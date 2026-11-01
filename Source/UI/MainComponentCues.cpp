@@ -146,7 +146,12 @@ void MainComponent::loadSetlistFromActiveSession()
             if (auto* root = parsed.getDynamicObject())
             {
                 const auto pls = root->getProperty ("playlists");
-                if (pls.isArray()) engine.loadPlaylistsFromJson (pls);
+                if (pls.isArray())
+                {
+                    engine.loadPlaylistsFromJson (pls);
+                    engine.reconcileClipsWithMedia (root->getProperty ("mediaLengths"),
+                                                    proj.getSiblingFile ("recording.session").existsAsFile());
+                }
                 // Automation lanes (formatVersion >= 3). Older saves
                 // have no automation key, so the if-check is enough
                 // to keep them loadable.
@@ -214,6 +219,7 @@ juce::String MainComponent::captureProjectPatchJson() const
     // Persist comp playlists (Takes) -- RAM-only before this fix
     // meant every alternate take was lost on app quit.
     obj->setProperty ("playlists",  engine.playlistsToJson());
+    obj->setProperty ("mediaLengths", engine.mediaLengthsToJson());
     // Persist per-track automation lanes (volume/pan/mute points +
     // curve types). Without this, every point the engineer drew was
     // lost on app quit. Same data-loss class as the Takes bug fix.

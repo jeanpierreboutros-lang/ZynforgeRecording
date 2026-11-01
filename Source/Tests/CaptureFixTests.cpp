@@ -4,6 +4,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/AiffRepair.h"
+#include "../Audio/AudioEngine.h"
 #include "../Audio/FloatAiffWriter.h"
 #include "../Audio/MultitrackRecorder.h"
 
@@ -98,8 +99,100 @@ namespace zynforge
 
         void runTest() override
         {
+            AudioEngine::setTestModeSkipAudioInit (true);
             aiffCrashSurvival();
             punchPastATracksEnd();
+            continuedTakeSurvivesACrash();
+        }
+
+        static void recordOn (AudioEngine& engine, const juce::File& dir, int blocks, float value, bool continuing)
+        {
+            auto& rec = engine.getRecorder();
+            rec.getTrack (0).armed.store (true);
+            if (continuing) engine.armContinue (engine.getCaptureLengthSamples());
+            if (! engine.startRecording (dir)) return;
+            std::vector<float> samples ((size_t) kBlock, value);
+            const float* inputs[] { samples.data() };
+            for (int b = 0; b < blocks; ++b) { rec.processBlock (inputs, 1, kBlock); rec.drainPendingForTests(); }
+            engine.stopRecording();
+        }
+
+        static juce::int64 clipEnd (AudioEngine& engine)
+        {
+            juce::int64 end = 0;
+            for (const auto& clip : engine.clipsFor (0))
+                end = juce::jmax (end, clip.timelineStartSamples + clip.fileLengthSamples);
+            return end;
+        }
+
+        static void trimEnd (AudioEngine& engine, juce::int64 frames)
+        {
+            engine.clipsFor (0)[0].fileLengthSamples -= frames;
+            engine.syncActiveTake (0);
+        }
+
+        // The project on disk from before the second pass, then the take as a
+        // crash left it: its new part is there, nothing saved it into a clip.
+        void continuedTakeSurvivesACrash()
+        {
+            const auto run = [this] (bool trimmed, bool withLengths)
+            {
+                const auto dir = tempDir ("continue-crash");
+                const juce::int64 first = 40 * kBlock, second = 30 * kBlock, trim = 10 * kBlock;
+                juce::var playlists, lengths;
+                {
+                    AudioEngine engine;
+                    engine.setStripCount (1);
+                    engine.prepareForTests (kRate, kBlock);
+                    recordOn (engine, dir, 40, 0.25f, false);
+                    if (trimmed) trimEnd (engine, trim);
+                    playlists = engine.playlistsToJson();
+                    if (withLengths) lengths = engine.mediaLengthsToJson();
+                    recordOn (engine, dir, 30, 0.5f, true);
+                }
+
+                AudioEngine engine;
+                engine.setStripCount (1);
+                engine.prepareForTests (kRate, kBlock);
+                expectEquals (engine.loadSession (dir), 1);
+                engine.loadPlaylistsFromJson (playlists);
+                expectEquals (clipEnd (engine), first - (trimmed ? trim : 0), "the fixture lost the old project's clips");
+                engine.reconcileClipsWithMedia (lengths, true);
+
+                expectEquals (clipEnd (engine), first + second, "the new part is missing from the timeline");
+                const auto& clips = engine.clipsFor (0);
+                if (trimmed)
+                {
+                    expectEquals ((int) clips.size(), withLengths ? 2 : 1);
+                    if (withLengths) expectEquals (clips[0].fileLengthSamples, first - trim, "the trim was undone");
+                }
+                else
+                    expectEquals ((int) clips.size(), 1, "a plain take should stay one clip");
+
+                engine.clearAllStripOverrides();
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            };
+
+            beginTest ("A crash in a continued take leaves its new audio on the timeline");
+            run (false, true);
+            beginTest ("Clip edits survive the rebuild, and the new audio still lands");
+            run (true, true);
+            beginTest ("An older project with no saved lengths is rebuilt from its clips after a crash");
+            run (false, false);
+
+            beginTest ("A deliberate end trim is left alone when nothing was recorded after it");
+            {
+                const auto dir = tempDir ("trim-kept");
+                AudioEngine engine;
+                engine.setStripCount (1);
+                engine.prepareForTests (kRate, kBlock);
+                recordOn (engine, dir, 40, 0.25f, false);
+                trimEnd (engine, 10 * kBlock);
+                engine.reconcileClipsWithMedia (engine.mediaLengthsToJson(), false);
+                expectEquals (clipEnd (engine), (juce::int64) 30 * kBlock, "reconciling undid a trim");
+                engine.clearAllStripOverrides();
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
         }
 
         static std::unique_ptr<MultitrackRecorder> recorderFor (const juce::File& dir, float value, int blocks,

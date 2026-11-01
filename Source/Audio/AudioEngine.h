@@ -900,6 +900,15 @@ namespace zynforge
         // this, Takes are RAM-only and lost on app quit.
         juce::var playlistsToJson() const;
         void      loadPlaylistsFromJson (const juce::var& v);
+        // The media length of every track when these playlists were saved,
+        // kept beside them in the .zfproj.
+        juce::var mediaLengthsToJson() const;
+        // Run after a session's playlists load. Audio past what they were
+        // saved against came from a take that ended without a save (a crash
+        // in a continued take); it gets a clip, as a normal STOP would give
+        // it. Older projects hold no lengths, so for them `afterCrash` says
+        // to measure from the end of the clips instead.
+        void reconcileClipsWithMedia (const juce::var& savedLengths, bool afterCrash);
         // Split the named track at the current playhead -- creates two
         // clips that reference the same audio file with adjacent regions.
         bool splitTrackAtPlayhead (int track);

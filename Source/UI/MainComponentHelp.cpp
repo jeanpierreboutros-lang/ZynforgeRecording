@@ -648,6 +648,14 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
             // failed open (interrupted punch, incomplete move) keeps it listed
             // so the engineer can try again, and keeps its own error status.
             if (self->openSessionFolder (dir) < 0) return;
+            // The marker is what told an older project to rebuild its clips,
+            // so they are saved before it goes.
+            if (! self->saveSessionStateTo (dir))
+            {
+                self->showStatus ("Recovered " + dir.getFileName()
+                                  + ", but it could not be saved; it stays on the recovery list");
+                return;
+            }
             dir.getChildFile ("recording.session").deleteFile();
             self->showStatus ("Recovered: " + dir.getFileName());
             self->updateTransportLabels();
