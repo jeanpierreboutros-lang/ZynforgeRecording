@@ -24,9 +24,9 @@ namespace zynforge
         {
             juce::String  name;
             juce::File    location;        // parent folder for the new session
-            CaptureFormat captureFormat;
-            double        sampleRate;
-            bool          interleaved;
+            CaptureFormat captureFormat { CaptureFormat::Wav24 };
+            double        sampleRate { 48000.0 };
+            bool          interleaved { false };
             juce::String  ioSettings;
             juce::String  inputDeviceName;   // chosen record-from input device ("" = unchanged)
             juce::String  outputDeviceName;  // chosen monitor output device  ("" = unchanged)

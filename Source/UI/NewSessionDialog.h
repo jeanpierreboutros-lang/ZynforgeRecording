@@ -18,9 +18,9 @@ namespace zynforge
         {
             juce::String  name;
             juce::File    location;        // parent folder for the new session
-            CaptureFormat captureFormat;   // derived from file type + bit depth
-            double        sampleRate;
-            bool          interleaved;
+            CaptureFormat captureFormat { CaptureFormat::Wav24 };   // derived from file type + bit depth
+            double        sampleRate { 48000.0 };
+            bool          interleaved { false };
             juce::String  ioSettings;      // "Last Used", "Stereo Mix"
         };
 
