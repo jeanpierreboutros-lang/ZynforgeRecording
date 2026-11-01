@@ -8,6 +8,7 @@
 #include "MultiPartReader.h"
 
 #include <juce_cryptography/juce_cryptography.h>
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <thread>
@@ -613,12 +614,25 @@ namespace zynforge
                 .dropLastCharacters (10);
             const auto target = audioDir.getChildFile (stem + sidecar.getFileExtension());
             const auto archived = archiveRoot.getChildFile (target.getFileName());
+            // The punch file exists only once every part of the base was moved
+            // aside, so then a part with no sidecar is one the punch rolled
+            // into. Before that it may be base audio not yet moved: it stays.
+            if (target.exists() && ! stem.contains ("_part"))
+                for (const auto& part : audioDir.findChildFiles (juce::File::findFiles, false,
+                                                                 stem + "_part*" + sidecar.getFileExtension()))
+                {
+                    if (part.getFileName().contains (".punchbase") || punchSidecar (part).exists()) continue;
+                    if (! part.moveFileTo (archiveRoot.getChildFile (part.getFileName()))) return false;
+                }
             if (target.exists() && ! target.moveFileTo (archived)) return false;
             if (! sidecar.moveFileTo (target))
             {
                 if (archived.existsAsFile()) archived.moveFileTo (target);
                 return false;
             }
+            for (const auto& temporary : audioDir.findChildFiles (juce::File::findFiles, false,
+                                                                  stem + ".punchtmp*"))
+                temporary.deleteFile();
             if (recovered != nullptr) ++*recovered;
         }
         return true;
@@ -2141,7 +2155,13 @@ namespace zynforge
         // Punch-in: the final on-disk paths of every copy (primary/backup/each
         // mirror), aligned with `writers`, so each can be spliced after the
         // writers close.
-        struct PunchWriterFiles { juce::File primary, backup; std::vector<juce::File> mirrors; };
+        struct PunchFiles
+        {
+            juce::File main;                // Track_NN.<ext>
+            std::vector<juce::File> fresh;  // every part the punch wrote, in order
+            juce::int64 maxBytesPerFile { 0 };
+        };
+        struct PunchWriterFiles { PunchFiles primary, backup; std::vector<PunchFiles> mirrors; };
 
         juce::Time  stoppedAt;
         juce::int64 totalSamples {}, totalMissed {};
@@ -2360,7 +2380,12 @@ namespace zynforge
         if (isCopyAbandoned (1)) stop.backupWasRunning = false;
         const auto punchPath = [] (const CaptureCopy::Track& t)
         {
-            return t.baseFile == juce::File() ? juce::File() : t.baseFile.withFileExtension (t.ext);
+            TakeStop::PunchFiles files;
+            if (t.baseFile == juce::File()) return files;
+            files.main = t.baseFile.withFileExtension (t.ext);
+            for (const auto& name : t.partFiles) files.fresh.push_back (t.baseFile.getSiblingFile (name));
+            files.maxBytesPerFile = maxBytesForContainer (t.container);
+            return files;
         };
         for (size_t i = 0; i < writers.size(); ++i)
         {
@@ -2458,16 +2483,20 @@ namespace zynforge
         // commit-or-rollback decision for the whole track.
         struct CopySplice
         {
-            juce::File              fresh;      // the freshly-recorded punch file
-            juce::File              tmp;        // spliced result awaiting commit
+            juce::File              fresh;      // Track_NN.<ext>
+            std::vector<juce::File> freshParts; // every file the punch recorded
+            juce::File              tmp;        // first file of the spliced result
+            std::vector<juce::File> tmpParts;   // the whole spliced result, awaiting commit
             std::vector<juce::File> baseParts;  // stashed .punchbase sidecars
             bool                    attempted { false };  // this copy was stashed
             bool                    spliced   { false };  // splice to tmp succeeded
         };
-        auto prepareCopy = [&] (const juce::File& fresh) -> CopySplice
+        auto prepareCopy = [&] (const TakeStop::PunchFiles& files) -> CopySplice
         {
             CopySplice cs;
+            const auto& fresh = files.main;
             cs.fresh = fresh;
+            cs.freshParts = files.fresh;
             if (fresh.getFullPathName().isEmpty()) return cs;
             // Gather every stashed base part for this copy, in order:
             // Track_NN.punchbase + Track_NN_partXX.punchbase (continue takes
@@ -2490,7 +2519,8 @@ namespace zynforge
             }
             cs.tmp = fresh.getSiblingFile (
                 fresh.getFileNameWithoutExtension() + ".punchtmp" + fresh.getFileExtension());
-            cs.spliced = splicePunchParts (fm, cs.baseParts, fresh, punchPos, cs.tmp);
+            cs.spliced = splicePunchTake (fm, cs.baseParts, cs.freshParts, punchPos, cs.tmp,
+                                          files.maxBytesPerFile, cs.tmpParts);
             return cs;
         };
         auto readLen = [&fm] (const juce::File& f) -> juce::int64
@@ -2517,19 +2547,38 @@ namespace zynforge
         };
         // Put one copy back to its pre-punch take. The fresh file (or, if the
         // install got as far as removing it, the spliced temp) is archived.
+        // The punch's files must all be out of the way before a base part comes
+        // back: a part the punch rolled into has the same name as a base part.
         const auto rollBack = [&] (CopySplice& c, bool archive)
         {
-            const auto name = c.fresh.getFileName();
-            if (archive && c.fresh.existsAsFile())    { if (! archiveUnspliced (c.fresh, name)) c.fresh.deleteFile(); }
-            else if (archive && c.tmp.existsAsFile()) { if (! archiveUnspliced (c.tmp, name))   c.tmp.deleteFile(); }
-            c.tmp.deleteFile();
-            c.fresh.deleteFile();
+            bool freshKept = false;
+            for (const auto& part : c.freshParts)
+            {
+                if (! part.existsAsFile()) continue;
+                if (archive && archiveUnspliced (part, part.getFileName())) freshKept = true;
+                else part.deleteFile();
+            }
+            for (const auto& part : c.tmpParts)
+            {
+                if (archive && ! freshKept && part.existsAsFile())
+                    if (! archiveUnspliced (part, c.fresh.getFileName())) part.deleteFile();
+                part.deleteFile();
+            }
             for (auto& part : c.baseParts)
                 part.moveFileTo (sidecarToTake (part));
         };
         const auto install = [] (CopySplice& c)
         {
-            return (! c.fresh.existsAsFile() || c.fresh.deleteFile()) && c.tmp.moveFileTo (c.fresh);
+            for (const auto& part : c.freshParts)
+                if (part.existsAsFile() && ! part.deleteFile()) return false;
+            for (size_t p = 0; p < c.tmpParts.size(); ++p)
+            {
+                const auto target = p == 0 ? c.fresh
+                    : partFileFor (c.fresh.getParentDirectory(), c.fresh.getFileNameWithoutExtension(),
+                                   c.fresh.getFileExtension(), (int) p + 1);
+                if (! c.tmpParts[p].moveFileTo (target)) return false;
+            }
+            return true;
         };
 
         for (size_t i = 0; i < punchFiles.size() && i < writerSnapshots.size(); ++i)
@@ -2548,7 +2597,8 @@ namespace zynforge
             // that rolled back IS its base, so neither takes this pass's time.
             for (const auto& c : copies)
                 if (c.attempted)
-                    std::erase_if (stop.stampedParts, [&c] (const auto& part) { return part.file == c.fresh; });
+                    std::erase_if (stop.stampedParts, [&c] (const auto& part)
+                                   { return std::find (c.freshParts.begin(), c.freshParts.end(), part.file) != c.freshParts.end(); });
 
             // Nothing was captured (a selection punch stopped during its
             // pre-roll): there is no punch, so every copy simply keeps its take.
@@ -2571,7 +2621,7 @@ namespace zynforge
                 for (size_t ci = 1; ci < copies.size(); ++ci)
                 {
                     auto& c = copies[ci];
-                    if (! c.attempted) { c.tmp.deleteFile(); continue; }
+                    if (! c.attempted) { for (const auto& part : c.tmpParts) part.deleteFile(); continue; }
                     if (c.spliced && install (c))
                     {
                         for (auto& part : c.baseParts) part.deleteFile();
@@ -2596,7 +2646,7 @@ namespace zynforge
                 punchSpliceFailed.store (true, std::memory_order_relaxed);
                 for (auto& c : copies)
                 {
-                    if (! c.attempted) { c.tmp.deleteFile(); continue; }
+                    if (! c.attempted) { for (const auto& part : c.tmpParts) part.deleteFile(); continue; }
                     rollBack (c, true);
                 }
             }

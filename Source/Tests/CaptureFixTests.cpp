@@ -7,6 +7,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/CaptureCopy.h"
 #include "../Audio/FloatAiffWriter.h"
+#include "../Audio/MultiPartReader.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Capture/CaptureDaemon.h"
 #include "../UI/MainComponent.h"
@@ -108,6 +109,7 @@ namespace zynforge
             AudioEngine::setTestModeSkipAudioInit (true);
             aiffCrashSurvival();
             punchPastATracksEnd();
+            punchAcrossTheRollCeiling();
             continuedTakeSurvivesACrash();
         }
 
@@ -252,6 +254,142 @@ namespace zynforge
                 expect (audio[30 * kBlock] == 0.0f, "the gap is not silence");
                 expect (std::abs (audio[(size_t) punchAt] - 0.75f) < 0.001f, "the punch landed early");
                 MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
+        }
+
+        // Every value identifies its position, so a part in the wrong place shows.
+        static float rampAt (juce::int64 frame) noexcept
+        {
+            return (float) (frame % 30011) / 40000.0f - 0.35f;
+        }
+
+        static void feedRamp (MultitrackRecorder& rec, juce::int64 startFrame, int blocks)
+        {
+            std::vector<float> samples ((size_t) kBlock);
+            const float* inputs[] { samples.data() };
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < kBlock; ++i)
+                    samples[(size_t) i] = rampAt (startFrame + b * (juce::int64) kBlock + i);
+                rec.processBlock (inputs, 1, kBlock);
+                rec.drainPendingForTests();
+            }
+        }
+
+        static std::vector<float> takeSamples (const juce::File& main)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            const auto reader = ConcatReader::create (fm, findTakeParts (main));
+            if (reader == nullptr) return {};
+            juce::AudioBuffer<float> buffer (1, (int) reader->lengthInSamples);
+            reader->read (&buffer, 0, buffer.getNumSamples(), 0, true, false);
+            return { buffer.getReadPointer (0), buffer.getReadPointer (0) + buffer.getNumSamples() };
+        }
+
+        void punchAcrossTheRollCeiling()
+        {
+            // 24000 bytes is 12000 frames of 16-bit mono.
+            MultitrackRecorder::setAutoSplitThresholdBytesForTests (24000);
+            const juce::ScopeGuard clear { [] { MultitrackRecorder::setAutoSplitThresholdBytesForTests (0); } };
+            const auto record = [] (const juce::File& dir, juce::int64 at, int blocks, std::function<void (MultitrackRecorder&)> arm)
+            {
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.setCaptureFormat (CaptureFormat::Aiff16);
+                rec.getTrack (0).armed.store (true);
+                if (arm) arm (rec);
+                if (! rec.startRecording (dir)) return false;
+                feedRamp (rec, at, blocks);
+                rec.stopRecording();
+                return ! rec.hasPunchSpliceFailed();
+            };
+
+            beginTest ("A punch longer than the roll point lands whole, in order");
+            {
+                const auto dir = tempDir ("punch-roll");
+                const auto audio = dir.getChildFile ("Audio Files");
+                expect (record (dir, 0, 120, {}));
+                expect (audio.getChildFile ("Track_01_part02.aif").existsAsFile(), "the base did not roll");
+
+                const juce::int64 in = 20 * kBlock, punchLength = 70 * kBlock;
+                expect (record (dir, in + 1000000, 70, [&] (MultitrackRecorder& rec) { rec.armPunchIn (in); }));
+
+                const auto samples = takeSamples (audio.getChildFile ("Track_01.aif"));
+                expectEquals ((int) samples.size(), 120 * kBlock, "the take changed length");
+                int wrong = 0;
+                for (int i = 0; i < (int) samples.size(); ++i)
+                {
+                    const bool punched = i >= in && i < in + punchLength;
+                    const auto expected = rampAt (punched ? 1000000 + (juce::int64) i : (juce::int64) i);
+                    if (std::abs (samples[(size_t) i] - expected) > 0.0002f) ++wrong;
+                }
+                expectEquals (wrong, 0, "audio moved in the splice");
+
+                for (const auto& file : audio.findChildFiles (juce::File::findFiles, false, "*"))
+                {
+                    expect (! file.getFileName().containsIgnoreCase (".punch"), "left behind: " + file.getFileName());
+                    expect (file.getSize() <= 24000 + 54 + 2, "a file crossed the ceiling: " + file.getFileName());
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
+
+            beginTest ("A failed splice puts every base part back and keeps every punch part");
+            {
+                const auto dir = tempDir ("punch-roll-fail");
+                const auto audio = dir.getChildFile ("Audio Files");
+                expect (record (dir, 0, 60, {}));
+                const auto basePart = audio.getChildFile ("Track_01_part02.aif");
+                const auto before = bytesOf (basePart);
+
+                const juce::int64 in = 20 * kBlock;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.setCaptureFormat (CaptureFormat::Aiff16);
+                rec.getTrack (0).armed.store (true);
+                rec.armPunchIn (in);
+                expect (rec.startRecording (dir));
+                feedRamp (rec, 1000000, 70);
+                // The splice cannot read this base.
+                audio.getChildFile ("Track_01.punchbase.aif").replaceWithText ("not audio any more");
+                rec.stopRecording();
+
+                expect (rec.hasPunchSpliceFailed(), "the fixture did not fail the splice");
+                expect (bytesOf (basePart) == before, "a punch part replaced a base part");
+                const auto archives = dir.getChildFile ("Session File Backups")
+                    .findChildFiles (juce::File::findFiles, true, "Track_01*.aif");
+                expectGreaterThan (archives.size(), 1, "the rolled punch parts were not kept");
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
+
+            beginTest ("Crash recovery takes a rolled punch part off the restored take");
+            {
+                const auto dir = tempDir ("punch-roll-crash");
+                const auto audio = dir.getChildFile ("Audio Files");
+                audio.createDirectory();
+                writeAiff (audio.getChildFile ("Track_01.punchbase.aif"), 16, 1, 100);
+                writeAiff (audio.getChildFile ("Track_01.aif"), 16, 1, 200);
+                writeAiff (audio.getChildFile ("Track_01_part02.aif"), 16, 1, 300);
+                audio.getChildFile ("Track_01.punchtmp.aif").replaceWithText ("half a splice");
+                expect (MultitrackRecorder::recoverInterruptedPunches (audio));
+                expectEquals (lengthOf (audio.getChildFile ("Track_01.aif")), (juce::int64) 100, "the base did not come back");
+                expect (! audio.getChildFile ("Track_01_part02.aif").existsAsFile(), "the rolled part stayed on the take");
+                expect (! audio.getChildFile ("Track_01.punchtmp.aif").existsAsFile(), "the temp file stayed");
+                expectEquals (dir.getChildFile ("Session File Backups")
+                                  .findChildFiles (juce::File::findFiles, true, "Track_01*.aif").size(), 2,
+                              "the punch's audio was not kept");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A base part not yet moved aside when a punch died is never taken off");
+            {
+                const auto dir = tempDir ("punch-stash-crash");
+                const auto audio = dir.getChildFile ("Audio Files");
+                audio.createDirectory();
+                writeAiff (audio.getChildFile ("Track_01.punchbase.aif"), 16, 1, 100);
+                writeAiff (audio.getChildFile ("Track_01_part02.aif"), 16, 1, 300);
+                expect (MultitrackRecorder::recoverInterruptedPunches (audio));
+                expectEquals (lengthOf (audio.getChildFile ("Track_01_part02.aif")), (juce::int64) 300);
+                dir.deleteRecursively();
             }
         }
 
