@@ -82,12 +82,8 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
             recorder.getTrack (clickTrackIndex).referenceMedia.store (true);
     }
 
-    const double sr = juce::jmax (8000.0, [this]
-    {
-        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
-            return d->getCurrentSampleRate();
-        return 48000.0;
-    }());
+    const double sr = juce::jmax (8000.0, engine.getSessionAudioRate() > 0.0
+                                              ? engine.getSessionAudioRate() : 48000.0);
     // Match the session's playback length. An empty new session has no media
     // length yet, so provide three hours: enough for the stated two-hour show
     // plus setup/overtime headroom.
@@ -390,9 +386,9 @@ void MainComponent::cancelAnalysisForTake()
 
 // A report dialog is modal: over a live take it would stand between the
 // engineer and STOP.
-bool MainComponent::analysisResultWanted (const juce::File& scannedSession, bool cancelled)
+bool MainComponent::analysisResultWanted (const juce::File& scannedSession)
 {
-    if (engine.isRecording() || captureMetadataPending || cancelled)
+    if (engine.isRecording() || captureMetadataPending)
     {
         showStatus ("Analysis stopped for the take -- run it again after recording");
         return false;
@@ -444,7 +440,8 @@ void MainComponent::runNoiseAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    analysisJobs.start ([self, sessionDir, names] (const std::atomic<bool>& cancelled) -> zynforge::SessionJobRunner::Completion
+    analysisJobs.start ([self, sessionDir, names] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
         const auto findings = zynforge::NoiseAnalyzer::analyseSession (
             sessionDir,
@@ -453,15 +450,15 @@ void MainComponent::runNoiseAnalysis()
                 return (idx >= 0 && idx < names.size())
                     ? names[idx]
                     : juce::String ("Track ") + juce::String (idx + 1);
-            },
-            &cancelled);
+            }, &cancel);
+        if (cancel.load (std::memory_order_relaxed))
+            return [self] { if (self != nullptr) self->showStatus ("Noise analysis stopped: a take started"); };
 
         const auto summary = noiseAnalysisSummary (findings);
-        const bool wasCancelled = cancelled.load();
 
-        return [self, summary, findings, sessionDir, wasCancelled]
+        return [self, summary, findings, sessionDir]
         {
-            if (self == nullptr || ! self->analysisResultWanted (sessionDir, wasCancelled)) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             self->showStatus (summary);
             // Sortable table replaces the text dump -- engineer clicks
             // column headers to sort by worst hum / most bumps /
@@ -500,11 +497,13 @@ void MainComponent::runQcAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    analysisJobs.start ([self, sessionDir, audioDir, files, names] (const std::atomic<bool>& cancelled) -> zynforge::SessionJobRunner::Completion
+    analysisJobs.start ([self, sessionDir, audioDir, files, names] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
+        const auto stopped = [self]
+        { if (self != nullptr) self->showStatus ("QC stopped: a take started. No report was written."); };
+
         std::vector<zynforge::qc::TrackQc> results;
-        const auto stoppedForTake = [self, sessionDir]
-        { if (self != nullptr) self->analysisResultWanted (sessionDir, true); };
         for (const auto& f : files)
         {
             const auto stem = f.getFileNameWithoutExtension();          // "Track_NN" or "Track_NN_partXX"
@@ -516,8 +515,8 @@ void MainComponent::runQcAnalysis()
             // Also skips punch sidecars and Track_NN_consolidated_K renders.
             const int idx = zynforge::mainTakeTrackNumber (f) - 1;
             if (idx < 0) continue;
-            auto q = zynforge::qc::analyzeFile (f, &cancelled);
-            if (cancelled.load()) return stoppedForTake;
+            auto q = zynforge::qc::analyzeFile (f, &cancel);
+            if (cancel.load (std::memory_order_relaxed)) return stopped;
             q.trackIndex = idx;
             q.name = (idx < names.size() && names[idx].isNotEmpty()) ? names[idx] : stem;
             results.push_back (std::move (q));
@@ -533,7 +532,7 @@ void MainComponent::runQcAnalysis()
                 missed = (juce::int64) v.getProperty ("missedSamples", -1);
         }
 
-        if (cancelled.load()) return stoppedForTake;
+        if (cancel.load (std::memory_order_relaxed)) return stopped;
 
         // Write the morning-after text report next to the exports.
         const auto exportDir = sessionDir.getChildFile ("Export Files");
@@ -543,22 +542,13 @@ void MainComponent::runQcAnalysis()
         const bool reportSaved = zynforge::atomicfile::writeText (
             reportTxt, zynforge::qc::reportText (sessionDir.getFileName(), results, missed));
 
-        int clipped = 0, totalEvents = 0;
-        for (const auto& q : results)
-            if (q.clipEventCount > 0) { ++clipped; totalEvents += q.clipEventCount; }
-        juce::String summary = juce::String ((int) results.size()) + " track"
-            + (results.size() == 1 ? juce::String() : juce::String ("s")) + " QC'd -- "
-            + (clipped == 0 ? juce::String ("no clipping")
-                            : juce::String (clipped) + " with clipping ("
-                              + juce::String (totalEvents) + " events)")
-            + (missed > 0 ? juce::String (", DROPOUTS: ") + juce::String (missed) + " samples"
-                          : juce::String())
+        juce::String summary = zynforge::qc::statusSummary (results, missed)
             + (reportSaved ? ". Saved " + reportTxt.getFileName() + "."
                            : ". WARNING: report file could not be saved.");
 
-        return [self, summary, results, sessionDir]() mutable
+        return [self, summary, results, sessionDir] () mutable
         {
-            if (self == nullptr || ! self->analysisResultWanted (sessionDir, false)) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             self->showStatus (summary);
             zynforge::QcReportDialog::launch (std::move (results));
         };
@@ -913,48 +903,30 @@ void MainComponent::detectSongsToMarkers()
         return;
     }
 
-    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
-                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
-    auto files = audioDir.findChildFiles (juce::File::findFiles, false,
-                                          "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac");
-    if (files.isEmpty())
+    const auto voices = engine.songScanVoices();
+    if (voices.empty())
     {
         showStatus ("No recorded audio to scan -- record a take first.");
         return;
     }
-    files.sort();
+    const auto arrangement = juce::JSON::toString (engine.playlistsToJson());
 
     showStatus ("Detecting songs (multi-track quorum scan)...");
 
     juce::Component::SafePointer<MainComponent> self (this);
-    analysisJobs.start ([self, files, sessionDir] (const std::atomic<bool>& cancelled) -> zynforge::SessionJobRunner::Completion
+    analysisJobs.start ([self, voices, sessionDir, arrangement] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
         const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
-        std::vector<std::vector<char>> flags;
         double sr = 48000.0;
-        for (const auto& f : files)
-        {
-            // Skip continuation parts: envelopeFlags treats every file as
-            // starting at t=0, so a Track_NN_partXX would fold set-2 audio onto
-            // the timeline START and add a phantom voice to the quorum, landing
-            // song markers all over the session. Scan main files only (a
-            // consolidate render or punch sidecar is the same phantom voice).
-            if (zynforge::mainTakeTrackNumber (f) <= 0)
-                continue;
-            double fileSr = 0.0;
-            auto fl = zynforge::songs::envelopeFlags (f, params.thresholdDb,
-                                                      params.windowSec, fileSr, &cancelled);
-            if (cancelled.load()) break;
-            if (fileSr > 0.0) sr = fileSr;
-            if (! fl.empty()) flags.push_back (std::move (fl));
-        }
-        const bool wasCancelled = cancelled.load();
-        const auto found = wasCancelled ? decltype (zynforge::songs::detect (flags, sr, params)) {}
-                                        : zynforge::songs::detect (flags, sr, params);
+        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel);
+        if (cancel.load (std::memory_order_relaxed))
+            return [self] { if (self != nullptr) self->showStatus ("Song detection stopped: a take started"); };
+        const auto found = zynforge::songs::detect (flags, sr, params);
 
-        return [self, found, sessionDir, wasCancelled]
+        return [self, found, sessionDir, arrangement]
         {
-            if (self == nullptr || ! self->analysisResultWanted (sessionDir, wasCancelled)) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             if (found.empty())
             {
                 self->showStatus ("No songs detected -- try Marker List to add them by hand.");
@@ -962,10 +934,15 @@ void MainComponent::detectSongsToMarkers()
             }
             // Markers are a timeline edit: a take may have started during the scan.
             if (! self->canMutateTimeline ("adding song markers")) return;
+            if (juce::JSON::toString (self->engine.playlistsToJson()) != arrangement)
+            {
+                self->showStatus ("The arrangement changed during the scan; no markers were added");
+                return;
+            }
             auto& markers = self->engine.getMarkers();
             int n = 0;
             for (const auto& s : found)
-                markers.drop (s.startSample, "Song " + juce::String (++n));
+                markers.drop (s.startSample, "Song " + juce::String (++n), "song");
             self->showStatus (juce::String (n) + " song marker" + (n == 1 ? "" : "s")
                               + " dropped -- rename them in the Marker List.");
         };

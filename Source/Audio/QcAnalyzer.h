@@ -7,6 +7,7 @@
 #include "MultiPartReader.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <vector>
 
@@ -35,6 +36,7 @@ namespace zynforge::qc
         float        noiseFloorDb   { -120.0f };  // 10th percentile of 100 ms RMS windows
         int          clipEventCount { 0 };
         std::vector<ClipEvent> clipEvents;  // first kMaxStoredClipEvents only
+        juce::String error;                 // nonempty: these figures do not cover the take
     };
 
     // A clip = a run of >= kClipRunSamples consecutive samples at (or
@@ -44,18 +46,22 @@ namespace zynforge::qc
     constexpr int   kClipRunSamples       = 3;
     constexpr int   kMaxStoredClipEvents  = 200;
 
+    // A set `cancel` stops the scan at the next block; its result means nothing.
     inline TrackQc analyzeFile (const juce::File& f, const std::atomic<bool>* cancel = nullptr)
     {
         TrackQc qc;
         qc.file = f;
-        if (! f.existsAsFile()) return qc;
+        if (! f.existsAsFile()) { qc.error = "File is missing"; return qc; }
 
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
         auto reader = ConcatReader::create (fm, findTakeParts (f));
         if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate <= 0.0
             || reader->numChannels < 1)   // 0-channel/malformed file: getReadPointer(0) would be OOB
+        {
+            qc.error = "Take cannot be read (corrupt, or a part is missing or does not match)";
             return qc;
+        }
 
         qc.sampleRate    = reader->sampleRate;
         qc.lengthSamples = reader->lengthInSamples;
@@ -91,7 +97,13 @@ namespace zynforge::qc
         {
             if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return qc;
             const int n = (int) juce::jmin ((juce::int64) block, qc.lengthSamples - pos);
-            if (! reader->read (&buf, 0, n, pos, true, true)) break;   // ALL channels (native stereo = one 2-ch file)
+            // ALL channels (native stereo = one 2-ch file)
+            if (! reader->read (&buf, 0, n, pos, true, true))
+            {
+                qc.error = "Read failed at " + juce::String ((double) pos / reader->sampleRate, 1)
+                         + " s -- only the audio before it was scanned";
+                break;
+            }
             const int nch = juce::jmin (buf.getNumChannels(), 8);
 
             for (int i = 0; i < n; ++i)
@@ -179,8 +191,15 @@ namespace zynforge::qc
 
         for (const auto& q : tracks)
         {
-            t << juce::String::formatted ("Track %02d  ", q.trackIndex + 1) << q.name << "\n"
-              << "  Peak: "        << juce::String (q.peakDb, 1)         << " dBFS"
+            t << juce::String::formatted ("Track %02d  ", q.trackIndex + 1) << q.name << "\n";
+            if (q.error.isNotEmpty())
+                t << "  QC INCOMPLETE: " << q.error << "\n";
+            if (q.lengthSamples <= 0)
+            {
+                t << "\n";
+                continue;
+            }
+            t << "  Peak: "        << juce::String (q.peakDb, 1)         << " dBFS"
               << "   LUFS-I: "     << juce::String (q.integratedLufs, 1)
               << "   Noise floor: "<< juce::String (q.noiseFloorDb, 1)   << " dBFS"
               << "   Length: "     << timecode (q.lengthSamples, q.sampleRate) << "\n";
@@ -198,5 +217,27 @@ namespace zynforge::qc
         }
         if (tracks.empty()) t << "(no recorded tracks found)\n";
         return t;
+    }
+
+    // The status line. A track that was not fully read is never counted as clean.
+    inline juce::String statusSummary (const std::vector<TrackQc>& tracks, juce::int64 missedSamples)
+    {
+        int clipped = 0, totalEvents = 0, failed = 0;
+        for (const auto& q : tracks)
+        {
+            if (q.error.isNotEmpty()) ++failed;
+            if (q.clipEventCount > 0) { ++clipped; totalEvents += q.clipEventCount; }
+        }
+        const int scanned = (int) tracks.size() - failed;
+        juce::String line;
+        line << scanned << " track" << (scanned == 1 ? "" : "s") << " QC'd -- "
+             << (clipped == 0 ? juce::String ("no clipping")
+                              : juce::String (clipped) + " with clipping ("
+                                + juce::String (totalEvents) + " events)");
+        if (failed > 0)
+            line << ", " << failed << " COULD NOT BE READ";
+        if (missedSamples > 0)
+            line << ", DROPOUTS: " << missedSamples << " samples";
+        return line;
     }
 }

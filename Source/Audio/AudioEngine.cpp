@@ -1361,7 +1361,7 @@ namespace zynforge
         return *it;
     }
 
-    int AudioEngine::dropMarkerAtCurrentPosition (const juce::String& name)
+    int AudioEngine::dropMarkerAtCurrentPosition (const juce::String& name, const juce::String& type)
     {
         if (! markers.hasContext()) return -1;
         if (externalRecording.load (std::memory_order_acquire)
@@ -1397,7 +1397,7 @@ namespace zynforge
         else
             return -1;
 
-        markers.drop (pos, name);
+        markers.drop (pos, name, type);
         if (onMarkerDropped)
             for (const auto& dropped : markers.getAll())
                 if (dropped.runtimeId == markers.lastDroppedId) { onMarkerDropped (dropped.name); break; }

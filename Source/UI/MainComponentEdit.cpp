@@ -129,12 +129,12 @@ namespace
         bool perform() override
         {
             if (firstRun) { firstRun = false; return true; }   // already applied
-            eng.loadPlaylistsFromJson (afterState);
+            eng.restorePlaylistSnapshot (afterState);
             return true;
         }
         bool undo() override
         {
-            eng.loadPlaylistsFromJson (beforeState);
+            eng.restorePlaylistSnapshot (beforeState);
             return true;
         }
 
@@ -142,6 +142,55 @@ namespace
         juce::var beforeState, afterState;
         bool      firstRun { true };
     };
+
+    // A marker dropped as part of an edit. It is already in the list when this
+    // is pushed.
+    struct MarkerDropAction final : public juce::UndoableAction
+    {
+        MarkerDropAction (MarkersManager& m, Marker dropped) : markers (m), marker (std::move (dropped)) {}
+
+        bool perform() override
+        {
+            if (firstRun) { firstRun = false; return true; }
+            markers.insert (marker);
+            return true;
+        }
+        bool undo() override { markers.removeById (marker.runtimeId); return true; }
+
+        MarkersManager& markers;
+        Marker marker;
+        bool firstRun { true };
+    };
+
+    // Crop / Ripple Delete: the edit has already happened when this is pushed.
+    struct TimelineCutAction final : public juce::UndoableAction
+    {
+        TimelineCutAction (std::function<void()> redoFn, std::function<void()> undoFn)
+            : redo (std::move (redoFn)), revert (std::move (undoFn)) {}
+
+        bool perform() override
+        {
+            if (firstRun) { firstRun = false; return true; }
+            redo();
+            return true;
+        }
+        bool undo() override { revert(); return true; }
+
+        std::function<void()> redo, revert;
+        bool firstRun { true };
+    };
+
+    // Markers and cues are not on the undo stack, so one added since the step
+    // (a take's scene marker, say) must not vanish with it.
+    template <class Item, class Same>
+    void keepAddedSince (std::vector<Item>& target, const std::vector<Item>& stepState,
+                         const std::vector<Item>& current, Same same)
+    {
+        for (const auto& item : current)
+            if (std::none_of (stepState.begin(), stepState.end(),
+                              [&] (const Item& known) { return same (known, item); }))
+                target.push_back (item);
+    }
 }
 
 void MainComponent::pushClipUndo (const juce::String& label, const juce::var& before)
@@ -153,6 +202,89 @@ void MainComponent::pushClipUndo (const juce::String& label, const juce::var& be
     undoManager.beginNewTransaction (label);
     undoManager.perform (new ClipSnapshotAction (engine, before, after));
 }
+MainComponent::TimelineSnapshot MainComponent::captureTimeline() const
+{
+    return { engine.captureTimelineState(), cues };
+}
+
+void MainComponent::restoreTimeline (TimelineSnapshot target, const TimelineSnapshot& replaced)
+{
+    keepAddedSince (target.engineState.markers, replaced.engineState.markers,
+                    engine.getMarkers().getAll(),
+                    [] (const Marker& a, const Marker& b) { return a.runtimeId == b.runtimeId; });
+    keepAddedSince (target.cues, replaced.cues, cues,
+                    [] (const SetlistBar::Cue& a, const SetlistBar::Cue& b)
+                    { return a.name == b.name && a.samplePos == b.samplePos; });
+
+    engine.restoreTimelineState (target.engineState);
+    cues = std::move (target.cues);
+    if (currentCueIndex >= (int) cues.size()) currentCueIndex = -1;
+    setlistBar.setCues (cues, currentCueIndex);
+    if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
+    saveCueChanges ({});
+}
+
+// Cues move with the audio like markers do, and each cue's own automation
+// snapshot moves with the live lanes it reinstalls on recall.
+std::vector<SetlistBar::Cue> MainComponent::cuesAfterCut (const std::vector<SetlistBar::Cue>& cues,
+                                                          const timelinecut::Cut& cut,
+                                                          const std::vector<int>& tracks,
+                                                          bool wholeTimeline)
+{
+    std::vector<SetlistBar::Cue> kept;
+    for (auto cue : cues)
+    {
+        cue.automation = AudioEngine::cutAutomationSnapshot (cue.automation, cut, tracks);
+        if (wholeTimeline)
+        {
+            const auto pos = cut.map (cue.samplePos);
+            if (! pos) continue;
+            std::vector<AudioEngine::TempoChange> curve;
+            for (const auto& point : cue.tempoCurve)
+                curve.push_back ({ cue.samplePos + point.offsetSamples, point.bpm });
+            cue.tempoCurve.clear();
+            for (const auto& change : timelinecut::cutTempoMap (curve, cut))
+                cue.tempoCurve.push_back ({ change.samplePos - *pos, change.bpm });
+            cue.samplePos = *pos;
+        }
+        kept.push_back (std::move (cue));
+    }
+    return kept;
+}
+
+// The engine has moved the clips, automation and markers; this finishes the
+// edit. The save is immediate because markers.json is already written: a crash
+// must not leave the markers moved and the clips not.
+void MainComponent::commitTimelineCut (const juce::String& label, const TimelineSnapshot& before,
+                                       const timelinecut::Cut& cut, const std::vector<int>& tracks)
+{
+    cues = cuesAfterCut (cues, cut, tracks, engine.namesEveryStrip (tracks));
+    if (currentCueIndex >= (int) cues.size()) currentCueIndex = -1;
+    setlistBar.setCues (cues, currentCueIndex);
+
+    auto after = captureTimeline();
+    undoManager.beginNewTransaction (label);
+    undoManager.perform (new TimelineCutAction (
+        [this, before, after] { restoreTimeline (after, before); },
+        [this, before, after] { restoreTimeline (before, after); }));
+    saveCueChanges ({});
+}
+
+int MainComponent::rippleTimeline (const juce::String& label, const std::vector<int>& tracks,
+                                   juce::int64 start, juce::int64 end)
+{
+    const timelinecut::Cut cut { start, end, false };
+    if (const auto refusal = engine.timelineCutRefusal (cut, tracks); refusal.isNotEmpty())
+    {
+        showStatus (refusal);
+        return -1;
+    }
+    const auto before = captureTimeline();
+    const int changed = engine.rippleDeleteTracks (tracks, start, end);
+    if (changed > 0) commitTimelineCut (label, before, cut, tracks);
+    return changed;
+}
+
 void MainComponent::recordUndoSnapshot (const juce::String& label)
 {
     juce::Array<juce::var> arr;
@@ -456,47 +588,44 @@ void MainComponent::editCropToLoopRange()
     const auto dir = engine.getActiveSessionDir();
     if (! dir.isDirectory())      { showStatus ("No active session to crop"); return; }
 
-    // Multi-part takes (Track_NN_partNN.<ext>) span several files -- cropping
-    // those correctly is out of scope, so refuse rather than mangle them.
-    // ALL containers: a .wav-only glob never saw a FLAC/AIFF session's parts,
-    // so Crop went ahead on exactly the multi-part take this guard exists to
-    // protect. Takes are not always WAV -- see CLAUDE.md.
-    const auto audioDir = dir.getChildFile ("Audio Files");
-    for (auto& f : audioDir.findChildFiles (juce::File::findFiles, false,
-             "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff"))
-        if (f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
-        { showStatus ("Cannot crop a multi-part take -- use Save Session As"); return; }
-
     const juce::int64 a = player.getLoopStart();
     const juce::int64 b = player.getLoopEnd();
+    const timelinecut::Cut cut { a, b, true };
+    if (const auto refusal = engine.timelineCutRefusal (cut, engine.allTimelineTracks());
+        refusal.isNotEmpty())
+    { showStatus (refusal); return; }
     const double secs = (double) (b - a) / juce::jmax (1.0, player.getSampleRate());
 
-    // Non-destructive: this only re-points each track's clips at the loop
-    // region (the Track_NN.wav files are untouched and the change persists
-    // in the .zfproj playlists), so it's reversible. A light confirmation
-    // still guards against an accidental whole-session re-clip, since clip
-    // edits aren't on the Cmd+Z stack yet.
     constexpr int kCrop = 1, kCancel = 2;
     auto* aw = new juce::AlertWindow ("Crop to loop range?",
         "Trim every track to the " + juce::String (secs, 2) + " s loop region?\n"
-        "Non-destructive -- the recordings on disk are untouched and you can "
-        "re-crop to the full range to undo.",
+        "Markers, automation, tempo changes, cues and other takes move with the "
+        "audio, and whatever lies outside the region goes.\n"
+        "Non-destructive -- the recordings on disk are untouched and Cmd+Z restores everything.",
         juce::MessageBoxIconType::NoIcon, this);
     aw->setLookAndFeel (&laf);
     aw->addButton ("Crop",   kCrop,   juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([self, aw, a, b] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, a, b, cut, dir] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
             if (result != kCrop || self == nullptr) return;
-            const auto before = self->engine.playlistsToJson();
+            // The dialog can sit open while a take starts from a desk macro or
+            // a remote, or the session changes: decide again now.
+            if (! self->canMutateTimeline ("cropping")) return;
+            if (self->engine.getActiveSessionDir() != dir)
+            { self->showStatus ("The session changed -- nothing was cropped"); return; }
+            const auto tracks = self->engine.allTimelineTracks();
+            if (const auto refusal = self->engine.timelineCutRefusal (cut, tracks); refusal.isNotEmpty())
+            { self->showStatus (refusal); return; }
+
+            const auto before = self->captureTimeline();
             const int kept = self->engine.cropToRange (a, b);
-            self->pushClipUndo ("Crop to loop range", before);   // Cmd+Z reverts the crop
+            self->commitTimelineCut ("Crop to loop range", before, cut, tracks);
             self->engine.getPlayer().clearLoopRegion();
             if (self->editPage != nullptr) self->editPage->repaint();
-            self->requestUILayoutSave();   // persist the new clip layout
             self->showStatus ("Cropped to loop region (" + juce::String (kept)
                         + " track(s) with audio) -- non-destructive");
         }),
@@ -523,8 +652,8 @@ void MainComponent::editSetRangeToLoopRange()
         return;
     }
     auto& m = engine.getMarkers();
-    m.drop (player.getLoopStart(), "Range In");
-    m.drop (player.getLoopEnd(),   "Range Out");
+    m.drop (player.getLoopStart(), "Range In", "range");
+    m.drop (player.getLoopEnd(),   "Range Out", "range");
     showStatus ("Range markers placed at loop boundaries");
 }
 
@@ -714,14 +843,24 @@ void MainComponent::editSplitAtPlayhead()
     if (zeroCrossSnap && ! targets.empty())
         pos = engine.nearestZeroCrossing (targets.front(), pos, 240);
 
-    engine.getMarkers().drop (pos, "Split");
+    engine.getMarkers().drop (pos, "Split", "split");
+    const auto splitMarkerId = engine.getMarkers().lastDroppedId;
 
     const auto before = engine.playlistsToJson();   // clip-aware undo
     int splits = 0;
     for (int phys : targets)
         if (engine.splitTrackAtSample (phys, pos)) ++splits;
     if (splits > 0)
+    {
         pushClipUndo ("Split clips at playhead", before);
+        // In the split's transaction: its marker goes when the split does.
+        for (const auto& marker : engine.getMarkers().getAll())
+            if (marker.runtimeId == splitMarkerId)
+            {
+                undoManager.perform (new MarkerDropAction (engine.getMarkers(), marker));
+                break;
+            }
+    }
 
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     showStatus ((splits > 0
@@ -905,16 +1044,24 @@ void MainComponent::editConsolidateSelection()
     if (! canMutateTimeline ("consolidating audio")) return;
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion()) { showStatus ("Select a range first, then Consolidate"); return; }
-    const auto a = player.getLoopStart(), b = player.getLoopEnd();
     const auto targets = tracksToEditPhysical();
     if (targets.empty()) { showStatus ("Select at least one track"); return; }
+    consolidateTracks (targets, player.getLoopStart(), player.getLoopEnd());
+}
+
+// A session job whichever menu started it: it writes a WAV into the session, so
+// RECORD and other jobs must wait, and its undo step must not depend on the row
+// that asked still existing.
+void MainComponent::consolidateTracks (const std::vector<int>& targets, juce::int64 start, juce::int64 end)
+{
+    if (! canMutateTimeline ("consolidating audio")) return;
     if (! sessionJobs.reserve())
     { showStatus ("Wait for the session operation to finish"); return; }
     const auto before = engine.playlistsToJson();
     if (editPage != nullptr) editPage->setEnabled (false);
     showStatus ("Consolidating audio in the background...");
     juce::Component::SafePointer<MainComponent> self (this);
-    engine.consolidateRangeAsync (targets, a, b, [self, before] (int n, bool complete)
+    engine.consolidateRangeAsync (targets, start, end, [self, before] (int n, bool complete)
     {
         if (self == nullptr) return;
         self->sessionJobs.release();
@@ -1080,6 +1227,7 @@ void MainComponent::editClipboardCut (bool cut)
         root->setProperty ("track", editPage->getSelectedClipTrack());
         root->setProperty ("clips", entries);
         clipClipboard = juce::var (root);
+        clipClipboardSession = engine.getActiveSessionDir();
         if (cut) editDeleteSelectedClip();
         showStatus (juce::String (cut ? "Cut " : "Copied ") + juce::String (entries.size()) + " clips");
         return;
@@ -1092,6 +1240,8 @@ void MainComponent::editClipboardCut (bool cut)
 void MainComponent::editClipboardPaste()
 {
     if (! canMutateTimeline()) return;
+    if (clipClipboard.isObject() && clipClipboardSession != engine.getActiveSessionDir())
+        clipClipboard = juce::var();   // those clips read another session's files
     if (currentView == View::Edit && clipClipboard.isObject())
     {
         auto* entries = clipClipboard["clips"].getArray();
@@ -1156,10 +1306,20 @@ void MainComponent::editRippleDelete()
         { showStatus ("No clip selected"); return; }
         const auto a = (*clips)[(size_t) idx].timelineStartSamples;
         const auto b = a + (*clips)[(size_t) idx].fileLengthSamples;
-        const auto before = engine.playlistsToJson();
-        if (engine.rippleDeleteRange (track, a, b))
+
+        // Both halves of a stereo clip move, or the pair drifts apart.
+        auto& rec = engine.getRecorder();
+        std::set<int> picked { track };
+        for (const auto& [selectedTrack, selectedIndex] : editPage->getSelectedClips())
+            picked.insert (selectedTrack);
+        for (const int t : std::set<int> (picked))
         {
-            pushClipUndo ("Ripple delete clip", before);
+            if (t < 0 || t >= rec.getNumTracks()) continue;
+            if (rec.getTrack (t).isStereo.load (std::memory_order_relaxed)) picked.insert (t + 1);
+            if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed)) picked.insert (t - 1);
+        }
+        if (rippleTimeline ("Ripple delete clip", { picked.begin(), picked.end() }, a, b) > 0)
+        {
             editPage->clearSelectedClip();
             editPage->repaint();
             showStatus ("Ripple-deleted clip -- gap closed");
@@ -1168,13 +1328,9 @@ void MainComponent::editRippleDelete()
     }
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion()) { showStatus ("Select a clip or a range first"); return; }
-    const auto a = player.getLoopStart();
-    const auto b = player.getLoopEnd();
-    const auto before = engine.playlistsToJson();
-    int n = 0;
-    for (int phys : tracksToEditPhysical())
-        if (engine.rippleDeleteRange (phys, a, b)) ++n;
-    if (n > 0) pushClipUndo ("Ripple delete selection", before);
+    const int n = rippleTimeline ("Ripple delete selection", tracksToEditPhysical(),
+                                  player.getLoopStart(), player.getLoopEnd());
+    if (n < 0) return;   // refused, and rippleTimeline said why
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     showStatus (n > 0 ? "Ripple-deleted selection on " + juce::String (n) + " track(s) -- gap closed"
                       : juce::String ("Nothing to ripple-delete"));
@@ -1194,7 +1350,7 @@ void MainComponent::editStartRange()
     // Half a range is a default, not a selection, so it can't arm a punch.
     if (otherEdgeSet) player.selectRange (pos, juce::jmax (end, pos + 1));
     else              player.setLoopRegion (pos, juce::jmax (end, pos + 1));
-    engine.getMarkers().drop (pos, "Range In");
+    engine.getMarkers().drop (pos, "Range In", "range");
     showStatus ("Range In set at playhead");
 }
 
@@ -1211,7 +1367,7 @@ void MainComponent::editFinishRange()
     // Half a range is a default, not a selection, so it can't arm a punch.
     if (otherEdgeSet) player.selectRange (juce::jmin (start, pos - 1), pos);
     else              player.setLoopRegion (juce::jmin (start, pos - 1), pos);
-    engine.getMarkers().drop (pos, "Range Out");
+    engine.getMarkers().drop (pos, "Range Out", "range");
     showStatus ("Range Out set at playhead");
 }
 

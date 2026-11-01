@@ -730,6 +730,8 @@ MainComponent::MainComponent()
         if (editPage != nullptr) editPage->repaint();
     };
     editPage->onStatus = [this] (const juce::String& message) { showStatus (message); };
+    editPage->consolidateRange = [this] (const std::vector<int>& targets, juce::int64 start, juce::int64 end)
+    { consolidateTracks (targets, start, end); };
     // Right-click ▸ Delete Channel from the EDIT row header. Select just
     // this channel (so the highlight matches what's about to go), then run
     // the shared confirm + delete path used by the Track menu + Delete key.

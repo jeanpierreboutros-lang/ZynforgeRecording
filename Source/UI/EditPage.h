@@ -109,6 +109,7 @@ namespace zynforge
         // it ends; the host turns the before/after clip state into a
         // Cmd+Z step (no-op when nothing actually changed). Wired by
         // MainComponent to engine.playlistsToJson + pushClipUndo.
+        std::function<void (const std::vector<int>&, juce::int64, juce::int64)> consolidateRange;
         std::function<juce::var ()>                                 captureClipsForUndo;
         std::function<void (const juce::var&, const juce::String&)> commitClipUndo;
         void beginClipEdit()  { if (captureClipsForUndo) clipUndoBefore = captureClipsForUndo(); }

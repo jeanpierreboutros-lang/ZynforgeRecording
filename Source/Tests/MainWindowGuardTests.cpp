@@ -1011,8 +1011,7 @@ namespace zynforge
             {
                 Window w;
                 const std::atomic<bool> cancelled { true };
-                auto findings = NoiseAnalyzer::analyseSession (w.session, {}, &cancelled);
-                expect (findings.empty());
+                NoiseAnalyzer::analyseSession (w.session, {}, &cancelled);
                 expect (! w.session.getChildFile ("noise_report.json").existsAsFile(),
                         "a cancelled scan wrote its report");
                 expectEquals (qc::analyzeFile (trackFile (w.session, 0), &cancelled).clipEventCount, 0);
@@ -1056,12 +1055,11 @@ namespace zynforge
             beginTest ("A scan's result is held back from a take and from another session");
             {
                 Window w;
-                expect (w.main.analysisResultWanted (w.session, false));
-                expect (! w.main.analysisResultWanted (w.session, true), "a cancelled scan reported");
-                expect (! w.main.analysisResultWanted (juce::File ("/tmp/zf-other-session"), false),
+                expect (w.main.analysisResultWanted (w.session));
+                expect (! w.main.analysisResultWanted (juce::File ("/tmp/zf-other-session")),
                         "a report opened for the wrong session");
                 w.main.captureMetadataPending = true;
-                expect (! w.main.analysisResultWanted (w.session, false), "a report opened over finalization");
+                expect (! w.main.analysisResultWanted (w.session), "a report opened over finalization");
                 w.main.captureMetadataPending = false;
             }
         }

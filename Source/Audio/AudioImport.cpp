@@ -1,5 +1,7 @@
 #include "AudioImport.h"
+#include "CheckedFileStream.h"
 #include "CheckedReaderSource.h"
+#include "SincResampler.h"
 
 namespace zynforge::audioimport
 {
@@ -36,7 +38,8 @@ namespace zynforge::audioimport
             const double sourceRate = reader.sampleRate > 0.0 ? reader.sampleRate : targetRate;
 
             juce::WavAudioFormat wav;
-            std::unique_ptr<juce::FileOutputStream> output (temporary.createOutputStream());
+            const auto closeFailed = CheckedFileStream::makeFailedFlag();
+            auto output = CheckedFileStream::open (temporary, closeFailed);
             if (output == nullptr) return false;
             juce::StringPairArray metadata;
             std::unique_ptr<juce::AudioFormatWriter> writer (
@@ -79,7 +82,7 @@ namespace zynforge::audioimport
             else
             {
                 CheckedReaderSource source (reader);
-                juce::ResamplingAudioSource resampler (&source, false, sourceChannels);
+                SincResampler resampler (&source, sourceChannels);
                 resampler.setResamplingRatio (sourceRate / targetRate);
                 resampler.prepareToPlay (chunk, targetRate);
 
@@ -101,7 +104,8 @@ namespace zynforge::audioimport
             }
 
             writer.reset(); // close/flush before preserving the destination
-            if (destination.exists() || ! temporary.moveFileTo (destination)) return false;
+            if (closeFailed->load() || destination.exists()
+                || ! temporary.moveFileTo (destination)) return false;
             complete = true;
             return true;
         }

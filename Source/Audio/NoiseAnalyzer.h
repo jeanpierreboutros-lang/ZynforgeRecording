@@ -3,7 +3,9 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include <algorithm>
 #include <atomic>
+#include <numeric>
 #include <vector>
 #include "MultiPartReader.h"
 #include "AtomicFile.h"
@@ -76,6 +78,8 @@ namespace zynforge
             { nf.error = "Audio is invalid or shorter than the one-second analysis window"; return nf; }
 
             constexpr int kFftOrder = 12;          // 4096-point
+            // Quieter hum is under what a channel plays back with in a gap.
+            constexpr float kHumGateDbFS = -70.0f;
             constexpr int kFftSize  = 1 << kFftOrder;
             const int hopSamples    = juce::jmax (1, (int) (sr * 0.5));
 
@@ -84,6 +88,8 @@ namespace zynforge
             for (int i = 0; i < kFftSize; ++i)
                 window[(size_t) i] = 0.5f - 0.5f * std::cos (2.0f * juce::MathConstants<float>::pi
                                                               * (float) i / (kFftSize - 1));
+            // The transform is unnormalised: this reads a full-scale sine as 1.0.
+            const float magScale = 2.0f / std::accumulate (window.begin(), window.end(), 0.0f);
 
             juce::AudioBuffer<float> chunk ((int) reader->numChannels, kFftSize);
             std::vector<float> fftBuf ((size_t) kFftSize * 2, 0.0f);
@@ -101,6 +107,7 @@ namespace zynforge
             double sumCount = 0.0;
             int    bumps    = 0;
             float  prevLowEnergy = 0.0f;
+            std::vector<float> frameDb;
 
             float bestHumDb       = -120.0f;
             float bestHumAboveFloor = 0.0f;
@@ -121,14 +128,18 @@ namespace zynforge
 
                 // Window into fftBuf (real-only).
                 std::fill (fftBuf.begin(), fftBuf.end(), 0.0f);
+                double frameSq = 0.0;
                 for (int i = 0; i < kFftSize; ++i)
                 {
                     const float s = in[i] * window[(size_t) i];
                     fftBuf[(size_t) i] = s;
                     if (std::abs (in[i]) > maxPeak) maxPeak = std::abs (in[i]);
-                    sumSq += (double) in[i] * (double) in[i];
-                    ++sumCount;
+                    frameSq += (double) in[i] * (double) in[i];
                 }
+                sumSq += frameSq;
+                sumCount += kFftSize;
+                frameDb.push_back ((float) juce::Decibels::gainToDecibels (
+                    juce::jmax (1e-7, std::sqrt (frameSq / kFftSize)), -120.0));
 
                 fft.performFrequencyOnlyForwardTransform (fftBuf.data());
 
@@ -145,9 +156,9 @@ namespace zynforge
                                   floorBins.end());
                 const float floorMag = floorBins[floorBins.size() / 2];
 
-                auto magDb = [] (float m) -> float
+                auto magDb = [magScale] (float m) -> float
                 {
-                    return juce::Decibels::gainToDecibels (juce::jmax (1e-7f, m), -120.0f);
+                    return juce::Decibels::gainToDecibels (juce::jmax (1e-7f, m * magScale), -120.0f);
                 };
                 const float floorDb = magDb (floorMag);
 
@@ -160,7 +171,7 @@ namespace zynforge
                     {
                         const auto m = fftBuf[(size_t) binFor (fundamental * h)];
                         const float above = magDb (m) - floorDb;
-                        if (above > 6.0f && magDb (m) > -40.0f)
+                        if (above > 6.0f && magDb (m) > kHumGateDbFS)
                         {
                             ++hits;
                             worstAbove = juce::jmax (worstAbove, above);
@@ -190,12 +201,21 @@ namespace zynforge
                 prevLowEnergy = lowSum;
             }
 
+            // The quietest tenth of the frames, as QC measures it: the average
+            // level of a track with music on it says nothing about its noise.
+            float floor = -120.0f;
+            if (! frameDb.empty())
+            {
+                const auto tenth = frameDb.begin() + (std::ptrdiff_t) ((frameDb.size() - 1) / 10);
+                std::nth_element (frameDb.begin(), tenth, frameDb.end());
+                floor = *tenth;
+            }
             const double rms = sumCount > 0 ? std::sqrt (sumSq / sumCount) : 0.0;
-            const auto floor = (float) juce::Decibels::gainToDecibels (juce::jmax (1e-7, rms), -120.0);
             if (floor >= nf.noiseFloorDbFS)
             {
                 nf.noiseFloorDbFS = floor;
-                nf.crestFactor = juce::Decibels::gainToDecibels (juce::jmax (1e-7f, maxPeak), -120.0f) - floor;
+                nf.crestFactor = juce::Decibels::gainToDecibels (juce::jmax (1e-7f, maxPeak), -120.0f)
+                               - (float) juce::Decibels::gainToDecibels (juce::jmax (1e-7, rms), -120.0);
             }
             if (bestHumAboveFloor > nf.humDbAboveFloor)
             {
@@ -239,7 +259,7 @@ namespace zynforge
                 if (idx < 0) continue;
                 const auto nm = trackNameOf ? trackNameOf (idx) : stem;
                 findings.push_back (analyseFile (f, idx, nm, cancel));
-                if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
+                if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return findings;
             }
 
             // Emit JSON to noise_report.json.
