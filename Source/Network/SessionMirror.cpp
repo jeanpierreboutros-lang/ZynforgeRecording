@@ -1,4 +1,5 @@
 #include "SessionMirror.h"
+#include "LineSocket.h"
 #include "../Audio/AudioEngine.h"
 #include "../Audio/EngineStatus.h"
 #include <juce_core/juce_core.h>
@@ -51,7 +52,7 @@ namespace zynforge
             }
             else
             {
-                const auto v = juce::JSON::parse (payload);
+                const auto v = linesocket::parseJson (payload);
                 if (! v.isObject())
                 {
                     // The commonest cause by far is a rejected token: the

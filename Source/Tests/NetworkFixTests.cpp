@@ -1,0 +1,460 @@
+// Network and console-link regressions. The JSON guard is checked against the
+// real JUCE parser on a thread with a worker's stack, and every server that
+// parses network text is driven over a real loopback socket, so a guard that
+// falls out of step with the parser fails here the way it would on a show.
+
+#include <juce_core/juce_core.h>
+
+#include "../Audio/AudioEngine.h"
+#include "../Network/CaptureLink.h"
+#include "../Network/LineSocket.h"
+#include "../Network/SessionMirror.h"
+#include "../Network/TwinLink.h"
+
+#include <pthread.h>
+
+#include <atomic>
+#include <chrono>
+#include <functional>
+#include <iterator>
+#include <string>
+#include <vector>
+
+namespace zynforge
+{
+    namespace
+    {
+        // The stack macOS gives a plain std::thread, which is where the capture
+        // link, the twin link and the companion workers parse.
+        constexpr size_t kWorkerStackBytes = 512 * 1024;
+
+        // Deep enough to overflow that stack if a single level reaches the parser.
+        constexpr int kOverflowLevels = 20000;
+
+        void runOnWorkerStack (const std::function<void()>& body)
+        {
+            struct Call
+            {
+                static void* run (void* arg) { (*static_cast<const std::function<void()>*> (arg)) (); return nullptr; }
+            };
+            pthread_attr_t attributes;
+            pthread_attr_init (&attributes);
+            pthread_attr_setstacksize (&attributes, kWorkerStackBytes);
+            pthread_t thread;
+            pthread_create (&thread, &attributes, &Call::run, const_cast<std::function<void()>*> (&body));
+            pthread_join (thread, nullptr);
+            pthread_attr_destroy (&attributes);
+        }
+
+        // Keeps bytes as they are: broken UTF-8 reaches the guard the way
+        // pumpLines hands it over, unrepaired.
+        juce::String lineOf (const std::string& bytes)
+        {
+            return juce::String::fromUTF8 (bytes.data(), (int) bytes.size());
+        }
+
+        std::string repeated (const std::string& unit, int count)
+        {
+            std::string out;
+            out.reserve (unit.size() * (size_t) count);
+            for (int i = 0; i < count; ++i) out += unit;
+            return out;
+        }
+
+        int depthOf (const juce::var& value)
+        {
+            int deepest = 0;
+            if (const auto* array = value.getArray())
+            {
+                for (const auto& item : *array) deepest = juce::jmax (deepest, depthOf (item));
+                return deepest + 1;
+            }
+            if (const auto* object = value.getDynamicObject())
+            {
+                for (const auto& property : object->getProperties())
+                    deepest = juce::jmax (deepest, depthOf (property.value));
+                return deepest + 1;
+            }
+            return 0;
+        }
+
+        // Tokens the parser takes as one complete value, JSON or not.
+        const char* const kValues[] = {
+            "\"plain\"", "'plain'", "'\"'", "\"'\"", "\"\\\"\"", "'\\''", "'\\\\'", "\"\\\\\"",
+            "\"[[[[\"", "'{{{{'", "\"]]\"", "'}}'", "\"\\u0041\"", "'\\u0022'", "\"\\uD83D\\uDE00\"",
+            "\"\\/\"", "'\\\"'", "\"-\"", "'-'", "\"caf\xC3\xA9\"", "'\xE2\x82\xAC'",
+            "0", "7", "-1", "- 2", "-\t3", "1.5", "-0.25", "1e5", "1E-5", "-2.5e+3", "true", "false", "null",
+            // Not JSON, accepted anyway.
+            "-\"", "-'", "-]", "-}", "-[", "-{", "-\\", "- \"", "-x",
+            // Not UTF-8.
+            "\"\xF1\"", "'\xE2'",
+        };
+
+        const char* const kGaps[] = {
+            "", "", "", " ", "\n", "\t", "\r\n", "\xE0\x80\xA0",
+            // Not UTF-8.
+            "\xF0\x80\xA0\"",
+        };
+
+        template <size_t N>
+        const char* pick (juce::Random& random, const char* const (&options)[N])
+        {
+            return options[(size_t) random.nextInt ((int) N)];
+        }
+
+        void addValue (std::string& out, juce::Random& random, int levels)
+        {
+            out += pick (random, kGaps);
+            if (levels <= 0 || random.nextInt (12) == 0) { out += pick (random, kValues); return; }
+
+            const bool array = random.nextBool();
+            out += array ? "[" : "{";
+            const int items = 1 + random.nextInt (3);
+            const int nested = random.nextInt (items);
+            for (int i = 0; i < items; ++i)
+            {
+                if (i > 0) out += ",";
+                out += pick (random, kGaps);
+                if (! array) out += "\"k" + std::to_string (i) + "\":";
+                if (i == nested) addValue (out, random, levels - 1);
+                else             out += pick (random, kValues);
+                out += pick (random, kGaps);
+            }
+            out += array ? "]" : "}";
+        }
+
+        std::vector<std::string> hostileLines()
+        {
+            const auto deep = repeated ("[", kOverflowLevels);
+            return {
+                deep,
+                repeated ("{\"a\":", kOverflowLevels),
+                "['\"'," + deep,
+                "[\"'\"," + deep,
+                "['\\'','\"'," + deep,
+                "[\"\\\"\"," + deep,
+                "[-\"," + deep,
+                "[-'," + deep,
+                "[- \"," + deep,
+                "[-\\," + deep,
+                repeated ("[-],", kOverflowLevels),
+                repeated ("[-},", kOverflowLevels),
+                repeated ("{\"a\":-],\"b\":", kOverflowLevels),
+                "[\"\xF1\"," + deep,
+                "[\xF0\x80\xA0\"" + deep,
+            };
+        }
+
+        juce::var object (std::initializer_list<std::pair<const char*, juce::var>> fields)
+        {
+            auto* o = new juce::DynamicObject();
+            for (const auto& [name, value] : fields) o->setProperty (name, value);
+            return juce::var (o);
+        }
+
+        bool waitFor (const std::function<bool()>& done, int timeoutMs = 4000)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
+            while (! done())
+            {
+                if (juce::Time::getMillisecondCounterHiRes() > end) return false;
+                juce::Thread::sleep (2);
+            }
+            return true;
+        }
+
+        // A socket a test drives by hand.
+        struct Peer
+        {
+            juce::StreamingSocket socket;
+            juce::MemoryBlock scratch;
+            juce::StringArray lines;
+
+            bool send (const juce::String& line)
+            {
+                return linesocket::writeAll (socket, line + "\n",
+                                             linesocket::Clock::now() + std::chrono::milliseconds (2000));
+            }
+
+            bool pump (int waitMs = 20)
+            {
+                return linesocket::pumpLines (socket, scratch, [this] (const juce::String& l) { lines.add (l); }, waitMs);
+            }
+
+            bool readLine (int timeoutMs = 1500)
+            {
+                return waitFor ([this] { return ! lines.isEmpty() || ! pump(); }, timeoutMs) && ! lines.isEmpty();
+            }
+
+            bool closedWithin (int timeoutMs)
+            {
+                return waitFor ([this] { return ! pump(); }, timeoutMs);
+            }
+        };
+
+        class SilentHost final : public twin::TwinHost
+        {
+        public:
+            twin::MacStatus twinStatus() override { return {}; }
+            bool twinStartRecord (juce::String& refusal) override { refusal = "fixture"; return false; }
+            void twinStopRecord (std::function<void (bool, juce::String)> done) override { done (false, "fixture"); }
+            void twinDropMarker (const juce::String&) override {}
+            void twinNotify (const juce::String&) override {}
+        };
+    }
+
+    class NetworkFixTests final : public juce::UnitTest
+    {
+    public:
+        NetworkFixTests() : juce::UnitTest ("Network fixes", "zynforge") {}
+
+        void runTest() override
+        {
+            AudioEngine::setTestModeSkipAudioInit (true);
+            testJsonGuard();
+            testJsonRoutes();
+        }
+
+    private:
+        void testJsonGuard()
+        {
+            beginTest ("The depth guard never counts less nesting than the parser builds");
+            {
+                int accepted = 0, deep = 0;
+                for (int seed = 0; seed < 60000; ++seed)
+                {
+                    juce::Random random (seed + 1);
+                    std::string text = random.nextBool() ? "[" : "{\"k\":";
+                    const bool array = text[0] == '[';
+                    addValue (text, random, 4 + random.nextInt (28));
+                    text += array ? "]" : "}";
+
+                    // Only shallow text reaches the parser here, on a full stack.
+                    const auto line = lineOf (text);
+                    const auto parsed = juce::JSON::parse (line);
+                    if (parsed.isVoid()) continue;
+                    ++accepted;
+                    const int real = depthOf (parsed);
+                    if (real > 16) ++deep;
+                    if (linesocket::jsonDepthWithin (line, real - 1))
+                    {
+                        expect (false, "guard under-counts: real depth " + juce::String (real) + " in " + line);
+                        return;
+                    }
+                }
+                expectGreaterThan (accepted, 20000, "the generator stopped producing parsable text");
+                expectGreaterThan (deep, 1000, "the generator stopped producing deep text");
+            }
+
+            beginTest ("Everything JUCE writes passes the guard at exactly its own depth");
+            {
+                juce::Random random (20261101);
+                const std::function<juce::var (int)> make = [&] (int levels) -> juce::var
+                {
+                    const auto leaf = [&]() -> juce::var
+                    {
+                        switch (random.nextInt (6))
+                        {
+                            case 0:  return "name [with] 'quotes' \"and\" \\ {braces}";
+                            case 1:  return juce::String::fromUTF8 ("caf\xC3\xA9 \xE2\x82\xAC -1 -");
+                            case 2:  return -96.5;
+                            case 3:  return -3;
+                            case 4:  return 1.0e-7;
+                            default: return true;
+                        }
+                    };
+                    if (levels <= 0) return leaf();
+                    if (random.nextBool())
+                    {
+                        juce::Array<juce::var> items;
+                        items.add (leaf());
+                        items.add (make (levels - 1));
+                        return items;
+                    }
+                    return object ({ { "first", leaf() }, { "next", make (levels - 1) } });
+                };
+                for (int i = 0; i < 2000; ++i)
+                {
+                    const auto value = make (random.nextInt (linesocket::kMaxJsonDepth));
+                    const auto line = juce::JSON::toString (value, true);
+                    const int depth = depthOf (value);
+                    expect (linesocket::jsonDepthWithin (line, depth), line);
+                    expect (depth == 0 || ! linesocket::jsonDepthWithin (line, depth - 1), line);
+                    expect (depth == 0 || juce::JSON::toString (linesocket::parseJson (line), true) == line, line);
+                }
+            }
+
+            beginTest ("A line ending inside an escape or after a minus stops at its own end");
+            {
+                for (const auto* text : { "[-", "[- ", "[\"\\", "['\\", "[\"\xE2", "[1,-" })
+                    expect (linesocket::parseJson (lineOf (text)).isVoid());
+            }
+
+            beginTest ("Hostile nesting on a worker's stack is refused, never parsed");
+            {
+                const auto lines = hostileLines();
+                std::vector<char> refused (lines.size(), 0);
+                runOnWorkerStack ([&]
+                {
+                    for (size_t i = 0; i < lines.size(); ++i)
+                        refused[i] = linesocket::parseJson (lineOf (lines[i])).isVoid() ? 1 : 0;
+                });
+                for (size_t i = 0; i < lines.size(); ++i)
+                    expect (refused[i] != 0, "line " + juce::String ((int) i) + " was not refused");
+            }
+
+            beginTest ("A worker survives random text in front of deep nesting");
+            {
+                static const std::string units[] = { "[", "{\"a\":", "[-],", "[-},", "['\"',", "[\"'\",", "[-\",", "[1,", "[[]," };
+                std::vector<std::string> lines;
+                juce::Random random (20261102);
+                for (int i = 0; i < 1200; ++i)
+                {
+                    std::string text;
+                    const int atoms = 1 + random.nextInt (5);
+                    for (int a = 0; a < atoms; ++a)
+                    {
+                        text += "[";
+                        text += pick (random, kGaps);
+                        text += pick (random, kValues);
+                        text += pick (random, kGaps);
+                        text += ",";
+                    }
+                    text += repeated (units[(size_t) random.nextInt ((int) std::size (units))], kOverflowLevels);
+                    lines.push_back (std::move (text));
+                }
+                std::atomic<int> survived { 0 };
+                runOnWorkerStack ([&]
+                {
+                    for (const auto& text : lines)
+                    {
+                        const auto parsed = linesocket::parseJson (lineOf (text));
+                        if (depthOf (parsed) <= linesocket::kMaxJsonDepth) ++survived;
+                    }
+                });
+                expectEquals (survived.load(), (int) lines.size());
+            }
+        }
+
+        void testJsonRoutes()
+        {
+            using namespace capture;
+
+            beginTest ("A twin follower refuses hostile lines before authentication and stays up");
+            {
+                SilentHost host;
+                twin::TwinLink follower (host);
+                twin::Config config;
+                config.role = twin::Role::Follower;
+                config.port = 0;
+                config.pairingCode = "7K3M-Q2XD-9HVB-T4WN";
+                config.bindAddress = "127.0.0.1";
+                config.localName = "mini";
+                config.linkTimeoutMs = 1200;
+                config.handshakeTimeoutMs = 600;
+                config.reconnectMs = 50;
+                config.statusPeriodMs = 40;
+                juce::String error;
+                expect (follower.start (config, error), error);
+                expect (waitFor ([&] { follower.tick(); return follower.getBoundPort() > 0; }));
+
+                // Each of these fits inside a follower's frame limit.
+                const auto within = juce::String::repeatedString ("[", 16000);
+                int attempts = 0;
+                for (const auto& line : { "['\"'," + within, "[-\"," + within, "[\"'\"," + within })
+                {
+                    ++attempts;
+                    Peer peer;
+                    expect (peer.socket.connect ("127.0.0.1", follower.getBoundPort(), 1000));
+                    expect (peer.readLine(), "no hello from the follower");
+                    expect (peer.send (line));
+                    expect (peer.closedWithin (2000), "a hostile line left the socket open");
+                    expect (waitFor ([&] { follower.tick(); return follower.snapshot().failedAuth == attempts; }));
+                }
+                follower.stop();
+            }
+
+            beginTest ("A capture endpoint refuses hostile lines before authentication and stays up");
+            {
+                CaptureServer server;
+                int port = -1;
+                for (int p : { 49740, 49741, 49742, 49743 })
+                    if (server.listen (p)) { port = p; break; }
+                expect (port > 0, "no free capture port");
+                if (port > 0)
+                {
+                    const auto within = juce::String::repeatedString ("[", 16000);
+                    for (const auto& line : { within, "['\"'," + within, "[-\"," + within })
+                    {
+                        Peer peer;
+                        expect (peer.socket.connect ("127.0.0.1", port, 1000));
+                        expect (peer.readLine(), "no challenge from the endpoint");
+                        peer.send (line);
+                        expect (peer.closedWithin (3000), "a hostile line left the handshake open");
+                    }
+
+                    // Nothing past the handshake's size either, whatever it holds.
+                    Peer flat;
+                    expect (flat.socket.connect ("127.0.0.1", port, 1000));
+                    expect (flat.readLine());
+                    flat.send ("{\"pad\":\"" + juce::String::repeatedString ("x", 64 * 1024) + "\"}");
+                    expect (flat.closedWithin (1000), "an oversize handshake line left the socket open");
+
+                    CaptureClient client;
+                    expect (client.connect ("127.0.0.1", port));
+                    expect (client.hello (3000).ok, "a real client was locked out");
+                    client.disconnect();
+                }
+                server.stop();
+            }
+
+            beginTest ("A capture client survives a hostile line from whoever answered its port");
+            {
+                juce::StreamingSocket listener;
+                expect (listener.createListener (0, "127.0.0.1"));
+                CaptureClient client;
+                std::atomic<int> replies { 0 };
+                client.onReply = [&] (const Reply&) { ++replies; };
+                expect (client.connect ("127.0.0.1", listener.getBoundPort()));
+                std::unique_ptr<juce::StreamingSocket> accepted (listener.waitForNextConnection());
+                expect (accepted != nullptr);
+                if (accepted != nullptr)
+                {
+                    const auto deadline = linesocket::Clock::now() + std::chrono::seconds (3);
+                    const auto deep = juce::String::repeatedString ("[", 200000);
+                    expect (linesocket::writeAll (*accepted, deep + "\n" + "['\"'," + deep + "\n", deadline));
+                    // A refusal this client must act on, sent after both lines.
+                    expect (linesocket::writeAll (*accepted, juce::JSON::toString (
+                        object ({ { "type", "reply" }, { "ok", false } }), true) + "\n", deadline));
+                    expect (waitFor ([&] { return replies.load() == 1; }), "the reader stopped at the hostile line");
+                }
+                client.disconnect();
+            }
+
+            beginTest ("A hostile mirror response on the message thread is refused and changes nothing");
+            {
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                const juce::ScopeGuard cleanup { [&] { engine.clearAllStripOverrides(); } };
+                engine.setStripCount (2);
+                engine.setTrackName (0, "preserved");
+
+                SessionMirror mirror (engine);
+                mirror.host = "fixture-no-network";
+                mirror.fetchActive.store (true);
+                const auto deep = juce::String::repeatedString ("[", SessionMirror::kMaxPayloadBytes);
+                for (const auto& payload : { deep, "['\"'," + deep, "[-\"," + deep })
+                {
+                    mirror.resultPayload = payload;
+                    mirror.resultReady.store (true);
+                    mirror.timerCallback();
+                    expectEquals (engine.getRecorder().getNumTracks(), 2);
+                    expect (mirror.getLastError().isNotEmpty());
+                    expectEquals (mirror.getLastSyncMs(), (juce::int64) 0);
+                }
+            }
+        }
+    };
+
+    static NetworkFixTests networkFixTests;
+}

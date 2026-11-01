@@ -485,8 +485,7 @@ namespace zynforge::twin
             {
                 const auto line = connection.lines.front();
                 connection.lines.pop_front();
-                if (! linesocket::jsonDepthWithin (line, linesocket::kMaxJsonDepth)) return false;
-                message = juce::JSON::parse (line);
+                message = linesocket::parseJson (line);
                 return message.isObject();
             }
             if (! connection.pump (kPollMs)) return false;
@@ -612,8 +611,7 @@ namespace zynforge::twin
         // and a recorded frame cannot be played back.
         const auto openFrame = [&keys] (const juce::String& line, juce::var& body)
         {
-            if (! linesocket::jsonDepthWithin (line, linesocket::kMaxJsonDepth)) return false;
-            const auto frame = juce::JSON::parse (line);
+            const auto frame = linesocket::parseJson (line);
             if (frame.getProperty ("type", "").toString() != "twin.frame") return false;
             const auto sequence = (juce::int64) frame.getProperty ("seq", 0);
             const auto text = frame.getProperty ("body", "").toString();
@@ -623,8 +621,7 @@ namespace zynforge::twin
                                                + juce::String (sequence) + ":" + text)))
                 return false;
             keys.received = sequence;
-            if (! linesocket::jsonDepthWithin (text, linesocket::kMaxJsonDepth)) return false;
-            body = juce::JSON::parse (text);
+            body = linesocket::parseJson (text);
             return body.isObject();
         };
 

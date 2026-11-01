@@ -22,27 +22,53 @@ namespace zynforge::linesocket
     inline constexpr size_t kMaxLineBytes       = 1u << 20;   // 1 MiB
     inline constexpr int    kMaxJsonDepth       = 16;
 
-    // juce::JSON::parse recurses once per '[' / '{' with no depth limit, so
-    // a 1 MB body of '[' overflowed a worker's stack and took the app down.
-    // A command is one flat object; refuse deeper nesting before parsing.
+    // juce::JSON::parse recurses once per '[' / '{' with no depth limit, so deep
+    // nesting overflows the stack of whichever thread parses it. A command is
+    // one flat object; refuse deeper nesting before parsing.
+    //
+    // The count only holds if this reads the text exactly as the parser does,
+    // and the parser accepts more than JSON. So a string here opens and closes
+    // the way it does there, on either quote, and a '-' needs a digit after it,
+    // because the parser never looks. The parser also steps through a cut-off
+    // UTF-8 character differently in different places, so text with one is
+    // refused: the two steppers below have to land together. Nothing we write
+    // does any of this, whatever bytes a name arrived with.
     inline bool jsonDepthWithin (const juce::String& text, int maxDepth)
     {
         int depth = 0;
-        bool inString = false, escaped = false;
-        for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
+        juce::juce_wchar quote = 0;
+        bool escaped = false;
+        auto p = text.getCharPointer();
+        while (! p.isEmpty())
         {
-            const auto c = *p;
-            if (inString)
+            auto stepped = p;
+            ++stepped;
+            const auto c = p.getAndAdvance();
+            if (p != stepped) return false;
+
+            if (quote != 0)
             {
-                if (escaped)        escaped = false;
-                else if (c == '\\') escaped = true;
-                else if (c == '"')  inString = false;
+                if (escaped)         escaped = false;
+                else if (c == '\\')  escaped = true;
+                else if (c == quote) quote = 0;
             }
-            else if (c == '"')             inString = true;
-            else if (c == '[' || c == '{') { if (++depth > maxDepth) return false; }
-            else if (c == ']' || c == '}') depth = juce::jmax (0, depth - 1);
+            else if (c == '"' || c == '\'')  quote = c;
+            else if (c == '[' || c == '{')   { if (++depth > maxDepth) return false; }
+            else if (c == ']' || c == '}')   depth = juce::jmax (0, depth - 1);
+            else if (c == '-')
+            {
+                p = p.findEndOfWhitespace();
+                if (! p.isDigit()) return false;
+            }
         }
         return true;
+    }
+
+    // Every parse of text that came off a socket goes through here. Refused
+    // text comes back void, the same as text that isn't JSON at all.
+    inline juce::var parseJson (const juce::String& text)
+    {
+        return jsonDepthWithin (text, kMaxJsonDepth) ? juce::JSON::parse (text) : juce::var();
     }
 
     // Read available bytes, accumulate them RAW in `scratch`, and dispatch

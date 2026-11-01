@@ -731,9 +731,7 @@ poll();
 
     void CompanionServer::handleCommand (juce::StreamingSocket& s, const juce::String& body)
     {
-        if (! linesocket::jsonDepthWithin (body, linesocket::kMaxJsonDepth))
-        { writeRaw (s, "400 Bad Request", "text/plain", "json expected"); return; }
-        const auto parsed = juce::JSON::parse (body);
+        const auto parsed = linesocket::parseJson (body);
         if (! parsed.isObject()) { writeRaw (s, "400 Bad Request", "text/plain", "json expected"); return; }
         const auto action = parsed.getProperty ("action", "").toString();
         const int channel = (int) parsed.getProperty ("channel", 0);
