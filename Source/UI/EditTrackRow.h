@@ -3297,8 +3297,7 @@ namespace zynforge
                     {
                         auto* page = findParentComponentOfClass<EditPage>();
                         if (page != nullptr) page->beginClipEdit();
-                        for (int t : stripTracks())
-                            engine.compRangeFromTake (t, tk, a, b);
+                        compFromTake (tk, a, b);
                         if (page != nullptr) page->commitClipEdit ("Comp swipe");
                     }
                 }
@@ -3513,6 +3512,20 @@ namespace zynforge
             if (stereo && index + 1 < engine.getRecorder().getNumTracks())
                 return { index, index + 1 };
             return { index };
+        }
+
+        // Both halves or neither: refusing one half would pull a pair apart.
+        void compFromTake (int take, juce::int64 start, juce::int64 end)
+        {
+            const auto tracks = stripTracks();
+            for (int t : tracks)
+                if (engine.compRangeHitsLockedClip (t, start, end))
+                {
+                    if (auto* page = findParentComponentOfClass<EditPage>())
+                        if (page->onStatus) page->onStatus ("A locked clip is in that range -- unlock it to comp");
+                    return;
+                }
+            for (int t : tracks) engine.compRangeFromTake (t, take, start, end);
         }
 
         // True once the background thumbnail scan has finished for this row's
@@ -4250,9 +4263,7 @@ namespace zynforge
                 if (! player.hasLoopRegion()) return;
                 auto* page = row->findParentComponentOfClass<EditPage>();
                 if (page != nullptr) page->beginClipEdit();
-                for (int t : row->stripTracks())
-                    row->engine.compRangeFromTake (t, chosen - 870,
-                                                   player.getLoopStart(), player.getLoopEnd());
+                row->compFromTake (chosen - 870, player.getLoopStart(), player.getLoopEnd());
                 if (page != nullptr) page->commitClipEdit ("Comp selection from take");
                 row->repaint();
                 return;

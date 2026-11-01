@@ -147,10 +147,6 @@ public:
         {
             Folder f; expect (write (f.track()));
             AudioEngine e; setup (e, 2); e.loadSession (f.dir);
-            e.pasteClip (1, 0, 0, 4800, 0, 0, 0.0f, "copied", f.track(), 0);
-            e.deleteClip (1, 0);
-            auto* entries = e.playlistsToJson().getArray();
-            expect (entries != nullptr);
             juce::Array<juce::var> noTakes;
             juce::DynamicObject::Ptr entry (new juce::DynamicObject());
             entry->setProperty ("track", 1);
@@ -436,6 +432,13 @@ public:
             expect (error.contains ("Final write"), error);
         }
 
+        beginTest ("A strip name exports to any file system");
+        {
+            const auto safe = songexport::safeName ("Vox: lead? *2");
+            expect (! safe.containsAnyOf (":?*/\\"), safe);
+            expect (safe.isNotEmpty());
+        }
+
         beginTest ("A format's size limit refuses first, with the reason");
         {
             ExportOptions options;
@@ -453,7 +456,8 @@ public:
 
         beginTest ("Sample-rate conversion rejects aliases and keeps the passband");
         {
-            const auto convert = [] (double hz, double fromRate, double toRate, int frames, int skip)
+            const auto convert = [] (double hz, double fromRate, double toRate, int frames, int skip,
+                                     bool linear = false)
             {
                 juce::MemoryBlock mem;
                 {
@@ -469,21 +473,35 @@ public:
                 std::unique_ptr<juce::AudioFormatReader> reader (format.createReaderFor (
                     new juce::MemoryInputStream (mem, false), true));
                 CheckedReaderSource source (*reader);
-                SincResampler resampler (&source, 1);
-                resampler.setResamplingRatio (fromRate / toRate);
-                resampler.prepareToPlay (4096, toRate);
                 const int count = (int) (frames * toRate / fromRate) - skip;
                 juce::AudioBuffer<float> out (1, count + skip);
                 juce::AudioSourceChannelInfo info (&out, 0, count + skip);
-                resampler.getNextAudioBlock (info);
-                resampler.releaseResources();
+                if (linear)
+                {
+                    juce::ResamplingAudioSource resampler (&source, false, 1);
+                    resampler.setResamplingRatio (fromRate / toRate);
+                    resampler.prepareToPlay (4096, toRate);
+                    resampler.getNextAudioBlock (info);
+                    resampler.releaseResources();
+                }
+                else
+                {
+                    SincResampler resampler (&source, 1);
+                    resampler.setResamplingRatio (fromRate / toRate);
+                    resampler.prepareToPlay (4096, toRate);
+                    resampler.getNextAudioBlock (info);
+                    resampler.releaseResources();
+                }
                 juce::AudioBuffer<float> middle (1, count - skip);
                 middle.copyFrom (0, 0, out, 0, skip, count - skip);
                 return (double) juce::Decibels::gainToDecibels (middle.getMagnitude (0, middle.getNumSamples()) / 0.5f);
             };
             // 23.5 kHz is above the new Nyquist: anything left of it is an alias.
             const double alias = convert (23500.0, 48000.0, 44100.0, 48000, 2000);
-            logMessage ("Alias of 23.5 kHz at 48 -> 44.1 kHz: " + juce::String (alias, 1) + " dB");
+            const double before = convert (23500.0, 48000.0, 44100.0, 48000, 2000, true);
+            logMessage ("Alias of 23.5 kHz at 48 -> 44.1 kHz: JUCE linear " + juce::String (before, 1)
+                        + " dB, now " + juce::String (alias, 1) + " dB");
+            expect (before > alias + 40.0, "the converter did not improve on linear interpolation");
             expect (alias < -90.0, "alias only " + juce::String (alias, 1) + " dB down");
             expect (std::abs (convert (1000.0, 48000.0, 44100.0, 48000, 2000)) < 0.01, "1 kHz level moved");
             expect (std::abs (convert (15000.0, 48000.0, 44100.0, 48000, 2000)) < 0.05, "15 kHz level moved");
@@ -680,6 +698,7 @@ public:
             expectEquals (e.newTakeFromCurrent (0, "Take 2"), 1);
             e.setClipLocked (0, 0, true);
             const auto before = e.playlistsToJson();
+            expect (e.compRangeHitsLockedClip (0, 12000, 24000));
             expect (! e.compRangeFromTake (0, 0, 12000, 24000));
             expect (juce::JSON::toString (before) == juce::JSON::toString (e.playlistsToJson()));
             expectWithinAbsoluteError (renderedAt (e, 0, 48000, 15000), 0.25f, 0.001f, "the range plays both takes");

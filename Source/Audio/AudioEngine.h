@@ -909,6 +909,9 @@ namespace zynforge
         // active take. Returns true if the comp changed anything.
         bool  compRangeFromTake (int track, int sourceTakeIdx,
                                  juce::int64 start, juce::int64 end);
+        // A locked clip stays, so a comp over it would play both takes on top
+        // of each other. compRangeFromTake refuses this, as consolidate does.
+        bool  compRangeHitsLockedClip (int track, juce::int64 start, juce::int64 end) const;
         // Serialise / deserialise the full playlist (every track's
         // takes + their clip lists) for .zfproj persistence. Without
         // this, Takes are RAM-only and lost on app quit.

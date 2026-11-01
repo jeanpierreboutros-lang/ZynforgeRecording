@@ -1475,6 +1475,7 @@ namespace zynforge
             {
                 Clip whole;
                 whole.fileLengthSamples = player.getTrackLengthSamples (t);
+                if (whole.fileLengthSamples <= 0) continue;   // nothing recorded here
                 voice.clips.push_back (whole);
             }
             voices.push_back (std::move (voice));
@@ -2141,6 +2142,15 @@ namespace zynforge
         return changed;
     }
 
+    bool AudioEngine::compRangeHitsLockedClip (int track, juce::int64 start, juce::int64 end) const
+    {
+        if (const auto* clips = tryClipsFor (track))
+            for (const auto& clip : *clips)
+                if (clip.locked && clip.timelineStartSamples < end
+                    && clip.timelineStartSamples + clip.fileLengthSamples > start) return true;
+        return false;
+    }
+
     bool AudioEngine::compRangeFromTake (int track, int sourceTakeIdx,
                                          juce::int64 start, juce::int64 end)
     {
@@ -2153,11 +2163,7 @@ namespace zynforge
         if (track >= (int) trackClips.size()) return false;
         auto& dst = trackClips[(size_t) track];
 
-        // A locked clip stays, so the range would play both takes on top of
-        // each other. The same refusal as consolidateRange.
-        for (const auto& clip : dst)
-            if (clip.locked && clip.timelineStartSamples < end
-                && clip.timelineStartSamples + clip.fileLengthSamples > start) return false;
+        if (compRangeHitsLockedClip (track, start, end)) return false;
 
         // 1. Clear [start, end) in the active comp.
         splitListAtTimeline (dst, start);
