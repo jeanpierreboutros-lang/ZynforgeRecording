@@ -421,6 +421,7 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
         engine.setExternalRecording (true);
         engine.setActiveSessionDir (plan.dir);
         engine.claimMixerFor (plan.dir);
+        engine.noteLastCapture (plan.dir);
         statusLabel.setText ("DAEMON recording " + juce::String (plan.armed) + "/"
                              + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
                              + (mixerInTakeFolder ? "  (take survives a GUI crash)"
@@ -1162,37 +1163,23 @@ void MainComponent::showStatus (const juce::String& msg)
 void MainComponent::removeLastCapture()
 {
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
-    const auto root = getSessionsRoot();
-    if (! root.isDirectory()) { showStatus ("No sessions to remove"); return; }
-
-    // Every session folder, not just the auto-stamped "Session_*" ones -- a
-    // session created via New Session with a custom name was invisible here, so
-    // "Remove last capture" silently deleted an OLDER auto-named session
-    // instead of the take the engineer had just made.
-    juce::Array<juce::File> dirs;
-    for (const auto& d : root.findChildFiles (juce::File::findDirectories, false))
-        if (d.getChildFile ("Audio Files").isDirectory()
-            || ! d.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
-                                   false, "*.zfproj").isEmpty())
-            dirs.add (d);
-    if (dirs.isEmpty()) { showStatus ("No sessions to remove"); return; }
-
-    // Most recently MODIFIED wins -- names no longer sort chronologically once
-    // user-named sessions are in the mix.
-    juce::File target = dirs.getFirst();
-    for (const auto& d : dirs)
-        if (d.getLastModificationTime() > target.getLastModificationTime())
-            target = d;
-
     if (engine.isRecording()) { showStatus ("Stop recording before removing a capture"); return; }
+    // The recorded capture, never a guess from folder dates: an older session
+    // that was only opened looks newest, and a capture can live anywhere.
+    const auto target = engine.getLastCapture();
+    if (target == juce::File())
+    {
+        showStatus ("No recorded capture to remove -- it has been removed or moved, or nothing was recorded");
+        return;
+    }
     if (! sessionJobs.reserve()) { showStatus ("Wait for the session operation to finish"); return; }
     juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::NoIcon)
             .withTitle ("Remove last capture?")
-            .withMessage ("Permanently delete\n\n" + target.getFullPathName() + "\n\nThis cannot be undone.")
-            .withButton ("Delete")
+            .withMessage (lastCapturePrompt (target))
+            .withButton ("Move to Trash")
             .withButton ("Cancel"),
         [self, target] (int result)
     {
@@ -1202,13 +1189,32 @@ void MainComponent::removeLastCapture()
     });
 }
 
+juce::File MainComponent::testTrashFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("zynforge-test-trash");
+}
+
+juce::String MainComponent::lastCapturePrompt (const juce::File& target)
+{
+    return "Move the whole session \"" + target.getFileName() + "\" to the Trash?\n\n"
+         + target.getFullPathName() + "\n\nThis is the session the last take was recorded into.";
+}
+
 bool MainComponent::deleteCaptureSession (const juce::File& target)
 {
     if (engine.isRecording() || sessionIoBusy.load())
     { showStatus ("Stop recording and finish session operations before removing a capture"); return false; }
     const bool deletingActive = target == engine.getActiveSessionDir();
-    if (! zynforge::MultitrackRecorder::deleteSessionAfterCancellingReports (target))
-    { showStatus ("Couldn't remove that folder"); return false; }
+    const auto moveToTrash = [&target]
+    {
+        if (! zynforge::isolatedSettings.load()) return target.moveToTrash();
+        const auto slot = testTrashFolder().getChildFile (juce::Uuid().toString());
+        return slot.createDirectory().wasOk() && target.moveFileTo (slot.getChildFile (target.getFileName()));
+    };
+    if (! zynforge::MultitrackRecorder::removeSessionAfterCancellingReports (target, moveToTrash))
+    { showStatus ("Couldn't move that folder to the Trash; nothing was removed"); return false; }
+    // Forget it, so a second press finds nothing rather than an older session.
+    engine.forgetLastCapture();
     if (deletingActive)
     {
         condemnAllStrips();
@@ -1218,7 +1224,7 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
         undoManager.clearUndoHistory();
         updateTransportLabels(); explicitDocumentOpened = false; showStartupWelcome();
     }
-    showStatus ("Removed: " + target.getFileName());
+    showStatus ("Moved to the Trash: " + target.getFileName());
     return true;
 }
 

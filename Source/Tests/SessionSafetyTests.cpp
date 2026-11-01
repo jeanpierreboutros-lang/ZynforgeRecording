@@ -809,6 +809,55 @@ public:
         }
     }
 
+    void testRemoveLastCapture()
+    {
+        beginTest ("Remove Last Capture targets the recorded take by identity and uses the Trash");
+        {
+            Folder take, opened;
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.setStripCount (1); host.engine.setTrackArmed (0, true);
+            expect (host.engine.startRecording (take.dir));
+            host.engine.stopRecording();
+            expect (host.engine.getLastCapture() == take.dir);
+
+            // An older session that was merely opened and saved looks newest.
+            writeSavedShow (opened, 1);
+            expect (opened.mix().setLastModificationTime (juce::Time::getCurrentTime() + juce::RelativeTime::hours (1)));
+            expect (host.engine.getLastCapture() == take.dir);
+
+            const auto prompt = MainComponent::lastCapturePrompt (take.dir);
+            expect (prompt.contains (take.dir.getFileName()), "the prompt must name it");
+            expect (prompt.contains ("Trash"), prompt);
+
+            const auto marker = take.dir.getChildFile ("marker.txt");
+            expect (marker.replaceWithText ("still here"));
+            const auto before = MainComponent::testTrashFolder().getNumberOfChildFiles (juce::File::findDirectories);
+            expect (host.deleteCaptureSession (take.dir));
+            expect (! take.dir.exists());
+            expectEquals (MainComponent::testTrashFolder().getNumberOfChildFiles (juce::File::findDirectories), before + 1,
+                          "the capture was destroyed instead of moved to the Trash");
+            expect (host.engine.getLastCapture() == juce::File(), "a second press would find an older session");
+            expect (opened.dir.isDirectory());
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A folder at the recorded path with another identity is not the capture");
+        {
+            Folder take;
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.setStripCount (1); host.engine.setTrackArmed (0, true);
+            expect (host.engine.startRecording (take.dir));
+            host.engine.stopRecording();
+            expect (take.dir.getChildFile (".zynforge-capture-id").replaceWithText ("a different capture"));
+            expect (host.engine.getLastCapture() == juce::File());
+            host.removeLastCapture();
+            expect (host.statusLabel.getText().contains ("No recorded capture"), host.statusLabel.getText());
+            expect (take.dir.isDirectory());
+            host.engine.forgetLastCapture();
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -822,6 +871,7 @@ public:
         testSettingsWriters();
         testMissingSessionFolder();
         testReadOnlySessions();
+        testRemoveLastCapture();
     }
 };
 

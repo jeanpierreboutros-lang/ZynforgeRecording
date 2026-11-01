@@ -243,6 +243,9 @@ private:
     // editSplitAtPlayhead / editStartRange / editFinishRange).
     void removeLastCapture();
     bool deleteCaptureSession (const juce::File& target);
+    static juce::String lastCapturePrompt (const juce::File& target);
+    // A test process has no business in the owner's Trash.
+    static juce::File testTrashFolder();
     void showBatchRenameDialog();
     // Import channel names from a console/spreadsheet CSV onto existing tracks.
     void importChannelNamesFromCsv();

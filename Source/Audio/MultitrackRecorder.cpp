@@ -3072,10 +3072,16 @@ namespace zynforge
 
     bool MultitrackRecorder::deleteSessionAfterCancellingReports (const juce::File& directory)
     {
+        return removeSessionAfterCancellingReports (directory, [&directory] { return directory.deleteRecursively(); });
+    }
+
+    bool MultitrackRecorder::removeSessionAfterCancellingReports (const juce::File& directory,
+                                                                  const std::function<bool()>& remove)
+    {
         const auto state = sessionReportState (directory);
         const std::lock_guard<std::mutex> lock (state->publication);
         state->generation.fetch_add (1, std::memory_order_acq_rel);
-        return directory.deleteRecursively();
+        return remove();
     }
 
     void MultitrackRecorder::closeWriters()

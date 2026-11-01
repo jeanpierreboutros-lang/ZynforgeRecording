@@ -511,6 +511,12 @@ namespace zynforge
         // of mixer state is refused anywhere else.
         void claimMixerFor (const juce::File& dir) { mixerSession = dir; }
         juce::File getMixerSession() const { return mixerSession; }
+        // The folder of the last take that really started, kept with the take's
+        // capture identity so a different folder moved to that path is not
+        // mistaken for it. Survives a relaunch; verify_take.sh reads it too.
+        void noteLastCapture (const juce::File& dir);
+        void forgetLastCapture();
+        juce::File getLastCapture() const;
         bool mixerBelongsTo (const juce::File& dir) const
         { return dir != juce::File() && mixerSession == dir; }
 
