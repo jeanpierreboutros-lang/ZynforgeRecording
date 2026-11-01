@@ -19,7 +19,6 @@ namespace zynforge
         formatBox.addItem ("WAV",  1);
         formatBox.addItem ("AIFF", 2);
         formatBox.addItem ("FLAC", 3);
-        formatBox.addItem ("MP3",  4);
         formatBox.setSelectedId (1);
         formatBox.onChange = [this] { refreshAvailability(); };
         addAndMakeVisible (formatBox);
@@ -69,17 +68,6 @@ namespace zynforge
         bitsBox.setSelectedId (2);
         addAndMakeVisible (bitsBox);
 
-        // MP3 bitrate
-        bitrateLabel.setText ("MP3 bitrate", juce::dontSendNotification);
-        bitrateLabel.setColour (juce::Label::textColourId, brand::textPrimary);
-        addAndMakeVisible (bitrateLabel);
-
-        bitrateBox.addItem ("128 kbps", 1);
-        bitrateBox.addItem ("256 kbps", 2);
-        bitrateBox.addItem ("320 kbps", 3);
-        bitrateBox.setSelectedId (2);
-        addAndMakeVisible (bitrateBox);
-
         sessionRateHz = sr;
         refreshAvailability();
     }
@@ -101,19 +89,13 @@ namespace zynforge
         row (formatLabel,  formatBox);
         row (rateLabel,    rateBox);
         row (bitsLabel,    bitsBox);
-        row (bitrateLabel, bitrateBox);
 
         srNote.setBounds (r.removeFromTop (18));
     }
 
     void ExportFormatControls::refreshAvailability()
     {
-        const int sel = formatBox.getSelectedId();
-        const bool isMp3  = (sel == 4);
-        const bool isFlac = (sel == 3);
-
-        bitsLabel.setEnabled (! isMp3);
-        bitsBox  .setEnabled (! isMp3);
+        const bool isFlac = (formatBox.getSelectedId() == 3);
 
         // FLAC: only 16-bit or 24-bit valid.
         // Disable the 32-bit-float item by rebuilding the combo state,
@@ -124,14 +106,10 @@ namespace zynforge
         bitsBox.clear (juce::dontSendNotification);
         bitsBox.addItem ("16-bit PCM",   1);
         bitsBox.addItem ("24-bit PCM",   2);
-        if (! isFlac && ! isMp3)
+        if (! isFlac)
             bitsBox.addItem ("32-bit float", 3);
-        const bool prevStillValid = prevId == 1 || prevId == 2
-                                    || (prevId == 3 && ! isFlac && ! isMp3);
+        const bool prevStillValid = prevId == 1 || prevId == 2 || (prevId == 3 && ! isFlac);
         bitsBox.setSelectedId (prevStillValid ? prevId : 2, juce::dontSendNotification);
-
-        bitrateLabel.setEnabled (isMp3);
-        bitrateBox  .setEnabled (isMp3);
 
         const int rateIdx = rateBox.getSelectedId() - 1;
         const double chosen = (rateIdx >= 0 && rateIdx < (int) rateHz.size())
@@ -155,7 +133,6 @@ namespace zynforge
             case 1: opts.format = ExportFormat::Wav24;  break;
             case 2: opts.format = ExportFormat::Aiff24; break;
             case 3: opts.format = ExportFormat::Flac24; break;
-            case 4: opts.format = ExportFormat::Mp3;    break;
         }
 
         const int rateIdx = rateBox.getSelectedId() - 1;
@@ -171,12 +148,6 @@ namespace zynforge
             default: opts.bitsPerSample = 24;
         }
 
-        switch (bitrateBox.getSelectedId())
-        {
-            case 1: opts.mp3Bitrate = 128; break;
-            case 2: opts.mp3Bitrate = 256; break;
-            case 3: opts.mp3Bitrate = 320; break;
-        }
         return opts;
     }
 
@@ -208,7 +179,7 @@ namespace zynforge
                     [safe = juce::Component::SafePointer<ExportDialogContent> (this)]
                     { if (safe != nullptr) safe->okButton.grabKeyboardFocus(); });
 
-                setSize (380, 268);
+                setSize (380, 232);
             }
 
             void resized() override

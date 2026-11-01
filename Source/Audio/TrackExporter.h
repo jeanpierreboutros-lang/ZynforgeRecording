@@ -9,8 +9,7 @@ namespace zynforge
     {
         Wav24,
         Aiff24,
-        Flac24,
-        Mp3
+        Flac24
     };
 
     struct ExportOptions
@@ -18,13 +17,10 @@ namespace zynforge
         ExportFormat format        { ExportFormat::Wav24 };
         double       sampleRate    { 48000.0 };
         int          bitsPerSample { 24 };    // 16 / 24 / 32 (32 = IEEE float)
-        int          mp3Bitrate    { 256 };   // kbps, used only for MP3
     };
 
     // Reads a source audio file, optionally resamples it, and writes it
-    // to `dest` in the requested format. For MP3 the audio is first
-    // rendered to a temporary WAV, then `lame` is invoked to produce
-    // the final file. Returns true on success.
+    // to `dest` in the requested format. Returns true on success.
     class TrackExporter
     {
     public:
@@ -53,24 +49,8 @@ namespace zynforge
         // failure on a disk with space.
         static juce::String sizeRefusal (const ExportOptions&, int numChannels, juce::int64 frames);
 
-        // Resolves a path to the `lame` binary if installed (Homebrew /opt
-        // or /usr/local, or a directory on PATH). Returns
-        // an invalid File if unavailable.
-        static juce::File findLameBinary();
-
-        // Long show exports need longer than the historical fixed 120 s.
-        static int mp3EncodeTimeoutMs (double durationSeconds);
-
     private:
         friend class StereoExportTests; // deterministic decoder-failure fixture
-        // Shared MP3 tail: encodes an already-written temp WAV to .mp3 via
-        // lame, then deletes the temp. False (+ outError) if lame is missing
-        // or fails.
-        bool encodeMp3 (const juce::File& tempWav,
-                        const juce::File& destWithoutExt,
-                        const ExportOptions&,
-                        juce::String& outError);
-
         juce::AudioFormatManager formatManager;
     };
 
@@ -79,8 +59,8 @@ namespace zynforge
     // until commit() installs it, so an abandoned or failed export leaves
     // nothing behind that could pass for a finished one: the destructor
     // removes the sibling. A plain WAV, AIFF or FLAC at the render's own rate
-    // is written directly; MP3 or a rate conversion renders to a float WAV
-    // first and hands it to exportTrack, the one path both already take.
+    // is written directly; a rate conversion renders to a float WAV first and
+    // hands it to exportTrack.
     class ExportFileStream
     {
     public:

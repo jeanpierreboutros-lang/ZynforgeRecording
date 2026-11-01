@@ -10,8 +10,8 @@
 
 namespace zynforge
 {
-    // The format rows every export dialog shares: format, sample rate, bit depth
-    // and MP3 bitrate, with the per-format constraints below.
+    // The format rows every export dialog shares: format, sample rate and bit
+    // depth, with the per-format constraints below.
     class ExportFormatControls final : public juce::Component
     {
     public:
@@ -20,7 +20,7 @@ namespace zynforge
 
         ExportOptions getOptions() const;
 
-        static constexpr int kPreferredHeight = 162;
+        static constexpr int kPreferredHeight = 126;
 
         void resized() override;
 
@@ -30,16 +30,15 @@ namespace zynforge
         std::vector<double> rateHz;
         double              sessionRateHz { 48000.0 };
         juce::Label         srNote;
-        juce::Label         formatLabel, rateLabel, bitsLabel, bitrateLabel;
-        juce::ComboBox      formatBox,   rateBox,   bitsBox,   bitrateBox;
+        juce::Label         formatLabel, rateLabel, bitsLabel;
+        juce::ComboBox      formatBox,   rateBox,   bitsBox;
     };
 
-    // Modal dialog: pick format, sample rate, bit depth (or MP3 bitrate).
+    // Modal dialog: pick format, sample rate, bit depth.
     // Per-format constraints:
     //   - WAV  : 16 / 24 / 32 (32 = IEEE float)
     //   - AIFF : 16 / 24 / 32 (32 = IEEE float)
     //   - FLAC : 16 / 24       (FLAC does not support 32-bit)
-    //   - MP3  : bit-depth N/A, uses MP3 bitrate (128 / 256 / 320 kbps)
     //
     // Calls onResult with ExportOptions on OK, std::nullopt on Cancel.
     class ExportDialog

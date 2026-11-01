@@ -227,7 +227,7 @@ private:
     // on the MESSAGE thread (it reads TrackStates), then does the actual
     // decode / resample / encode work on `sessionJobs` and reports the result
     // on the message thread. Running the whole thing inline used to freeze the app for
-    // the length of the export -- minutes for a 32-track MP3 batch, with no
+    // the length of the export -- minutes for a 32-track batch, with no
     // progress and no way to cancel.
     void startExportTracksTo (const juce::File& dir,
                               const std::vector<int>& channelIndices,

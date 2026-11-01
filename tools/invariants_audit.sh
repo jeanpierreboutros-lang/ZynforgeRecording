@@ -410,13 +410,6 @@ report "optional stereo-mix capture is controllable and failure-visible" \
        "an unreachable option or ignored writer failure produces no mix while the operator believes it is enabled" \
        "$HITS"
 
-HITS=""
-grep -q 'findExecutableInPath' Source/Audio/TrackExporter.cpp \
-    || HITS="Source/Audio/TrackExporter.cpp: MP3 encoder lookup can regress to a blocking child-process probe"
-report "external inputs fail bounded and validated" \
-       "a timed-out child-process read or malformed pre-auth network bytes can freeze/assert the app" \
-       "$HITS"
-
 # juce::OSCReceiver parses on its own thread with no #bundle depth cap; one
 # nested-bundle datagram from any LAN host overflowed that thread's stack and
 # crashed the app. Every OSC socket goes through OscPacketReceiver. (Its

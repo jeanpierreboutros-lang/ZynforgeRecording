@@ -1680,7 +1680,7 @@ void MainComponent::onExportIndividualTracks()
                     chosenTracks.push_back (ch);
         if (chosenTracks.empty()) return;
 
-        // Step 2: format / sample-rate / bit-depth (or MP3 bitrate).
+        // Step 2: format / sample-rate / bit-depth.
         zynforge::ExportDialog::launch ("Export format", sessionAudioRateFor (engine),
             [self, this, chosenTracks] (std::optional<zynforge::ExportOptions> opts)
         {
