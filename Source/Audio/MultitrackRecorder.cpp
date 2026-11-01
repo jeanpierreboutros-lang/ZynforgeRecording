@@ -1686,7 +1686,7 @@ namespace zynforge
     // a gigabyte of ring: then less, never under a second.
     int MultitrackRecorder::copyRingFrames (int numCopies, int channels) const noexcept
     {
-        if (copyRingFramesForTests > 0) return copyRingFramesForTests;
+        if (copyRingFramesForTests > 0) return juce::jmax (copyRingFramesForTests, CaptureCopy::kChunkFrames);
         constexpr juce::int64 kMaxRingBytes = (juce::int64) 1 << 30;
         const int floorFrames = juce::jmax (1, (int) sampleRate);
         auto frames = juce::nextPowerOfTwo ((int) (sampleRate * kFifoSeconds));

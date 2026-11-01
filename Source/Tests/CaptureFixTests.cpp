@@ -1153,7 +1153,9 @@ namespace zynforge
                 player.setLoopRegion (100 * kBlock, 200 * kBlock);
                 engine.setPunchModeOn (true);
                 engine.setTrackPunchArmed (0, true);
+                player.setPositionSamples (90 * kBlock);
                 engine.startPlayback();
+                expect (player.isPlaying());
                 main.sessionIoBusy.store (true);
                 player.setPositionSamples (150 * kBlock);
                 main.servicePunch();
@@ -1336,7 +1338,7 @@ namespace zynforge
                 rec->getTrack (0).armed.store (true);
                 rec->setBackupDirectory (dirs.backup);
                 expect (rec->setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
-                rec->copyRingFramesForTests = 4096;
+                rec->copyRingFramesForTests = Copy::kChunkFrames;
                 auto stall = std::make_shared<Stall> (held);
                 hold (*rec, stall);
                 expect (rec->startRecording (dirs.session));
@@ -1609,7 +1611,7 @@ namespace zynforge
             MultitrackRecorder rec;
             rec.prepare (kRate, kBlock, 1);
             rec.getTrack (0).armed.store (true);
-            rec.copyRingFramesForTests = 4096;
+            rec.copyRingFramesForTests = Copy::kChunkFrames;
             auto stall = std::make_shared<Stall> (0);
             hold (rec, stall);
             expect (rec.startRecording (dirs.session));
