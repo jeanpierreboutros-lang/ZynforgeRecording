@@ -4,7 +4,7 @@
 
 Current source: the `ZynforgeRecordingTests` app passes **938 groups / 0 failures** in Release, under ASan/UBSan (once in the standard setup, once from a fresh home) and under TSan, with no sanitizer reports. That is 689 before this work, plus 249 new groups: *Console VSC* 75, *Twin recorder link* 50, *Capture metadata* 40, *Dead-channel alarm* 30, *Session interchange* 23, *Twin recorder host* 18 and *Song export* 13. Both static gates pass. `tools/test_notarize.py` passes 16 tests. `tools/test_auto_stop.py` passes.
 
-None of the new dialogs, panels or native menu ticks were operated by hand, and nothing here has run on a console or between two Macs: see *Market-moves acceptance* in [FIELD-TEST.md](FIELD-TEST.md).
+The merged Release app launched with `--isolated-settings`, passed the microphone prompt and quit through the normal path with `--smoke-quit-after`, with no crash report. Nobody looked at its windows. None of the new dialogs, panels or native menu ticks were operated by hand, and nothing here has run on a console or between two Macs: see *Market-moves acceptance* in [FIELD-TEST.md](FIELD-TEST.md).
 
 **A hang found by this suite.** Stereo pairs inside a stream fault spun `channelalarm::Monitor::live` forever: a short-circuited `||` skipped the loop's own increment. In the app that froze the status timer on the message thread, on exactly the fault the alarm exists for. *Dead-channel alarm* now pins it twice, through the Monitor and through the callback. A hang fails no assertion, so run a suite under a time limit when it can loop; this one spun for almost three hours before anyone looked.
 
