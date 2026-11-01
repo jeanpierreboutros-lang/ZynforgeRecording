@@ -23,6 +23,191 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+Everything from here down to *Added — console and virtual soundcheck* came in on 2026-11-01. It is in `main` only: not installed on either Mac, and not yet tried on real hardware.
+
+### Fixed — punch and RECORD safety
+
+- Clicking Loop no longer makes the next RECORD replace the take. Loop with nothing selected now loops the whole take without making a selection, and whole-take selections left in saved sessions by earlier builds are dropped when the session opens.
+- A range arms a punch only if you selected it in this run, and only once. A range restored from a saved session still loops and edits but no longer punches until you touch it.
+- A stopped playhead left inside a take no longer punches. RECORD appends unless the transport is rolling, a cursor is placed, or a range is selected.
+- With the transport stopped, RECORD at a placed EDIT cursor now asks first. Return records after the take and clears the cursor, Replace From Cursor punches, and Esc cancels.
+- PUNCH mode now punches the tracks armed at punch-in, as the R buttons show. It turns off when you leave the session, a strip move can't redirect it, and it can no longer end a normal take.
+- PUNCH mode ends exactly at the out point, and a punch-in missed because of a save is reported.
+- A remote RECORD (desk macro, OSC, companion, control surface, twin) never punches. It is refused and says why.
+- A punch past the end of a shorter track stays where it was played.
+- A punch longer than the AIFF/FLAC roll point lands whole, on every copy, and rolls back whole.
+
+### Added — main window
+
+- A pill beside the transport time shows PUNCH MODE, and warns whenever the next RECORD would replace audio.
+- Pre-roll is back: Session Settings.
+- The Generic OSC access token is now shown in the OSC panel.
+
+### Fixed — main window
+
+- LOCK now holds on right-click menus, the patch matrix and EDIT rows, and is no longer lost when the strips rebuild (GRID, for example).
+- Cmd+Q and the close box refuse under LOCK.
+- A take in trouble now shows in a red banner under the transport rather than muted header text. Refused RECORD presses show there too.
+- Noise, QC and song scans stop when a take starts, write nothing, and never open a report over a take. RECORD never waits for a scan, and a second scan refuses.
+- Console SOUNDCHECK patch and Restore Gains refuse during a take.
+- A failed take no longer stops a remote STOP from stopping playback, and no longer follows you into the next session.
+- The setlist bar clears when a session closes, Welcome's new session no longer inherits old cues, and a running cue fade stops when you leave the session.
+- Session ▸ Patch and Meterbridge reuse their one window, and LOCK reaches it.
+- The meterbridge stays open on a second display, survives a same-size session swap and follows renames.
+- Pre-flight no longer shows green for a disk RECORD would refuse.
+- The backup folder chooser no longer claims success when the folder was refused.
+- Creating a session from Welcome at the device's rate no longer blocks RECORD, and a first launch on a non-48 kHz device raises no false alarm.
+- A strip named "Click" keeps its R and I buttons.
+- A session with no audio reopens instead of showing Welcome, and is no longer reported as failed.
+- The first-run tour no longer sits under Welcome.
+- A cue fade stops when strips move, and a cue's click refresh really happens after the take.
+- Tap STOP again shows at once, even with other messages waiting.
+- Virtual Soundcheck, Print Setlist and the soundcheck report wait for the take.
+- Session Info shows the format in use. Help text matches the keys and the two-tap STOP.
+- Quitting on a heavily loaded machine no longer risks a crash from a slow background thread being killed, and closing EDIT waits for its scans. A thread stuck on a dead drive makes quit wait instead.
+
+### Removed — session dialogs
+
+- Interleaved, Create From Template, the Stereo Mix I/O choice and a Templates hint in the session dialogs, none of which changed anything.
+
+### Fixed — capture copies, crash recovery and the capture daemon
+
+- One stalled drive no longer costs audio on the others: every copy now has its own writer. A copy that falls behind loses audio only on itself and is named in the banner and the report.
+- A full or read-only backup or mirror no longer refuses RECORD: the copy is left out and named.
+- The disk warning and ring reading stay live while a drive is stuck, and the status line shows missed samples.
+- AIFF 16 and 24-bit takes stay readable after a crash, and files left by older builds are repaired when a session opens.
+- FLAC sessions left by a crash open without decoding every file.
+- A crash during a continued take no longer leaves the new audio off the timeline.
+- Losing the audio device during a take no longer freezes the app, leaves the button reading STOP, or skips saving the session.
+- Auto-save no longer writes to the take's drive during a take.
+- Moving a session, Save As and Show Handoff wait for integrity hashing to finish.
+- If the capture daemon dies or its link drops, RECORD, STOP, the daemon toggle and Quit all keep working, and the window reconnects by itself. New: Session ▸ Recording & Sync ▸ Reconnect Capture Daemon.
+- Slow daemon stops and starts no longer leave the window out of step, and daemon STOP no longer freezes the window.
+- A capture daemon that cannot be reached at launch now says so plainly, with the reason.
+- Reattaching to a rolling daemon take no longer opens Welcome over it.
+- Markers during a capture daemon take land in that take's session.
+- A refused RECORD keeps the previous take's failure on screen, a daemon refusal shows its reason, a refused continue leaves no empty part files, and a full drive is no longer read as unknown free space.
+
+### Fixed — sessions and backups
+
+- Auto-save and STOP can no longer overwrite a session's mixer with an empty one after a crash, a failed reopen or a reattached capture-daemon take.
+- Reattaching to a rolling capture-daemon take now restores that session's strips, cues and settings. STOP then saves them rather than an empty session.
+- A session whose mixer was already saved with no strips now opens with one strip per recorded track.
+- Session backups always keep the newest mix that still has channels.
+- Unchanged auto-saves no longer push older states out of the backups.
+- Save As, Show Handoff and moving a session between drives could crash the app, because the copy buffer was too large for its thread's stack. It now lives on the heap.
+- Opening the session that is already open no longer reloads it and loses unsaved changes.
+- A damaged `session_mix.json`, `session_settings.json`, `markers.json` or `.zfproj` is kept under a dated name, you are told, and the newest good backup is offered. A damaged project no longer blocks saving.
+- Changing the strip width or another preference can no longer undo a patch, name or gain change after a device restart.
+- Auto-save now says so when the session's drive disappears, and Save, Save As and Import wait for the drive. Repeated failures are spaced out rather than repeating every 15 seconds.
+- Save As, Move and Show Handoff work on read-only sessions after asking, and Save As and Move keep unsaved changes in the new copy.
+- Remove Last Capture now removes the session you last recorded, names it, and moves it to the Trash.
+- Cloud upload runs your command through a shell, finds Homebrew tools, and reports whether the upload finished or failed.
+- File ▸ Open shows the real reason when a session does not open.
+- A new session keeps its capture format if reopened before the first save.
+- A RECORD press during an auto-save is held and starts when the save ends.
+- A nearly full disk can no longer pass a truncated save as successful.
+- Generate Click can no longer replace a recorded take, and renders at the session's sample rate, not the device's.
+- `tools/auto_stop.sh` reports a successful stop as a success.
+- `tools/verify_take.sh` with no argument verifies the capture the app last recorded and refuses to guess.
+- `tools/verify_reaper_export.py` now fails a render that stops short.
+
+### Changed — sessions
+
+- Removing every strip from a saved session is refused. Use File ▸ New Session to start over.
+
+### Fixed — editing and export
+
+- Undo and redo no longer remove audio recorded since the undo step was made.
+- Crop to Loop Range and Ripple Delete move markers, automation, the tempo map, cues and other takes with the audio, and undo as one step. A ripple on some strips moves those strips' takes and automation only.
+- Crop rechecks LOCK, takes and session jobs when its button is pressed. Its dialog no longer suggests re-cropping to undo, and multi-part takes can be cropped.
+- Bounce Stereo Mix and Export Songs ignore master MUTE. A silent mix or a solo left on is reported instead of plain success.
+- Pasting clips copied in another session is refused.
+- Show Handoff refuses a session with a clip outside its folder, and ignores `.DS_Store` files that appear during the copy.
+- Detect Songs places markers at timeline positions, ignores audio cut from the arrangement, and is no longer held open by a click track. A stereo pair counts once.
+- Export Songs cuts only at song and ordinary markers, not at Split, Range or scene markers. Undoing a split removes its marker.
+- Comp over a locked clip is refused instead of playing both takes.
+- Strip Silence keeps long fades, and treats a stereo pair or edit group as one.
+- QC reports an unreadable take as failed instead of silent. The noise report's floor is the quiet parts of a track, and hum levels read in dBFS.
+- Clip-menu Consolidate is a session job.
+- A disk that fills during the last bytes of an export, bounce, consolidate or import is now a failure.
+- Export All no longer reads INCOMPLETE after a native stereo pair is unlinked, and an uncreatable export folder reports an error.
+- Strip names with `:`, `?` or `*` export to exFAT.
+- AIFF's 2 GB and 4 GB limits refuse up front with the reason.
+- Heal Separation reaches only a split near the playhead.
+- DAW exports note a VCA solo.
+- A corrupt `activeTake` loads safely.
+
+### Changed — sample-rate conversion
+
+- Sample-rate conversion on export and import is a windowed-sinc converter, with aliases about 100 dB down. It takes longer than the old converter did: a 3-hour 56-channel file set takes roughly 18 minutes under load. Same-rate exports stay bit-exact.
+
+### Fixed — EDIT view
+
+- Shift+Delete, D and Shift+click acted on one half of a stereo clip and skipped edit-group peers. Every clip command now reaches the whole strip and its group, and a nudge moves them all by one amount.
+- With overlapping clips, moving or deleting a clip on a stereo row could move or delete a different clip on the R half.
+- Cmd+X after a Range drag removed the channel with no prompt and cleared undo. It now clears the range after the usual confirmation, and Cut Strip asks before removing a channel.
+- Automation point drags and curve bends never reached undo.
+- Clear with the Lane on Click or Tempo erased every track's Mute automation.
+- Arrow keys, Delete and right-click no longer reach automation the row does not show.
+- A clip selection now stays on its clip. After undo, heal, crop or a take switch it drops instead of moving to a neighbour.
+- EDIT drew the wrong waveform for consolidated clips and clips pasted from another strip.
+- Reopening a session after a strip move or delete could draw other channels' waveforms.
+- Saving and loading EDIT's waveform cache no longer stalls the app on long sessions. A failed write no longer replaces a good cache.
+- Normalize could land on the wrong strip after a strip move. It now says when it fails, and its undo step cannot be lost to another edit.
+- Take changes and Tempo lane edits are undoable, a generated click follows Tempo lane edits, and Delete Take asks first.
+- A clip menu, take menu or rename dialog left open can no longer change the arrangement once a take starts.
+- EDIT's R, I, M and S buttons now reach the edit group, as they do on the MIXER.
+- Up and Down on an automation point keep its curve and bend, and no longer disturb a close neighbour.
+- A Range drag or range key takes over from an older clip selection.
+- Pasting a stereo clip onto a mono strip, or a mono clip onto a stereo strip, is refused.
+- Automation pastes only into the kind of lane it was copied from.
+- Marker rename and delete act on the marker they were opened on, and the ruler shows a new name at once.
+- A marker jump or desk locate no longer pauses FOLLOW.
+- After STOP only the rows that recorded rescan.
+- Long sessions zoomed out no longer rebuild overviews on every repaint.
+- During a take, un-armed clips stay on the ruler. A take started past the live zoom limit relays out at once. An unlinked stereo pair's R row shows its audio. The red REC label shows only for a take.
+- Solo, Arm and strip paste are one undo step each, and redo restores them.
+- A group fade or crossfade drag keeps each peer's other fade.
+
+### Fixed — network and console
+
+- Network JSON handling is hardened. Every network parser now shares one guard, including the capture link and the session mirror.
+- A safety Mac mirroring a primary keeps its strips, routing and arms when the primary's status is unavailable or the primary has no session open.
+- A flood of OSC packets can no longer freeze the app or fill a take with markers. Remote markers are limited to a rate a person could ask for, and the status line says when some were ignored.
+- The X32 show patch is saved with the session before the console moves to card returns. A crash, a quit or Restore Gains can no longer lose it, and a desk already on card returns is never saved as the show patch.
+- Console gains and saved patches stay with their session. Opening another session no longer lets Restore write the last show's values to the desk.
+- A mistyped console address is refused at connect instead of stalling the app on every send. A console link now ignores packets from any other address.
+- `/stream.wav` survives a Wi-Fi stall: audio drops and the stream carries on.
+- MCU bank changes clear the previous bank's MUTE, SOLO and REC lights and names.
+- The Yamaha link no longer sends a scene-recall command as a subscription.
+- A leader restarted during a daemon take can enter the pairing code and re-link.
+- Twin comparison now compares one pass with one pass, so an earlier one-sided take no longer raises false warnings.
+- The twin link and the capture daemon no longer race on `session.report.json`.
+
+### Fixed — engine, outputs and sync
+
+- A stereo strip's STREAM send and bus sends now carry both channels. They reached the left half only, so StereoMix.wav and the bus had no right channel; a pair saved that way is repaired on open, from what the strip shows. On a mono bus each half carries half, so a centred source lands at the send's level and old sessions do not jump.
+- Trim-Follow can no longer put a channel's whole preamp value on the outputs. A channel captured with no desk reading stays at 0 dB offset and is named on the status line, and any follow offset is limited to +12 / -30 dB. It never touches live input.
+- Solo during a take no longer strips everything else out of StereoMix.wav and the stream bus.
+- With strips patched 1:1 on a multi-output interface, the master mix and click no longer land on the first two outputs on top of those channels.
+- Every loop wrap, locate and PLAY from a far position brings all tracks in together, with no audio dropped from the start of the pass. Edits that jump far inside a file, and overlapping clips cut from one file, play in full.
+- MTC joined mid-stream no longer reads a time mixed from two frames, which jumped the chased playhead by up to an hour.
+- A muted strip that is soloed is heard on the master while rolling, as it is on direct outputs and when stopped.
+- A device smaller than the saved monitor pair keeps both sides of the mix.
+- MIDI clock slaves follow a locate or loop wrap while rolling, and turning the clock on mid-play sends the position instead of a burst of pulses.
+- An aux send level from a damaged session file is limited to the fader range.
+
+### Changed — playback
+
+- A locate or PLAY from a far position starts after a short silence, once every track is ready, instead of at once with tracks entering one by one.
+
+### Added — outputs and sync
+
+- Transport Sync: session start timecode, typed or taken from the first take's stamp. Chase says why when timecode falls outside the session, and no longer pins the playhead at the end.
+- Stream Bus Output sends the stream bus to an output pair, saved with the session.
+- Master output Off, and Let the Mix Share Outputs With Patched Strips for rigs whose first outputs are monitors.
+
 ### Added — console and virtual soundcheck
 
 - **Scene Follow** (Session ▸ Console, off by default): outside a take, a console scene or snapshot recall moves the playhead to the marker of that name without changing the transport state.
