@@ -943,6 +943,42 @@ namespace zynforge
                 s.main.clickTrackIndex = -1;
             }
 
+            beginTest ("Up and Down change a point's value and nothing else");
+            {
+                Show s (1, { 48000 });
+                s.main.switchView (MainComponent::View::Edit);
+                expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000), "setup");
+                s.page().setBounds (0, 0, 1400, 500);
+                s.page().refresh();
+                s.engine.clearAutomation (AP::Volume);
+                using C = AudioEngine::AutomationCurve;
+                s.engine.pasteAutomationRange (0, AP::Volume, 12000,
+                                               { { 0, -6.0f, C::Hold, 0.0f }, { 1000, -12.0f, C::SCurve, 0.0f },
+                                                 { 30000, -3.0f, C::Linear, 0.4f } });
+                auto rows = rowsOf (s.page());
+                if (rows.size() == 1)
+                {
+                    rows[0]->laneMode = Lane::Volume;
+                    s.page().setActiveRowTrackIndex (0);
+                    s.page().setFocusedPointIdx (0);
+                    s.main.keyPressed (juce::KeyPress (juce::KeyPress::upKey), nullptr);
+                    s.page().setFocusedPointIdx (2);
+                    s.main.keyPressed (juce::KeyPress (juce::KeyPress::downKey), nullptr);
+                    const auto& lane = s.engine.getAutomation (0, AP::Volume);
+                    expectEquals ((int) lane.size(), 3, "the nudged point vanished into its neighbour");
+                    if (lane.size() == 3)
+                    {
+                        expectWithinAbsoluteError (lane[0].value, -5.5f, 0.001f);
+                        expect (lane[0].curve == C::Hold, "a Hold point turned Linear");
+                        expectWithinAbsoluteError (lane[1].value, -12.0f, 0.001f, "the neighbour changed");
+                        expect (lane[1].curve == C::SCurve);
+                        expectWithinAbsoluteError (lane[2].value, -3.5f, 0.001f);
+                        expectWithinAbsoluteError (lane[2].tension, 0.4f, 0.001f, "the bend was lost");
+                    }
+                }
+                s.engine.clearAutomation (AP::Volume);
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

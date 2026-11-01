@@ -696,6 +696,9 @@ namespace zynforge
         void addAutomationPoint (int track, AutomationParam, juce::int64 samplePos, float value);
 
         // Remove the nearest point inside the given sample tolerance.
+        // Change one point's value and nothing else: its position, curve and
+        // bend stay. samplePos is the point's exact position.
+        void setAutomationPointValue (int track, AutomationParam, juce::int64 samplePos, float value);
         void removeAutomationPointNear (int track, AutomationParam,
                                         juce::int64 samplePos, juce::int64 tolerance);
 

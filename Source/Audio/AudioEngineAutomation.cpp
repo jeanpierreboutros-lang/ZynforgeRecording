@@ -367,6 +367,22 @@ namespace zynforge
         addPointLocked (*lane, p, samplePos, value);
     }
 
+    void AudioEngine::setAutomationPointValue (int track, AutomationParam p,
+                                               juce::int64 samplePos, float value)
+    {
+        const juce::ScopedLock sl (automationLock);
+        if (track < 0 || track >= (int) automationData.size()) return;
+        if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
+        auto* lane = findLane (track, p);
+        if (lane == nullptr) return;
+        for (auto& pt : *lane)
+            if (pt.samplePos == samplePos)
+            {
+                pt.value = p == AutomationParam::Mute ? (value >= 0.5f ? 1.0f : 0.0f) : value;
+                return;
+            }
+    }
+
     void AudioEngine::setAutomationCurveAt (int track, AutomationParam p,
                                             juce::int64 samplePos, juce::int64 tolerance,
                                             AutomationCurve curve)

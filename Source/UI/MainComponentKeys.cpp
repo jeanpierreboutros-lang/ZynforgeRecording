@@ -329,10 +329,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             const auto samplePos = pt.samplePos;
             runAutomationEdit ("Nudge automation point",
                                [this, track, p, samplePos, v]
-                               {
-                                   engine.removeAutomationPointNear (track, p, samplePos, 1);
-                                   engine.addAutomationPoint        (track, p, samplePos, v);
-                               });
+                               { engine.setAutomationPointValue (track, p, samplePos, v); });
             editPage->repaint();
             return true;
         }

@@ -3257,7 +3257,7 @@ namespace zynforge
                     // between adjacent segments are easy to dial in.
                     if (e.mods.isShiftDown())
                         t = std::round (t * 4.0f) / 4.0f;
-                    engine.setAutomationTensionAt (index, p, pointSample, 4096, t);
+                    engine.setAutomationTensionAt (index, p, pointSample, 0, t);
                     repaint();
                 }
                 return;
@@ -4045,7 +4045,7 @@ namespace zynforge
                         auto editFn = [eng = &safe->engine, idx = safe->index,
                                        engineParam, pointSample]
                                       { eng->setAutomationTensionAt (idx, engineParam,
-                                                                      pointSample, 4096, 0.0f); };
+                                                                      pointSample, 0, 0.0f); };
                         if (safe->automationEditWrapper)
                             safe->automationEditWrapper ("Reset automation bend",
                                                           std::move (editFn));
@@ -4067,7 +4067,7 @@ namespace zynforge
                     auto editFn = [eng = &safe->engine, idx = safe->index,
                                    engineParam, pointSample, newCurve]
                                   { eng->setAutomationCurveAt (idx, engineParam,
-                                                                pointSample, 4096, newCurve); };
+                                                                pointSample, 0, newCurve); };
                     if (safe->automationEditWrapper)
                         safe->automationEditWrapper ("Change automation curve",
                                                       std::move (editFn));
