@@ -2220,7 +2220,7 @@ namespace zynforge
             header.removeFromLeft (4);
 
             const bool isClickRow =
-                engine.getRecorder().getTrack (index).name == "Click";
+                engine.getRecorder().getTrack (index).referenceMedia.load (std::memory_order_relaxed);
 
             // -------------- LEFT (name + buttons) --------------
             constexpr int leftBlockW = 140;

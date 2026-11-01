@@ -1316,11 +1316,12 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
 
         // ── 3. Two rows of two buttons each: [ I | R ] / [ S | M ] ──
-        //   ...except on the metronome strip ("Click"), which is
-        //   playback-only -- record-arm and input-monitor make no sense
-        //   so those two pills are hidden, and the SOLO + MUTE row sits
-        //   alone with no gap above it.
-        const bool isClickStrip = (state.name == "Click");
+        //   ...except on the generated metronome strip, which is playback-
+        //   only -- record-arm and input-monitor make no sense so those two
+        //   pills are hidden, and the SOLO + MUTE row sits alone with no gap
+        //   above it. Known by its flag: a recorded click return may well be
+        //   named "Click", and it needs its R button.
+        const bool isClickStrip = state.referenceMedia.load (std::memory_order_relaxed);
         const bool isBusStrip   = state.isBus.load (std::memory_order_relaxed);
         const int btnH = 24;
         const int btnGap = 3;
