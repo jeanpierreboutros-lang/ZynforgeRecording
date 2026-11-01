@@ -163,9 +163,11 @@ private:
     // lets the launch flow avoid auto-reopening a session under the dialog.
     bool offerSessionRecovery (std::function<void()> onClosed = {});
     void showStartupWelcome();
+    void createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
+    void openSessionFromWelcome (const juce::File&);
     void showKeyboardShortcuts();
     void showAboutDialog();
-    void showFirstRunTutorial();
+    void showFirstRunTutorial (std::function<void()> onFinished = {});
     void showUserGuide();
     void launchNewSessionDialog (juce::File templateFile = {});
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);

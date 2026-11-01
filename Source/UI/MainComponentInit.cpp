@@ -836,13 +836,13 @@ MainComponent::MainComponent()
             if (self->explicitDocumentOpened) return;
             if (firstRun)
             {
-                self->showFirstRunTutorial();
                 if (auto* p = self->engine.getAppProps())
                 {
                     p->setValue ("tutorialShown", true);
                     p->saveIfNeeded();
                 }
-                juce::Timer::callAfterDelay (350, [self] { if (self != nullptr) self->showStartupWelcome(); });
+                // Modal dialogs stack rather than queue, so Welcome waits for the tour.
+                self->showFirstRunTutorial ([self] { if (self != nullptr) self->showStartupWelcome(); });
             }
             else
             {

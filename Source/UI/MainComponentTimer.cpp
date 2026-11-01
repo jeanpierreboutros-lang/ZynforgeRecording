@@ -581,6 +581,18 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     };
     if (deviceSampleRate <= 0.0) { setWarning ({}); return; }
 
+    // With no session there is no rate to disagree with: 48 kHz here is only a
+    // launch default, so the next session starts from what the device runs at.
+    if (! engine.getActiveSessionDir().isDirectory() && ! engine.getPlayer().isLoaded()
+        && ! engine.isRecording())
+    {
+        pendingSampleRate = deviceSampleRate;
+        engine.setSessionSampleRate (deviceSampleRate);
+        srMismatchWarned = 0.0;
+        setWarning ({});
+        return;
+    }
+
     // The session's authoritative rate: once a take is loaded that's the
     // recorded files' rate; otherwise it's the rate the session was created
     // at. Either way the comparison catches ANY divergence -- 44.1 / 48 /
