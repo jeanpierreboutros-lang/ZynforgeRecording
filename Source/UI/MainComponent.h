@@ -34,6 +34,7 @@
 #include "PlaceholderView.h"
 #include "VcaPanel.h"
 #include "TransportBar.h"
+#include "ClipEditTargets.h"
 
 #include <memory>
 #include <set>
@@ -351,10 +352,11 @@ private:
     TimelineSnapshot captureTimeline() const;
     void restoreTimeline (TimelineSnapshot target, const TimelineSnapshot& replaced);
     void commitTimelineCut (const juce::String& label, const TimelineSnapshot& before,
-                            const zynforge::timelinecut::Cut&, const std::vector<int>& tracks,
-                            bool joinLastStep = false);
+                            const zynforge::timelinecut::Cut&, const std::vector<int>& tracks);
+    void finishTimelineEdit (const juce::String& label, const TimelineSnapshot& before);
     int  rippleTimeline (const juce::String& label, const std::vector<int>& tracks,
-                         juce::int64 start, juce::int64 end, bool joinLastStep = false);
+                         juce::int64 start, juce::int64 end);
+    int  rippleSpans (const juce::String& label, const std::vector<zynforge::clipedit::RippleSpan>&);
     void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();

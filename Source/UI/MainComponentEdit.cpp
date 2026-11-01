@@ -295,15 +295,19 @@ std::vector<SetlistBar::Cue> MainComponent::cuesAfterCut (const std::vector<Setl
 // edit. The save is immediate because markers.json is already written: a crash
 // must not leave the markers moved and the clips not.
 void MainComponent::commitTimelineCut (const juce::String& label, const TimelineSnapshot& before,
-                                       const timelinecut::Cut& cut, const std::vector<int>& tracks,
-                                       bool joinLastStep)
+                                       const timelinecut::Cut& cut, const std::vector<int>& tracks)
 {
     cues = cuesAfterCut (cues, cut, tracks, engine.namesEveryStrip (tracks));
+    finishTimelineEdit (label, before);
+}
+
+void MainComponent::finishTimelineEdit (const juce::String& label, const TimelineSnapshot& before)
+{
     if (currentCueIndex >= (int) cues.size()) currentCueIndex = -1;
     setlistBar.setCues (cues, currentCueIndex);
 
     auto after = captureTimeline();
-    if (! joinLastStep) undoManager.beginNewTransaction (label);
+    undoManager.beginNewTransaction (label);
     undoManager.perform (new TimelineCutAction (
         [this, before, after] { restoreTimeline (after, before); },
         [this, before, after] { restoreTimeline (before, after); }));
@@ -311,7 +315,7 @@ void MainComponent::commitTimelineCut (const juce::String& label, const Timeline
 }
 
 int MainComponent::rippleTimeline (const juce::String& label, const std::vector<int>& tracks,
-                                   juce::int64 start, juce::int64 end, bool joinLastStep)
+                                   juce::int64 start, juce::int64 end)
 {
     const timelinecut::Cut cut { start, end, false };
     if (const auto refusal = engine.timelineCutRefusal (cut, tracks); refusal.isNotEmpty())
@@ -321,7 +325,33 @@ int MainComponent::rippleTimeline (const juce::String& label, const std::vector<
     }
     const auto before = captureTimeline();
     const int changed = engine.rippleDeleteTracks (tracks, start, end);
-    if (changed > 0) commitTimelineCut (label, before, cut, tracks, joinLastStep);
+    if (changed > 0) commitTimelineCut (label, before, cut, tracks);
+    return changed;
+}
+
+// Every gap in one edit: one undo step and one save. The save starts a metadata
+// job, so an edit per gap would have the first one refuse the rest.
+int MainComponent::rippleSpans (const juce::String& label,
+                                const std::vector<zynforge::clipedit::RippleSpan>& spans)
+{
+    for (const auto& span : spans)
+        if (const auto refusal = engine.timelineCutRefusal ({ span.start, span.end, false }, span.tracks);
+            refusal.isNotEmpty())
+        {
+            showStatus (refusal);
+            return -1;
+        }
+    const auto before = captureTimeline();
+    int changed = 0;
+    for (const auto& span : spans)
+    {
+        const int moved = engine.rippleDeleteTracks (span.tracks, span.start, span.end);
+        if (moved <= 0) continue;
+        changed += moved;
+        cues = cuesAfterCut (cues, { span.start, span.end, false }, span.tracks,
+                             engine.namesEveryStrip (span.tracks));
+    }
+    if (changed > 0) finishTimelineEdit (label, before);
     return changed;
 }
 
@@ -1462,16 +1492,7 @@ void MainComponent::editRippleDelete()
         if (zynforge::clipedit::anyLocked (engine, sel))
         { showStatus ("Clip is locked -- unlock before ripple deleting"); return; }
         const auto plan = zynforge::clipedit::ripplePlan (engine, sel, editPage->getSelectedClipTrack());
-        for (const auto& span : plan)
-            if (const auto refusal = engine.timelineCutRefusal ({ span.start, span.end, false }, span.tracks);
-                refusal.isNotEmpty())
-            { showStatus (refusal); return; }
-        // One Cmd+Z step, however many gaps the selection closes.
-        int changed = 0;
-        for (const auto& span : plan)
-            changed += juce::jmax (0, rippleTimeline ("Ripple delete clip", span.tracks,
-                                                      span.start, span.end, changed > 0));
-        if (changed > 0)
+        if (rippleSpans ("Ripple delete clip", plan) > 0)
         {
             editPage->clearSelectedClip();
             editPage->repaint();

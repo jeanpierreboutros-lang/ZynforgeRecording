@@ -234,6 +234,7 @@ namespace zynforge
                 s.main.editRippleDelete();
                 expectEquals (spans (s.clips (0)), juce::String ("0+16000"), "both gaps must close");
                 expectEquals (spans (s.clips (1)), spans (s.clips (0)), "R did not follow L");
+                expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000), "setup: the save lands");
                 s.main.editUndo();
                 expectEquals (spans (s.clips (0)), before, "one Cmd+Z must bring every clip back");
                 expectEquals (spans (s.clips (1)), before);
