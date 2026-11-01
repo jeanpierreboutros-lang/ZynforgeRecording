@@ -762,6 +762,25 @@ namespace zynforge
         return -1;
     }
 
+    static float sendLevelInRange (float dB) noexcept
+    {
+        return std::isfinite (dB) ? juce::jlimit (-60.0f, 12.0f, dB) : -60.0f;
+    }
+
+    // The bus the other half of a stereo strip sends to, given where this half
+    // goes: the matching half of a stereo bus, or the same bus when it is mono.
+    static int stereoPartnerBusLocked (MultitrackRecorder& rec, int bus, bool partnerIsRight)
+    {
+        if (bus < 0 || bus >= rec.getNumTracks()) return bus;
+        if (partnerIsRight && bus + 1 < rec.getNumTracks()
+            && rec.getTrack (bus).isStereo.load (std::memory_order_relaxed))
+            return bus + 1;
+        if (! partnerIsRight && bus > 0
+            && rec.getTrack (bus - 1).isStereo.load (std::memory_order_relaxed))
+            return bus - 1;
+        return bus;
+    }
+
     template <typename Member>
     static bool applyToPair (MultitrackRecorder& rec, int index, Member member,
                              bool value, const juce::CriticalSection& lock)
@@ -1136,12 +1155,27 @@ namespace zynforge
                                     so->hasProperty ("bus") ? (int) so->getProperty ("bus") : -1,
                                     std::memory_order_relaxed);
                                 t.sends[(size_t) s].levelDb.store (
-                                    (float) (double) so->getProperty ("dB"), std::memory_order_relaxed);
+                                    sendLevelInRange ((float) (double) so->getProperty ("dB")),
+                                    std::memory_order_relaxed);
                                 t.sends[(size_t) s].postFader.store (
                                     ! so->hasProperty ("post") || (bool) so->getProperty ("post"),
                                     std::memory_order_relaxed);
                             }
                 }
+
+        // The strip shows L, so L is what the engineer set. A session saved
+        // while these controls wrote L alone can hold R out of step with it.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            if (! t.isStereo.load (std::memory_order_relaxed)) continue;
+            setTrackStream (i, t.streamSend.load (std::memory_order_relaxed));
+            for (int s = 0; s < TrackState::kNumSends; ++s)
+                setTrackSend (i, s, t.sends[(size_t) s].targetBus.load (std::memory_order_relaxed),
+                              t.sends[(size_t) s].levelDb.load (std::memory_order_relaxed),
+                              t.sends[(size_t) s].postFader.load (std::memory_order_relaxed));
+        }
+
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();
@@ -1663,6 +1697,10 @@ namespace zynforge
             const int out = l.outputRouting.load (std::memory_order_relaxed);
             if (in  != -2) setTrackInputRouting  (channelIndex + 1, in  >= 0 ? in  + 1 : -1);
             if (out != -2) setTrackOutputRouting (channelIndex + 1, out >= 0 ? out + 1 : -1);
+            for (int s = 0; s < TrackState::kNumSends; ++s)
+                setTrackSend (channelIndex, s, l.sends[(size_t) s].targetBus.load (std::memory_order_relaxed),
+                              l.sends[(size_t) s].levelDb.load (std::memory_order_relaxed),
+                              l.sends[(size_t) s].postFader.load (std::memory_order_relaxed));
         }
         // Bump the track generation so EVERY view (MIXER, EDIT, and the
         // meterbridge) rebuilds and re-collapses the pair -- a stereo link from
@@ -2355,8 +2393,8 @@ namespace zynforge
 
     void AudioEngine::setTrackStream (int channelIndex, bool enabled)
     {
-        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
-        recorder.getTrack (channelIndex).streamSend.store (enabled, std::memory_order_relaxed);
+        applyToPair (recorder, channelIndex, &TrackState::streamSend, enabled,
+                     recorder.getStructureLock());
     }
 
     int AudioEngine::getCurrentDeviceInputCount() const
@@ -2546,14 +2584,24 @@ namespace zynforge
     void AudioEngine::setTrackSend (int channelIndex, int slot,
                                      int targetBus, float levelDb, bool postFader)
     {
+        const juce::ScopedLock sl (recorder.getStructureLock());
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         if (slot < 0 || slot >= TrackState::kNumSends) return;
-        levelDb = juce::jlimit (-60.0f, 12.0f, levelDb);
+        levelDb = sendLevelInRange (levelDb);
 
-        auto& s = recorder.getTrack (channelIndex).sends[(size_t) slot];
-        s.targetBus.store (targetBus,  std::memory_order_relaxed);
-        s.levelDb  .store (levelDb,    std::memory_order_relaxed);
-        s.postFader.store (postFader,  std::memory_order_relaxed);
+        const auto write = [&] (int track, int bus)
+        {
+            auto& s = recorder.getTrack (track).sends[(size_t) slot];
+            s.targetBus.store (bus,       std::memory_order_relaxed);
+            s.levelDb  .store (levelDb,   std::memory_order_relaxed);
+            s.postFader.store (postFader, std::memory_order_relaxed);
+        };
+        write (channelIndex, targetBus);
+        // A pair is one strip, so a send is one send: both halves feed the
+        // bus. A stereo bus takes L on its L half and R on its R half.
+        const int partner = stereoPartnerIndexLocked (recorder, channelIndex);
+        if (partner >= 0 && partner < recorder.getNumTracks())
+            write (partner, stereoPartnerBusLocked (recorder, targetBus, partner > channelIndex));
         // Sends persist per-session via session_mix.json (saveSessionMixTo),
         // NOT global appProps -- writing them to appProps keyed by index made
         // routing leak from one session into the next.

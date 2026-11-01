@@ -594,8 +594,8 @@ namespace zynforge
                             nameLabel.setText (reset, juce::dontSendNotification);
                         }
                         break;
-                case 5: state.streamSend.store (! state.streamSend.load (std::memory_order_relaxed),
-                                                std::memory_order_relaxed);
+                case 5: if (onStreamSendChanged)
+                            onStreamSendChanged (! state.streamSend.load (std::memory_order_relaxed));
                         break;
                 case 6: state.outputMuted.store (! state.outputMuted.load (std::memory_order_relaxed),
                                                  std::memory_order_relaxed);
@@ -656,7 +656,6 @@ namespace zynforge
                             const int idx = chosen - 801;
                             if (idx < (int) list.size()) target = list[(size_t) idx].first;
                         }
-                        state.sends[0].targetBus.store (target, std::memory_order_relaxed);
                         if (onSendTargetChanged) onSendTargetChanged (target);
                     }
                     break;
