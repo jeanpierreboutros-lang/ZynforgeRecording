@@ -4,6 +4,7 @@
 #include "AtomicFile.h"
 #include "FastAccumulate.h"
 #include "TransientDetector.h"
+#include "MultiPartReader.h"
 
 namespace zynforge
 {
@@ -668,11 +669,74 @@ namespace zynforge
         const double rate = player.getSampleRate() > 0.0 ? player.getSampleRate()
                           : (deviceManager.getCurrentAudioDevice() != nullptr
                                 ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 48000.0);
-        const double secs = (double) timecodeChase.getHours()   * 3600.0
-                          + (double) timecodeChase.getMinutes() * 60.0
-                          + (double) timecodeChase.getSeconds()
-                          + (double) timecodeChase.getFrames()  / fps;
-        return (juce::int64) (secs * rate + 0.5);
+        const auto start = chaseStartLabel.load (std::memory_order_relaxed);
+        double secs = timecodeChase.timeOfDaySeconds (0)
+                    - ((double) (start >> 24) * 3600.0 + (double) ((start >> 16) & 0xFF) * 60.0
+                       + (double) ((start >> 8) & 0xFF) + (double) (start & 0xFF) / fps);
+        // House timecode wraps at midnight; a show running across it is still
+        // the same show.
+        constexpr double kDay = 24.0 * 3600.0;
+        if (secs < -kDay / 2.0) secs += kDay;
+        return (juce::int64) std::floor (secs * rate + 0.5);
+    }
+
+    juce::String AudioEngine::getChaseStartTimecode() const
+    {
+        const auto start = chaseStartLabel.load (std::memory_order_relaxed);
+        return juce::String::formatted ("%02d:%02d:%02d:%02d", (int) (start >> 24), (int) ((start >> 16) & 0xFF),
+                                        (int) ((start >> 8) & 0xFF), (int) (start & 0xFF));
+    }
+
+    bool AudioEngine::setChaseStartTimecode (const juce::String& hhmmssff)
+    {
+        juce::StringArray fields;
+        fields.addTokens (hhmmssff.trim(), ":;.", {});
+        if (fields.size() != 4) return false;
+        int value[4] {};
+        for (int i = 0; i < 4; ++i)
+        {
+            if (fields[i].isEmpty() || ! fields[i].containsOnly ("0123456789")) return false;
+            value[i] = fields[i].getIntValue();
+        }
+        if (value[0] > 23 || value[1] > 59 || value[2] > 59 || value[3] > 29) return false;
+        chaseStartLabel.store (((juce::uint32) value[0] << 24) | ((juce::uint32) value[1] << 16)
+                                   | ((juce::uint32) value[2] << 8) | (juce::uint32) value[3],
+                               std::memory_order_relaxed);
+        return true;
+    }
+
+    bool AudioEngine::setChaseStartFromTake()
+    {
+        const auto folder = getActiveSessionDir().getChildFile ("Audio Files");
+        auto files = folder.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "Track_*");
+        files.sort();
+        const double rate = player.getSampleRate();
+        double fps = timecodeChase.getFps();
+        if (fps <= 0.0) fps = 30.0;
+        if (rate <= 0.0) return false;
+        for (const auto& file : files)
+        {
+            juce::uint64 stamp = 0;
+            if (file.getFileName().contains (".punchbase") || mainTakeTrackNumber (file) <= 0
+                || bwf::readTimeReference (file, stamp) != bwf::StampResult::ok) continue;
+            const double seconds = (double) stamp / rate;
+            const int whole = (int) seconds;
+            return setChaseStartTimecode (juce::String::formatted ("%02d:%02d:%02d:%02d",
+                (whole / 3600) % 24, (whole / 60) % 60, whole % 60,
+                juce::jmin (29, (int) ((seconds - whole) * fps))));
+        }
+        return false;
+    }
+
+    juce::String AudioEngine::getChaseParkReason() const
+    {
+        const auto total  = player.getTotalLengthSamples();
+        const auto target = getChaseTargetSamples();
+        if (target >= 0 && target < total) return {};
+        if (total <= 0) return "Chase is holding: no audio is loaded";
+        return "Chase is holding: timecode " + getChaseTimecodeString()
+             + (target < 0 ? " is before the session start (" : " is past the end of the session (starts at ")
+             + getChaseStartTimecode() + "). Set the start in Transport Sync";
     }
 
     bool AudioEngine::getTimecodeAnchor (bwf::TimeAnchor& anchor) const
@@ -1113,6 +1177,7 @@ namespace zynforge
         // Session-level tempo state (BPM, time signature, and the multi-point
         // tempo map) -- per session, not global appProps.
         root->setProperty ("tempoBpm",   (double) currentTempoBpm.load (std::memory_order_relaxed));
+        root->setProperty ("chaseStartTimecode", getChaseStartTimecode());
         root->setProperty ("timeSigNum",   timeSigNumerator  .load (std::memory_order_relaxed));
         root->setProperty ("timeSigDenom", timeSigDenominator.load (std::memory_order_relaxed));
         juce::Array<juce::var> tmap;
@@ -1171,6 +1236,8 @@ namespace zynforge
         for (int i = 0; i < recorder.getNumTracks(); ++i)
             recorder.getTrack (i).isStereo.store (false);
 
+        if (! setChaseStartTimecode (root->getProperty ("chaseStartTimecode").toString()))
+            chaseStartLabel.store (0, std::memory_order_relaxed);
         // Session tempo state. Guarded so an older session (no keys) keeps
         // whatever's current rather than snapping to 0 BPM / 4-4.
         if (root->hasProperty ("tempoBpm"))
@@ -2377,6 +2444,7 @@ namespace zynforge
         }
         clearAllAutomationTrims();
         resetAllStripState();
+        chaseStartLabel.store (0, std::memory_order_relaxed);
         for (auto& v : vcas)
         {
             v.gainDb.store (0); v.muted.store (false); v.soloed.store (false);

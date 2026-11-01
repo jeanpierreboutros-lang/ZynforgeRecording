@@ -133,7 +133,20 @@ namespace zynforge
         }
         // The position (in the player's sample domain) the chased timecode
         // currently points at, and a HH:MM:SS:FF string for display.
+        // Where the timecode puts the playhead: its label minus the session's
+        // start timecode. Can fall outside the session; see getChaseParkReason.
         juce::int64  getChaseTargetSamples() const;
+        // The timecode that lines up with the session's first sample, saved
+        // with the session. 00:00:00:00 unless set: house timecode and any
+        // show that starts at 01:00:00:00 need it, or the target is hours out.
+        juce::String getChaseStartTimecode() const;
+        bool         setChaseStartTimecode (const juce::String& hhmmssff);   // false = not a timecode
+        // Line the session's first sample up with the first take's BWF stamp,
+        // the time of day it was recorded. False when no take carries one.
+        bool         setChaseStartFromTake();
+        // Empty while the timecode lands inside the session. Otherwise why
+        // chase is holding off instead of throwing the playhead at the end.
+        juce::String getChaseParkReason() const;
         juce::String getChaseTimecodeString() const;
         // The running timecode as a time of day for a take's BWF stamp. False
         // unless chase is live right now; the take then uses the wall clock.
@@ -1241,6 +1254,7 @@ namespace zynforge
         TrackState        masterState;
         TrackState        masterStateR;
         LoudnessMeter     loudness;   // BS.1770 master loudness + true-peak
+        std::atomic<juce::uint32> chaseStartLabel { 0 };   // hh mm ss ff, one byte each
         std::atomic<bool> masterHeldOff { false };
         std::atomic<bool> streamHeldOff { false };
         std::atomic<bool> mixMaySharePatchedOutputs { false };

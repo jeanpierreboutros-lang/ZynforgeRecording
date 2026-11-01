@@ -566,6 +566,72 @@ namespace zynforge
                 e.stopRecording();
             }
 
+            beginTest ("Chase subtracts the session's start timecode");
+            {
+                TempFolder f;
+                {
+                    Rig r (1, 1, 2);
+                    r.engine.setTrackArmed (0, true);
+                    expect (r.engine.startRecording (f.dir));
+                    r.input (0, 0.25f);
+                    for (int b = 0; b < 2000; ++b) r.process();    // about 10 s
+                    r.engine.stopRecording();
+                }
+                Rig r (1, 1, 2);
+                auto& e = r.engine;
+                expectEquals (e.loadSession (f.dir), 1);
+                const double rate = e.getPlayer().getSampleRate();
+                e.setChaseMode (AudioEngine::ChaseMode::Mtc);
+
+                e.getTimecodeChase().feedMtcFullFrame (1, 0, 5, 0, 25.0f);
+                expect (e.getChaseParkReason().contains ("past the end"),
+                        "timecode an hour on must say why chase will not follow");
+                expect (e.setChaseStartTimecode ("01:00:00:00"));
+                expectEquals (e.getChaseStartTimecode(), juce::String ("01:00:00:00"));
+                expectWithinAbsoluteError ((double) e.getChaseTargetSamples(), 5.0 * rate, 1.0);
+                expect (e.getChaseParkReason().isEmpty(), "chase refused a target inside the session");
+
+                e.getTimecodeChase().feedMtcFullFrame (0, 59, 50, 0, 25.0f);
+                expect (e.getChaseTargetSamples() < 0);
+                expect (e.getChaseParkReason().contains ("before the session"));
+
+                expect (! e.setChaseStartTimecode ("25:00:00:00"));
+                expect (! e.setChaseStartTimecode ("rubbish"));
+                expectEquals (e.getChaseStartTimecode(), juce::String ("01:00:00:00"), "bad text changed the start");
+
+                expect (e.setChaseStartTimecode ("23:59:58:00"));
+                e.getTimecodeChase().feedMtcFullFrame (0, 0, 1, 0, 25.0f);
+                expectWithinAbsoluteError ((double) e.getChaseTargetSamples(), 3.0 * rate, 1.0,
+                                           "a show running over midnight lost its place");
+
+                expect (e.setChaseStartTimecode ("10:20:30:04"));
+                expect (e.saveSessionMixTo (f.dir));
+                e.clearSessionState();
+                expectEquals (e.getChaseStartTimecode(), juce::String ("00:00:00:00"), "the start leaked past its session");
+                expect (e.loadSessionMixFrom (f.dir));
+                expectEquals (e.getChaseStartTimecode(), juce::String ("10:20:30:04"));
+                e.setChaseMode (AudioEngine::ChaseMode::Off);
+            }
+
+            beginTest ("The session start can come from the first take's time stamp");
+            {
+                TempFolder f;
+                Rig r (1, 1, 2);
+                auto& e = r.engine;
+                e.setTrackArmed (0, true);
+                expect (e.startRecording (f.dir));
+                r.input (0, 0.25f);
+                for (int b = 0; b < 64; ++b) r.process();
+                e.stopRecording();
+                e.setActiveSessionDir (f.dir);
+                expectEquals (e.loadSession (f.dir), 1);
+                const auto now = juce::Time::getCurrentTime();
+                expect (e.setChaseStartFromTake(), "a recorded WAV carries a stamp");
+                expect (e.getChaseStartTimecode().startsWith (juce::String::formatted ("%02d:", now.getHours()))
+                            || now.getMinutes() == 0,
+                        "the stamp did not reach the start: " + e.getChaseStartTimecode());
+            }
+
             beginTest ("A muted strip that is soloed is heard on the master, rolling and in a bounce");
             {
                 TempFolder f;

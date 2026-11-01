@@ -605,18 +605,34 @@ void MainComponent::serviceTimecodeChase()
     if (engine.isRecording())
     {
         chaseWasLive = false;
+        chaseParked  = false;
         return;
     }
 
     if (engine.getChaseMode() == zynforge::AudioEngine::ChaseMode::Off)
     {
         chaseWasLive = false;
+        chaseParked  = false;
         return;
     }
 
     const bool live = engine.isChaseLive();
-    if (live)
+    const auto parkReason = live ? engine.getChaseParkReason() : juce::String();
+    if (parkReason.isNotEmpty())
     {
+        // Leave the playhead alone: a locate would clamp to the session end,
+        // PLAY would refuse, and every manual locate would be undone a tenth
+        // of a second later. Stop what chase started, once, and say why.
+        if (! chaseParked)
+        {
+            chaseParked = true;
+            if (chaseWasLive && engine.isPlaying()) engine.stopPlayback();
+            showStatus (parkReason);
+        }
+    }
+    else if (live)
+    {
+        chaseParked = false;
         const double sr = engine.getPlayer().getSampleRate() > 0.0
                             ? engine.getPlayer().getSampleRate() : pendingSampleRate;
         const juce::int64 target = engine.getChaseTargetSamples();
