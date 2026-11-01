@@ -1,4 +1,5 @@
 #include "SessionMirror.h"
+#include "LineSocket.h"
 #include "../Audio/AudioEngine.h"
 #include "../Audio/EngineStatus.h"
 #include <juce_core/juce_core.h>
@@ -51,7 +52,7 @@ namespace zynforge
             }
             else
             {
-                const auto v = juce::JSON::parse (payload);
+                const auto v = linesocket::parseJson (payload);
                 if (! v.isObject())
                 {
                     // The commonest cause by far is a rejected token: the
@@ -63,13 +64,14 @@ namespace zynforge
                 }
                 else
                 {
-                    if (applyState (v))
+                    juce::String refusal;
+                    if (applyState (v, refusal))
                     {
                         lastSyncMs = juce::Time::currentTimeMillis();
                         lastError.clear();
                     }
                     else
-                        lastError = "invalid primary status; channel layout preserved";
+                        lastError = refusal;
                 }
             }
         }
@@ -142,8 +144,9 @@ namespace zynforge
         resultReady.store (true);
     }
 
-    bool SessionMirror::applyState (const juce::var& v)
+    bool SessionMirror::applyState (const juce::var& v, juce::String& refusal)
     {
+        refusal = "invalid primary status; channel layout preserved";
         if (v.getDynamicObject() == nullptr) return false;
 
         // Validate the complete layout before changing any strip. A proxy's
@@ -164,6 +167,22 @@ namespace zynforge
                 || colour.length() != 7 || ! colour.startsWithChar ('#')
                 || ! colour.substring (1).containsOnly ("0123456789abcdefABCDEF"))
                 return false;
+        }
+
+        // A primary whose capture daemon has gone quiet reports no strips, and
+        // so does one with no session open. Neither says the show has no
+        // channels. Following them frees every strip here, and regrowing clears
+        // each strip's routing and arm, so the next RECORD on this Mac would
+        // capture nothing, or the wrong inputs.
+        if (v.getProperty ("source", "local").toString() == "daemon-unavailable")
+        {
+            refusal = "primary's capture status is unavailable; channel layout preserved";
+            return false;
+        }
+        if (tracks->isEmpty())
+        {
+            refusal = "primary has no channels; channel layout preserved";
+            return false;
         }
 
         // Parse the EXACT schema the primary's CompanionServer emits

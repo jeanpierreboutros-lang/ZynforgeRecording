@@ -60,6 +60,34 @@ namespace zynforge::scenefollow
         juce::uint32 lastMs { 0 };
     };
 
+    // Markers and scene recalls arrive from desks with no token, so anyone on
+    // the network can send them, and each one costs a sort, a file rewrite and
+    // a write to the session volume on the message thread. A person fires a
+    // handful in a row at most and about one a second after that. Message
+    // thread only.
+    class MarkerBudget
+    {
+    public:
+        static constexpr juce::uint32 kBurst    = 8;
+        static constexpr juce::uint32 kRefillMs = 1000;
+
+        bool take (juce::uint32 nowMs)
+        {
+            if (const auto earned = (nowMs - lastRefillMs) / kRefillMs; earned > 0)
+            {
+                tokens = juce::jmin (kBurst, tokens + juce::jmin (kBurst, earned));
+                lastRefillMs += earned * kRefillMs;
+            }
+            if (tokens == 0) return false;
+            --tokens;
+            return true;
+        }
+
+    private:
+        juce::uint32 tokens { kBurst };
+        juce::uint32 lastRefillMs { 0 };
+    };
+
     struct Facts
     {
         bool capturing    { false };   // AudioEngine::isRecording(): local or daemon

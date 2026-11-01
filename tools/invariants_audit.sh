@@ -445,6 +445,18 @@ report "OSC datagrams are parsed by the depth-capped OscPacketReceiver" \
        "use OscPacketReceiver (Source/Network/OscPacketReceiver.h), never juce::OSCReceiver" \
        "$HITS"
 
+# juce::JSON::parse recurses with no depth cap, so text off a socket reaches it
+# only through linesocket::parseJson. Two parsers here once skipped the guard
+# while the docs said every parser ran it, and a third trusted a guard that had
+# fallen out of step with the parser. Loading a File is local session state.
+HITS=$(grep -rnE 'JSON::(parse|fromString)' Source/Network Source/Capture 2>/dev/null \
+       | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
+       | grep -v '^Source/Network/LineSocket\.h:' \
+       | grep -vE '^Source/Network/ConsoleLink\.cpp:[0-9]+:.*JSON::parse \(f\)')
+report "network text reaches juce::JSON::parse only through the depth guard" \
+       "call linesocket::parseJson (Source/Network/LineSocket.h), never juce::JSON::parse, on anything off a socket" \
+       "$HITS"
+
 HITS=""
 grep -q 'COMMAND /usr/bin/codesign --force --sign -' CMakeLists.txt \
     || HITS="CMakeLists.txt: local app bundle is not resealed after the capture helper is embedded"

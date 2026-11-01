@@ -4,10 +4,12 @@
 #include "FastHash.h"
 #include "PunchSplice.h"
 #include "MultiPartReader.h"
+#include "../Network/CaptureIdentity.h"
 
 #include <juce_cryptography/juce_cryptography.h>
 #include <limits>
 #include <map>
+#include <optional>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -25,6 +27,30 @@ namespace zynforge
         {
             std::mutex publication;
             std::atomic<juce::int64> generation { 0 };
+        };
+
+        // `publication` only spans one process, and with a capture daemon the
+        // report has two: the daemon publishes hashes while the GUI merges the
+        // twin block, each reading the file and writing it back. flock works
+        // across them, and the kernel lets go if the holder dies. The wait is
+        // bounded because every hold is one small read and write: a holder that
+        // is stuck must not cost the report.
+        class ReportFileLock
+        {
+        public:
+            ReportFileLock() : file (capture::identity::Endpoint::openSharedFile (MultitrackRecorder::kReportLockName))
+            {
+                const auto giveUp = juce::Time::getMillisecondCounterHiRes() + kWaitMs;
+                while (file >= 0 && ::flock (file, LOCK_EX | LOCK_NB) != 0
+                       && juce::Time::getMillisecondCounterHiRes() < giveUp)
+                    juce::Thread::sleep (2);
+            }
+            ~ReportFileLock() { if (file >= 0) ::close (file); }   // closing releases it
+
+        private:
+            static constexpr double kWaitMs = 3000.0;
+            int file;
+            JUCE_DECLARE_NON_COPYABLE (ReportFileLock)
         };
 
         std::shared_ptr<SessionReportState> sessionReportState (const juce::File& directory)
@@ -2278,6 +2304,8 @@ namespace zynforge
         juce::Time  stoppedAt;
         juce::int64 reportedSamples {}, reportedMissed {};
         double      reportedSeconds {};
+        juce::int64 passSamples {}, passMissed {};
+        double      passSeconds {};
         bool        backupWasRunning {}, reportedBackupFailure {}, reportedPrimaryFailure {},
                     reportedPunchFailure {}, reportedMirrorFailure {}, reportedDeviceLoss {};
         int         reportedMirrorsSkipped {};
@@ -2794,6 +2822,9 @@ namespace zynforge
                                          ? (double) oldReport.getProperty ("totalSeconds", 0.0) : 0.0)
                                      + stop.totalSeconds;
         report.reportedMissed = previousInt ("missedSamples") + stop.totalMissed;
+        report.passSamples = stop.totalSamples;
+        report.passSeconds = stop.totalSeconds;
+        report.passMissed  = stop.totalMissed;
         report.reportedMirrorsSkipped = (int) previousInt ("mirrorsSkipped") + mirrorsSkipped;
         report.reportedDeviceLoss = previousBool ("captureDeviceLost") || stop.deviceLostAtStop;
         report.reportedPrimaryFailure = previousBool ("primaryFailed") || primFailed;
@@ -2835,6 +2866,11 @@ namespace zynforge
         report->setProperty ("totalSamples",   (juce::int64) reportedSamples);
         report->setProperty ("totalSeconds",   reportedSeconds);
         report->setProperty ("missedSamples",  (juce::int64) reportedMissed);
+        // The totals above add up every pass of the session. These are this
+        // pass alone, which is what a comparison with another Mac has to read.
+        report->setProperty ("passSamples",    (juce::int64) passSamples);
+        report->setProperty ("passSeconds",    passSeconds);
+        report->setProperty ("passMissedSamples", (juce::int64) passMissed);
         report->setProperty ("captureDeviceLost", reportedDeviceLoss);
         report->setProperty ("backupActive",   backupWasRunning);
         report->setProperty ("backupFailed",   reportedBackupFailure);
@@ -2951,6 +2987,7 @@ namespace zynforge
         const auto reportState = sessionReportState (report.sessionDir);
         std::unique_lock<std::mutex> publication (reportState->publication);
         const auto myGen = reportState->generation.fetch_add (1, std::memory_order_acq_rel) + 1;
+        std::optional<ReportFileLock> otherProcess (std::in_place);
 
         // 1) Write the metadata report SYNCHRONOUSLY, right now -- this
         //    guarantees session.report.json exists the instant recording
@@ -2960,6 +2997,7 @@ namespace zynforge
             ! atomicfile::writeText (report.sessionDir.getChildFile ("session.report.json"),
                                      report.toJson (false, false, {}, report.twin)),
             std::memory_order_relaxed);
+        otherProcess.reset();
         publication.unlock();
 
         // Scan sequentially at background priority, with bounded read bursts.
@@ -3033,6 +3071,7 @@ namespace zynforge
                 // new pending reports, media mutation, and session removal.
                 const std::lock_guard<std::mutex> publish (reportState->publication);
                 if (! current()) return;
+                const ReportFileLock otherProcess;
                 // The twin link adds its block after STOP, and in daemon mode
                 // from the other process, so the file is the only place to
                 // find it. Hashing can outlast that by many minutes.
@@ -3062,6 +3101,7 @@ namespace zynforge
     {
         const auto state = sessionReportState (sessionDir);
         const std::lock_guard<std::mutex> lock (state->publication);
+        const ReportFileLock otherProcess;
         const auto file = sessionDir.getChildFile ("session.report.json");
         auto report = file.existsAsFile() ? juce::JSON::parse (file) : juce::var();
         auto* object = report.getDynamicObject();
