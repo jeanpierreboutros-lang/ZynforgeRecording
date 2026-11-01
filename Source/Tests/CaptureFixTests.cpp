@@ -900,6 +900,98 @@ namespace zynforge
                         main.captureSupervisor.lastConnectError);
             }
 
+            beginTest ("PUNCH mode ends at the out point however late the timer runs");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                main.useCaptureDaemon = false;
+                main.captureSupervisor.disconnect();
+                auto& engine = main.engine;
+                auto& rec = engine.getRecorder();
+                auto& player = engine.getPlayer();
+                rec.getTrack (0).armed.store (true);
+                engine.setTrackInputRouting (0, 0);
+                std::vector<float> samples ((size_t) kBlock, 0.25f);
+                const float* inputs[] { samples.data() };
+                juce::AudioBuffer<float> out (2, kBlock);
+                const auto callback = [&]
+                { engine.audioDeviceIOCallbackWithContext (inputs, 1, out.getArrayOfWritePointers(), 2, kBlock, {}); };
+
+                expect (engine.startRecording (rig.session));
+                for (int b = 0; b < 400; ++b) { callback(); rec.drainPendingForTests(); }
+                engine.stopRecording();
+                expect (player.isLoaded());
+
+                const juce::int64 in = 100 * kBlock, outPoint = 200 * kBlock;
+                player.setLoopRegion (in, outPoint);
+                engine.setPunchModeOn (true);
+                engine.setTrackPunchArmed (0, true);
+                player.setPositionSamples (90 * kBlock);
+                engine.startPlayback();
+                std::fill (samples.begin(), samples.end(), 0.75f);
+                while (player.getPositionSamples() < in + kBlock) callback();
+                main.servicePunch();
+                expect (engine.isRecording(), "the punch never started");
+                // The timer stalls well past the out point.
+                while (player.getPositionSamples() < 260 * kBlock)
+                {
+                    callback();
+                    rec.drainPendingForTests();
+                }
+                main.servicePunch();
+                expect (pumpUntil ([&] { return ! engine.isRecording() && ! engine.isCaptureFinalizing()
+                                             && ! main.captureMetadataPending; }, 15000));
+                engine.setPunchModeOn (false);
+
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (
+                    rig.session.getChildFile ("Audio Files").getChildFile ("Track_01.wav")));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    juce::AudioBuffer<float> take (1, (int) reader->lengthInSamples);
+                    reader->read (&take, 0, take.getNumSamples(), 0, true, false);
+                    expect (std::abs (take.getSample (0, 150 * kBlock) - 0.75f) < 0.001f, "the punch did not land");
+                    expect (std::abs (take.getSample (0, (int) outPoint - 1) - 0.75f) < 0.001f, "the punch ended early");
+                    expect (std::abs (take.getSample (0, (int) outPoint) - 0.25f) < 0.001f, "the punch ran past the out point");
+                    expect (std::abs (take.getSample (0, 230 * kBlock) - 0.25f) < 0.001f, "audio after the out point was replaced");
+                }
+            }
+
+            beginTest ("A punch-in a save ran through is reported, not skipped in silence");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                main.useCaptureDaemon = false;
+                main.captureSupervisor.disconnect();
+                auto& engine = main.engine;
+                auto& rec = engine.getRecorder();
+                auto& player = engine.getPlayer();
+                rec.getTrack (0).armed.store (true);
+                expect (engine.startRecording (rig.session));
+                std::vector<float> samples ((size_t) kBlock, 0.25f);
+                const float* inputs[] { samples.data() };
+                for (int b = 0; b < 400; ++b) { rec.processBlock (inputs, 1, kBlock); rec.drainPendingForTests(); }
+                engine.stopRecording();
+
+                player.setLoopRegion (100 * kBlock, 200 * kBlock);
+                engine.setPunchModeOn (true);
+                engine.setTrackPunchArmed (0, true);
+                engine.startPlayback();
+                main.sessionIoBusy.store (true);
+                player.setPositionSamples (150 * kBlock);
+                main.servicePunch();
+                expect (! engine.isRecording());
+                player.setPositionSamples (250 * kBlock);
+                main.servicePunch();
+                main.sessionIoBusy.store (false);
+                engine.stopPlayback();
+                engine.setPunchModeOn (false);
+                expect (main.statusLabel.getText().contains ("Punch-in missed"), main.statusLabel.getText());
+            }
+
             beginTest ("A take the daemon ended by itself comes back to the window");
             {
                 Rig rig;

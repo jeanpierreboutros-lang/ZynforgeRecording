@@ -519,6 +519,7 @@ private:
     static constexpr const char* kDaemonGoneMidTake =
         "CAPTURE DAEMON GONE MID-TAKE -- the take ended with it; audio up to its last header write is on disk";
     int  captureDaemonPort { kCaptureDaemonPort };
+    bool punchInWaiting { false };       // a save is holding up a PUNCH-mode punch-in
     bool daemonLinkLost { false };       // reported lost, not yet resolved
     bool daemonTakeAdopted { false };    // this window knows the rolling take
     // RECORD got no reply. The take may be rolling, so the guard is up until a

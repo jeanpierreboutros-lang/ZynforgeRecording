@@ -266,12 +266,12 @@ void MainComponent::restoreArmStateAfterPunch()
 
 void MainComponent::servicePunch()
 {
-    if (sessionIoBusy.load()) return;
     auto& player = engine.getPlayer();
     if (! player.isLoaded()) return;
     const auto pos    = player.getPositionSamples();
     if (punchSessionActive)
     {
+        if (sessionIoBusy.load()) return;
         // Selection recording opened before pre-roll began. The audio callback
         // admitted exactly [in,out), so this timer only finalises the file and
         // starts post-roll; it no longer decides which samples hit disk.
@@ -298,6 +298,21 @@ void MainComponent::servicePunch()
         return;
     }
     const auto inside = (pos >= player.getLoopStart() && pos < player.getLoopEnd());
+
+    // A save owns the session and the engine refuses a take until it ends, so
+    // the punch-in waits for it. A window that passes first is reported, not
+    // skipped in silence. A rolling take is never held: its punch-out runs.
+    if (sessionIoBusy.load() && ! engine.isRecording())
+    {
+        if (inside && player.isPlaying()) punchInWaiting = true;
+        else if (punchInWaiting)
+        {
+            punchInWaiting = false;
+            showStatus ("Punch-in missed -- a session save ran through the whole punch window");
+        }
+        return;
+    }
+    punchInWaiting = false;
 
     if (inside && ! wasInsidePunch && player.isPlaying())
     {
@@ -331,9 +346,14 @@ void MainComponent::servicePunch()
             // Splice at the ACTUAL playhead where recording begins (one timer
             // tick past loopStart), so the captured audio lands at the right
             // timeline position instead of being nudged earlier to loopStart.
-            engine.armPunchIn (player.getPositionSamples());
+            const auto punchAt = player.getPositionSamples();
+            engine.armPunchIn (punchAt);
+            // The callback ends the capture at the out point to the sample.
+            // This timer only closes the take, whenever it next gets to run.
+            engine.setCaptureWindow (punchAt, player.getLoopEnd());
             if (! engine.startRecording (sessionDir))
             {
+                engine.clearCaptureWindow();
                 engine.getRecorder().cancelPunchIn();
                 restoreArmStateAfterPunch();
                 showStatus ("Punch-in failed -- existing take was restored");
