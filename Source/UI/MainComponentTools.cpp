@@ -1085,7 +1085,9 @@ void MainComponent::showSessionProperties()
             : juce::String ("--");
     }
     {
-        const int fmt = obj ? (int) obj->getProperty ("captureFormat") : (int) CaptureFormat::Wav24;
+        // The project file holds the format the session was created with.
+        // The recorder holds the one in use, and only this session is open.
+        const int fmt = (int) engine.getRecorder().getCaptureFormat();
         fields.captureFormat = formatLabel (fmt);
         fields.bitDepth = (fmt == (int) CaptureFormat::Wav16 || fmt == (int) CaptureFormat::Aiff16 || fmt == (int) CaptureFormat::Flac16) ? "16-bit"
                         : (fmt == (int) CaptureFormat::Wav32Float || fmt == (int) CaptureFormat::Aiff32Float)              ? "32-bit float"

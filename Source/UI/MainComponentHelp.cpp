@@ -63,7 +63,7 @@ namespace
                 }},
                 { "Edit", {
                     { "A",            "Solo selected strips" },
-                    { "S",            "Split clip at playhead" },
+                    { "S",            "Smart tool (with the EDIT tools showing)" },
                     { ",",            "Set range start at playhead" },
                     { ".",            "Set range end at playhead" },
                     { "Ctrl + 4",     "Toggle snap mode" },

@@ -113,18 +113,15 @@ namespace zynforge
                 bitDepthCombo.setSelectedId (bitDepthIdFromFormat (lastCaptureFormat), juce::dontSendNotification);
 
                 // ─── I/O Settings ───
-                addAndMakeVisible (ioLabel);
                 ioLabel.setText ("I/O Settings", juce::dontSendNotification);
                 styleFieldLabel (ioLabel);
 
-                addAndMakeVisible (ioCombo);
                 styleCombo (ioCombo);
                 ioCombo.addItem ("Last Used",  1);
                 ioCombo.addItem ("Stereo Mix", 2);
                 ioCombo.setSelectedId (1, juce::dontSendNotification);
 
                 // ─── Interleaved ───
-                addAndMakeVisible (interleavedToggle);
                 interleavedToggle.setButtonText ("Interleaved");
                 interleavedToggle.setToggleState (true, juce::dontSendNotification);
                 interleavedToggle.setColour (juce::ToggleButton::textColourId, brand::textPrimary);

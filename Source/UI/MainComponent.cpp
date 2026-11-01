@@ -171,7 +171,7 @@ bool MainComponent::handleRecordPressDuringTake()
         if (stopArmedAtMs == 0 || (now - stopArmedAtMs) > kArmWindowMs)
         {
             stopArmedAtMs = now;
-            toast.show ("Tap STOP again to end the recording", Toast::Kind::Warning);
+            toast.showNow ("Tap STOP again to end the recording", Toast::Kind::Warning);
             statusLabel.setText ("STOP armed -- tap again within 2 s to end the take",
                                  juce::dontSendNotification);
             return true;
@@ -570,7 +570,7 @@ void MainComponent::onStopClicked()
         {
             // First tap -- arm. Don't actually stop yet.
             stopArmedAtMs = now;
-            toast.show ("Tap STOP again to end the recording", Toast::Kind::Warning);
+            toast.showNow ("Tap STOP again to end the recording", Toast::Kind::Warning);
             statusLabel.setText ("STOP armed -- tap again within 2 s to stop recording",
                                  juce::dontSendNotification);
             return;
@@ -1025,9 +1025,10 @@ void MainComponent::onVscClicked()
 
 void MainComponent::onBackupClicked()
 {
-    if (engine.isRecording())
+    if (engine.isRecording() || sessionIoBusy.load())
     {
-        showStatus ("Stop recording to change the backup folder");
+        showStatus (engine.isRecording() ? "Stop recording to change the backup folder"
+                                         : "Wait for the session operation to finish");
         return;
     }
 
@@ -1325,8 +1326,9 @@ void MainComponent::confirmAndQuit()
         aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         aw->addButton ("Quit",   kQuit,   juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<MainComponent> self (this);
         aw->enterModalState (true,
-            juce::ModalCallbackFunction::create ([aw] (int result)
+            juce::ModalCallbackFunction::create ([aw, self] (int result)
             {
                 std::unique_ptr<juce::AlertWindow> dispose (aw);
                 if (result == kCancel) return;       // stay in app
