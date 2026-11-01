@@ -627,9 +627,12 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 {
     if (engine.isRecording()) { showStatus ("Stop recording before exporting tracks"); return; }
     auto sourceDir = engine.getActiveSessionDir();
-    if (! sourceDir.isDirectory() || ! destDir.isDirectory()) return;
-
-    destDir.createDirectory();
+    if (! sourceDir.isDirectory()) { showStatus ("No active session to export"); return; }
+    if (destDir.createDirectory().failed())
+    {
+        showStatus ("Export failed: cannot create " + destDir.getFullPathName());
+        return;
+    }
 
     // Imported/generated media can coexist with legacy root-level takes.
     // Prefer the modern file for each track, then fall back to its legacy file.
@@ -692,14 +695,8 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 
         auto& trackState = rec.getTrack (i);
         const bool stereo = trackState.isStereo.load (std::memory_order_relaxed);
-        // Replace '.' too: the exporter appends the extension via
-        // withFileExtension, which treats a name like "Out 2.1" as if ".1"
-        // were the extension -- so "Out 2.1" and "Out 2.2" both collapsed to
-        // "...Out 2.wav" and the second export silently overwrote the first.
-        const auto safeName = trackState.name.replaceCharacter ('/', '_')
-                                              .replaceCharacter ('\\', '_')
-                                              .replaceCharacter ('.', '_');
-        const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1) + safeName;
+        const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1)
+                            + zynforge::songexport::safeName (trackState.getNameThreadSafe());
 
         ExportJob job;
         job.destStem = destDir.getChildFile (baseName);
@@ -739,6 +736,13 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
         if (job.srcL.existsAsFile()) jobs.push_back (std::move (job));
         else
         {
+            // After unlinking a native pair, the right strip's audio is the
+            // second channel of the left's file, which this export writes.
+            int fileChannel = 0;
+            if (i > 0 && std::find (channelIndices.begin(), channelIndices.end(), i - 1) != channelIndices.end()
+                && engine.getTrackAudioFile (i, &fileChannel).existsAsFile() && fileChannel == 1)
+                continue;
+
             // Empty, never-recorded strips are expected in Export All. A
             // selected strip, a previously loaded source, or a dangling
             // continuation part is missing media and makes the batch partial.
@@ -875,7 +879,7 @@ void MainComponent::completeBounceStems (juce::File dest)
             if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
                 continue;
             const auto& ts = rec.getTrack (t);
-            const auto safe = ts.getNameThreadSafe().replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
+            const auto safe = zynforge::songexport::safeName (ts.getNameThreadSafe());
             stems.push_back ({ t, ts.isStereo.load (std::memory_order_relaxed),
                                dest.getChildFile (juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav") });
         }
@@ -958,27 +962,31 @@ void MainComponent::completeBounceStereoMix (juce::File dest)
     if (editPage != nullptr) editPage->setEnabled (false);
 
     showStatus ("Bouncing stereo mix...");
+    const bool soloActive = engine.isAnySoloActive();
     // No structure lock here: the mix renderer snapshots every strip under a
     // brief lock of its own and then renders lock-free. Holding the lock for
     // the whole render froze the UI timer (captureStatus) until it finished.
     juce::Component::SafePointer<MainComponent> self (this);
-    sessionJobs.launch ([self, &eng = engine, dest, arrLen, sr] (const std::atomic<bool>& cancel)
+    sessionJobs.launch ([self, &eng = engine, dest, arrLen, sr, soloActive] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
         // Streams the summed mix window-by-window straight to disk.
+        float peak = 0.0f;
         const bool ok = ! cancel.load (std::memory_order_relaxed)
-                     && eng.bounceStereoMixToWav (dest, arrLen, sr, &cancel);
+                     && eng.bounceStereoMixToWav (dest, arrLen, sr, &cancel, &peak);
         // A quit cancels us; that returns false but is NOT a failure -- don't
         // post a spurious "bounce failed".
         const bool cancelled = cancel.load (std::memory_order_relaxed);
-        return [self, ok, cancelled, dest]
+        return [self, ok, cancelled, dest, peak, soloActive]
         {
             if (self == nullptr) return;
             self->engine.setSessionTransitionActive (false);
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
-            if (! cancelled)
-                self->showStatus (ok ? "Bounced stereo mix -> " + dest.getFileName()
-                                     : juce::String ("Stereo mix bounce failed"));
+            if (cancelled) return;
+            if (! ok) { self->showStatus ("Stereo mix bounce failed"); return; }
+            const auto warning = zynforge::songexport::mixRenderWarning (peak <= 0.0f, soloActive);
+            self->showStatus ("Bounced stereo mix -> " + dest.getFileName()
+                              + (warning.isNotEmpty() ? " -- " + warning : juce::String()));
         };
     });
 }
@@ -1313,9 +1321,7 @@ void MainComponent::onSaveSessionAs()
 // player (it read the files), fall back to the session setting, then the device.
 static double sessionAudioRateFor (zynforge::AudioEngine& engine)
 {
-    if (const double pr = engine.getPlayer().getSampleRate(); pr > 0.0) return pr;
-    if (const double ss = engine.getSessionSampleRate();      ss > 0.0) return ss;
-    return engine.getDeviceSampleRate();
+    return engine.getSessionAudioRate();
 }
 
 void MainComponent::onExportAllTracks()
@@ -1766,6 +1772,14 @@ void MainComponent::exportShowHandoff()
             return;
         }
         const auto interchange = self->engine.captureInterchange();
+        if (const auto outside = projectexport::firstMediaOutsideSession (interchange);
+            outside != juce::File())
+        {
+            self->sessionJobs.release();
+            self->showStatus ("Handoff cancelled: a clip reads " + outside.getFullPathName()
+                              + ", which is outside this session and would not be in the copy");
+            return;
+        }
         const auto version = applicationVersion();
         // A crash or quit mid-copy must leave a visible incomplete marker,
         // not a plausible-looking folder with a few truncated recordings.

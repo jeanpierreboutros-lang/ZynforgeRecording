@@ -111,6 +111,7 @@ namespace zynforge
         // it ends; the host turns the before/after clip state into a
         // Cmd+Z step (no-op when nothing actually changed). Wired by
         // MainComponent to engine.playlistsToJson + pushClipUndo.
+        std::function<void (const std::vector<int>&, juce::int64, juce::int64)> consolidateRange;
         std::function<juce::var ()>                                 captureClipsForUndo;
         std::function<void (const juce::var&, const juce::String&)> commitClipUndo;
         void beginClipEdit()  { if (captureClipsForUndo) clipUndoBefore = captureClipsForUndo(); }
@@ -390,7 +391,7 @@ namespace zynforge
         void beginWaveCacheLoad (const juce::File& sessionDir);
         void beginWaveCacheSave (const juce::File& sessionDir);
         juce::ThreadPool  waveCacheThread { 1, juce::Thread::osDefaultStackSize,
-                                            juce::Thread::Priority::background };
+                                            juce::Thread::Priority::low };
         std::atomic<int>  waveCacheWork   { 0 };
         std::atomic<int>  waveCacheLoaded { -1 };    // the load job that finished
         std::atomic<bool> waveCacheSaving { false };

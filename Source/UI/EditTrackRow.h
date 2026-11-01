@@ -3356,8 +3356,7 @@ namespace zynforge
                     {
                         auto* page = findParentComponentOfClass<EditPage>();
                         if (page != nullptr) page->beginClipEdit();
-                        for (int t : stripTracks())
-                            engine.compRangeFromTake (t, tk, a, b);
+                        compFromTake (tk, a, b);
                         if (page != nullptr) page->commitClipEdit ("Comp swipe");
                     }
                 }
@@ -3525,6 +3524,20 @@ namespace zynforge
             return { index };
         }
 
+        // Both halves or neither: refusing one half would pull a pair apart.
+        void compFromTake (int take, juce::int64 start, juce::int64 end)
+        {
+            const auto tracks = stripTracks();
+            for (int t : tracks)
+                if (engine.compRangeHitsLockedClip (t, start, end))
+                {
+                    if (auto* page = findParentComponentOfClass<EditPage>())
+                        if (page->onStatus) page->onStatus ("A locked clip is in that range -- unlock it to comp");
+                    return;
+                }
+            for (int t : tracks) engine.compRangeFromTake (t, take, start, end);
+        }
+
         // True once the background thumbnail scan has finished for this row's
         // file(s) (an empty/no-source thumbnail counts as loaded). Lets the
         // page persist WaveCache.wfm the moment the whole session is scanned.
@@ -3621,18 +3634,8 @@ namespace zynforge
                     const auto start = (*clips)[(size_t) clipIdx].timelineStartSamples;
                     const auto end = start + (*clips)[(size_t) clipIdx].fileLengthSamples;
                     if (auto* page = self->findParentComponentOfClass<EditPage>())
-                        page->beginClipEdit();
-                    self->setEnabled (false);
-                    self->engine.consolidateRangeAsync (
-                        self->editGroupPeers(), start, end,
-                        [self] (int, bool)
-                    {
-                        if (self == nullptr) return;
-                        self->setEnabled (true);
-                        if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
-                            pageNow->commitClipEdit ("Consolidate clip");
-                        self->repaint();
-                    });
+                        if (page->consolidateRange)
+                            page->consolidateRange (self->editGroupPeers(), start, end);
                     return;
                 }
                 case 412:
@@ -4352,11 +4355,7 @@ namespace zynforge
                 auto& player = engine.getPlayer();
                 if (! player.hasLoopRegion()) return;
                 clipUndoStep ("Comp selection from take", [&]
-                {
-                    for (int t : stripTracks())
-                        engine.compRangeFromTake (t, chosen - 870,
-                                                  player.getLoopStart(), player.getLoopEnd());
-                });
+                { compFromTake (chosen - 870, player.getLoopStart(), player.getLoopEnd()); });
                 return;
             }
             if (chosen == 850)   // new take from current
