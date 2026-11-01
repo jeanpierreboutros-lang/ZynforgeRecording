@@ -105,7 +105,6 @@ add_library(ZynforgeCore STATIC
     Source/UI/MainComponentTools.cpp
     Source/UI/MainComponentStrips.cpp
     Source/UI/MainComponentTwin.cpp
-    Source/UI/TrackSelectDialog.cpp
     Source/UI/SessionSettingsDialog.cpp
     Source/Network/CaptureLink.cpp
     Source/Capture/CaptureDaemon.cpp
@@ -114,8 +113,6 @@ add_library(ZynforgeCore STATIC
     Source/Network/DeskMacro.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
-    Source/UI/MiniSpectrum.cpp
-    Source/UI/TimelineStrip.cpp
     Source/UI/StripColourPicker.cpp
     Source/UI/ExportDialog.cpp
     Source/UI/ExportSongsDialog.cpp
@@ -128,13 +125,11 @@ add_library(ZynforgeCore STATIC
     Source/UI/NewSessionDialog.cpp
     Source/UI/WelcomeDialog.cpp
     Source/UI/PerfDashboard.cpp
-    Source/UI/SessionPropertiesDialog.cpp
+    Source/UI/SessionInfoDialog.cpp
     Source/UI/SetlistBar.cpp
     Source/UI/TempoBar.cpp
     Source/UI/ClickSettingsDialog.cpp
-    Source/Network/CompanionServer.cpp
     Source/Network/RemoteControl.cpp
-    Source/Network/SessionMirror.cpp
     Source/Network/TwinLink.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
@@ -216,7 +211,6 @@ juce_add_gui_app(ZynforgeRecordingTests
 
 target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TestMain.cpp
-    Source/Tests/AafTests.cpp
     Source/Tests/AsyncStopAuditTests.cpp
     Source/Tests/AudioCallbackTests.cpp
     Source/Tests/AudioImportTests.cpp
@@ -234,8 +228,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ChannelCsvTests.cpp
     Source/Tests/ChannelStripAccessibilityTests.cpp
     Source/Tests/ClickTrackRendererTests.cpp
-    Source/Tests/CompanionServerTests.cpp
-    Source/Tests/CompoundFileTests.cpp
     Source/Tests/ConcurrencyAuditTests.cpp
     Source/Tests/ConsoleLinkTests.cpp
     Source/Tests/ConsoleTransportTests.cpp

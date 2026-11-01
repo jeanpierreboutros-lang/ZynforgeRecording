@@ -161,11 +161,9 @@ namespace zynforge
                     [sp = juce::Component::SafePointer<juce::TextEditor> (&nameEditor)]
                     { if (sp != nullptr) sp->grabKeyboardFocus(); });
 
-                addAndMakeVisible (localRadio);
-                localRadio.setButtonText ("Local Storage:");
-                localRadio.setToggleState (true, juce::dontSendNotification);
-                localRadio.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-                localRadio.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                addAndMakeVisible (storageLabel);
+                storageLabel.setText ("Local Storage:", juce::dontSendNotification);
+                styleFieldLabel (storageLabel);
 
                 addAndMakeVisible (pathButton);
                 pathButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
@@ -226,13 +224,6 @@ namespace zynforge
                 };
                 fileTypeCombo.onChange();
 
-                ioLabel.setText ("I/O Settings", juce::dontSendNotification);
-                styleFieldLabel (ioLabel);
-                dialog::styleCombo (ioCombo);
-                ioCombo.addItem ("Last Used",  1);
-                ioCombo.addItem ("Stereo Mix", 2);
-                ioCombo.setSelectedId (1, juce::dontSendNotification);
-
                 // Input / Output device pickers -- choose what to record from
                 // and monitor through, right here when creating the session.
                 addAndMakeVisible (inputDevLabel);
@@ -258,25 +249,6 @@ namespace zynforge
                     const int idx = dev.outputs.indexOf (dev.currentOutput);
                     outputDevCombo.setSelectedId (juce::jmax (1, idx + 1), juce::dontSendNotification);
                 }
-
-                interleaved.setButtonText ("Interleaved");
-                interleaved.setToggleState (true, juce::dontSendNotification);
-                interleaved.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-                interleaved.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
-
-                fromTemplate.setButtonText ("Create From Template");
-                fromTemplate.setToggleState (false, juce::dontSendNotification);
-                fromTemplate.setColour (juce::ToggleButton::textColourId, brand::textSecondary);
-                fromTemplate.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
-
-                templatesHeader.setText ("Templates", juce::dontSendNotification);
-                templatesHeader.setFont (brand::type::ui (14.0f, true));
-                templatesHeader.setColour (juce::Label::textColourId, brand::textMuted);
-
-                templatesHint.setText ("(no templates -- save one via Session > Save Current as Template)",
-                                       juce::dontSendNotification);
-                templatesHint.setFont (brand::type::caption());
-                templatesHint.setColour (juce::Label::textColourId, brand::textMuted);
             }
 
             juce::String  getName()        const { return nameEditor.getText().trim(); }
@@ -284,8 +256,6 @@ namespace zynforge
             CaptureFormat getFormat()      const { return formatFromUi (fileTypeCombo.getSelectedId(),
                                                                         bitDepthCombo.getSelectedId()); }
             double        getSampleRate() const { return hzFromSampleRateId (sampleRateCombo.getSelectedId()); }
-            bool          isInterleaved() const { return interleaved.getToggleState(); }
-            juce::String  getIoSettings() const { return ioCombo.getText(); }
             juce::String  getInputDevice()  const { return inputDevCombo.getNumItems()  > 0 ? inputDevCombo.getText()  : juce::String(); }
             juce::String  getOutputDevice() const { return outputDevCombo.getNumItems() > 0 ? outputDevCombo.getText() : juce::String(); }
 
@@ -299,7 +269,7 @@ namespace zynforge
                 b.removeFromTop (brand::space::btnH);
 
                 auto local = b.removeFromTop (28);
-                localRadio.setBounds (local.removeFromLeft (150));
+                storageLabel.setBounds (local.removeFromLeft (150));
                 local.removeFromLeft (brand::space::sm);
                 pathButton.setBounds (local.removeFromLeft (juce::jmin (local.getWidth(), 360)));
                 b.removeFromTop (28);
@@ -324,20 +294,10 @@ namespace zynforge
                 }
                 b.removeFromTop (18);
 
-                auto row2 = b.removeFromTop (60);
-                {
-                    auto left = row2.removeFromLeft (colW);
-                    bitDepthLabel.setBounds (left.removeFromTop (18));
-                    left.removeFromTop (brand::space::xs);
-                    bitDepthCombo.setBounds (left.removeFromTop (32));
-                }
-                row2.removeFromLeft (18);
-                {
-                    auto right = row2;
-                    ioLabel.setBounds (right.removeFromTop (18));
-                    right.removeFromTop (brand::space::xs);
-                    ioCombo.setBounds (right.removeFromTop (32));
-                }
+                auto row2 = b.removeFromTop (60).removeFromLeft (colW);
+                bitDepthLabel.setBounds (row2.removeFromTop (18));
+                row2.removeFromTop (brand::space::xs);
+                bitDepthCombo.setBounds (row2.removeFromTop (32));
                 b.removeFromTop (18);
 
                 auto row3 = b.removeFromTop (60);
@@ -354,17 +314,6 @@ namespace zynforge
                     right.removeFromTop (brand::space::xs);
                     outputDevCombo.setBounds (right.removeFromTop (32));
                 }
-                b.removeFromTop (12);
-
-                interleaved.setBounds (b.removeFromTop (brand::space::rowH).removeFromLeft (180));
-                b.removeFromTop (18);
-
-                fromTemplate.setBounds (b.removeFromTop (brand::space::rowH).removeFromLeft (240));
-                b.removeFromTop (14);
-
-                templatesHeader.setBounds (b.removeFromTop (brand::space::ctrlH));
-                b.removeFromTop (brand::space::xs);
-                templatesHint.setBounds (b.removeFromTop (brand::space::ioH));
             }
 
         private:
@@ -397,7 +346,7 @@ namespace zynforge
             juce::File         storageDir;
             juce::Label        nameLabel;
             juce::TextEditor   nameEditor;
-            juce::ToggleButton localRadio;
+            juce::Label        storageLabel;
             juce::TextButton   pathButton;
             juce::Label        sectionHeader;
             juce::Label        fileTypeLabel;
@@ -406,16 +355,10 @@ namespace zynforge
             juce::ComboBox     sampleRateCombo;
             juce::Label        bitDepthLabel;
             juce::ComboBox     bitDepthCombo;
-            juce::Label        ioLabel;
-            juce::ComboBox     ioCombo;
             juce::Label        inputDevLabel;
             juce::ComboBox     inputDevCombo;
             juce::Label        outputDevLabel;
             juce::ComboBox     outputDevCombo;
-            juce::ToggleButton interleaved;
-            juce::ToggleButton fromTemplate;
-            juce::Label        templatesHeader;
-            juce::Label        templatesHint;
             std::unique_ptr<juce::FileChooser> folderChooser;
         };
 
@@ -647,8 +590,6 @@ namespace zynforge
                 r.location      = newPanel->getLocation();
                 r.captureFormat = newPanel->getFormat();
                 r.sampleRate    = newPanel->getSampleRate();
-                r.interleaved   = newPanel->isInterleaved();
-                r.ioSettings    = newPanel->getIoSettings();
                 r.inputDeviceName  = newPanel->getInputDevice();
                 r.outputDeviceName = newPanel->getOutputDevice();
                 onCreate (r);

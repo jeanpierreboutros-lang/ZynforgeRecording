@@ -41,7 +41,6 @@ namespace zynforge
         props->saveIfNeeded();
     }
     void StripRouting::clearInput  (int i) { if (props) { reloadSettingsReplacing (*props); props->removeValue (inKey  (i)); props->saveIfNeeded(); } }
-    void StripRouting::clearOutput (int i) { if (props) { reloadSettingsReplacing (*props); props->removeValue (outKey (i)); props->saveIfNeeded(); } }
     void StripRouting::resetRange (int firstIndex, int lastIndexExclusive)
     {
         if (! props || firstIndex >= lastIndexExclusive) return;

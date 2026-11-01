@@ -346,23 +346,14 @@ namespace zynforge
                 { l.setText (t, juce::dontSendNotification); l.setColour (juce::Label::textColourId, c);
                   l.setFont (brand::type::ui (13.0f, b)); addAndMakeVisible (l); };
 
-                lab (typeKey, "Device Type",        brand::textSecondary);
                 lab (inKey,   "Surface receives via", brand::textSecondary);
                 lab (outKey,  "Surface sends via",  brand::textSecondary);
-
-                dialog::styleCombo (typeBox);
-                const auto types = juce::String (info.key) == "mackie"
-                    ? juce::StringArray { "Mackie Control", "Mackie Control Universal Pro" }
-                    : juce::StringArray { "FaderPort", "FaderPort 2", "FaderPort 8", "FaderPort 16" };
-                for (int i = 0; i < types.size(); ++i) typeBox.addItem (types[i], i + 1);
-                typeBox.setSelectedId (juce::jmax (1, prop ("type", 1)), juce::dontSendNotification);
-                addAndMakeVisible (typeBox);
 
                 fillMidi (inBox,  engine.getMidiInputNames(),       "midiin");
                 fillMidi (outBox, zynforge::MidiClockOut::listOutputs(), "midiout");
 
-                note.setText ("Device configuration is saved with the app. Live fader / transport / "
-                              "metering control over MIDI is on the roadmap; OSC consoles work today.",
+                note.setText ("Saved with the app. Tick this surface in the Control Surfaces list to open it: "
+                              "faders, mute, solo, arm, transport and jog work live.",
                               juce::dontSendNotification);
                 note.setColour (juce::Label::textColourId, brand::textMuted);
                 note.setFont (brand::type::caption());
@@ -374,7 +365,7 @@ namespace zynforge
                 applyB.onClick = [this] { save(); };
                 closeB.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
                 addAndMakeVisible (applyB); addAndMakeVisible (closeB);
-                setSize (520, 300);
+                setSize (520, 260);
             }
 
             void paint (juce::Graphics& g) override
@@ -385,7 +376,7 @@ namespace zynforge
                 auto b = getLocalBounds().reduced (24).withTrimmedTop (44);
                 auto row = [&] (juce::Label& k, juce::Component& v)
                 { auto r = b.removeFromTop (30); k.setBounds (r.removeFromLeft (160)); v.setBounds (r); b.removeFromTop (10); };
-                row (typeKey, typeBox); row (inKey, inBox); row (outKey, outBox);
+                row (inKey, inBox); row (outKey, outBox);
                 b.removeFromTop (6);
                 note.setBounds (b.removeFromTop (54));
                 auto br = getLocalBounds().removeFromBottom (50).reduced (24, 10);
@@ -394,9 +385,6 @@ namespace zynforge
             }
 
         private:
-            int prop (const char* k, int dflt) const
-            { return engine.getAppProps() ? engine.getAppProps()->getIntValue (juce::String ("cs_") + info.key + "_" + k, dflt) : dflt; }
-
             void fillMidi (juce::ComboBox& box, const juce::StringArray& names, const char* k)
             {
                 dialog::styleCombo (box);
@@ -412,7 +400,6 @@ namespace zynforge
             {
                 updateSettings (engine.getAppProps(), [&] (juce::PropertiesFile& p)
                 {
-                    p.setValue (juce::String ("cs_") + info.key + "_type", typeBox.getSelectedId());
                     p.setValue (juce::String ("cs_") + info.key + "_midiin",  inBox.getSelectedId()  > 1 ? inBox.getText()  : juce::String());
                     p.setValue (juce::String ("cs_") + info.key + "_midiout", outBox.getSelectedId() > 1 ? outBox.getText() : juce::String());
                 });
@@ -421,8 +408,8 @@ namespace zynforge
 
             AudioEngine& engine;
             ProtoInfo info;
-            juce::Label typeKey, inKey, outKey, note;
-            juce::ComboBox typeBox, inBox, outBox;
+            juce::Label inKey, outKey, note;
+            juce::ComboBox inBox, outBox;
             juce::TextButton applyB, closeB;
         };
 

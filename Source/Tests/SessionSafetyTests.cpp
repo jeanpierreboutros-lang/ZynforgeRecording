@@ -8,7 +8,6 @@
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/SettingsFile.h"
-#include "../Network/CloudUpload.h"
 #include <csignal>
 #include <sys/resource.h>
 #if JUCE_MAC
@@ -861,88 +860,6 @@ public:
         }
     }
 
-    struct UploadResult { bool started = false; cloud::UploadOutcome outcome; };
-
-    static UploadResult runUpload (const juce::String& command, const juce::File& session)
-    {
-        cloud::UploadRun run;
-        juce::WaitableEvent finished;
-        UploadResult result;
-        result.started = run.start (command, session, [&] (cloud::UploadOutcome outcome)
-        {
-            result.outcome = std::move (outcome);
-            finished.signal();
-        });
-        if (result.started) finished.wait (20000);
-        return result;
-    }
-
-    void testCloudUpload()
-    {
-        beginTest ("A cloud upload reports how it really ended");
-        {
-            Folder f;
-            const auto good = runUpload ("/usr/bin/true", f.dir);
-            expect (good.started && good.outcome.ok);
-
-            const auto failed = runUpload ("/bin/sh -c 'exit 3'", f.dir);
-            expect (failed.started, "starting is not the thing being tested");
-            expect (! failed.outcome.ok, "a failed upload was reported as finished");
-            expect (failed.outcome.problem.contains ("3"), failed.outcome.problem);
-
-            const auto missing = runUpload ("no-such-uploader-zynforge {SESSION} remote:", f.dir);
-            expect (! missing.outcome.ok, "a command that cannot run was reported as finished");
-            expect (missing.outcome.problem.contains ("not found"), missing.outcome.problem);
-
-            const auto killed = runUpload ("kill -9 $$", f.dir);
-            expect (! killed.outcome.ok, "an uploader killed by a signal was reported as finished");
-
-            const auto malformed = runUpload ("echo 'unterminated", f.dir);
-            expect (! malformed.outcome.ok, "a command line the shell cannot parse was reported as finished");
-
-            expect (! runUpload ("   ", f.dir).started);
-            expect (! runUpload ("/usr/bin/true", f.dir.getChildFile ("gone")).started);
-        }
-
-        beginTest ("The upload command is a shell command and the session path stays data");
-        {
-            const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                  .getChildFile ("zf upload \"$(touch pwned)'`x` " + juce::Uuid().toString());
-            expect (root.createDirectory().wasOk());
-            const juce::ScopeGuard removeRoot { [&] { root.deleteRecursively(); } };
-
-            for (const auto* command : { "/usr/bin/touch {SESSION}/bare",
-                                         "/usr/bin/touch \"{SESSION}/double\"",
-                                         "/usr/bin/touch '{SESSION}'/single",
-                                         "cd {SESSION} && /usr/bin/touch chained" })
-                expect (runUpload (command, root).outcome.ok, command);
-            for (const auto* marker : { "bare", "double", "single", "chained" })
-                expect (root.getChildFile (marker).existsAsFile(), marker);
-
-            expect (runUpload ("cd ~ && /usr/bin/true", root).outcome.ok, "~ must expand");
-            const auto path = runUpload ("case \":$PATH:\" in *:/opt/homebrew/bin:*) ;; *) exit 9 ;; esac", root);
-            expect (path.outcome.ok, "Homebrew tools are invisible to an app launched from Finder");
-        }
-
-        beginTest ("A running upload does not hold the session or RECORD");
-        {
-            Folder f;
-            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
-            host.engine.setActiveSessionDir (f.dir);
-            host.engine.claimMixerFor (f.dir);
-            if (auto* props = host.engine.getAppProps())
-                props->setValue ("cloudUploadCommand", "/bin/sh -c 'exit 7'");
-            host.runCloudUpload();
-            expect (! host.sessionIoBusy.load(), "an upload can outlast a show");
-            expect (host.statusLabel.getText().contains ("started"), host.statusLabel.getText());
-            expect (pumpUntil ([&] { return host.statusLabel.getText().containsIgnoreCase ("upload failed"); }),
-                    "the failure never reached the main window: " + host.statusLabel.getText());
-            expect (host.statusLabel.getText().contains ("7"), host.statusLabel.getText());
-            if (auto* props = host.engine.getAppProps()) props->removeValue ("cloudUploadCommand");
-            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
-        }
-    }
-
     void testOpenMessages()
     {
         beginTest ("File > Open keeps the real reason when a session does not open");
@@ -1108,6 +1025,75 @@ public:
         }
     }
 
+    // Earlier builds saved all of these. Nothing reads them now, and none of
+    // them may get in the way of what still loads.
+    void testKeysFromEarlierBuilds()
+    {
+        beginTest ("A session saved with the keys of removed features opens and loads the rest");
+        {
+            Folder f; writeSavedShow (f);
+            auto project = juce::JSON::parse (f.project());
+            auto* saved = project.getDynamicObject();
+            saved->setProperty ("interleaved", true);
+            saved->setProperty ("ioPreset", "Last Used");
+            for (const auto* key : { "artist", "venue", "fohEngineer", "date", "notes" })
+                saved->setProperty (key, "Left by an earlier build");
+            expect (f.project().replaceWithText (juce::JSON::toString (project)));
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) == 0);
+            expect (host.engine.mixerBelongsTo (f.dir));
+            expectEquals (host.engine.getRecorder().getNumTracks(), 3);
+            expectEquals (stripName (host, 2), juce::String ("Saved 3"));
+            expectEquals ((int) host.cues.size(), 1, "the session's cues were not loaded");
+            expect (host.saveSessionStateTo (f.dir));
+            expectEquals (juce::JSON::parse (f.project())["venue"].toString(), juce::String ("Left by an earlier build"),
+                          "a save dropped a field it does not own");
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("Settings keys left by removed features are ignored");
+        {
+            {
+                MainComponent writer; writer.stopTimer();
+                auto* props = writer.engine.getAppProps();
+                expect (props != nullptr);
+                if (props != nullptr)
+                {
+                    props->setValue ("interleavedFlag", true);
+                    props->setValue ("ioPreset", "Last Used");
+                    props->setValue ("sessionName", "Old");
+                    props->setValue ("cloudUploadCommand", "/usr/bin/false");
+                    props->setValue ("cs_mackie_type", 2);
+                    props->saveIfNeeded();
+                }
+            }
+            Folder f; writeSavedShow (f);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) == 0);
+            expectEquals (host.engine.getRecorder().getNumTracks(), 3);
+            if (auto* props = host.engine.getAppProps())
+                for (const auto* key : { "interleavedFlag", "ioPreset", "sessionName", "cloudUploadCommand", "cs_mackie_type" })
+                    props->removeValue (key);
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A new session's document holds no I/O preset or interleaved flag");
+        {
+            Folder f;
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            NewSessionDialog::Result r;
+            r.name = "Fresh";
+            r.location = f.dir;
+            const auto session = host.createSessionFolderStructure (r);
+            expect (session.isDirectory());
+            const auto document = juce::JSON::parse (session.getChildFile ("Fresh.zfproj"));
+            expect (document["zynforgeSession"], "the document was not written");
+            expect (! document.hasProperty ("interleaved") && ! document.hasProperty ("ioPreset"));
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -1122,11 +1108,11 @@ public:
         testMissingSessionFolder();
         testReadOnlySessions();
         testRemoveLastCapture();
-        testCloudUpload();
         testOpenMessages();
         testHeldRecordPress();
         testShortWrites();
         testUnchangedBackups();
+        testKeysFromEarlierBuilds();
     }
 };
 

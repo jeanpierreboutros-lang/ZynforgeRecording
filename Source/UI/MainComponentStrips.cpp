@@ -346,7 +346,7 @@ void MainComponent::selectAllStrips()
 
 void MainComponent::condemnAllStrips()
 {
-    // Stop every strip's strip/meter/spectrum timers so none samples a
+    // Stop every strip's strip/meter timers so none samples a
     // TrackState that a recorder-vector shrink (New Session, close, opening a
     // smaller session, a console-session rebuild) is about to free. The strips
     // are rebuilt on the 10 Hz timer AFTER the free, so without this there is a
@@ -577,8 +577,6 @@ void MainComponent::createSessionFromCsv()
             r.location      = self->getSessionsRoot();
             r.captureFormat = self->engine.getRecorder().getCaptureFormat();
             r.sampleRate    = self->pendingSampleRate;
-            r.interleaved   = true;
-            r.ioSettings    = "Last Used";
             const auto dir  = self->createSessionFolderStructure (r);
             if (! dir.isDirectory())
             {
@@ -587,7 +585,7 @@ void MainComponent::createSessionFromCsv()
             }
 
             self->engine.setActiveSessionDir (dir);
-            // Stop the live strips' meter/spectrum timers before setStripCount
+            // Stop the live strips' meter timers before setStripCount
             // frees any TrackState they reference (a CSV with fewer names than
             // the current count shrinks the recorder vector); strips rebuild on
             // the next 10 Hz tick.
@@ -614,7 +612,7 @@ bool MainComponent::setStereoLink (int i, bool link)
     { showStatus ("Unlink the neighbouring stereo pair first"); return false; }
     engine.setTrackStereo (i, link);
     // The engine refuses while a take is live; then the pans must not move
-    // either (they reach the monitor, stream and NDI mid-show).
+    // either (they reach the monitor and stream mid-show).
     if (engine.getRecorder().getTrack (i).isStereo.load() != link)
     { showStatus ("Stop recording before linking or unlinking a stereo pair"); return false; }
     // Newly linked stereo -> hard-pan L/R for the full image; unlinked back to
@@ -703,8 +701,6 @@ void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& 
     r.location      = getSessionsRoot();
     r.captureFormat = engine.getRecorder().getCaptureFormat();
     r.sampleRate    = pendingSampleRate;
-    r.interleaved   = true;
-    r.ioSettings    = "Last Used";
     const auto dir  = createSessionFolderStructure (r);
     if (! dir.isDirectory())
     {

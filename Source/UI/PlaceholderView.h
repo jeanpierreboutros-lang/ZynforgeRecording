@@ -99,14 +99,6 @@ namespace zynforge
 
         State getState() const noexcept { return state; }
 
-        // Swap the empty-state glyph for a caller-supplied painter (e.g. a
-        // view-specific icon). Bounds are the glyph's square cell.
-        void setEmptyIconPainter (std::function<void (juce::Graphics&, juce::Rectangle<float>)> fn)
-        {
-            iconPainter = std::move (fn);
-            repaint();
-        }
-
         // ---- Component ------------------------------------------------
 
         void resized() override
@@ -126,7 +118,6 @@ namespace zynforge
                 const auto cell = L.icon.toFloat();
                 if (state == State::Loading)        paintLoadingDots (g, cell);
                 else if (state == State::Error)     paintErrorGlyph  (g, cell);
-                else if (iconPainter)               iconPainter (g, cell);
                 else                                paintEmptyGlyph  (g, cell);
             }
 
@@ -275,7 +266,6 @@ namespace zynforge
         State state { State::Hidden };
         juce::String title, detail;
         std::function<void()> onAction;
-        std::function<void (juce::Graphics&, juce::Rectangle<float>)> iconPainter;
         juce::TextButton action;
         float phase { 0.0f };
 

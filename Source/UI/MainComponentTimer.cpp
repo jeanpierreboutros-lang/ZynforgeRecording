@@ -61,9 +61,6 @@ void MainComponent::timerCallback()
     updateTransportLabels();
 
     const bool playing = engine.isPlaying();
-    if (! playing && playButton.getButtonText() == "PAUSE")
-        playButton.setButtonText ("PLAY");
-
     surfaceAsyncReportFailure();
 
     const double deviceSR = [this]() -> double
@@ -127,7 +124,6 @@ void MainComponent::serviceCaptureDaemonLink()
                     {
                         daemonStartUnansweredMs = 0;
                         engine.setExternalRecording (false);
-                        recordButton.setButtonText ("RECORD");
                         showStatus ("Daemon did not start the take");
                     }
                 }
@@ -382,8 +378,6 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     }
     if (automationToolbar != nullptr)
         automationToolbar->setEnabled (! rec && ! sessionIoBusy.load() && ! sessionLocked);
-    formatButton .setEnabled (! rec && ! sessionLocked);
-    preRollButton.setEnabled (! rec && ! sessionLocked);
 
     // Free space on the volume the take ACTUALLY lands on. This used to
     // hardcode ~/Music/Zynforge Sessions, so an engineer recording to an
@@ -439,7 +433,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     perfDashboard.setDeviceInfo (status.sampleRate,
                                  status.blockSize);
     perfDashboard.setRecording (rec);
-    // Drives per-strip meter/spectrum refresh: full rate while recording or
+    // Drives per-strip meter refresh: full rate while recording or
     // playing, throttled to ~8 Hz when stopped (see TrackState.h).
     gTransportActive.store (rec || playing, std::memory_order_relaxed);
     // Re-lay-out the header once when REC toggles so the dashboard resizes.

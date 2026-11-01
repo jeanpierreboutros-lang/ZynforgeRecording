@@ -267,18 +267,6 @@ namespace zynforge
         rebuildShards();
     }
 
-    void MultitrackRecorder::removeTrackAt (int index)
-    {
-        if (isRecording() || isFinalizing()) return;
-        const juce::ScopedLock sl (structureLock);
-        if (index < 0 || index >= (int) tracks.size()) return;
-        tracks.erase (tracks.begin() + index);
-        fifos.erase  (fifos.begin()  + index);
-        preRoll.erase(preRoll.begin()+ index);
-        trackGen.fetch_add (1, std::memory_order_relaxed);
-        rebuildShards();
-    }
-
     void MultitrackRecorder::setTrackCount (int n)
     {
         if (isRecording() || isFinalizing()) return;
@@ -357,7 +345,7 @@ namespace zynforge
         // stop / restart (device swap, sample-rate or buffer-size change).
         // Detach the device- and thread-bound writer shards, but PRESERVE
         // the per-track state (tracks / fifos / preRoll). Every
-        // ChannelStrip / LedMeter / MiniSpectrum / EditPage row caches a
+        // ChannelStrip / LedMeter / EditPage row caches a
         // TrackState& grabbed at construction, and the CoreAudio IO
         // callback reads getTrack(i) every block -- destroying TrackState
         // here left all of them dangling and crashed the audio thread

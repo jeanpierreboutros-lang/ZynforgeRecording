@@ -8,7 +8,7 @@
 namespace zynforge
 {
     // Set by the app's UI timer: true while recording OR playing. Per-strip
-    // LED meters + mini-spectra run at full refresh when this is true (or the
+    // LED meters run at full refresh when this is true (or the
     // strip itself is armed/monitored); when the transport is stopped and a
     // strip isn't being watched, they throttle to ~8 Hz to save idle CPU --
     // the meters still move (signal-present check), just less often.
@@ -200,8 +200,8 @@ namespace zynforge
         std::atomic<juce::uint32> colourARGB       { 0 };
 
         // FFT FIFO -- audio thread fills `fftFifo`, snapshots into
-        // `fftSnapshot` when full and sets `fftBlockReady`. UI thread
-        // reads the snapshot, FFTs it, then clears the flag.
+        // `fftSnapshot` when full and sets `fftBlockReady`. The soundcheck
+        // report reads the snapshot; ChannelStrip's timer clears the flag.
         std::array<float, kFftSize> fftFifo     {};
         std::array<float, kFftSize> fftSnapshot {};
         std::atomic<int>            fftIndex      { 0 };
@@ -209,7 +209,7 @@ namespace zynforge
 
         juce::String       name;
         // `name` is written on the message thread but ALSO copied by
-        // captureStatus() from the companion-server's detached thread -- reading
+        // captureStatus() from a thread off the message thread -- reading
         // a juce::String mid-reassignment is a data race (torn / freed buffer).
         // This SpinLock guards the cross-thread read + every write; pure
         // message-thread reads (the UI) can keep touching `name` directly since

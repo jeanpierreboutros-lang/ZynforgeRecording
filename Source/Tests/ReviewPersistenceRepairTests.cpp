@@ -1,7 +1,6 @@
 #include "../UI/MainComponent.h"
-#include "../Audio/NoiseAnalyzer.h"
 #include "../UI/SessionMetadataWriter.h"
-#include "../UI/SessionPropertiesDialog.h"
+#include "../UI/SessionInfoDialog.h"
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -75,29 +74,6 @@ public:
     {
         AudioEngine::setTestModeSkipAudioInit (true);
 
-        beginTest ("Noise completion summary identifies failed analysis instead of reporting clean metrics");
-        {
-            NoiseFinding failed;
-            failed.error = "Audio read failed";
-            const auto summary = MainComponent::noiseAnalysisSummary ({ failed });
-            expect (summary.contains ("0 of 1"), summary);
-            expect (summary.contains ("1 analysis failed"), summary);
-        }
-        beginTest ("Noise completion counts only completed findings and reports partial failures");
-        {
-            NoiseFinding complete, failed;
-            complete.humFundamentalHz = 50; complete.bumpCount = 2;
-            failed.error = "Audio read failed";
-            failed.humFundamentalHz = 60; failed.bumpCount = 3;
-            const auto summary = MainComponent::noiseAnalysisSummary ({ complete, failed });
-            expect (summary.contains ("1 of 2"), summary);
-            expect (summary.contains ("1 analysis failed"), summary);
-            expect (summary.contains ("1 with hum"), summary);
-            expect (summary.contains ("1 with mic bumps"), summary);
-            const auto healthy = MainComponent::noiseAnalysisSummary ({ complete });
-            expect (healthy.contains ("1 track analysed") && ! healthy.contains ("failed"), healthy);
-        }
-
         beginTest ("Malformed existing project is preserved when an automatic layout patch is saved");
         {
             Folder f;
@@ -145,36 +121,32 @@ public:
             expectEquals (saved["playlists"][0].toString(), juce::String ("keep"));
         }
 
-        beginTest ("Session Properties preserves a newer full save completed while its dialog was open");
+        beginTest ("Session Info only reads, and a later save keeps what it does not own");
         {
             Folder f;
             MainComponent host; prepare (host, f);
-            expect (f.project().replaceWithText (R"({"name":"Original","playlists":["old"],"automation":{"revision":"old"}})"));
-            SessionPropertiesDialog::SaveCallback save;
-            SessionPropertiesDialog::Fields fields;
-            SessionPropertiesDialog::launchForTests = [&] (auto initial, auto callback)
-            { fields = std::move (initial); save = std::move (callback); };
-            const juce::ScopeGuard resetHook { [] { SessionPropertiesDialog::launchForTests = {}; } };
-            host.showSessionProperties();
-            expect ((bool) save, "actual properties callback was not captured");
+            expect (f.project().replaceWithText (R"({"name":"Original","artist":"Earlier Build","playlists":["old"],"automation":{"revision":"old"}})"));
+            SessionInfoDialog::Fields shown;
+            SessionInfoDialog::launchForTests = [&] (auto fields) { shown = std::move (fields); };
+            const juce::ScopeGuard resetHook { [] { SessionInfoDialog::launchForTests = {}; } };
+            const auto before = f.project().loadFileAsString();
+            host.showSessionInfo();
+            expectEquals (shown.name, juce::String ("Original"));
+            expect (pumpUntil ([&] { return host.pendingMetadataSaves == 0; }));
+            expectEquals (f.project().loadFileAsString(), before, "showing the session changed its project");
+
+            // An earlier build's fields and anything a newer one wrote stay put.
             SessionMetadataSnapshot newer;
             newer.directory = f.dir;
             newer.mixerOwner = f.dir;
             newer.projectPatchJson = R"({"playlists":["new saved edit"],"automation":{"revision":"new"},"unknownFutureField":17})";
             newer.backup = false;
-            // Same persistence path as an autosave; complete it before the deferred dialog callback.
             expect (writeSessionMetadata (newer).ok);
-            fields.artist = "Edited Artist";
-            host.lastSavedUndoUnits = -1; // unrelated edits are still dirty
-            if (save) save (fields);
-            expect (pumpUntil ([&] { return host.pendingMetadataSaves == 0; }));
             const auto saved = juce::JSON::parse (f.project());
-            expectEquals (saved["artist"].toString(), fields.artist);
+            expectEquals (saved["artist"].toString(), juce::String ("Earlier Build"));
             expectEquals (saved["playlists"][0].toString(), juce::String ("new saved edit"));
             expectEquals (saved["automation"]["revision"].toString(), juce::String ("new"));
             expectEquals ((int) saved["unknownFutureField"], 17);
-            expectEquals (host.lastSavedUndoUnits, -1,
-                          "descriptive-only Properties save marked unrelated edits clean");
             host.engine.clearAllStripOverrides();
         }
 
@@ -262,6 +234,27 @@ public:
             host.engine.clearAllStripOverrides();
         }
 
+        beginTest ("Edited tracks render the ticked strips, and a stale tick refuses");
+        {
+            Folder f, output;
+            expect (writeAudio (f.track()));
+            expect (writeAudio (f.track (2)));
+            MainComponent host; prepare (host, f, 2);
+            host.completeBounceStems (output.dir, { 1 });
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }));
+            const auto stems = output.dir.findChildFiles (juce::File::findFiles, false, "*.wav");
+            expectEquals (stems.size(), 1);
+            if (stems.size() == 1)
+                expect (stems[0].getFileName().startsWith ("Track_02"), stems[0].getFileName());
+
+            host.completeBounceStems (output.dir, { 0, 7 });
+            expect (host.statusLabel.getText().containsIgnoreCase ("channel list changed"),
+                    host.statusLabel.getText());
+            expectEquals (output.dir.findChildFiles (juce::File::findFiles, false, "*.wav").size(), 1,
+                          "a stale tick still rendered");
+            host.engine.clearAllStripOverrides();
+        }
+
         for (int operation = 0; operation < 3; ++operation)
         {
             beginTest (juce::String ("Deferred picker refuses newly active recording: ")
@@ -274,7 +267,7 @@ public:
             recorder.getTrack (0).armed.store (true);
             expect (recorder.startRecording (capture.dir), "isolated no-device capture did not start");
             if (operation == 0) host.completeAudioImport ({ input.track() });
-            else if (operation == 1) host.completeBounceStems (output.dir);
+            else if (operation == 1) host.completeBounceStems (output.dir, { 0 });
             else host.completeBounceStereoMix (output.dir.getChildFile ("mix.wav"));
             expect (! host.sessionIoBusy.load(), "late callback admitted disk work during recording");
             expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }));

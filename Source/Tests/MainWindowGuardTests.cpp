@@ -13,7 +13,6 @@
 #include "../UI/SessionSettingsDialog.h"
 #include "../Audio/ChannelAlarm.h"
 #include "../Audio/MultiPartReader.h"
-#include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/QcAnalyzer.h"
 #include "../Audio/SongDetector.h"
 
@@ -295,6 +294,7 @@ namespace zynforge
             lockHolds();
             alarmsStandOut();
             sessionLeaving();
+            soundcheckReport();
             analysisStaysOutOfTheTake();
             consoleWaitsForTheTake();
             mainWindowRepairs();
@@ -1021,15 +1021,39 @@ namespace zynforge
             }
         }
 
+        void soundcheckReport()
+        {
+            beginTest ("The soundcheck report keeps its levels and bands, and no longer guesses");
+            {
+                Window w;
+                auto& track = w.recorder().getTrack (0);
+                std::fill (track.fftSnapshot.begin(), track.fftSnapshot.end(), 0.5f);
+                track.fftBlockReady.store (true, std::memory_order_release);
+                w.main.writeSoundcheckReport();
+                const auto report = juce::JSON::parse (w.session.getChildFile ("soundcheck.report.json"));
+                const auto strip = report["strips"][0];
+                expect (strip.hasProperty ("name") && strip.hasProperty ("peak") && strip.hasProperty ("clipCount"));
+                expect ((double) strip["bandSub"] > 0.0, "the bands left the report");
+                expect (! strip.hasProperty ("guess"), "the report still guesses a name");
+            }
+
+            beginTest ("A strip releases the FFT snapshot, so the next report is current");
+            {
+                Window w;
+                w.main.rebuildStrips();
+                auto& track = w.recorder().getTrack (0);
+                track.fftBlockReady.store (true, std::memory_order_release);
+                expect (pumpUntil ([&] { return ! track.fftBlockReady.load (std::memory_order_acquire); }),
+                        "nothing lets the audio thread publish another snapshot");
+            }
+        }
+
         void analysisStaysOutOfTheTake()
         {
             beginTest ("A cancelled scan stops and writes no report");
             {
                 Window w;
                 const std::atomic<bool> cancelled { true };
-                NoiseAnalyzer::analyseSession (w.session, {}, &cancelled);
-                expect (! w.session.getChildFile ("noise_report.json").existsAsFile(),
-                        "a cancelled scan wrote its report");
                 expectEquals (qc::analyzeFile (trackFile (w.session, 0), &cancelled).clipEventCount, 0);
                 double rate = 0.0;
                 expect (songs::envelopeFlags (trackFile (w.session, 0), -40.0f, 1.0, rate, &cancelled).empty());
@@ -1040,7 +1064,7 @@ namespace zynforge
                 Window w;
                 w.arm ({ 0 });
                 w.main.analysisBusy.store (true);
-                w.main.runNoiseAnalysis();
+                w.main.runQcAnalysis();
                 expect (w.main.statusLabel.getText().containsIgnoreCase ("already"), w.main.statusLabel.getText());
                 w.main.onRecordClicked();
                 expect (w.engine().isRecording(), w.main.statusLabel.getText());
@@ -1054,7 +1078,7 @@ namespace zynforge
             {
                 Window w;
                 w.arm ({ 0 });
-                w.main.runNoiseAnalysis();
+                w.main.runQcAnalysis();
                 expect (w.main.analysisBusy.load());
                 w.engine().armContinue (w.engine().getCaptureLengthSamples());
                 expect (w.engine().startRecording (w.session), w.recorder().getStartError());
@@ -1062,7 +1086,7 @@ namespace zynforge
                 expect (pumpUntil ([&] { return ! w.main.analysisBusy.load(); }), "the scan never ended");
                 expectEquals (juce::ModalComponentManager::getInstance()->getNumModalComponents(), 0,
                               "a report dialog opened over the take");
-                expect (w.main.statusLabel.getText().containsIgnoreCase ("analysis stopped"), w.main.statusLabel.getText());
+                expect (w.main.statusLabel.getText().containsIgnoreCase ("stopped"), w.main.statusLabel.getText());
                 feedAll (w.recorder(), 0.1f, 4);
                 w.main.stopActiveCaptureAsync (false);
                 expect (w.stopped());
@@ -1233,7 +1257,7 @@ namespace zynforge
             {
                 Window w;
                 w.recorder().setCaptureFormat (CaptureFormat::Flac16);
-                w.main.showSessionProperties();
+                w.main.showSessionInfo();
                 juce::StringArray texts;
                 if (auto* dialog = juce::ModalComponentManager::getInstance()->getModalComponent (0))
                 {
@@ -1284,6 +1308,21 @@ namespace zynforge
                 expect (pumpUntil ([&] { return before == nullptr; }, 2000),
                         "detached meters were never rebound, so the bridge stayed dead");
                 delete w.main.metersDialog.getComponent();
+            }
+
+            beginTest ("Pre-flight names the backup's format");
+            {
+                Window w;
+                const auto folder = tempDir ("backup-format");
+                w.dirs.add (folder);
+                const auto saved = w.recorder().getBackupDirectory();
+                expect (folder.createDirectory().wasOk());
+                expect (w.engine().setBackupDirectory (folder));
+                expect (w.engine().setBackupFormat (CaptureFormat::Flac24));
+                expect (w.main.backupChecklistRow().contains ("FLAC/24"), w.main.backupChecklistRow());
+                expect (w.engine().setBackupDirectory (saved));
+                expect (w.engine().setBackupFormat (CaptureFormat::Wav24));
+                updateSettings (w.engine().getAppProps(), [] (juce::PropertiesFile& p) { p.removeValue ("backupFormat"); });
             }
 
             beginTest ("A refused backup folder is neither claimed nor saved");

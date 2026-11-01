@@ -1,6 +1,6 @@
 // TrackState lifetime and mixer-undo change detection.
 //
-// UI surfaces (ChannelStrip, LedMeter, MiniSpectrum) cache a TrackState& and
+// UI surfaces (ChannelStrip, LedMeter) cache a TrackState& and
 // sample it on their own timers. Every recorder shrink -- and a device restart
 // that reshapes the track set inside MultitrackRecorder::prepare() -- freed
 // those objects while the surfaces still read them until the next rebuild
@@ -17,7 +17,6 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../UI/LedMeter.h"
-#include "../UI/MiniSpectrum.h"
 #include "../UI/MixerSnapshot.h"
 
 #include <set>
@@ -41,8 +40,7 @@ namespace zynforge
                 eng.setStripCount (3);
                 auto& doomed = eng.getRecorder().getTrack (2);
                 doomed.peak.store (0.5f);
-                auto meter    = std::make_unique<LedMeter> (doomed);
-                auto spectrum = std::make_unique<MiniSpectrum> (doomed);
+                auto meter = std::make_unique<LedMeter> (doomed);
 
                 eng.setStripCount (1);   // the recorder releases track 2
                 expectEquals (eng.getRecorder().getNumTracks(), 1);
@@ -50,7 +48,6 @@ namespace zynforge
                 // reports it); with it, the detached object is still valid.
                 expectEquals (doomed.peak.load(), 0.5f);
                 meter.reset();
-                spectrum.reset();
                 eng.clearAllStripOverrides();
             }
 

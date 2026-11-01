@@ -9,13 +9,11 @@
 // on the same `this`.
 
 #include "MainComponent.h"
-#include "../Network/CloudUpload.h"
 #include "../Theme/DialogChrome.h"
 #include "PatchPage.h"
 #include "Meterbridge.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
-#include "MirrorDrivesDialog.h"
 #include "TimecodeSyncDialog.h"
 #include "ControlSurfacesDialog.h"
 #include "DeskMacroDialog.h"
@@ -70,14 +68,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // is metadata-only but gated too for a consistent "not mid-take" rule.
         const bool hasActive = engine.hasSessionFolder();
         const bool canExport = hasActive && sessionEditable;   // also blocked while LOCKED
-        exportMenu.addItem (10, "Export All Tracks...", canExport);
-
         const int n = engine.getRecorder().getNumTracks();
-        // Opens a tick-box picker of the session's tracks → format → folder.
-        exportMenu.addItem (11, "Export Individual Tracks...", canExport && n > 0);
-        exportMenu.addSeparator();
-        exportMenu.addItem (12, "Bounce Edited Tracks (Stems)...", canExport && n > 0);
-        exportMenu.addItem (13, "Bounce Stereo Mix...",            canExport && n > 0);
+        exportMenu.addItem (970, "Export Audio...", canExport && n > 0);
         exportMenu.addSeparator();
         exportMenu.addItem (14, "Export Timeline (markers/cues/tracks) as CSV...", canExport && n > 0);
         exportMenu.addItem (966, "Export Reaper Project...", canExport && n > 0);
@@ -134,8 +126,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (7, "New Session from CSV (channel names)...", ! engine.isRecording());
 
         menu.addSeparator();
-        menu.addItem (60, "Choose Backup Folder...", ! engine.isRecording());
-        menu.addItem (61, "Mirror Drives...",        ! engine.isRecording());
+        menu.addItem (61, "Backup & Mirror Drives...", ! engine.isRecording());
         menu.addSeparator();
         menu.addItem (99, "Quit Zynforge Recording...");
     }
@@ -261,9 +252,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // ── Network & Surfaces ───────────────────────────────────────────
         {
             juce::PopupMenu m;
-            m.addItem (55, engine.getNDIBridge().isEnabled()
-                               ? juce::String ("Stop NDI broadcast")
-                               : juce::String ("Start NDI broadcast..."));
             // Control Surfaces hub -- OSC + every console/surface protocol.
             m.addItem (720, "Control Surfaces...");
 
@@ -278,13 +266,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                 midiMenu.addItem (401 + i, outs[i], true, clockOn && outs[i] == active);
             m.addSubMenu ("MIDI clock out", midiMenu);
 
-            m.addSeparator();
-            const bool compRunning = engine.getRemotes().isCompanionServerRunning();
-            // id 950 -- outside every menuItemSelected dispatch range.
-            m.addItem (950, compRunning
-                               ? juce::String ("Stop companion (port " + juce::String (engine.getRemotes().getCompanionServerPort()) + ")")
-                               : juce::String ("Start companion server on :9000..."));
-            m.addItem (961, "Copy read-only confidence URL", compRunning);
             m.addSeparator();
             m.addItem (968, "Twin Recorder...", true, twinLink.isEnabled());
             menu.addSubMenu ("Network & Surfaces", m);
@@ -323,38 +304,20 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             menu.addSubMenu ("Console", m);
         }
 
-        // ── Cloud & Mirror ───────────────────────────────────────────────
-        {
-            juce::PopupMenu m;
-            // ids 959/960 -- outside every menuItemSelected dispatch range.
-            // (260/261 collided with the File template-default submenu, which
-            //  meant Upload silently ran setDefaultTemplate({}) instead.)
-            m.addItem (959, "Upload session to cloud...", ! engine.isRecording());
-            m.addItem (960, "Configure cloud upload command...");
-            m.addSeparator();
-            m.addItem (290, sessionMirror.isMirroring()
-                               ? "Stop mirroring " + sessionMirror.getPrimary()
-                               : juce::String ("Mirror primary host..."));
-            menu.addSubMenu ("Cloud & Mirror", m);
-        }
-
         // ── Analysis & Reports (ids 952/953 outside dispatch ranges) ──────
         {
             juce::PopupMenu m;
-            m.addItem (280, "Spectral auto-name strips",
-                       engine.getRecorder().getNumTracks() > 0);
             m.addItem (281, "Write soundcheck report",
                        engine.hasSessionFolder() && ! engine.isRecording());
             // Each reads every take file in full: never during a take.
             const bool canAnalyse = engine.hasSessionFolder() && ! engine.isRecording();
-            m.addItem (282, "Analyse for noise / hum / bumps...", canAnalyse);
             m.addItem (952, "Post-show QC report...",             canAnalyse);
             m.addItem (953, "Detect songs -> markers...",         canAnalyse);
             menu.addSubMenu ("Analysis & Reports", m);
         }
 
         menu.addSeparator();
-        menu.addItem (251, "Session Info & Notes...", engine.hasSessionFolder());
+        menu.addItem (251, "Session Info...", engine.hasSessionFolder());
     }
     else if (topLevelIndex == 4)  // Help
     {
@@ -409,7 +372,6 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) engine.isSceneFollowEnabled()
         << '|' << (int) engine.getRemotes().isDeskMacroListening()
         << '|' << (int) useCaptureDaemon
-        << '|' << (int) engine.getRemotes().isCompanionServerRunning()
         << '|' << (int) captureSupervisor.isAttached()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording())
         << '|' << (int) songExportRunning;
@@ -462,10 +424,7 @@ void MainComponent::registerMenuCommands()
     m.add (5,   replaceSession ([this] { launchNewSessionDialog(); }));
     m.add (6,   [this] { closeSession(); });
     m.add (7,   replaceSession ([this] { createSessionFromCsv(); }));
-    m.add (10,  [this] { onExportAllTracks(); });
-    m.add (11,  [this] { onExportIndividualTracks(); });
-    m.add (12,  [this] { onBounceStems(); });
-    m.add (13,  [this] { onBounceStereoMix(); });
+    m.add (970, [this] { onExportAudio(); });
     m.add (14,  [this] { exportTimelineCsv(); });
     m.add (962, [this] { exportShowHandoff(); });
     m.add (965, [this] { exportDawProject (projectexport::Format::DawProject); });
@@ -493,8 +452,7 @@ void MainComponent::registerMenuCommands()
         const auto list = listSessionTemplates();
         if (offset < list.size()) setDefaultTemplate (list[offset]);
     });
-    m.add (60,  [this] { onBackupClicked(); });
-    m.add (61,  [this] { MirrorDrivesDialog::launch (engine); });
+    m.add (61,  [this] { onBackupClicked(); });
     m.add (99,  [this] { confirmAndQuit(); });
 
     // Session
@@ -503,7 +461,6 @@ void MainComponent::registerMenuCommands()
     m.add (52,  [this] { onVscClicked(); });
     m.add (53,  [this] { zynforge::MarkerListDialog::launch (engine); });
     m.add (54,  [this] { showPreflightChecklist(); });
-    m.add (55,  [this] { toggleNdiBroadcast(); });
     m.add (56,  [this] { dropMarkerAndPromptName(); });
     m.add (62,  [this]
     {
@@ -511,7 +468,7 @@ void MainComponent::registerMenuCommands()
         showStatus (engine.isAutoArmOnInputDetect() ? "Auto-arm on input detect: ON"
                                                     : "Auto-arm on input detect: OFF");
     });
-    m.add (251, [this] { showSessionProperties(); });
+    m.add (251, [this] { showSessionInfo(); });
     m.add (255, [this]
     {
         SessionSettingsDialog::launch (engine,
@@ -535,10 +492,7 @@ void MainComponent::registerMenuCommands()
                             : "The mix stays off outputs that strips are patched to");
     });
     m.add (990, [this] { promptStreamOutputs(); });
-    m.add (280, [this] { runSpectralAutoName(); });
     m.add (281, [this] { writeSoundcheckReport(); });
-    m.add (282, [this] { runNoiseAnalysis(); });
-    m.add (290, [this] { promptMirrorHost(); });
     m.add (400, [this]
     {
         engine.getMidiClockOut().setEnabled (false);
@@ -570,7 +524,6 @@ void MainComponent::registerMenuCommands()
         [self] { return self != nullptr && self->consoleLink.isConnected()
                      && self->consoleLink.getProfile().canReadNames; });
     });
-    m.add (950, [this] { toggleCompanionServer(); });
     m.add (951, [this] { showAutosaveSettings(); });
     m.add (952, [this] { runQcAnalysis(); });
     m.add (953, [this] { detectSongsToMarkers(); });
@@ -580,9 +533,6 @@ void MainComponent::registerMenuCommands()
     m.add (957, [this] { consoleRestoreGains(); });
     m.add (958, [this] { toggleCaptureDaemon(); });
     m.add (975, [this] { reconnectCaptureDaemon(); });
-    m.add (959, [this] { runCloudUpload(); });
-    m.add (960, [this] { editCloudUploadCommand(); });
-    m.add (961, [this] { copyConfidenceUrl(); });
     m.add (963, [this]
     {
         const bool on = ! engine.isSceneFollowEnabled();
@@ -698,147 +648,6 @@ juce::String MainComponent::consoleLinkSummary() const
          + (consoleLink.isDialectConfirmed() ? ", dialect confirmed by the desk"
                                              : ", dialect not confirmed by the desk");
 }
-
-void MainComponent::copyConfidenceUrl()
-{
-    const auto url = engine.getRemotes().getCompanionAccessUrl().replace ("/?t=", "/confidence?t=");
-    if (engine.getRemotes().isCompanionServerRunning() && url.isNotEmpty())
-    {
-        juce::SystemClipboard::copyTextToClipboard (url);
-        showStatus ("Read-only confidence URL copied. Use a TLS tunnel for another device.");
-    }
-    else
-        showStatus ("Start the companion server before copying its confidence URL");
-}
-
-void MainComponent::runCloudUpload()
-{
-    // Run the configured cloud-upload command with {SESSION} expanded.
-    if (engine.isTakeOnDisk()) { showStatus ("Upload after STOP -- the take's files are still being written"); return; }
-    const auto sessionDir = engine.getActiveSessionDir();
-    if (! sessionDir.isDirectory()) { showStatus ("No session active -- load or record first"); return; }
-    auto* props = engine.getAppProps();
-    const auto tmpl = props != nullptr ? props->getValue ("cloudUploadCommand") : juce::String();
-    if (tmpl.isEmpty())
-    {
-        showStatus ("No upload command configured -- pick \"Configure cloud upload command...\" first");
-        return;
-    }
-    if (cloudUpload.isActive()) { showStatus ("A cloud upload is already running"); return; }
-    juce::Component::SafePointer<MainComponent> self (this);
-    const auto name = sessionDir.getFileName();
-    const bool started = cloudUpload.start (tmpl, sessionDir, [self, name] (zynforge::cloud::UploadOutcome outcome)
-    {
-        juce::MessageManager::callAsync ([self, name, outcome]
-        {
-            if (self != nullptr)
-                self->showStatus (outcome.ok ? "Cloud upload finished: " + name
-                                             : "! Cloud upload FAILED for " + name + ": " + outcome.problem);
-        });
-    });
-    showStatus (started ? "Cloud upload started: " + sessionDir.getFileName()
-                        : juce::String ("Cloud upload failed to launch -- check the configured command"));
-}
-
-void MainComponent::toggleCompanionServer()
-{
-    if (engine.getRemotes().isCompanionServerRunning())
-    {
-        engine.getRemotes().stopCompanionServer();
-        showStatus ("Companion server stopped");
-    }
-    else if (engine.getRemotes().startCompanionServer (9000))
-    {
-        const auto url = engine.getRemotes().getCompanionAccessUrl();
-        // Show + copy the full URL (with access token) so the
-        // engineer can paste it on their phone without typing
-        // the 32-hex token. Companion is loopback-only by
-        // default; for phone / off-machine access put a tunnel in
-        // front of loopback (Tailscale / Cloudflare / SSH -L) -- it
-        // gives real TLS, unlike serving plaintext HTTP over Wi-Fi.
-        // See README "Companion server -- Security & secure remote access".
-        juce::SystemClipboard::copyTextToClipboard (url);
-        if (engine.getRemotes().isCompanionExposedOnLan())
-            showStatus ("! Companion EXPOSED ON LAN (plaintext) -- use a tunnel for remote access, not raw Wi-Fi");
-        else
-            showStatus ("Companion on (loopback-only) -- URL copied. For phone access, tunnel to 127.0.0.1:9000 (see README)");
-    }
-    else
-    {
-        showStatus ("Companion failed to bind port 9000 -- try a different port");
-    }
-}
-
-void MainComponent::editCloudUploadCommand()
-{
-    // Edit the upload command template.
-    auto* aw = new juce::AlertWindow ("Cloud upload command",
-                                      "Shell command to upload a session. Use {SESSION} as a "
-                                      "placeholder for the session directory's absolute path. "
-                                      "Examples:\n"
-                                      "  rclone copy {SESSION} myremote:zynforge-sessions/\n"
-                                      "  aws s3 sync {SESSION} s3://my-bucket/sessions/\n"
-                                      "  rsync -a {SESSION} engineer@studio:/sessions/",
-                                      juce::MessageBoxIconType::NoIcon);
-    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
-    const auto current = engine.getAppProps() != nullptr
-                          ? engine.getAppProps()->getValue ("cloudUploadCommand")
-                          : juce::String();
-    aw->addTextEditor ("cmd", current, {});
-    dialog::primeNameEditor (*aw, "cmd");
-    aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    juce::Component::SafePointer<MainComponent> self (this);
-    aw->enterModalState (true,
-        juce::ModalCallbackFunction::create (
-            [self, aw] (int result)
-            {
-                if (result == 1 && self != nullptr && self->engine.getAppProps() != nullptr)
-                {
-                    const auto v = aw->getTextEditorContents ("cmd").trim();
-                    zynforge::updateSettings (self->engine.getAppProps(), [&v] (juce::PropertiesFile& p)
-                                              { p.setValue ("cloudUploadCommand", v); });
-                    self->showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
-                                            : juce::String ("Cloud upload command saved"));
-                }
-                delete aw;
-            }),
-        false);
-}
-
-void MainComponent::toggleNdiBroadcast()
-{
-    auto& bridge = engine.getNDIBridge();
-    if (bridge.isEnabled())
-    {
-        bridge.stop();
-        showStatus ("NDI broadcast stopped");
-    }
-    else
-    {
-        const auto runtime = zynforge::NDIBridge::findRuntimePath();
-        if (runtime.isEmpty())
-        {
-            juce::AlertWindow::showMessageBoxAsync (
-                juce::MessageBoxIconType::NoIcon,
-                "NDI runtime not found",
-                "Install the free NDI runtime from ndi.tv (the 'NDI Tools' bundle "
-                "ships with libndi.dylib in /usr/local/lib). Re-launch the app "
-                "after installing to broadcast over NDI.", "OK");
-            return;
-        }
-        auto sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-            ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
-            : 48000.0;
-        const auto host = juce::SystemStats::getComputerName();
-        if (bridge.start ("Zynforge -- " + host, sr))
-            showStatus ("NDI broadcasting as 'Zynforge -- " + host + "'");
-        else
-            showStatus ("NDI start failed -- check ndi.tv runtime install");
-    }
-}
-
-
 
 int MainComponent::oscListenPort() const
 {

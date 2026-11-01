@@ -360,7 +360,7 @@ namespace zynforge
                     const auto& ls = logical[(std::size_t) col];
                     const int totalTracks = engine.getRecorder().getNumTracks();
                     // setTrackStereo refuses during a take; the pans below must
-                    // not move then either (monitor, stream and NDI hear them).
+                    // not move then either (monitor and stream hear them).
                     if (engine.isRecording()) { dragActive = false; return; }
                     if (! ls.stereo)
                     {

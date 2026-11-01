@@ -9,6 +9,8 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Theme/BrandColors.h"
+#include "../UI/ExportDialog.h"
+#include "../UI/BackupMirrorDialog.h"
 
 namespace zynforge
 {
@@ -24,6 +26,11 @@ namespace zynforge
             TempDir()  { dir.createDirectory(); }
             ~TempDir() { dir.deleteRecursively(); }
         };
+
+        static void forgetBackupFormat (AudioEngine& engine)
+        {
+            updateSettings (engine.getAppProps(), [] (juce::PropertiesFile& p) { p.removeValue ("backupFormat"); });
+        }
 
         void runTest() override
         {
@@ -134,6 +141,125 @@ namespace zynforge
                 expect (rec.setMirrors ({ { driveA, CaptureFormat::Wav24 } }),
                         "editable again once the take ends");
                 rec.release();
+            }
+
+            beginTest ("A picked backup folder gets the refusals it always had");
+            {
+                TempDir tmp;
+                auto sessionsRoot = tmp.dir.getChildFile ("Zynforge Sessions");
+                auto sessionDir   = sessionsRoot.getChildFile ("Gig");
+                sessionDir.createDirectory();
+                const auto file = tmp.dir.getChildFile ("a file");
+                expect (file.replaceWithText ("not a folder"));
+
+                expect (BackupMirrorDialog::backupFolderRefusal (sessionsRoot, sessionDir).startsWith ("Backup folder rejected"));
+                expect (BackupMirrorDialog::backupFolderRefusal (file, sessionDir).contains ("not writable"));
+                const auto fresh = tmp.dir.getChildFile ("RECORD");
+                expect (BackupMirrorDialog::backupFolderRefusal (fresh, sessionDir).isEmpty());
+                expect (fresh.isDirectory(), "a new folder was not created");
+            }
+
+            beginTest ("The backup format starts at WAV 24, persists, and a take refuses a change");
+            {
+                TempDir tmp;
+                AudioEngine::setTestModeSkipAudioInit (true);
+                {
+                    AudioEngine engine;
+                    forgetBackupFormat (engine);
+                }
+                {
+                    AudioEngine engine;
+                    expect (engine.getRecorder().getBackupCaptureFormat() == CaptureFormat::Wav24,
+                            "a capture default changed");
+                    expect (engine.setBackupFormat (CaptureFormat::Flac24));
+                    expect (engine.getRecorder().getBackupCaptureFormat() == CaptureFormat::Flac24);
+                }
+                {
+                    AudioEngine engine;
+                    expect (engine.getRecorder().getBackupCaptureFormat() == CaptureFormat::Flac24,
+                            "the format did not survive a restart");
+                    engine.setStripCount (1);
+                    engine.prepareForTests (48000.0, 512);
+                    engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (engine.startRecording (tmp.dir.getChildFile ("Gig")), engine.getRecorder().getStartError());
+                    expect (! engine.setBackupFormat (CaptureFormat::Wav16), "a take let the format change");
+                    expect (engine.getAppProps()->getIntValue ("backupFormat") == (int) CaptureFormat::Flac24,
+                            "a refused format was saved");
+                    engine.stopRecording();
+                    forgetBackupFormat (engine);
+                    engine.clearSessionState();
+                    engine.clearAllStripOverrides();
+                }
+            }
+
+            beginTest ("Backup & Mirror Drives applies the folder, its format and the mirrors together");
+            {
+                TempDir tmp;
+                AudioEngine::setTestModeSkipAudioInit (true);
+                AudioEngine engine;
+                const auto savedBackup = engine.getBackupDirectory();
+                auto drive  = tmp.dir.getChildFile ("Backup"); drive.createDirectory();
+                auto mirror = tmp.dir.getChildFile ("Mirror"); mirror.createDirectory();
+                int refusals = 0;
+                backupdlg::Content dialog (engine, {
+                    [&] (const juce::String&) { ++refusals; },
+                    [&] (const juce::File& f) { return engine.setBackupDirectory (f); } });
+
+                expect (dialog.backup.format == CaptureFormat::Wav24);
+                const auto inside = tmp.dir.getChildFile ("Sessions").getChildFile ("Gig");
+                inside.createDirectory();
+                engine.setActiveSessionDir (inside);
+                expect (! dialog.acceptBackup (inside.getParentDirectory()), "the session's own parent was accepted");
+                expectEquals (refusals, 1);
+                engine.setActiveSessionDir ({});
+
+                dialog.backup.root = drive;
+                dialog.backup.format = CaptureFormat::Flac24;
+                dialog.working.push_back ({ drive, CaptureFormat::Wav24 });
+                dialog.applyAndClose();
+                expect (engine.getMirrors().empty(), "a mirror aimed at the backup was applied");
+                expect (engine.getBackupDirectory() == savedBackup, "a refused dialog still changed the backup");
+
+                dialog.working.clear();
+                dialog.working.push_back ({ mirror, CaptureFormat::Wav24 });
+                dialog.applyAndClose();
+                expect (engine.getBackupDirectory() == drive);
+                expect (engine.getRecorder().getBackupCaptureFormat() == CaptureFormat::Flac24);
+                expectEquals ((int) engine.getMirrors().size(), 1);
+
+                expect (engine.setBackupDirectory (savedBackup));
+                expect (engine.setBackupFormat (CaptureFormat::Wav24));
+                expect (engine.setMirrors ({}));
+                forgetBackupFormat (engine);
+            }
+
+            beginTest ("Export Audio starts on raw takes with every strip ticked");
+            {
+                std::optional<ExportAudioContent::Result> chosen;
+                ExportAudioContent dialog (44100.0, { "01  Kick", "02  Snare", "03  OH  (stereo)" },
+                                           [&] (std::optional<ExportAudioContent::Result> r) { chosen = std::move (r); });
+                expect (dialog.getSource() == ExportAudioContent::Source::rawTakes);
+                expect (dialog.formatApplies() && dialog.tracksApply() && dialog.canExport());
+                const auto result = dialog.getResult();
+                expect (result.rows == std::vector<int> ({ 0, 1, 2 }), "the strips did not all start ticked");
+                expectWithinAbsoluteError (result.options.sampleRate, 44100.0, 0.1);
+            }
+
+            beginTest ("Export Audio says what edited tracks and the mix are, and offers no format for them");
+            {
+                ExportAudioContent dialog (48000.0, { "01  Kick", "02  Snare" }, {});
+                dialog.chooseSource (ExportAudioContent::Source::editedTracks);
+                expect (! dialog.formatApplies(), "the format controls look live for a fixed-format render");
+                expect (dialog.tracksApply());
+                expect (dialog.getNote().contains ("24-bit WAV"), dialog.getNote());
+
+                dialog.setAllTicked (false);
+                expect (! dialog.canExport(), "Export is live with nothing ticked");
+                dialog.chooseSource (ExportAudioContent::Source::stereoMix);
+                expect (! dialog.formatApplies() && ! dialog.tracksApply());
+                expect (dialog.canExport(), "the mix needs no ticks");
+                expect (dialog.getNote().contains ("24-bit WAV"), dialog.getNote());
+                expect (dialog.getResult().rows.empty());
             }
 
             beginTest ("onSignal keeps every accent's label legible (no hardcoded white)");

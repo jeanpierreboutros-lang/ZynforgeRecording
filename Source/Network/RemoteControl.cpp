@@ -3,7 +3,6 @@
 
 #include "RemoteControl.h"
 
-#include "CompanionServer.h"
 #include "ConsoleLog.h"
 #include "DeskMacro.h"
 #include "../Audio/AudioEngine.h"
@@ -15,48 +14,9 @@
 
 namespace zynforge
 {
-    // Publish the companion's stable owner before any device callback can
-    // start: the audio thread feeds it from the first block.
-    RemoteControl::RemoteControl (AudioEngine& e)
-        : engine (e), companion (std::make_unique<CompanionServer> (e))
-    {
-    }
+    RemoteControl::RemoteControl (AudioEngine& e) : engine (e) {}
 
     RemoteControl::~RemoteControl() = default;
-
-    bool RemoteControl::startCompanionServer (int port)
-    {
-        // Default to loopback -- the engineer opts into LAN exposure
-        // via startCompanionServerOnLan when they actually need it.
-        return companion->start (port, "127.0.0.1");
-    }
-
-    bool RemoteControl::startCompanionServerOnLan (int port)
-    {
-        return companion->start (port, "0.0.0.0");
-    }
-
-    juce::String RemoteControl::getCompanionAccessUrl() const
-    {
-        return companion != nullptr ? companion->getAccessUrl() : juce::String();
-    }
-
-    bool RemoteControl::isCompanionExposedOnLan() const
-    {
-        return companion != nullptr && companion->isExposedOnLan();
-    }
-    void RemoteControl::stopCompanionServer()
-    {
-        if (companion != nullptr) companion->stop();
-    }
-    bool RemoteControl::isCompanionServerRunning() const noexcept
-    {
-        return companion != nullptr && companion->isRunning();
-    }
-    int RemoteControl::getCompanionServerPort() const noexcept
-    {
-        return companion != nullptr ? companion->getPort() : -1;
-    }
 
     bool RemoteControl::startOsc (int udpPort, int dialectIndex)
     {
@@ -401,10 +361,5 @@ namespace zynforge
     {
         if (surface != nullptr) { surface->stop(); surface.reset(); }
         activeSurfaceKey.clear();
-    }
-
-    void RemoteControl::feedCompanionStream (const float* L, const float* R, int numSamples) noexcept
-    {
-        companion->feedStreamSamples (L, R, numSamples);
     }
 }

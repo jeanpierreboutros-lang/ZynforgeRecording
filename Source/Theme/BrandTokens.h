@@ -173,19 +173,13 @@ namespace zynforge::brand
         inline juce::Font channelName()  { return ui   (h_body, true);     }
         inline juce::Font sectionTitle() { return ui   (h_title, true);    }
         inline juce::Font headline()     { return ui   (h_headline, true); }
-        // RESERVED scale rungs. The type ramp (h_label..h_hero) is a
+        // RESERVED scale rung. The type ramp (h_label..h_hero) is a
         // deliberately CONTINUOUS scale -- every rung exists so a future
         // layout can step up/down without inventing an off-scale size.
-        // These two have no live consumer today (intended: subhead for the
-        // cue-countdown / "Next: ..." pills, display for section hero
-        // numbers); they are kept to keep the ramp unbroken, NOT dead code.
+        // This one has no live consumer today (intended: section hero
+        // numbers); it is kept to keep the ramp unbroken, NOT dead code.
         // If a rung is still unused at the next type pass, fold it out then.
-        inline juce::Font subhead()      { return ui   (h_subhead, true);  }  // 22 pt UI bold (reserved)
         inline juce::Font display()      { return mono (h_display, true);  }  // 28 pt mono bold (reserved)
-        // 44 pt mono bold -- pinned for the BigClock timer.
-        inline juce::Font hero()         { return mono (h_hero, true);     }
-        // Numeric readouts -- every value-readout font goes through this.
-        inline juce::Font readout (float height) { return mono (height, true); }
 
         // Release every cached juce::Font. MUST be called from the app's
         // shutdown() while CoreText is still alive. detail::fontCache() is

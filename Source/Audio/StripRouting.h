@@ -22,7 +22,6 @@ namespace zynforge
         void setInput  (int channelIndex, int deviceChannel);
         void setOutput (int channelIndex, int deviceChannel);
         void clearInput  (int channelIndex);
-        void clearOutput (int channelIndex);
 
         // Clear this module's overrides in [firstIndex, lastIndexExclusive)
         // with one shared-file reload/save, keeping its live cache consistent.

@@ -10,8 +10,8 @@ namespace zynforge
     // id-collision class that has bitten this project repeatedly:
     //   (a) one id used by two different items ("Delete Template" + "Session
     //       Format" were both 250);
-    //   (b) an exact id lying inside a dispatch RANGE (the companion-server
-    //       item sat at 270 inside a template range and never ran);
+    //   (b) an exact id lying inside a dispatch RANGE (an item sat at 270
+    //       inside a template range and never ran);
     //   (c) a built menu item with no handler at all.
     // The table reports (b) itself via conflicts(), so this no longer depends
     // on a hand-kept list of ranges -- the old list had already gone stale.

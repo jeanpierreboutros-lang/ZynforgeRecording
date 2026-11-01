@@ -510,7 +510,7 @@ namespace zynforge
                         recorder.getTrack (0).armed.store (true);
                         recorder.getTrack (0).outputRouting.store (3);
                         expect (recorder.startRecording (take));
-                        main.runNoiseAnalysis();
+                        main.runQcAnalysis();
                         expect (main.statusLabel.getText().containsIgnoreCase ("after recording stops"),
                                 main.statusLabel.getText());
                         main.engine.setTrackLinkedRouting (0, 9);

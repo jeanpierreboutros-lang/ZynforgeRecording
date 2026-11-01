@@ -9,7 +9,7 @@
 //
 // Covers the path that ships audio to hardware: monitor-bus sum,
 // master gain + mute, master output routing (the bug we just fixed
-// where click / NDI / companion stream were pinned to outs 0+1),
+// where the click was pinned to outs 0+1),
 // per-track mute gating of input on the monitor bus.
 
 #include <juce_core/juce_core.h>

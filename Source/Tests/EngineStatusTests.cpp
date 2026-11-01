@@ -1,9 +1,10 @@
 // Headless tests for the Phase-0 status boundary (Source/Audio/EngineStatus.h):
 // the serialisable snapshot must round-trip through JSON intact and keep the
-// JSON shape the companion web client already consumes.
+// JSON shape the daemon link reads.
 
 #include <juce_core/juce_core.h>
 
+#include "../Audio/AudioEngine.h"
 #include "../Audio/EngineStatus.h"
 
 namespace zynforge
@@ -74,7 +75,45 @@ namespace zynforge
                 }
             }
 
-            beginTest ("toJson keeps the companion web-client shape");
+            beginTest ("A daemon take's snapshot carries its metrics and this window's mixer");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                AudioEngine engine;
+                engine.setStripCount (4);
+                engine.setTrackName (0, "KickTest");
+                EngineStatus daemon;
+                daemon.recording = true;
+                daemon.missedSamples = 17;
+                daemon.numTracks = 4;
+                daemon.tracks.resize (4);
+                engine.setExternalCaptureStatus (daemon);
+                engine.setExternalRecording (true);
+                engine.setTrackMuted (0, true);
+                engine.setTrackSoloed (0, true);
+
+                const auto live = engine.captureStatus();
+                expectEquals (live.source, juce::String ("daemon"), "the daemon's status was not selected");
+                expectEquals (live.missedSamples, (juce::int64) 17, "the daemon's capture metrics were lost");
+                expect (live.tracks.size() == 4 && live.tracks[0].name == "KickTest", "the window's name was lost");
+                expect (live.tracks.size() == 4 && live.tracks[0].muted && live.tracks[0].soloed,
+                        "a daemon take hid this window's mute and solo");
+                engine.setTrackMuted (0, false);
+                engine.setTrackSoloed (0, false);
+                expect (! engine.setTrackArmed (0, true), "a refused arm read as success");
+                expect (! engine.getRecorder().getTrack (0).armed.load());
+
+                engine.setExternalCaptureStatus (daemon, juce::Time::currentTimeMillis() - 5000);
+                expectEquals (engine.captureStatus().source, juce::String ("daemon-unavailable"),
+                              "a stale daemon status was presented as fresh");
+                engine.setExternalCaptureStatus (daemon);
+                engine.setExternalRecording (false);
+                engine.setExternalRecording (true);
+                expectEquals (engine.captureStatus().source, juce::String ("daemon-unavailable"),
+                              "a new daemon take reused the prior take's metrics");
+                engine.setExternalRecording (false);
+            }
+
+            beginTest ("toJson keeps the shape the daemon link reads");
             {
                 EngineStatus s;
                 s.recording = true; s.playing = true;

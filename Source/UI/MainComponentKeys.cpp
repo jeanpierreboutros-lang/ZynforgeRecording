@@ -181,13 +181,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         else if (player.isPlaying())
         {
             engine.stopPlayback();
-            playButton.setButtonText ("PLAY");
             showStatus ("Stopped");
         }
         else if (player.isLoaded())
         {
             engine.startPlayback();
-            playButton.setButtonText ("PAUSE");
             showStatus ("Playing");
         }
         else

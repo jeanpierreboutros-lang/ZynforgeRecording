@@ -1,5 +1,5 @@
 // The dead-channel alarm. The tiers run through the real audio callback, with
-// the same status snapshot the UI timer and /state.json read; the Monitor's
+// the same status snapshot the UI timer and the daemon link read; the Monitor's
 // arithmetic is pinned at its boundaries; the JSON stays additive.
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -33,7 +33,7 @@ namespace zynforge
             reportedAndCarried();
             daemon();
             statusFields();
-            confidencePage();
+            statusSnapshot();
         }
 
     private:
@@ -782,56 +782,27 @@ namespace zynforge
             }
         }
 
-        void confidencePage()
+        void statusSnapshot()
         {
-            beginTest ("/state.json and /confidence show the alarm; the page stays read-only");
+            beginTest ("The status snapshot carries the alarm, on a daemon take as on a local one");
             {
                 AudioEngine engine;
                 engine.setStripCount (1);
-                int port = 0;
-                for (int p = 19280; p < 19290 && port == 0; ++p)
-                    if (engine.getRemotes().startCompanionServer (p)) port = p;
-                expect (port != 0, "companion server failed to start");
-                if (port != 0)
-                {
-                    const auto token = engine.getRemotes().getCompanionAccessUrl()
-                                           .fromFirstOccurrenceOf ("t=", false, false).trim();
-                    EngineStatus status;
-                    status.recording = true;
-                    Alarm alarm;
-                    alarm.kind = channelalarm::kChannel; alarm.name = "Kick In";
-                    status.channelAlarms.push_back (alarm);
-                    engine.setExternalCaptureStatus (status);
-                    engine.setExternalRecording (true);
+                EngineStatus status;
+                status.recording = true;
+                Alarm alarm;
+                alarm.kind = channelalarm::kChannel; alarm.name = "Kick In";
+                status.channelAlarms.push_back (alarm);
+                engine.setExternalCaptureStatus (status);
+                engine.setExternalRecording (true);
 
-                    const auto state = get (port, "/state.json?t=" + token);
-                    expect (state.contains ("channelAlarms"), "state.json has no alarm field");
-                    expect (state.contains ("Kick In"), "state.json lost the alarm");
-
-                    const auto page = get (port, "/confidence?t=" + token);
-                    expect (page.contains ("state.channelAlarms"), "the page does not read the alarms");
-                    expect (page.contains ("INPUT STREAM LOST"), "the page has no stream alarm");
-                    expect (! page.contains ("/cmd"), "the page must stay read-only");
-                    engine.setExternalRecording (false);
-                }
+                const auto live = engine.captureStatus();
+                expectEquals ((int) live.channelAlarms.size(), 1, "the snapshot lost the alarm");
+                const auto state = juce::JSON::toString (live.toJson());
+                expect (state.contains ("channelAlarms"), "the status JSON has no alarm field");
+                expect (state.contains ("Kick In"), "the status JSON lost the alarm");
+                engine.setExternalRecording (false);
             }
-        }
-
-        static juce::String get (int port, const juce::String& path)
-        {
-            juce::StreamingSocket socket;
-            if (! socket.connect ("127.0.0.1", port, 1000)) return {};
-            const auto request = "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-            socket.write (request.toRawUTF8(), (int) request.getNumBytesAsUTF8());
-            juce::MemoryBlock received;
-            char buffer[4096];
-            for (int tries = 0; tries < 50 && socket.waitUntilReady (true, 100) >= 0; ++tries)
-            {
-                const int n = socket.read (buffer, sizeof (buffer), false);
-                if (n <= 0) break;
-                received.append (buffer, (size_t) n);
-            }
-            return received.toString();
         }
     };
 

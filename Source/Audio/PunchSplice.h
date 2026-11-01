@@ -186,23 +186,4 @@ namespace zynforge
         return splicePunchTake (fm, { base }, { insert }, punchInSample, outFile,
                                 std::numeric_limits<juce::int64>::max(), written);
     }
-
-    // ── Multi-part punch splice (flatten) ──────────────────────────────────
-    // Same as splicePunchFile, but the base take is given as its ordered part
-    // files (Track_NN + its Track_NN_partXX continuations). They're read as ONE
-    // seamless base via ConcatReader, so a punch into a SPLIT take is spliced
-    // correctly and FLATTENED into a single outFile (the caller then deletes the
-    // now-redundant parts). One part -> the simple single-file path; empty list
-    // -> false. This is what lets you punch in anywhere on a take that was built
-    // up by continue-recording (which appends parts).
-    inline bool splicePunchParts (juce::AudioFormatManager& fm,
-                                  const std::vector<juce::File>& baseParts,
-                                  const juce::File&              insert,
-                                  juce::int64                    punchInSample,
-                                  const juce::File&              outFile)
-    {
-        std::vector<juce::File> written;
-        return splicePunchTake (fm, baseParts, { insert }, punchInSample, outFile,
-                                std::numeric_limits<juce::int64>::max(), written);
-    }
 }
