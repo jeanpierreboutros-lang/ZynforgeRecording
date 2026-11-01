@@ -3806,6 +3806,13 @@ namespace zynforge
             static std::vector<AudioEngine::AutomationPoint> clip;
             return clip;
         }
+        // What those points mean: a dB value pasted into a Pan lane pins it hard
+        // left or right, so they paste only into the kind of lane they left.
+        static AudioEngine::AutomationParam& sharedClipboardParam()
+        {
+            static AudioEngine::AutomationParam param { AudioEngine::AutomationParam::Volume };
+            return param;
+        }
 
         // Returns the index of the automation point under the given
         // (row-local) position, or -1 if none. Hit tolerance is 7 px
@@ -4095,8 +4102,10 @@ namespace zynforge
             m.addItem (601, "Copy automation in range ("
                             + juce::String ((int) rangePoints.size()) + " points)",
                        ! rangePoints.empty());
-            m.addItem (602, "Paste automation at cursor",
-                       ! sharedClipboard().empty());
+            m.addItem (602, canPasteAutomation (engineParam) || sharedClipboard().empty()
+                                ? juce::String ("Paste automation at cursor")
+                                : "Paste automation (copied from a different lane)",
+                       canPasteAutomation (engineParam));
             m.addSeparator();
             m.addItem (603, "Clear automation in range",
                        ! rangePoints.empty());
@@ -4106,43 +4115,49 @@ namespace zynforge
                                  .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
                 [safe, engineParam, inSample, outSample] (int chosen)
                 {
-                    if (safe == nullptr || chosen == 0) return;
-                    auto& eng = safe->engine;
-                    if (chosen == 601)
-                    {
-                        sharedClipboard() = eng.copyAutomationRange (safe->index,
-                                                                      engineParam,
-                                                                      inSample, outSample);
-                    }
-                    else if (chosen == 602)
-                    {
-                        const auto anchor = eng.getEditCursorSample();
-                        if (anchor < 0) return;
-                        auto editFn = [&eng, idx = safe->index, engineParam, anchor]
-                                      { eng.pasteAutomationRange (idx, engineParam, anchor,
-                                                                  sharedClipboard()); };
-                        if (safe->automationEditWrapper)
-                            safe->automationEditWrapper ("Paste automation",
-                                                          std::move (editFn));
-                        else
-                            editFn();
-                        safe->repaint();
-                    }
-                    else if (chosen == 603)
-                    {
-                        auto editFn = [&eng, idx = safe->index, engineParam, inSample, outSample]
-                                      { eng.clearAutomationRange (idx, engineParam,
-                                                                  inSample, outSample); };
-                        if (safe->automationEditWrapper)
-                            safe->automationEditWrapper ("Clear automation range",
-                                                          std::move (editFn));
-                        else
-                            editFn();
-                        safe->repaint();
-                    }
+                    if (safe != nullptr)
+                        safe->applyAutomationRangeChoice (chosen, engineParam, inSample, outSample);
                 });
         }
 
+        bool canPasteAutomation (AudioEngine::AutomationParam lane) const
+        {
+            return ! sharedClipboard().empty() && sharedClipboardParam() == lane;
+        }
+
+    public:
+        // Apply one item of the automation range menu (601 copy, 602 paste,
+        // 603 clear). Split out of the menu callback as a test seam.
+        void applyAutomationRangeChoice (int chosen, AudioEngine::AutomationParam engineParam,
+                                         juce::int64 inSample, juce::int64 outSample)
+        {
+            auto& eng = engine;
+            auto edit = [this] (const char* label, std::function<void()> fn)
+            {
+                if (automationEditWrapper) automationEditWrapper (label, std::move (fn));
+                else                       fn();
+                repaint();
+            };
+            if (chosen == 601)
+            {
+                sharedClipboard() = eng.copyAutomationRange (index, engineParam, inSample, outSample);
+                sharedClipboardParam() = engineParam;
+            }
+            else if (chosen == 602)
+            {
+                const auto anchor = eng.getEditCursorSample();
+                if (anchor < 0 || ! canPasteAutomation (engineParam)) return;
+                edit ("Paste automation", [&eng, idx = index, engineParam, anchor]
+                      { eng.pasteAutomationRange (idx, engineParam, anchor, sharedClipboard()); });
+            }
+            else if (chosen == 603)
+            {
+                edit ("Clear automation range", [&eng, idx = index, engineParam, inSample, outSample]
+                      { eng.clearAutomationRange (idx, engineParam, inSample, outSample); });
+            }
+        }
+
+    private:
         void showSizeMenu (juce::Point<int> screenPos)
         {
             if (menuOpen) return;   // re-entrancy guard

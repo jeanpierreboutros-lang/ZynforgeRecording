@@ -1031,6 +1031,25 @@ namespace zynforge
                 expectEquals ((int) s.clips (0).size(), 2, "a mono clip landed on one half of a pair");
             }
 
+            beginTest ("Automation pastes only into the kind of lane it was copied from");
+            {
+                Show s (2, { 48000, 48000 });
+                s.engine.clearAutomation (AP::Volume);
+                s.engine.clearAutomation (AP::Pan);
+                s.engine.addAutomationPoint (0, AP::Volume, 12000, -20.0f);
+                auto rows = rowsOf (s.page());
+                if (rows.size() == 2)
+                {
+                    rows[0]->applyAutomationRangeChoice (601, AP::Volume, 0, 24000);
+                    s.engine.setEditCursorSample (30000);
+                    rows[1]->applyAutomationRangeChoice (602, AP::Pan, 0, 24000);
+                    expect (s.engine.getAutomation (1, AP::Pan).empty(), "dB values landed in a Pan lane");
+                    rows[1]->applyAutomationRangeChoice (602, AP::Volume, 0, 24000);
+                    expectEquals ((int) s.engine.getAutomation (1, AP::Volume).size(), 1);
+                }
+                s.engine.clearAutomation (AP::Volume);
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }
