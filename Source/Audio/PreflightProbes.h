@@ -4,6 +4,13 @@
 
 namespace zynforge::preflight
 {
+    // getBytesFreeOnVolume returns 0 both for a full volume and for a query
+    // that failed. A known volume size tells them apart.
+    inline bool freeSpaceKnown (juce::int64 freeBytes, juce::int64 volumeBytes) noexcept
+    {
+        return freeBytes > 0 || volumeBytes > 0;
+    }
+
     // Measured (not assumed) probes behind the Pre-Flight checklist.
     // Header-only and engine-free so the test harness can drive them
     // headlessly against temp directories.

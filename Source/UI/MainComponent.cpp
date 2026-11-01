@@ -341,8 +341,9 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
             : 3;
         const juce::int64 bytesPerSec    = (juce::int64) (sr * plan.armed * bytesPerSample);
         const juce::int64 wantBytes      = bytesPerSec * 60 * 30;  // 30 min headroom
-        const juce::int64 freeBytes      = plan.dir.getParentDirectory().getBytesFreeOnVolume();
-        if (freeBytes > 0 && freeBytes < wantBytes)
+        const auto        volume         = plan.dir.getParentDirectory();
+        const juce::int64 freeBytes      = volume.getBytesFreeOnVolume();
+        if (zynforge::preflight::freeSpaceKnown (freeBytes, volume.getVolumeTotalSize()) && freeBytes < wantBytes)
         {
             const double freeGB = freeBytes / 1.0e9;
             statusLabel.setText ("Drive has only "

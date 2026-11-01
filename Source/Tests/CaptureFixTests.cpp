@@ -10,6 +10,7 @@
 #include "../Audio/FloatAiffWriter.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/MultitrackRecorder.h"
+#include "../Audio/PreflightProbes.h"
 #include "../Capture/CaptureDaemon.h"
 #include "../UI/MainComponent.h"
 
@@ -113,6 +114,7 @@ namespace zynforge
             punchAcrossTheRollCeiling();
             flacCrashSurvivor();
             hashesFinishBeforeAMove();
+            refusedStarts();
             continuedTakeSurvivesACrash();
         }
 
@@ -511,6 +513,58 @@ namespace zynforge
             const auto report = juce::JSON::parse (dir.getChildFile ("session.report.json"));
             expect (! (bool) report["sha256Pending"], "the report was still pending after the wait");
             MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+        }
+
+        void refusedStarts()
+        {
+            beginTest ("A refused start keeps the last take's failure on screen");
+            {
+                const auto dir = tempDir ("refused");
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.startRecording (dir));
+                feed (rec, 4, 1);
+                rec.stopRecording();
+                rec.latches->primaryFailed.store (true);   // what a failed take leaves
+                // A fresh take cannot replace the existing one.
+                expect (! rec.startRecording (dir), "the fixture should refuse");
+                expect (rec.hasPrimaryFailed(), "the refusal cleared the banner");
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
+
+            beginTest ("A refused continue leaves no new files on any copy");
+            {
+                const auto dir = tempDir ("refused-parts");
+                const auto audio = dir.getChildFile ("Audio Files");
+                const auto arm = [] (MultitrackRecorder& rec)
+                {
+                    rec.prepare (kRate, kBlock, 2);
+                    rec.getTrack (0).armed.store (true);
+                    rec.getTrack (1).armed.store (true);
+                };
+                {
+                    MultitrackRecorder rec;
+                    arm (rec);
+                    expect (rec.startRecording (dir));
+                    feed (rec, 4, 2);
+                    rec.stopRecording();
+                }
+                // Track 2's next part cannot open: its name is taken.
+                expect (audio.getChildFile ("Track_02_part02.wav").createDirectory().wasOk());
+                MultitrackRecorder rec;
+                arm (rec);
+                rec.armContinue (4 * kBlock);
+                expect (! rec.startRecording (dir), "the fixture should refuse");
+                expect (! audio.getChildFile ("Track_01_part02.wav").exists(), "a refused start left a part file");
+                audio.getChildFile ("Track_02_part02.wav").deleteRecursively();
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
+
+            beginTest ("A drive with nothing free is full, not unknown");
+            expect (preflight::freeSpaceKnown (0, 1000), "a full volume read as unknown");
+            expect (! preflight::freeSpaceKnown (0, 0), "a failed query read as full");
+            expect (preflight::freeSpaceKnown (500, 1000));
         }
 
         void aiffCrashSurvival()

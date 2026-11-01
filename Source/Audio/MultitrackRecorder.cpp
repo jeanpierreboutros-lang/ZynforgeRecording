@@ -7,6 +7,7 @@
 #include "FlacRepair.h"
 #include "PunchSplice.h"
 #include "MultiPartReader.h"
+#include "PreflightProbes.h"
 
 #include <juce_cryptography/juce_cryptography.h>
 #include <algorithm>
@@ -761,7 +762,22 @@ namespace zynforge
         // A punch/continue arm belongs to this one start. Consume it on every
         // refusal below as well as on success (see discardTakeArms).
         bool wentLive = false;
-        const juce::ScopeGuard consumeArms { [&] { if (! wentLive) discardTakeArms(); } };
+        // A refused start is not a take: the last take's failure banner stays.
+        const bool hadFailed[] { recoveryMarkerFailed.load(), reportWriteFailed.load(), punchSpliceFailed.load(),
+                                 primaryFailed.load(), backupFailed.load(), mirrorFailed.load() };
+        const auto skippedBefore = mirrorsSkippedAtStart.load();
+        const juce::ScopeGuard consumeArms { [&]
+        {
+            if (wentLive) return;
+            discardTakeArms();
+            recoveryMarkerFailed.store (hadFailed[0]);
+            reportWriteFailed.store (hadFailed[1]);
+            punchSpliceFailed.store (hadFailed[2]);
+            primaryFailed.store (hadFailed[3]);
+            backupFailed.store (hadFailed[4]);
+            mirrorFailed.store (hadFailed[5]);
+            mirrorsSkippedAtStart.store (skippedBefore);
+        } };
         if (tracks.empty())   return false;
 
         // Every refusal names its reason: an empty startError made the UI
@@ -1817,11 +1833,11 @@ namespace zynforge
     // the files this pass created, and put any punch base back.
     void MultitrackRecorder::abandonTakeStart (TakeStart& take)
     {
-        auto& hadPrimaryBase = take.hadPrimaryBase;
-
         std::vector<juce::File> unusedNewFiles;
+        // Every file in partFiles is one this start created: opening refuses
+        // an existing target, so a continuation's new part is safe to remove.
         for (std::size_t i = 0; i < writers.size(); ++i)
-            if (! hadPrimaryBase[i] && writers[i].active)
+            if (writers[i].active)
                 for (const auto& copy : copies)
                     for (const auto& name : copy->tracks[i].partFiles)
                         unusedNewFiles.push_back (copy->tracks[i].baseFile.getSiblingFile (name));
@@ -3307,7 +3323,8 @@ namespace zynforge
         {
             if (! vol.exists() || rate <= 0) return kEffectivelyUnbounded;
             const auto free = vol.getBytesFreeOnVolume();
-            if (free <= 0) return kEffectivelyUnbounded;       // unknown -> don't pessimize
+            if (! preflight::freeSpaceKnown (free, vol.getVolumeTotalSize()))
+                return kEffectivelyUnbounded;                  // don't pessimize
             return (int) (free / (rate * (juce::int64) 60));
         };
         // Combine rates that land on the SAME filesystem. Primary + backup on
