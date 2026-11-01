@@ -1228,13 +1228,6 @@ namespace zynforge
         // cleanly).
         static juce::Array<juce::File> findIncompleteSessions (const juce::File& sessionsRoot);
 
-        // Phase correlation between two input channels (live, smoothed).
-        // Channels are 1-based for display, stored 0-based.
-        void setPhasePair (int leftCh1Based, int rightCh1Based) noexcept;
-        int  getPhaseLeftChannel()  const noexcept { return phaseLeft .load (std::memory_order_relaxed) + 1; }
-        int  getPhaseRightChannel() const noexcept { return phaseRight.load (std::memory_order_relaxed) + 1; }
-        float getPhaseCorrelation() const noexcept { return phaseCorrelation.load (std::memory_order_relaxed); }
-
         // Drops a marker at the current record or playback position. Pass a
         // name to set it atomically (drop re-sorts by position, so a separate
         // rename-by-index afterwards can hit the wrong marker). Returns the new
@@ -1296,10 +1289,6 @@ namespace zynforge
         StripNames               stripNames;
         StripGains               stripGains;
         StripRouting             stripRouting;
-
-        std::atomic<int>   phaseLeft         { 0 };  // 0-based
-        std::atomic<int>   phaseRight        { 1 };
-        std::atomic<float> phaseCorrelation  { 0.0f };
 
         std::atomic<int> streamOutL { -1 };
         std::atomic<int> streamOutR { -1 };

@@ -1428,12 +1428,6 @@ namespace zynforge
         return true;
     }
 
-    void AudioEngine::setPhasePair (int leftCh1Based, int rightCh1Based) noexcept
-    {
-        phaseLeft .store (juce::jmax (0, leftCh1Based  - 1), std::memory_order_relaxed);
-        phaseRight.store (juce::jmax (0, rightCh1Based - 1), std::memory_order_relaxed);
-    }
-
     void AudioEngine::setEditCursorSample (juce::int64 sample) noexcept
     {
         editCursorSample.store (sample, std::memory_order_release);
@@ -3544,31 +3538,6 @@ namespace zynforge
                                 ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate()
                                 : 48000.0;
                 timecodeChase.feedLtc (routedInputs[srcStrip], numSamples, sr);
-            }
-        }
-
-        // Phase correlation between the selected pair (smoothed). The
-        // pair refers to strip indices, so we use the routed input pointers.
-        {
-            const int li = phaseLeft .load (std::memory_order_relaxed);
-            const int ri = phaseRight.load (std::memory_order_relaxed);
-            if (li < numTracks && ri < numTracks
-                && routedInputs[li] != nullptr && routedInputs[ri] != nullptr)
-            {
-                const float* L = routedInputs[li];
-                const float* R = routedInputs[ri];
-                float lr = 0.0f, ll = 0.0f, rr = 0.0f;
-                for (int i = 0; i < numSamples; ++i)
-                {
-                    lr += L[i] * R[i];
-                    ll += L[i] * L[i];
-                    rr += R[i] * R[i];
-                }
-                const float denom = std::sqrt (ll * rr) + 1.0e-12f;
-                const float instantaneous = juce::jlimit (-1.0f, 1.0f, lr / denom);
-                const float prev = phaseCorrelation.load (std::memory_order_relaxed);
-                phaseCorrelation.store (prev * 0.85f + instantaneous * 0.15f,
-                                        std::memory_order_relaxed);
             }
         }
 
