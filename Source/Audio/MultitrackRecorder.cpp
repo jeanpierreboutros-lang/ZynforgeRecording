@@ -2278,6 +2278,8 @@ namespace zynforge
         juce::Time  stoppedAt;
         juce::int64 reportedSamples {}, reportedMissed {};
         double      reportedSeconds {};
+        juce::int64 passSamples {}, passMissed {};
+        double      passSeconds {};
         bool        backupWasRunning {}, reportedBackupFailure {}, reportedPrimaryFailure {},
                     reportedPunchFailure {}, reportedMirrorFailure {}, reportedDeviceLoss {};
         int         reportedMirrorsSkipped {};
@@ -2794,6 +2796,9 @@ namespace zynforge
                                          ? (double) oldReport.getProperty ("totalSeconds", 0.0) : 0.0)
                                      + stop.totalSeconds;
         report.reportedMissed = previousInt ("missedSamples") + stop.totalMissed;
+        report.passSamples = stop.totalSamples;
+        report.passSeconds = stop.totalSeconds;
+        report.passMissed  = stop.totalMissed;
         report.reportedMirrorsSkipped = (int) previousInt ("mirrorsSkipped") + mirrorsSkipped;
         report.reportedDeviceLoss = previousBool ("captureDeviceLost") || stop.deviceLostAtStop;
         report.reportedPrimaryFailure = previousBool ("primaryFailed") || primFailed;
@@ -2835,6 +2840,11 @@ namespace zynforge
         report->setProperty ("totalSamples",   (juce::int64) reportedSamples);
         report->setProperty ("totalSeconds",   reportedSeconds);
         report->setProperty ("missedSamples",  (juce::int64) reportedMissed);
+        // The totals above add up every pass of the session. These are this
+        // pass alone, which is what a comparison with another Mac has to read.
+        report->setProperty ("passSamples",    (juce::int64) passSamples);
+        report->setProperty ("passSeconds",    passSeconds);
+        report->setProperty ("passMissedSamples", (juce::int64) passMissed);
         report->setProperty ("captureDeviceLost", reportedDeviceLoss);
         report->setProperty ("backupActive",   backupWasRunning);
         report->setProperty ("backupFailed",   reportedBackupFailure);

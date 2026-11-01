@@ -207,9 +207,13 @@ namespace zynforge::twin
     {
         TakeSummary s;
         s.reportAvailable = report.isObject();
-        s.frames          = countOf (report, "totalSamples");
-        s.seconds         = (double) report.getProperty ("totalSeconds", 0.0);
-        s.missedSamples   = countOf (report, "missedSamples");
+        // One pass against one pass: the totals also hold earlier passes,
+        // which the other Mac may never have recorded. A report written
+        // before the pass fields existed has only the totals.
+        const bool hasPass = report.hasProperty ("passSeconds");
+        s.frames          = countOf (report, hasPass ? "passSamples" : "totalSamples");
+        s.seconds         = (double) report.getProperty (hasPass ? "passSeconds" : "totalSeconds", 0.0);
+        s.missedSamples   = countOf (report, hasPass ? "passMissedSamples" : "missedSamples");
         for (const auto* flag : { "primaryFailed", "backupFailed", "mirrorFailed", "punchSpliceFailed",
                                   "captureDeviceLost", "sha256Failed" })
             if ((bool) report.getProperty (flag, false)) ++s.failures;

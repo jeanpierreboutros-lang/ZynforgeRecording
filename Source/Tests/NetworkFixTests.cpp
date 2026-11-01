@@ -1000,6 +1000,57 @@ namespace zynforge
 
         void testTwinComparison()
         {
+            beginTest ("Twin comparison reads this pass, not the session's running totals");
+            {
+                auto* report = new juce::DynamicObject();
+                report->setProperty ("totalSamples", (juce::int64) 960000);
+                report->setProperty ("totalSeconds", 20.0);
+                report->setProperty ("missedSamples", (juce::int64) 12);
+                report->setProperty ("passSamples", (juce::int64) 480000);
+                report->setProperty ("passSeconds", 10.0);
+                report->setProperty ("passMissedSamples", (juce::int64) 0);
+                const auto pass = twin::summaryFromReport (juce::var (report));
+                expectEquals (pass.frames, (juce::int64) 480000);
+                expectEquals (pass.seconds, 10.0);
+                expectEquals (pass.missedSamples, (juce::int64) 0);
+
+                auto* older = new juce::DynamicObject();
+                older->setProperty ("totalSamples", (juce::int64) 960000);
+                older->setProperty ("totalSeconds", 20.0);
+                const auto fallback = twin::summaryFromReport (juce::var (older));
+                expectEquals (fallback.seconds, 20.0);
+
+                twin::TakeSummary oneSided = pass, matching = pass;
+                oneSided.reportAvailable = matching.reportAvailable = true;
+                expect (! twin::compareTakes (oneSided, matching, twin::Role::Leader).mismatch);
+            }
+
+            beginTest ("A continued take reports its own pass beside the running totals");
+            {
+                const auto dir = freshDir();
+                dir.getChildFile ("Audio Files").createDirectory();
+                const auto pass = [&] (bool continued)
+                {
+                    MultitrackRecorder recorder;
+                    recorder.prepare (48000.0, 256, 1);
+                    recorder.getTrack (0).armed.store (true);
+                    if (continued) recorder.armContinue (2048);
+                    expect (recorder.startRecording (dir));
+                    std::vector<float> audio (256, 0.1f);
+                    const float* input = audio.data();
+                    for (int block = 0; block < 8; ++block) recorder.processBlock (&input, 1, 256);
+                    recorder.stopRecording();
+                };
+                pass (false);
+                pass (true);
+                const auto report = juce::JSON::parse (dir.getChildFile ("session.report.json"));
+                const auto total = (juce::int64) report.getProperty ("totalSamples", 0);
+                const auto thisPass = (juce::int64) report.getProperty ("passSamples", 0);
+                expectGreaterThan (thisPass, (juce::int64) 0);
+                expectEquals (total, thisPass * 2);
+                dir.deleteRecursively();
+            }
+
             beginTest ("With no link, a leader can still type its way back to a rolling take");
             {
                 SilentHost host;
