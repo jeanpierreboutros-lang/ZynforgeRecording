@@ -188,7 +188,7 @@ public:
             host.engine.setTrackInputRouting (0, -1);
             host.engine.getRecorder().getTrack (0).referenceMedia.store (false);
             expect (host.saveSessionStateTo (f.dir));
-            expect (host.openSessionFolder (f.dir) > 0);
+            expect (host.openSessionFolder (f.dir, true) > 0);
             expectEquals (host.clickTrackIndex, -1, "ordinary recording was adopted as generated media");
             // Tempo changes refresh only an adopted click slot, exactly as the UI callback does.
             host.engine.setSessionTempoBpm (132.0f);
@@ -228,7 +228,7 @@ public:
             host.engine.setTrackInputRouting (0, -1);
             host.engine.getRecorder().getTrack (0).referenceMedia.store (true);
             expect (host.saveSessionStateTo (f.dir));
-            expect (host.openSessionFolder (f.dir) > 0);
+            expect (host.openSessionFolder (f.dir, true) > 0);
             expectEquals (host.clickTrackIndex, 0);
             bool complete = false, success = false;
             host.generateOrRefreshClickTrack ([&] (bool ok) { success = ok; complete = true; });
