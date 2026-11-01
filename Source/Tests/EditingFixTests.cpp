@@ -193,19 +193,6 @@ public:
             }
         }
 
-        beginTest ("Strip Silence leaves muted clips in place");
-        {
-            Folder f; expect (write (f.track(), 9600));
-            AudioEngine e; setup (e); e.loadSession (f.dir);
-            expect (e.splitTrackAtSample (0, 4800));
-            e.setClipMuted (0, 1, true);
-            e.stripSilence (0, -40.0f, 480, 480, 0);
-            int muted = 0;
-            for (const auto& c : e.clipsFor (0))
-                if (c.muted) { ++muted; expectEquals (c.timelineStartSamples, (juce::int64) 4800); }
-            expectEquals (muted, 1, "Strip Silence deleted the muted clip");
-        }
-
         beginTest ("Analysis scans ignore consolidate renders and punch sidecars");
         {
             Folder f; expect (write (f.track()));
@@ -374,7 +361,7 @@ public:
             expectWithinAbsoluteError (clipFadeGain (right(), 0), 0.0f, 1.0e-6f);
         }
 
-        beginTest ("A background Strip Silence does not overwrite a fade-ramp edit made meanwhile");
+        beginTest ("A background Consolidate does not overwrite a fade-ramp edit made meanwhile");
         {
             Folder f; expect (writeSine (f.track()));
             AudioEngine e; setup (e); e.loadSession (f.dir);
@@ -382,9 +369,9 @@ public:
             expect (e.splitTrackAtSample (0, 8000));
             std::atomic<bool> done { false };
             int processed = -1;
-            e.stripSilenceAsync ({ 0 }, -60.0f, 4800, 4800, 0,
-                                 [&] (int p, int, bool) { processed = p; done = true; });
-            // The scan publishes on the message thread, so this edit lands first.
+            e.consolidateRangeAsync ({ 0 }, 0, 48000,
+                                    [&] (int p, bool) { processed = p; done = true; });
+            // The render publishes on the message thread, so this edit lands first.
             expect (e.setClipFadeRamps (0, 1, 20001, 8000, 0, 0));
             for (int i = 0; i < 2000 && ! done; ++i)
             {
@@ -394,7 +381,7 @@ public:
                 juce::Thread::sleep (5);
                #endif
             }
-            expect (done.load(), "Strip Silence never finished");
+            expect (done.load(), "Consolidate never finished");
             expectEquals (processed, 0, "the stale result was published over the edit");
             expectEquals (e.clipsFor (0)[1].fadeInRampSamples, (juce::int64) 20001);
         }

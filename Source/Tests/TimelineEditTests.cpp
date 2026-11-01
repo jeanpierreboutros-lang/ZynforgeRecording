@@ -698,56 +698,8 @@ public:
         }
     }
 
-    void compAndStrip()
+    void healing()
     {
-        beginTest ("Strip Silence keeps the rest of a long fade at an edge it makes");
-        {
-            Folder f; expect (write (f.track(), 480000, 0.5f));
-            AudioEngine e; setup (e); e.loadSession (f.dir);
-            e.setClipFades (0, 0, 240000, 0);         // 5 s fade-in, quiet start under -42 dB
-            juce::AudioBuffer<float> before;
-            expect (e.renderTrackArrangement (0, before, 480000));
-            expect (e.stripSilence (0, -42.0f, 14400, 7200, 0) > 0);
-            juce::AudioBuffer<float> after;
-            expect (e.renderTrackArrangement (0, after, 480000));
-            for (const int at : { 40000, 120000, 200000, 300000 })
-                expectWithinAbsoluteError (after.getSample (0, at), before.getSample (0, at), 0.002f,
-                                           "the piece no longer plays the clip's fade");
-        }
-
-        beginTest ("Strip Silence takes one decision for a stereo pair");
-        {
-            Folder f;
-            const auto stereo = f.track();
-            stereo.getParentDirectory().createDirectory();
-            {
-                juce::WavAudioFormat format;
-                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
-                    stereo.createOutputStream().release(), 48000.0, 2, 24, {}, 0));
-                juce::AudioBuffer<float> b (2, 96000);
-                b.clear();
-                juce::FloatVectorOperations::fill (b.getWritePointer (0), 0.5f, 24000);        // L only
-                juce::FloatVectorOperations::fill (b.getWritePointer (1) + 48000, 0.5f, 24000); // R only
-                expect (writer->writeFromAudioSampleBuffer (b, 0, 96000));
-            }
-            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
-            e.getRecorder().getTrack (0).isStereo.store (true);
-            std::atomic<bool> finished { false };
-            e.stripSilenceAsync ({ 0, 1 }, -42.0f, 4800, 480, 0, [&finished] (int, int, bool) { finished = true; });
-            for (int i = 0; i < 2000 && ! finished.load(); ++i)
-                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
-            expect (finished.load());
-            const auto spans = [] (const std::vector<Clip>& clips)
-            {
-                juce::String text;
-                for (const auto& c : clips)
-                    text << c.timelineStartSamples << "+" << c.fileLengthSamples << " ";
-                return text;
-            };
-            expectEquals (spans (e.clipsFor (0)), spans (e.clipsFor (1)), "the two sides got different gaps");
-            expectEquals ((int) e.clipsFor (0).size(), 2);
-        }
-
         beginTest ("Heal Separation reaches only the split near the playhead");
         {
             Folder f; expect (write (f.track()));
@@ -873,7 +825,7 @@ public:
         clickAtSessionRate();
         songsOnTheTimeline();
         markersThatCutSongs();
-        compAndStrip();
+        healing();
         analysisReports();
     }
 };

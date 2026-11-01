@@ -987,22 +987,6 @@ namespace zynforge
         // was healed. The range variant heals every such boundary in [a, b).
         bool healSeparationAt    (int track, juce::int64 timelineSample);
         int  healSeparationRange (int track, juce::int64 start, juce::int64 end);
-        // Strip Silence: scan the track's active-take audio and separate it
-        // into clips around stretches quieter than thresholdDb for at least
-        // minSilenceSamples, dropping those silent gaps. Clips shorter than
-        // minClipSamples are discarded too. Non-destructive (clip-level only).
-        // Returns the number of audible clips left, or -1 on failure.
-        int  stripSilence (int track, float thresholdDb,
-                           juce::int64 minSilenceSamples, juce::int64 minClipSamples,
-                           juce::int64 padSamples = 0);
-        // Multi-track background variant used by the UI. File analysis happens
-        // off the message thread; the resulting clip lists are committed back
-        // on it only if the same session is still active. completion receives
-        // (tracksProcessed, audibleClips, fullySuccessful).
-        void stripSilenceAsync (std::vector<int> tracks, float thresholdDb,
-                                juce::int64 minSilenceSamples, juce::int64 minClipSamples,
-                                juce::int64 padSamples,
-                                std::function<void (int, int, bool)> completion);
         // Consolidate [start, end) on one track into a single new flat file
         // (Audio Files/Track_NN_consolidated_K.wav) referenced by one clip,
         // baking in gains / fades / clip order. Returns true on success.

@@ -159,7 +159,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                       canEdit && engine.getPlayer().hasLoopRegion());
         menu.addItem (317, "Consolidate Selection",
                       canEdit && engine.getPlayer().hasLoopRegion());
-        menu.addItem (316, "Strip Silence", canEdit);
         menu.addSeparator();
         menu.addItem (311, "Start Range at Playhead\t,",  canEdit);
         menu.addItem (312, "Finish Range at Playhead\t.", canEdit);
@@ -621,7 +620,6 @@ void MainComponent::registerMenuCommands()
     m.add (313, [this] { removeLastCapture(); });
     m.add (314, [this] { togglePunchMode(); });
     m.add (315, [this] { editHealSeparation(); });
-    m.add (316, [this] { editStripSilence(); });
     m.add (317, [this] { editConsolidateSelection(); });
     m.add (318, [this]
     {

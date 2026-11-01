@@ -297,57 +297,6 @@ namespace zynforge
                 chosen.deleteRecursively();
             }
 
-            beginTest ("Strip Silence analyzes the edited arrangement and commits all-silent emptiness");
-            {
-                auto dir = scratchDir ("strip_arrangement");
-                const auto audio = dir.getChildFile ("Audio Files");
-                audio.createDirectory();
-                const auto own = audio.getChildFile ("Track_01.wav");
-                const auto cross = audio.getChildFile ("cross.wav");
-                expect (writeWav (own, 48000.0, 4800, 0.5f));
-                expect (writeWav (cross, 48000.0, 4800, 0.7f));
-
-                AudioEngine eng;
-                eng.prepareForTests (48000.0, 256);
-                eng.setActiveSessionDir (dir);
-                expect (eng.loadSession (dir) > 0);
-                Clip first;
-                first.timelineStartSamples = 0;
-                first.fileLengthSamples = 4800;
-                first.gainDb = -3.0f;
-                Clip second;
-                second.audioFile = cross;
-                second.sourceChannel = 0;
-                second.timelineStartSamples = 9600;
-                second.fileLengthSamples = 4800;
-                second.gainDb = -6.0f;
-                eng.clipsFor (0) = { first, second };
-                eng.getPlayer().setTrackClips (0, eng.clipsFor (0));
-                eng.syncActiveTake (0);
-
-                expectEquals (eng.stripSilence (0, -40.0f, 1000, 100, 0), 2);
-                expectEquals ((int) eng.clipsFor (0).size(), 2);
-                expect (eng.clipsFor (0)[1].audioFile == cross,
-                        "cross-track source must survive Strip Silence");
-                expectEquals (eng.clipsFor (0)[1].sourceChannel, 0);
-                expectWithinAbsoluteError (eng.clipsFor (0)[1].gainDb, -6.0f, 0.001f);
-
-                auto silentDir = scratchDir ("strip_all_silent");
-                const auto silentAudio = silentDir.getChildFile ("Audio Files");
-                silentAudio.createDirectory();
-                expect (writeWav (silentAudio.getChildFile ("Track_01.wav"),
-                                  48000.0, 4800, 0.0f));
-                AudioEngine silent;
-                silent.prepareForTests (48000.0, 256);
-                silent.setActiveSessionDir (silentDir);
-                silent.loadSession (silentDir);
-                expectEquals (silent.stripSilence (0, -40.0f, 100, 100, 0), 0);
-                expect (silent.isTrackArrangementEmpty (0),
-                        "an all-silent result must be an explicit empty arrangement");
-                silentDir.deleteRecursively();
-                dir.deleteRecursively();
-            }
-
             beginTest ("External capture blocks local playback starts");
             {
                 auto dir = scratchDir ("external_record_playback_guard");
