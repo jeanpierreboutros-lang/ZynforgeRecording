@@ -134,7 +134,8 @@ namespace zynforge
         std::atomic<int> inputRouting  { -2 };
         std::atomic<int> outputRouting { -2 };
 
-        // Stream bus send (post-fader, post-mute/solo).
+        // Stream bus send (post-fader, post-mute). Solo never reaches it:
+        // see mix::streamAudible.
         std::atomic<bool> streamSend  { false };
 
         // ── Live recording waveform overview (RT-safe, lock-free SPSC) ──────

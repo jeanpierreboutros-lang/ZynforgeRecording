@@ -3174,6 +3174,16 @@ namespace zynforge
         for (const auto& v : vcas)
             if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
 
+        const auto vcaGateFor = [this] (const TrackState& t) noexcept
+        {
+            mix::VcaGate vca;
+            const int g = t.vcaGroup.load (std::memory_order_relaxed);
+            if (g >= 0 && g < kNumVcas)
+                vca = { true, vcas[(size_t) g].muted.load (std::memory_order_relaxed),
+                              vcas[(size_t) g].soloed.load (std::memory_order_relaxed) };
+            return vca;
+        };
+
         auto channelAudible = [&] (int i) -> bool
         {
             auto& t = recorder.getTrack (i);
@@ -3186,14 +3196,9 @@ namespace zynforge
             // reflects only the lane; the static mute is handled below.
             if (i < kMaxResolvedStrips && resolvedMix[(size_t) i].muteLane)
                 return false;
-            const int g = t.vcaGroup.load (std::memory_order_relaxed);
-            mix::VcaGate vca;
-            if (g >= 0 && g < kNumVcas)
-                vca = { true, vcas[(size_t) g].muted.load (std::memory_order_relaxed),
-                              vcas[(size_t) g].soloed.load (std::memory_order_relaxed) };
             return mix::audible (t.muted.load (std::memory_order_relaxed),
                                  t.soloed.load (std::memory_order_relaxed),
-                                 vca, anySolo, anyVcaSolo);
+                                 vcaGateFor (t), anySolo, anyVcaSolo);
         };
 
         // Mix the routed track scratch onto the device outputs honoring
@@ -3267,7 +3272,9 @@ namespace zynforge
             {
                 auto& t = recorder.getTrack (i);
                 if (! t.streamSend.load (std::memory_order_relaxed)) continue;
-                if (! channelAudible (i)) continue;
+                if (! mix::streamAudible (t.muted.load (std::memory_order_relaxed), vcaGateFor (t),
+                                          i < kMaxResolvedStrips && resolvedMix[(size_t) i].muteLane))
+                    continue;
 
                 const float dB   = effectiveGainDb (i);
                 const double gain = (double) juce::Decibels::decibelsToGain (dB, -60.0f);

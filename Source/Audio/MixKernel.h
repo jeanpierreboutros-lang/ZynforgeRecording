@@ -61,6 +61,14 @@ namespace zynforge::mix
         return anySolo ? soloed : ! muted;
     }
 
+    // The stream bus and StereoMix.wav are a record of the mix, and solo is a
+    // monitoring tool: it must not strip the show out of the file because the
+    // engineer checked a mic. Only a mute removes a strip here.
+    constexpr bool streamAudible (bool muted, VcaGate vca, bool muteLane) noexcept
+    {
+        return ! muteLane && audible (muted, false, vca, false, false);
+    }
+
     // One strip's lane-driven mix inputs at one timeline position.
     struct StripLanes
     {

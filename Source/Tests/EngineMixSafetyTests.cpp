@@ -225,6 +225,49 @@ namespace zynforge
                 }
             }
 
+            beginTest ("Solo during a take leaves StereoMix.wav and the stream bus alone");
+            {
+                TempFolder f;
+                Rig r (2, 2, 4);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                e.setStreamOutputs (2, 3);
+                e.setTrackStream (0, true);
+                e.setTrackStream (1, true);
+                e.setTrackArmed (0, true); e.setTrackArmed (1, true);
+                e.setRecordStereoMix (true);
+                expect (e.startRecording (f.dir));
+                r.input (0, 0.5f); r.input (1, 0.5f);
+                for (int b = 0; b < 16; ++b) r.process();
+                const float bothStrips = r.peak (2);
+                expect (bothStrips > 0.5f);
+                e.setTrackSoloed (0, true);          // the engineer checks a mic
+                r.process();
+                expectWithinAbsoluteError (r.peak (2), bothStrips, 0.001f, "solo reached the stream bus");
+                expect (r.peak (0) < bothStrips, "solo stopped working on the monitor");
+                for (int b = 0; b < 16; ++b) r.process();
+                e.setTrackMuted (1, true);           // a mute is part of the mix
+                r.process();
+                expect (r.peak (2) < bothStrips * 0.75f, "a mute no longer reaches the stream bus");
+                e.stopRecording();
+                e.setRecordStereoMix (false);
+                e.setTrackSoloed (0, false); e.setTrackMuted (1, false);
+                rec.getTrack (0).streamSend.store (false);
+                rec.getTrack (1).streamSend.store (false);
+
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> mix (
+                    fm.createReaderFor (f.dir.getChildFile ("Export Files/StereoMix.wav")));
+                expect (mix != nullptr, "StereoMix.wav missing");
+                if (mix != nullptr)
+                {
+                    // Block 20 of the take: the solo was on, the mute not yet.
+                    juce::AudioBuffer<float> data (2, 256);
+                    mix->read (&data, 0, 256, 256 * 20, true, true);
+                    expectWithinAbsoluteError (data.getMagnitude (0, 0, 256), bothStrips, 0.001f,
+                                               "solo reached the recorded mix");
+                }
+            }
+
             beginTest ("Trim-Follow with no capture reference holds the channel at 0 dB");
             {
                 Rig r (1, 1, 2);
