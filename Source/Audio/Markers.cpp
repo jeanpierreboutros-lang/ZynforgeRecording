@@ -102,6 +102,28 @@ namespace zynforge
         save();
     }
 
+    void MarkersManager::replaceAll (std::vector<Marker> newMarkers)
+    {
+        markers = std::move (newMarkers);
+        sortByPosition();
+        save();
+    }
+
+    void MarkersManager::insert (Marker marker)
+    {
+        markers.push_back (std::move (marker));
+        sortByPosition();
+        save();
+    }
+
+    void MarkersManager::removeById (const juce::String& runtimeId)
+    {
+        markers.erase (std::remove_if (markers.begin(), markers.end(),
+                                       [&runtimeId] (const Marker& m) { return m.runtimeId == runtimeId; }),
+                       markers.end());
+        save();
+    }
+
     bool MarkersManager::save() const
     {
         if (! sessionDir.isDirectory()) return false;

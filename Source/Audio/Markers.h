@@ -48,6 +48,9 @@ namespace zynforge
         void   removeMarker (int i);
         void   renameMarker (int i, const juce::String& newName);
         void   setMarkerSample (int i, juce::int64 sample);
+        void   replaceAll (std::vector<Marker> newMarkers);
+        void   insert (Marker marker);
+        void   removeById (const juce::String& runtimeId);
 
         bool save() const;
         bool load();
