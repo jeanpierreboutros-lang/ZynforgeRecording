@@ -376,6 +376,13 @@ namespace zynforge
 
         int rowCount() const { return (int) rows.size(); }
 
+        const TrackRow* rowForTrack (int physical) const
+        {
+            for (auto& r : rows)
+                if (r->getTrackIndex() == physical) return r.get();
+            return nullptr;
+        }
+
         // True when the rows were built for exactly this logical layout. A
         // count check alone misses a block move that keeps both the track and
         // row counts ([mono, stereo] -> [stereo, mono]) and would leave rows
@@ -716,10 +723,17 @@ namespace zynforge
         if (list != nullptr)
         {
             list->sharedAutomationEditWrapper = automationEditWrapper;
-            list->sharedAutomationDragBegin   = automationDragBegin;
-            list->sharedAutomationDragEnd     = automationDragEnd;
             list->updateRowContext();
         }
+    }
+
+    void EditPage::setAutomationDragHooks (std::function<void()> begin,
+                                           std::function<void (const juce::String&)> end)
+    {
+        if (list == nullptr) return;
+        list->sharedAutomationDragBegin = std::move (begin);
+        list->sharedAutomationDragEnd   = std::move (end);
+        list->updateRowContext();
     }
 
     void EditPage::setAutomationToolbar (AutomationToolbar* t)
@@ -735,9 +749,17 @@ namespace zynforge
         repaint();
     }
 
+    std::optional<AudioEngine::AutomationParam> EditPage::activeRowAutomationParam() const
+    {
+        if (list == nullptr) return {};
+        const auto* row = list->rowForTrack (activeRowTrackIndex);
+        return row != nullptr ? row->shownAutomationParam() : std::nullopt;
+    }
+
     void EditPage::applyToolbarParamToAllRows()
     {
         if (toolbar == nullptr || list == nullptr) return;
+        focusedPointIdx = -1;   // it named a point on the lane being replaced
 
         TrackRow::LaneMode lm = TrackRow::LaneMode::Volume;
         switch (toolbar->getParam())

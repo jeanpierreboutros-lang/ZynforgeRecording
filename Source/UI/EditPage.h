@@ -11,6 +11,7 @@
 
 #include <memory>
 #include <functional>
+#include <optional>
 #include <vector>
 #include <set>
 #include <tuple>
@@ -153,6 +154,10 @@ namespace zynforge
             }
         }
 
+        // The automation lane the active row shows, if it shows one. Keyboard
+        // point edits act on this lane and no other.
+        std::optional<AudioEngine::AutomationParam> activeRowAutomationParam() const;
+
         // Focused automation point index (within the active row's
         // active lane). -1 = no focus. Set by arrow-key navigation.
         // Paint shows the focused point with a brighter highlight
@@ -237,9 +242,10 @@ namespace zynforge
         // Begin / end an automation drag transaction. The host
         // (MainComponent) snapshots automation lanes at begin and
         // again at end, pushing a single AutomationSnapshotAction
-        // so the whole drag is one undo step instead of N.
-        std::function<void()>                       automationDragBegin;
-        std::function<void (const juce::String&)>   automationDragEnd;
+        // so the whole drag is one undo step instead of N. Reaches
+        // every row, present and future, when called.
+        void setAutomationDragHooks (std::function<void()> begin,
+                                     std::function<void (const juce::String&)> end);
 
         // Force every row's lane content to follow the toolbar's
         // Param choice. Called whenever the toolbar's onParamChanged

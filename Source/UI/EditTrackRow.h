@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace zynforge
@@ -344,6 +345,10 @@ namespace zynforge
                         case 34: self->laneMode = LaneMode::Click;      break;
                         default: return;
                     }
+                    // A focused point belongs to the lane that just left.
+                    if (auto* page = self->findParentComponentOfClass<EditPage>())
+                        if (page->getActiveRowTrackIndex() == self->index)
+                            page->setFocusedPointIdx (-1);
                     // Keep the AUTOMATION toolbar's Lane combo in
                     // lockstep with the per-row VIEW pick, so the
                     // toolbar param the engineer adds/deletes points
@@ -2505,8 +2510,7 @@ namespace zynforge
                 //   1. directly on a point handle  -> curve-type picker
                 //   2. with a loop region set      -> range copy / paste / clear
                 //   3. otherwise                   -> row-size menu
-                if (laneMode != LaneMode::Waveform && laneMode != LaneMode::Markers
-                    && inWavePane (e.x))
+                if (shownAutomationParam().has_value() && inWavePane (e.x))
                 {
                     const int hitPoint = hitTestAutomationPoint (e.getPosition());
                     if (hitPoint >= 0)
@@ -3808,8 +3812,7 @@ namespace zynforge
 
         int hitTestAutomationPoint (juce::Point<int> pos) const
         {
-            if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)
-                return -1;
+            if (! shownAutomationParam().has_value()) return -1;
             const auto& lane = engine.getAutomation (index, currentLaneParam());
             if (lane.empty()) return -1;
 
@@ -3848,14 +3851,27 @@ namespace zynforge
             }
         }
 
+    public:
+        // The automation lane this row draws points for, if it draws any.
+        // currentLaneParam() falls through to Volume for every other lane, so
+        // anything that edits points must ask here first: a Click or Tempo
+        // lane, a Waveform lane and the click strip show none.
+        std::optional<AudioEngine::AutomationParam> shownAutomationParam() const
+        {
+            const bool showsPoints = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
+                                  || laneMode == LaneMode::Mute;
+            if (! showsPoints || index == clickRowIdx) return {};
+            return currentLaneParam();
+        }
+
+    private:
         // Returns the index of the SEGMENT (i.e. the prev point in
         // the lane) whose tension handle is under the cursor, or -1.
         // Mirrors the paint code: skip Hold + flat segments + ones
         // narrower than 18 px. Tolerance is 6 px around the handle.
         int hitTestTensionHandle (juce::Point<int> pos) const
         {
-            if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)
-                return -1;
+            if (! shownAutomationParam().has_value()) return -1;
             const auto engineParam = currentLaneParam();
             if (engineParam == AudioEngine::AutomationParam::Mute) return -1;
             const auto& lane = engine.getAutomation (index, engineParam);

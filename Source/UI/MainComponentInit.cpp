@@ -498,11 +498,6 @@ MainComponent::MainComponent()
             editPage->repaint();
         }
     };
-    automationToolbar->onClearAll = [this]
-    {
-        showStatus ("Automation clear is recognised -- point storage lands in the next pass");
-    };
-
     // editPage doesn't exist yet here -- the real wiring happens below
     // after `editPage = std::make_unique<EditPage>(...)`.
 
@@ -511,11 +506,15 @@ MainComponent::MainComponent()
     {
         if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
         { showStatus ("Stop recording or unlock the session before clearing automation"); return; }
+        using Param = zynforge::AutomationToolbar::Param;
         const auto p = automationToolbar->getParam();
-        const auto engineParam =
-            p == zynforge::AutomationToolbar::Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
-          : p == zynforge::AutomationToolbar::Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
-                                                            : zynforge::AudioEngine::AutomationParam::Mute;
+        // Click and Tempo hold no automation points. Falling through to Mute
+        // here erased every Mute lane while the row showed something else.
+        if (p != Param::Volume && p != Param::Pan && p != Param::Mute)
+        { showStatus ("Clear works on the Volume, Pan and Mute lanes -- pick one first"); return; }
+        const auto engineParam = p == Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
+                               : p == Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
+                                                    : zynforge::AudioEngine::AutomationParam::Mute;
         // Wrap in an undoable transaction so a stray click can be
         // recovered with Cmd+Z. AutomationSnapshotAction captures
         // before/after, undo restores the full automation table.
@@ -675,9 +674,9 @@ MainComponent::MainComponent()
         {
             runAutomationEdit (label, std::move (fn));
         });
-    editPage->automationDragBegin = [this] { beginAutomationTransaction(); };
-    editPage->automationDragEnd   = [this] (const juce::String& label)
-                                    { endAutomationTransaction (label); };
+    editPage->setAutomationDragHooks (
+        [this] { beginAutomationTransaction(); },
+        [this] (const juce::String& label) { endAutomationTransaction (label); });
     // Save per-session zoom into .zfproj on every idle change.
     // A zoom click during capture changes only the view. The normal stop-save
     // persists its final value without writing to the active take volume.

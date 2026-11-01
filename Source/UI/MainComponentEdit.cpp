@@ -65,11 +65,17 @@ namespace
                                   juce::var beforeIn, juce::var afterIn)
             : engine (e), before (std::move (beforeIn)), after (std::move (afterIn)) {}
 
-        bool perform() override { engine.loadAutomationFromJson (after);  return true; }
-        bool undo()    override { engine.loadAutomationFromJson (before); return true; }
+        bool perform() override
+        {
+            if (firstRun) { firstRun = false; return true; }   // already applied
+            engine.loadAutomationFromJson (after);
+            return true;
+        }
+        bool undo() override { engine.loadAutomationFromJson (before); return true; }
 
         zynforge::AudioEngine& engine;
         juce::var before, after;
+        bool      firstRun { true };
     };
 
     struct MixerSnapshotAction final : public juce::UndoableAction
@@ -671,10 +677,15 @@ void MainComponent::endAutomationTransaction (const juce::String& label)
     if (! automationTransactionOpen) return;
     automationTransactionOpen = false;
     const auto after = engine.automationToJson();
-    undoManager.beginNewTransaction (label);
-    undoManager.perform (new AutomationSnapshotAction (engine,
-                                                       pendingAutomationBefore,
-                                                       after));
+    // A click that grabbed a point and moved nothing is not an edit: Cmd+Z
+    // must not spend a press on it.
+    if (juce::JSON::toString (pendingAutomationBefore) != juce::JSON::toString (after))
+    {
+        undoManager.beginNewTransaction (label);
+        undoManager.perform (new AutomationSnapshotAction (engine,
+                                                           pendingAutomationBefore,
+                                                           after));
+    }
     pendingAutomationBefore = juce::var();
     if (editPage != nullptr) editPage->repaint();
 }
