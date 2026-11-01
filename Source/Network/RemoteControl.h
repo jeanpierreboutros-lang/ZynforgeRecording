@@ -110,6 +110,10 @@ namespace zynforge
         void onConsoleStereoLink (int leftCh1, bool linked);
         std::map<int, bool> takeCapturedStereoLinks();
 
+        // A marker asked for over the network, held to scenefollow::MarkerBudget.
+        // What dropMarkerAtCurrentPosition returns, or -1 when refused.
+        int dropRemoteMarker (const juce::String& name = {});
+
         // Both console paths report a scene / snapshot recall here. The rule
         // is scenefollow::decide; this applies it and tells the engineer.
         scenefollow::Action onConsoleScene (int sceneNumber, const juce::String& sceneName,
@@ -139,6 +143,9 @@ namespace zynforge
 
     private:
         scenefollow::RecallEchoFilter recallEchoes;
+        scenefollow::MarkerBudget     markerBudget;
+        juce::int64                   markersRefused { 0 };
+        juce::uint32                  lastMarkerNoticeMs { 0 };
         scenefollow::Facts sceneFacts() const;
 
         AudioEngine& engine;

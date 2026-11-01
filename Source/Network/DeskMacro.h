@@ -68,25 +68,7 @@ namespace zynforge
             return { command, value };
         }
 
-        // A strict dotted quad, normalised so it compares equal to what the
-        // socket reports. Empty for anything that couldn't be one desk: no
-        // hostnames, and no wildcard or broadcast that would widen the pin.
-        inline juce::String normaliseSourceIp (const juce::String& text)
-        {
-            const auto parts = juce::StringArray::fromTokens (text.trim(), ".", "");
-            if (parts.size() != 4) return {};
-            int octets[4] {};
-            for (int i = 0; i < 4; ++i)
-            {
-                if (parts[i].isEmpty() || parts[i].length() > 3 || ! parts[i].containsOnly ("0123456789"))
-                    return {};
-                octets[i] = parts[i].getIntValue();
-                if (octets[i] > 255) return {};
-            }
-            if (octets[0] == 0 || octets[0] >= 224) return {};
-            return juce::String (octets[0]) + "." + juce::String (octets[1]) + "."
-                 + juce::String (octets[2]) + "." + juce::String (octets[3]);
-        }
+        using oscwire::normaliseSourceIp;
 
         // Desk macros can double-fire, and a held key can repeat. Measured from
         // the last SIGHTING, not the last command acted on: otherwise a repeat

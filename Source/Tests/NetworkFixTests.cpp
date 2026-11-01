@@ -237,6 +237,7 @@ namespace zynforge
             testJsonGuard();
             testJsonRoutes();
             testMirrorLayout();
+            testOscFlood();
         }
 
     private:
@@ -530,6 +531,89 @@ namespace zynforge
                 offer (real);
                 expectEquals (engine.getRecorder().getNumTracks(), 2);
                 expect (mirror.getLastError().isEmpty(), mirror.getLastError());
+            }
+        }
+
+        void testOscFlood()
+        {
+            struct SlowListener final : juce::OSCReceiver::Listener<juce::OSCReceiver::MessageLoopCallback>
+            {
+                std::atomic<int> heard { 0 };
+                void oscMessageReceived (const juce::OSCMessage&) override { ++heard; juce::Thread::sleep (1); }
+                void oscBundleReceived (const juce::OSCBundle&) override {}
+            };
+            struct Ticker final : juce::Timer
+            {
+                std::atomic<int> ticks { 0 };
+                void timerCallback() override { ++ticks; }
+            };
+
+            beginTest ("An OSC flood is capped, and the message thread keeps its timers");
+            {
+                SlowListener listener;
+                OscPacketReceiver receiver;
+                receiver.addListener (&listener);
+                int port = 0;
+                for (int p = 47950; p < 47970 && port == 0; ++p)
+                    if (receiver.connect (p)) port = p;
+                expect (port != 0, "no free UDP port");
+                if (port != 0)
+                {
+                    juce::DatagramSocket sender (false);
+                    const char packet[] = "/x\0\0,\0\0\0";
+                    const auto flooded = [&]
+                    {
+                        for (int i = 0; i < 64; ++i) sender.write ("127.0.0.1", port, packet, 8);
+                        return receiver.getOverflowCount() > 0;
+                    };
+                    expect (waitFor (flooded, 5000), "the backlog never filled");
+                    const auto dropped = receiver.getOverflowCount();
+                    expectGreaterThan (dropped, (juce::int64) 0);
+
+                    Ticker ticker;
+                    ticker.startTimer (10);
+                    const auto end = juce::Time::getMillisecondCounterHiRes() + 30000;
+                    int ticksAtHalf = -1;
+                    while (juce::Time::getMillisecondCounterHiRes() < end && listener.heard.load() < 2000)
+                    {
+                        pumpMessages();
+                        if (ticksAtHalf < 0 && listener.heard.load() >= 1000) ticksAtHalf = ticker.ticks.load();
+                    }
+                    ticker.stopTimer();
+                    expectGreaterThan (ticksAtHalf, 10, "timers stood behind the whole backlog");
+                    receiver.disconnect();
+                    expectLessOrEqual (listener.heard.load(), 2200, "more was queued than the cap allows");
+                }
+                receiver.removeListener (&listener);
+            }
+
+            beginTest ("Remote markers stop at a rate a person could ask for");
+            {
+                scenefollow::MarkerBudget budget;
+                juce::uint32 now = 5000000;
+                int granted = 0;
+                for (int i = 0; i < 100; ++i) granted += budget.take (now) ? 1 : 0;
+                expectEquals (granted, (int) scenefollow::MarkerBudget::kBurst);
+                expect (! budget.take (now + 999));
+                expect (budget.take (now + 1000));
+                expect (! budget.take (now + 1001));
+                granted = 0;
+                now += 3600000;
+                for (int i = 0; i < 100; ++i) granted += budget.take (now) ? 1 : 0;
+                expectEquals (granted, (int) scenefollow::MarkerBudget::kBurst, "idle time must not bank more than a burst");
+
+                const auto dir = freshDir();
+                AudioEngine engine;
+                engine.getMarkers().setContext (dir, 48000.0);
+                engine.setEditCursorSample (48000);
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::DiGiCo);
+                for (int i = 0; i < 500; ++i)
+                    osc.dispatchForTest (juce::OSCMessage ("/Console/Marker"));
+                expectLessOrEqual ((int) engine.getMarkers().getAll().size(), (int) scenefollow::MarkerBudget::kBurst + 1);
+                expectGreaterThan ((int) engine.getMarkers().getAll().size(), 0);
+                engine.getMarkers().clearContext();
+                dir.deleteRecursively();
             }
         }
 
