@@ -329,7 +329,10 @@ private:
     int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
     juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
     int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
-    void recordUndoSnapshot (const juce::String& label);
+    void flushMixerUndo();
+    // A bulk mixer action: take `before`, make the change, then commit it.
+    juce::var beginMixerUndo();
+    void commitMixerUndo (const juce::String& label, const juce::var& before);
     // Clip/playlist undo: capture engine.playlistsToJson() before the edit,
     // pass it here after; records an undoable step only if clips changed.
     void pushClipUndo (const juce::String& label, const juce::var& before);

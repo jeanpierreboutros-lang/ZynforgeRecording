@@ -1207,6 +1207,40 @@ namespace zynforge
                 s.page().setReadOnlyWhileRecording (false);
             }
 
+            beginTest ("Solo, Arm and strip paste are one undo step each");
+            {
+                Show s (2, { 48000, 48000 });
+                s.main.rebuildStrips();
+                s.main.selectedLogical = { 0 };
+                auto settle = [&s] { for (int i = 0; i < 8; ++i) s.main.pollMixerUndo(); };
+                auto& rec = s.engine.getRecorder();
+                settle();
+                s.main.undoManager.clearUndoHistory();
+                s.main.rebaselineMixerUndo();
+
+                s.main.editSoloSelection();
+                settle();
+                expect (rec.getTrack (0).soloed.load(), "setup: soloed");
+                s.main.editUndo();
+                expect (! rec.getTrack (0).soloed.load(), "undo must clear the solo");
+                expect (! s.main.undoManager.canUndo(), "the solo left a second, empty step");
+                s.main.editRedo();
+                expect (rec.getTrack (0).soloed.load(), "redo did nothing");
+                s.main.editUndo();
+                settle();
+
+                s.main.undoManager.clearUndoHistory();
+                s.main.armSelection();
+                settle();
+                expect (rec.getTrack (0).armed.load(), "setup: armed");
+                s.main.editUndo();
+                expect (! rec.getTrack (0).armed.load());
+                expect (! s.main.undoManager.canUndo(), "the arm left a second, empty step");
+                s.main.editRedo();
+                expect (rec.getTrack (0).armed.load(), "redo did nothing");
+                s.engine.setTrackArmed (0, false);
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

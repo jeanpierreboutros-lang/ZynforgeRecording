@@ -192,13 +192,36 @@ void MainComponent::pushClipUndo (const juce::String& label, const juce::var& be
     undoManager.beginNewTransaction (label);
     undoManager.perform (new ClipSnapshotAction (engine, before, after));
 }
-void MainComponent::recordUndoSnapshot (const juce::String& label)
+// Commit a mixer change still settling, so a bulk action starts from a clean
+// baseline and Cmd+Z undoes the latest move.
+void MainComponent::flushMixerUndo()
 {
-    juce::Array<juce::var> arr;
-    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
-        arr.add (snapshotStrip (engine, i));
+    if (! mixerUndoReady) return;
+    const auto fp = zynforge::mixersnapshot::fingerprint (engine);
+    const bool structural = engine.getRecorder().getNumTracks() != committedMixerCount;
+    if (fp == committedMixerFp || structural) return;
+    undoManager.beginNewTransaction ("Mixer change");
+    undoManager.perform (new MixerSnapshotAction (engine, committedMixerState));
+    committedMixerState = captureMixerSnapshot();
+    committedMixerFp = fp;
+    lastSeenMixerFp = fp;
+    mixerChangeStableTicks = 0;
+}
+
+juce::var MainComponent::beginMixerUndo()
+{
+    flushMixerUndo();
+    return captureMixerSnapshot();
+}
+
+// Runs after the change: MixerSnapshotAction reads its "after" state when
+// performed, so pushing it first recorded nothing and left the real change for
+// the settle poll to add as a second step.
+void MainComponent::commitMixerUndo (const juce::String& label, const juce::var& before)
+{
     undoManager.beginNewTransaction (label);
-    undoManager.perform (new MixerSnapshotAction (engine, juce::var (arr)));
+    undoManager.perform (new MixerSnapshotAction (engine, before));
+    rebaselineMixerUndo();
 }
 
 juce::var MainComponent::captureMixerSnapshot()
@@ -299,18 +322,7 @@ void MainComponent::editUndo()
     // Commit any in-flight mixer change NOW so Cmd+Z immediately after a fader
     // / rename / colour move undoes that move -- the timer's ~300 ms settle
     // wouldn't have recorded it as an undo step yet.
-    if (mixerUndoReady)
-    {
-        const auto fp = zynforge::mixersnapshot::fingerprint (engine);
-        const bool structural = engine.getRecorder().getNumTracks() != committedMixerCount;
-        if (fp != committedMixerFp && ! structural)
-        {
-            undoManager.beginNewTransaction ("Mixer change");
-            undoManager.perform (new MixerSnapshotAction (engine, committedMixerState));
-            committedMixerState = captureMixerSnapshot(); committedMixerFp = fp;
-            lastSeenMixerFp = fp; mixerChangeStableTicks = 0;
-        }
-    }
+    flushMixerUndo();
 
     if (! undoManager.canUndo()) { showStatus ("Nothing to undo"); return; }
     const auto undone = undoManager.getUndoDescription();   // read before undo() moves the stack
@@ -364,7 +376,7 @@ void MainComponent::editPasteSelected()
     if (arr == nullptr || arr->isEmpty()) { showStatus ("Clipboard is empty"); return; }
     if (selectedLogical.empty()) { showStatus ("Pick a target strip first"); return; }
 
-    recordUndoSnapshot ("Paste strip settings");
+    const auto before = beginMixerUndo();
 
     // Round-robin: paste clipboard entries onto the selected logical
     // strips. If selection > clipboard, wraps the clipboard.
@@ -375,6 +387,7 @@ void MainComponent::editPasteSelected()
         restoreStrip (engine, phys, (*arr)[i % arr->size()]);
         ++i;
     }
+    commitMixerUndo ("Paste strip settings", before);
     lastTrackCount = -1;
     showStatus ("Pasted strip settings onto " + juce::String ((int) selectedLogical.size())
                 + " strip(s)");
@@ -400,12 +413,13 @@ void MainComponent::editSoloSelection()
                 { allSelectedSoloed = false; break; }
         }
 
-        recordUndoSnapshot (allSelectedSoloed ? "Clear solo" : "Solo selection");
+        const auto before = beginMixerUndo();
         for (int i = 0; i < rec.getNumTracks(); ++i)   // clean slate either way
             rec.getTrack (i).soloed.store (false, std::memory_order_relaxed);
 
         if (allSelectedSoloed)
         {
+            commitMixerUndo ("Clear solo", before);
             showStatus ("Solo cleared");
             return;
         }
@@ -421,6 +435,7 @@ void MainComponent::editSoloSelection()
                     rec.getTrack (phys + 1).soloed.store (true, std::memory_order_relaxed);
             }
         }
+        commitMixerUndo ("Solo selection", before);
         showStatus ("Soloed " + juce::String ((int) selectedLogical.size()) + " strip(s)");
         return;
     }
@@ -431,11 +446,12 @@ void MainComponent::editSoloSelection()
         if (rec.getTrack (i).soloed.load (std::memory_order_relaxed))
             { anySolo = true; break; }
 
-    recordUndoSnapshot (anySolo ? "Clear solos" : "Solo armed");
+    const auto before = beginMixerUndo();
     if (anySolo)
     {
         for (int i = 0; i < rec.getNumTracks(); ++i)
             rec.getTrack (i).soloed.store (false, std::memory_order_relaxed);
+        commitMixerUndo ("Clear solos", before);
         showStatus ("Cleared all solos");
     }
     else
@@ -444,6 +460,7 @@ void MainComponent::editSoloSelection()
         for (int i = 0; i < rec.getNumTracks(); ++i)
             if (rec.getTrack (i).armed.load (std::memory_order_relaxed))
             { rec.getTrack (i).soloed.store (true, std::memory_order_relaxed); ++n; }
+        if (n > 0) commitMixerUndo ("Solo armed", before);
         showStatus ("Soloed " + juce::String (n) + " armed track" + (n == 1 ? "" : "s"));
     }
 }
@@ -479,7 +496,7 @@ void MainComponent::armSelection()
     }
     const bool arm = ! allArmed;
 
-    recordUndoSnapshot (arm ? "Arm selection" : "Disarm selection");
+    const auto before = beginMixerUndo();
     for (int logical : selectedLogical)
     {
         const int phys = physicalFromLogical (engine, logical);
@@ -489,6 +506,7 @@ void MainComponent::armSelection()
             && phys + 1 < rec.getNumTracks())
             rec.getTrack (phys + 1).armed.store (arm, std::memory_order_relaxed);
     }
+    commitMixerUndo (arm ? "Arm selection" : "Disarm selection", before);
 
     showStatus ((arm ? "Armed " : "Disarmed ")
                 + juce::String ((int) selectedLogical.size()) + " selected strip(s)");
