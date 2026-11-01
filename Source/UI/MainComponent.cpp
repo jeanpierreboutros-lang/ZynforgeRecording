@@ -996,6 +996,11 @@ void MainComponent::forgetSessionUiState()
 
 void MainComponent::onVscClicked()
 {
+    // This repatches and saves every output, which setTrackLinkedRouting
+    // refuses during a take for the same reason.
+    if (engine.isRecording() || captureMetadataPending)
+    { showStatus ("Virtual Soundcheck waits until the take has stopped"); return; }
+
     // Virtual Soundcheck: copy each strip's input routing to its output
     // routing, so playback feeds the same hardware channel the live
     // input would have used. The desk sees the recorded tracks on the

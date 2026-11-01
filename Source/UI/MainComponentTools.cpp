@@ -974,6 +974,9 @@ void MainComponent::detectSongsToMarkers()
 
 void MainComponent::writeSoundcheckReport()
 {
+    // Nothing writes to the session volume while a take is rolling.
+    if (engine.isRecording() || captureMetadataPending)
+    { showStatus ("The soundcheck report waits until the take has stopped"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {

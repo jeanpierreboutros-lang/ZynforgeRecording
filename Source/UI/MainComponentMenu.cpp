@@ -96,7 +96,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Session templates -- save the current strip config (count,
         // names, colours, routings, stereo flags) to a reusable
         // template, or start a new session pre-populated from one.
-        menu.addItem (71, "Print setlist...", ! cues.empty());
+        menu.addItem (71, "Print setlist...", ! cues.empty() && ! engine.isRecording());
         menu.addSeparator();
         menu.addItem (70, "Save Current as Template...",
                       engine.getRecorder().getNumTracks() > 0
@@ -330,7 +330,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addItem (280, "Spectral auto-name strips",
                        engine.getRecorder().getNumTracks() > 0);
             m.addItem (281, "Write soundcheck report",
-                       engine.getActiveSessionDir().isDirectory());
+                       engine.getActiveSessionDir().isDirectory() && ! engine.isRecording());
             // Each reads every take file in full: never during a take.
             const bool canAnalyse = engine.getActiveSessionDir().isDirectory() && ! engine.isRecording();
             m.addItem (282, "Analyse for noise / hum / bumps...", canAnalyse);

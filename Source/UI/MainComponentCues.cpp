@@ -704,6 +704,8 @@ void MainComponent::promptMirrorHost()
 
 void MainComponent::printSetlist()
 {
+    if (engine.isRecording() || captureMetadataPending)
+    { showStatus ("Printing the setlist waits until the take has stopped"); return; }
     if (cues.empty()) { showStatus ("No cues to print"); return; }
 
     const auto dir = engine.getActiveSessionDir();
