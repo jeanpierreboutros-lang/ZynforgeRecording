@@ -99,8 +99,12 @@ while :; do
                     sleep 1
                     continue
                 fi
+                # The app names the session only while a take rolls, so an
+                # idle status with no path is this take finishing. Refuse a
+                # different session, or a rolling take that names none.
                 session=$(printf '%s' "$state" | jq -r '.sessionPath // empty')
-                if [[ "$session" != "$target" ]]; then
+                recording=$(printf '%s' "$state" | jq -r '.recording')
+                if [[ "$session" != "$target" && ( -n "$session" || "$recording" == "true" ) ]]; then
                     log "!! live session changed; refusing further STOP requests"
                     exit 1
                 fi
@@ -128,7 +132,7 @@ while :; do
         fi
         for check in 1 2 3 4 5 6; do
             if state=$(read_state) && printf '%s' "$state" | jq -e --arg target "$target" \
-                    '.recording == false and .sessionPath == $target' >/dev/null 2>&1; then
+                    '.recording == false and ((.sessionPath // "") == "" or .sessionPath == $target)' >/dev/null 2>&1; then
                 log "confirmed stopped: $target"
                 log "# done. run tools/verify_take.sh to validate the take."
                 exit 0
