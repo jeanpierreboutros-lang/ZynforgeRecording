@@ -101,6 +101,9 @@ private:
     void planRecordPosition (RecordStartPlan&);
     bool recordPlanHasSelection (const RecordStartPlan&);
     bool recordPlanPunches (const RecordStartPlan&);
+    bool cursorPunchNeedsAnswer (const RecordStartPlan&);
+    void askBeforeCursorPunch (const RecordStartPlan&);
+    void answerCursorPunch (int answer);
     void runRecordPlan (RecordStartPlan&);
     void applyRecordAutoRouting (RecordStartPlan&);
     void startDaemonTake (const RecordStartPlan&);
@@ -655,6 +658,8 @@ private:
     // A manual RECORD into an existing take is a short punch, not a new live
     // take: its next RECORD/STOP press should punch out in one action.
     bool manualPunchActive { false };
+    bool cursorPunchAnswered { false };   // true only around the press that "Replace From Cursor" makes
+    juce::Component::SafePointer<juce::AlertWindow> cursorPunchQuestion;
     // Held during a multi-tick automation drag so endAutomationTransaction
     // can compare against the pre-drag state.
     juce::var pendingAutomationBefore;
