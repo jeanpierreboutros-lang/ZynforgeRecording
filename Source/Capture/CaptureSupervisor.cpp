@@ -98,6 +98,7 @@ namespace zynforge::capture
     CaptureSupervisor::Reattach CaptureSupervisor::reattach()
     {
         if (isAttached()) return Reattach::attached;
+        if (port <= 0) return Reattach::noAnswer;   // no daemon was ever here to look for
         { const std::lock_guard<std::mutex> g (statusLock); statusAtMs = 0; }
         statusSeen.store (false);
         if (! client.connect ("127.0.0.1", port)) return Reattach::nothingThere;

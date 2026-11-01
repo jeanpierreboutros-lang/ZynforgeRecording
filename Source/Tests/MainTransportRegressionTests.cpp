@@ -45,6 +45,14 @@ namespace zynforge
             return predicate();
         }
 
+        bool stopAndWait (MainComponent& main)
+        {
+            bool done = false, ok = false;
+            main.stopActiveCaptureAsync (false, [&] (bool saved) { done = true; ok = saved; });
+            expect (pumpUntil ([&] { return done; }, 15000), "STOP never finished");
+            return ok;
+        }
+
        #if JUCE_MAC
         struct MetadataProbe
         {
@@ -308,7 +316,7 @@ namespace zynforge
                         "main dashboard bypassed status age and showed cached healthy metrics");
                 expect (main.captureSupervisor.connectOrLaunch (port), "could not reattach to rolling daemon");
                 expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
-                expect (main.stopActiveCapture (false));
+                expect (stopAndWait (main));
                 expect (waitUntil ([&] { return main.captureSupervisor.hasStatus()
                                              && ! main.captureSupervisor.isDaemonRecording(); }, 3000));
                 expect (! main.engine.isRecording(), "Stop & Quit path left external recording set");
@@ -331,8 +339,7 @@ namespace zynforge
                 expect (vanishedMetadataTarget.deleteRecursively());
                 expect (main.engine.getActiveSessionDir() == vanishedMetadataTarget,
                         "a vanished recording volume silently fell back to the preceding take");
-                expect (! main.stopActiveCapture (false),
-                        "metadata write failure was reported as a clean stop");
+                expect (! stopAndWait (main), "metadata write failure was reported as a clean stop");
                 expect (waitUntil ([&] { return ! main.captureSupervisor.isDaemonRecording(); }, 3000));
                 expect (! main.engine.isRecording(), "capture itself did not stop on metadata failure");
 
