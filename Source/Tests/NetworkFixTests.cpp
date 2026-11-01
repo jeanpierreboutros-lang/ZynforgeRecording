@@ -242,6 +242,7 @@ namespace zynforge
             testConsoleAddress();
             testStream();
             testMcu();
+            testTwinComparison();
         }
 
     private:
@@ -994,6 +995,31 @@ namespace zynforge
                 sent.clear();
                 surface.timerCallback();
                 expect (sent.size() < 4, "an idle tick resent the whole surface");
+            }
+        }
+
+        void testTwinComparison()
+        {
+            beginTest ("With no link, a leader can still type its way back to a rolling take");
+            {
+                SilentHost host;
+                twin::TwinLink link (host);
+                TwinRecorderDialog::Content content (link, [] { return true; },
+                                                     [] { return (juce::PropertiesFile*) nullptr; }, [] {});
+                content.setRole (twin::Role::Leader);
+                content.refresh();
+                expect (content.codeEditable(), "a restarted leader could not enter the pairing code");
+                expect (! content.roleEditable(), "the role stayed editable under a take");
+
+                content.setPort (49878);
+                content.setPeerAddress ("127.0.0.1");
+                content.setCode ("7K3M-Q2XD-9HVB-T4WN");
+                content.pressEnable();
+                expect (link.isEnabled());
+                content.refresh();
+                expect (! content.codeEditable(), "the code stayed editable under a live link");
+                content.pressEnable();
+                expect (! link.isEnabled());
             }
         }
 
