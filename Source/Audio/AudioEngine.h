@@ -135,7 +135,20 @@ namespace zynforge
         }
         // The position (in the player's sample domain) the chased timecode
         // currently points at, and a HH:MM:SS:FF string for display.
+        // Where the timecode puts the playhead: its label minus the session's
+        // start timecode. Can fall outside the session; see getChaseParkReason.
         juce::int64  getChaseTargetSamples() const;
+        // The timecode that lines up with the session's first sample, saved
+        // with the session. 00:00:00:00 unless set: house timecode and any
+        // show that starts at 01:00:00:00 need it, or the target is hours out.
+        juce::String getChaseStartTimecode() const;
+        bool         setChaseStartTimecode (const juce::String& hhmmssff);   // false = not a timecode
+        // Line the session's first sample up with the first take's BWF stamp,
+        // the time of day it was recorded. False when no take carries one.
+        bool         setChaseStartFromTake();
+        // Empty while the timecode lands inside the session. Otherwise why
+        // chase is holding off instead of throwing the playhead at the end.
+        juce::String getChaseParkReason() const;
         juce::String getChaseTimecodeString() const;
         // The running timecode as a time of day for a take's BWF stamp. False
         // unless chase is live right now; the take then uses the wall clock.
@@ -178,9 +191,22 @@ namespace zynforge
         // path still goes through setMasterGainDb.
         void  setMasterGainDbFast (float dB) noexcept { masterState.gainDb.store (dB, std::memory_order_relaxed); }
         void  setMasterMuted  (bool m);
+        // setMasterOutputs (-1, -1) gives the master bus no output: it still
+        // meters and feeds the companion stream and NDI, and nothing lands on
+        // an interface channel.
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }
         void  setMasterOutputs (int l, int r);
+        // True while the audio callback keeps the master bus off its outputs
+        // because a strip is patched to one (mix::busHeldOffOutputs).
+        bool  isMasterHeldOff() const noexcept { return masterHeldOff.load (std::memory_order_relaxed); }
+        bool  isStreamHeldOff() const noexcept { return streamHeldOff.load (std::memory_order_relaxed); }
+        // The engineer's override: this rig's first outputs really are
+        // monitors, so the mix may sit on top of strips patched there.
+        void  setMixMayShareStripOutputs (bool allowed);
+        bool  getMixMayShareStripOutputs() const noexcept { return mixMaySharePatchedOutputs.load (std::memory_order_relaxed); }
+        // Empty, or a line saying which bus is held off its outputs and why.
+        juce::String getBusRoutingNotice() const;
 
         // Mono / stereo mode. In mono, L+R are summed and sent only to
         // masterOutL; the meter collapses to a single bar. In stereo, L
@@ -1261,6 +1287,9 @@ namespace zynforge
         // hot channels can't overshoot float headroom on the way to the
         // stereo master bus.
         juce::AudioBuffer<double>                               monitorAccum;
+        // The monitor mix as float, for the companion and NDI feeds while the
+        // master bus has no device output to read them from.
+        juce::AudioBuffer<float>                                monitorFeed;
 
         // 64-bit-float output accumulator. Per-strip / stream-bus
         // summing flows here in double precision; only the final
@@ -1275,6 +1304,10 @@ namespace zynforge
         TrackState        masterState;
         TrackState        masterStateR;
         LoudnessMeter     loudness;   // BS.1770 master loudness + true-peak
+        std::atomic<juce::uint32> chaseStartLabel { 0 };   // hh mm ss ff, one byte each
+        std::atomic<bool> masterHeldOff { false };
+        std::atomic<bool> streamHeldOff { false };
+        std::atomic<bool> mixMaySharePatchedOutputs { false };
         std::atomic<int>  masterOutL    { 0 };
         std::atomic<int>  masterOutR    { 1 };
         std::atomic<bool> masterStereo  { true };
@@ -1440,8 +1473,7 @@ namespace zynforge
         // automationLock -- the callback via its one try-lock per block, the
         // bounce via one blocking lock per automation step.
         mix::StripLanes resolveStripLanesLocked (int track, int autoCh, float faderDb, float pan,
-                                                 bool staticMute, juce::int64 pos,
-                                                 bool rolling, bool readLanes) const noexcept;
+                                                 juce::int64 pos, bool readLanes) const noexcept;
         std::atomic<int>              automationWriteMode { 0 };   // AutomationWriteMode::Off
         std::atomic<bool>             automationTrimMode  { false };
         // SUSPEND: temporarily ignore every lane's stored points at
@@ -1525,10 +1557,19 @@ namespace zynforge
         void setTrimFollowEnabled (bool on) noexcept { trimFollowEnabled.store (on, std::memory_order_relaxed); }
         bool isTrimFollowEnabled () const noexcept   { return trimFollowEnabled.load (std::memory_order_relaxed); }
         // Console preamp/trim gain for a 0-based channel (called from OSC,
-        // message thread). Updates the live value; if recording, also seeds
-        // the capture reference so a channel that arms mid-take is sane.
+        // message thread). Updates the live value only; the capture reference
+        // is fixed when a take starts.
         void setTrackLiveInputGain (int channelIndex, float dB);
-        float getTrackTrimDelta (int channelIndex);   // live - capture (0 if out of range)
+        // The offset playback gets: live - capture, limited, 0 with no reference.
+        float getTrackTrimDelta (int channelIndex);
+        // Take the desk's current reading as each armed strip's capture
+        // reference. Called when a take really starts, local or daemon.
+        void snapshotCaptureInputGains();
+        // Empty, or a line naming the strips Trim-Follow is not following:
+        // the desk reports them but no reference was captured, or the move
+        // is past the limit. For the status line.
+        juce::String getTrimFollowNotice();
+        int  getTrimFollowUnreferencedCount();
     private:
 
         void applyPersistedStripState();

@@ -229,8 +229,18 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                        engine.isAutoArmOnInputDetect());
             m.addSeparator();
             m.addItem (255, "Session Format & Recording...", ! engine.isRecording());
-            m.addItem (256, "Trim-Follow (console input gain -> soundcheck)",
+            const int noTrimReference = engine.isTrimFollowEnabled()
+                                          ? engine.getTrimFollowUnreferencedCount() : 0;
+            m.addItem (256, noTrimReference > 0
+                               ? "Trim-Follow (" + juce::String (noTrimReference) + " with no capture reference, held at 0 dB)"
+                               : juce::String ("Trim-Follow (console input gain -> soundcheck)"),
                        true, engine.isTrimFollowEnabled());
+            m.addItem (991, "Let the Mix Share Outputs With Patched Strips", true,
+                       engine.getMixMayShareStripOutputs());
+            m.addItem (990, engine.getStreamOutputL() >= 0
+                               ? "Stream Bus Output (Out " + juce::String (engine.getStreamOutputL() + 1) + "-"
+                                     + juce::String (engine.getStreamOutputR() + 1) + ")..."
+                               : juce::String ("Stream Bus Output (off)..."));
             // Transport Sync -- chase MTC / LTC with live status.
             m.addItem (600, engine.getChaseMode() != zynforge::AudioEngine::ChaseMode::Off
                                ? juce::String ("Transport Sync (chasing)...")
@@ -376,6 +386,9 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) cues.empty()
         << '|' << (int) stripClipboard.isObject()
         << '|' << (int) engine.isTrimFollowEnabled()
+        << '|' << engine.getStreamOutputL()
+        << '|' << (int) engine.getMixMayShareStripOutputs()
+        << '|' << (engine.isTrimFollowEnabled() ? engine.getTrimFollowUnreferencedCount() : 0)
         << '|' << (int) engine.getChaseMode()
         << '|' << engine.getLtcSourceStrip()
         << '|' << (int) twinLink.isEnabled()
@@ -503,9 +516,19 @@ void MainComponent::registerMenuCommands()
     {
         const bool on = ! engine.isTrimFollowEnabled();
         engine.setTrimFollowEnabled (on);
-        showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
-                       : "Trim-Follow OFF -- recorded tracks play at their printed level");
+        const auto notice = on ? engine.getTrimFollowNotice() : juce::String();
+        showStatus (notice.isNotEmpty() ? notice
+                    : on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
+                         : "Trim-Follow OFF -- recorded tracks play at their printed level");
     });
+    m.add (991, [this]
+    {
+        const bool allowed = ! engine.getMixMayShareStripOutputs();
+        engine.setMixMayShareStripOutputs (allowed);
+        showStatus (allowed ? "The mix now sums onto outputs that strips are patched to. Do not use this with console returns"
+                            : "The mix stays off outputs that strips are patched to");
+    });
+    m.add (990, [this] { promptStreamOutputs(); });
     m.add (280, [this] { runSpectralAutoName(); });
     m.add (281, [this] { writeSoundcheckReport(); });
     m.add (282, [this] { runNoiseAnalysis(); });

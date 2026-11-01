@@ -76,6 +76,8 @@ void MainComponent::timerCallback()
     checkDeviceSampleRate (deviceSR);
     // External timecode chase: drive the transport from incoming LTC / MTC.
     serviceTimecodeChase();
+    serviceTrimFollowNotice();
+    serviceBusRoutingNotice();
 
     // Auto-arm on input detect -- only meaningful while NOT recording. Arms a
     // strip after 12 ticks (1.2 s at 10 Hz) of input above -40 dBFS. Cheap;
@@ -571,6 +573,27 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }), false);
 }
 
+// Say so when Trim-Follow is holding a channel back. Shown when the set
+// changes, so a desk reading on a channel with no reference is reported as it
+// arrives; the Session menu item keeps the count on show.
+void MainComponent::serviceTrimFollowNotice()
+{
+    const auto notice = engine.isTrimFollowEnabled() ? engine.getTrimFollowNotice() : juce::String();
+    if (notice == lastTrimFollowNotice) return;
+    lastTrimFollowNotice = notice;
+    if (notice.isNotEmpty()) showStatus (notice);
+}
+
+// A bus held off its outputs is a routing change the engineer did not ask for,
+// so say so as it happens. The master strip keeps showing it.
+void MainComponent::serviceBusRoutingNotice()
+{
+    const auto notice = engine.getBusRoutingNotice();
+    if (notice == lastBusRoutingNotice) return;
+    lastBusRoutingNotice = notice;
+    if (notice.isNotEmpty()) showStatus (notice);
+}
+
 // Drive the transport from an external timecode master (LTC decoded off an
 // audio input, or MTC over MIDI). When the chase source is live we follow it:
 // start playback, and resync the playhead whenever it drifts more than ~80 ms
@@ -586,18 +609,34 @@ void MainComponent::serviceTimecodeChase()
     if (engine.isRecording())
     {
         chaseWasLive = false;
+        chaseParked  = false;
         return;
     }
 
     if (engine.getChaseMode() == zynforge::AudioEngine::ChaseMode::Off)
     {
         chaseWasLive = false;
+        chaseParked  = false;
         return;
     }
 
     const bool live = engine.isChaseLive();
-    if (live)
+    const auto parkReason = live ? engine.getChaseParkReason() : juce::String();
+    if (parkReason.isNotEmpty())
     {
+        // Leave the playhead alone: a locate would clamp to the session end,
+        // PLAY would refuse, and every manual locate would be undone a tenth
+        // of a second later. Stop what chase started, once, and say why.
+        if (! chaseParked)
+        {
+            chaseParked = true;
+            if (chaseWasLive && engine.isPlaying()) engine.stopPlayback();
+            showStatus (parkReason);
+        }
+    }
+    else if (live)
+    {
+        chaseParked = false;
         const double sr = engine.getPlayer().getSampleRate() > 0.0
                             ? engine.getPlayer().getSampleRate() : pendingSampleRate;
         const juce::int64 target = engine.getChaseTargetSamples();

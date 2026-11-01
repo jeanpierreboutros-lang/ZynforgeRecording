@@ -1201,7 +1201,7 @@ namespace zynforge
         // bounce finished. The snapshot is also the honest semantic: the file
         // is the mix as it stood when the bounce began, not a blend of
         // mid-bounce fader and mute moves.
-        struct SendSnapshot { int bus { -1 }; float levelDb { -100.0f }; bool post { false }; };
+        struct SendSnapshot { int bus { -1 }; float levelDb { -100.0f }; bool post { false }; float fold { 1.0f }; };
         struct TrackCtx
         {
             int track {};
@@ -1255,10 +1255,20 @@ namespace zynforge
                 ctx->vcaMuted = inVca && vcas[(size_t) grp].muted.load (std::memory_order_relaxed);
                 ctx->isBus    = ts.isBus.load (std::memory_order_relaxed);
                 ctx->muted    = ts.muted.load (std::memory_order_relaxed);
+                const auto isStereoHalf = [this] (int index)
+                {
+                    return recorder.getTrack (index).isStereo.load (std::memory_order_relaxed)
+                        || (index > 0 && recorder.getTrack (index - 1).isStereo.load (std::memory_order_relaxed));
+                };
                 for (size_t k = 0; k < ctx->sends.size(); ++k)
-                    ctx->sends[k] = { ts.sends[k].targetBus.load (std::memory_order_relaxed),
+                {
+                    const int bus = ts.sends[k].targetBus.load (std::memory_order_relaxed);
+                    ctx->sends[k] = { bus,
                                       ts.sends[k].levelDb.load (std::memory_order_relaxed),
-                                      ts.sends[k].postFader.load (std::memory_order_relaxed) };
+                                      ts.sends[k].postFader.load (std::memory_order_relaxed),
+                                      mix::sendFoldGain (isStereoHalf (t),
+                                                         bus >= 0 && bus < recorder.getNumTracks() && isStereoHalf (bus)) };
+                }
                 ctx->autoCh   = mix::automationChannel (
                     t, t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed));
                 live.push_back (std::move (ctx));
@@ -1324,7 +1334,7 @@ namespace zynforge
                     for (auto& cp : live)
                         if (cp->needed)
                             cp->lanes = resolveStripLanesLocked (cp->track, cp->autoCh, cp->baseDb, cp->basePan,
-                                                                 cp->muted, pos, true, readLanes);
+                                                                 pos, readLanes);
                 }
 
                 // Sends precede solo filtering, as in live playback: a soloed
@@ -1341,13 +1351,13 @@ namespace zynforge
                         const int bus = send.bus;
                         if (bus < 0 || bus >= nTracks || ! live[(size_t) bus]->isBus) continue;
                         raw.addFrom (bus, i, raw, cp->track, i, n,
-                                     mix::sendGain (send.levelDb, send.post, postGain));
+                                     send.fold * mix::sendGain (send.levelDb, send.post, postGain));
                     }
                 }
 
                 for (auto& cp : live)
                 {
-                    if (! cp->audible || cp->lanes.monitorMuted) continue;
+                    if (! cp->audible || cp->lanes.muteLane) continue;
                     const double gain = juce::Decibels::decibelsToGain ((double) mix::stripDb (cp->lanes.volDb, cp->vcaDb), -60.0);
                     const auto [gL, gR] = mix::constantPowerPan (gain, cp->lanes.pan);
                     const auto* s = raw.getReadPointer (cp->track);

@@ -89,12 +89,37 @@ namespace zynforge
                 keepRolling.onClick = [this] { engine.setKeepRollingOnSyncLoss (keepRolling.getToggleState()); };
                 addAndMakeVisible (keepRolling);
 
+                label (startLabel, "Session starts at", brand::textPrimary, 12.0f, false);
+                dialog::styleTextEditor (startEditor);
+                startEditor.setText (engine.getChaseStartTimecode(), juce::dontSendNotification);
+                startEditor.setTooltip ("The timecode that lines up with the session's first sample, "
+                                        "as HH:MM:SS:FF. Saved with the session.");
+                startEditor.onReturnKey = [this] { commitStart(); };
+                startEditor.onFocusLost = [this] { commitStart(); };
+                addAndMakeVisible (startEditor);
+
+                dialog::styleSecondary (startFromTake);
+                startFromTake.setButtonText ("Use Take Stamp");
+                startFromTake.setTooltip ("Line the session up with the time of day its first take was "
+                                          "recorded, for chasing the same timecode it was recorded against.");
+                startFromTake.onClick = [this]
+                {
+                    if (engine.setChaseStartFromTake())
+                        startEditor.setText (engine.getChaseStartTimecode(), juce::dontSendNotification);
+                    else
+                        parkStatus.setText ("No take here carries a time stamp", juce::dontSendNotification);
+                };
+                addAndMakeVisible (startFromTake);
+
+                label (parkStatus, {}, brand::textSecondary, 12.0f, false);
+                parkStatus.setMinimumHorizontalScale (0.7f);
+
                 closeBtn.setButtonText ("Close");
                 dialog::styleSecondary (closeBtn);
                 closeBtn.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
                 addAndMakeVisible (closeBtn);
 
-                setSize (600, 250);
+                setSize (600, 320);
                 startTimerHz (15);
                 refreshStatus();
             }
@@ -127,6 +152,10 @@ namespace zynforge
                 place (1, ltcSel, ltcType, ltcSource, ltcStatus);
 
                 keepRolling.setBounds (pad, rowY (2) + 8, 320, 24);
+                startLabel.setBounds (pad, rowY (3) + 4, 120, 26);
+                startEditor.setBounds (pad + 124, rowY (3) + 4, 110, 26);
+                startFromTake.setBounds (pad + 244, rowY (3) + 4, 120, 26);
+                parkStatus.setBounds (pad, rowY (4), getWidth() - pad * 2, 22);
                 closeBtn.setBounds (getWidth() - pad - 90, getHeight() - 44, 90, 28);
             }
 
@@ -151,6 +180,13 @@ namespace zynforge
                 engine.setLtcSourceStrip (id <= 1 ? 0 : id - 1);   // 1-based strip, 0 = none
                 if (id > 1) { masterIsMtc = false; ltcSel.setToggleState (true, juce::dontSendNotification); }
                 recompute();
+            }
+
+            void commitStart()
+            {
+                if (! engine.setChaseStartTimecode (startEditor.getText()))
+                    parkStatus.setText ("Enter the start as HH:MM:SS:FF", juce::dontSendNotification);
+                startEditor.setText (engine.getChaseStartTimecode(), juce::dontSendNotification);
             }
 
             void recompute()
@@ -197,6 +233,7 @@ namespace zynforge
                 };
                 set (mtcStatus, mode_mtc);
                 set (ltcStatus, mode_ltc);
+                if (live) parkStatus.setText (engine.getChaseParkReason(), juce::dontSendNotification);
             }
 
             AudioEngine& engine;
@@ -205,7 +242,9 @@ namespace zynforge
             juce::Label mtcType, ltcType, mtcStatus, ltcStatus;
             juce::ToggleButton mtcSel, ltcSel, keepRolling;
             juce::ComboBox mtcSource, ltcSource;
-            juce::TextButton closeBtn;
+            juce::Label startLabel, parkStatus;
+            juce::TextEditor startEditor;
+            juce::TextButton closeBtn, startFromTake;
         };
     }
 

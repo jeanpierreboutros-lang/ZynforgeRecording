@@ -532,6 +532,7 @@ public:
             auto process = [&] { e.audioDeviceIOCallbackWithContext (in, 2, out.getArrayOfWritePointers(), 2, 256, {}); };
             process(); expect (out.getMagnitude (0, 256) > 0.1f);
             const float liveLevel = out.getMagnitude (0, 256);
+            e.getRecorder().getTrack (0).captureInputGainKnown = true;   // the offset is real
             e.setTrackLiveInputGain (0, 12); e.setTrimFollowEnabled (true); process();
             expectWithinAbsoluteError (out.getMagnitude (0, 256), liveLevel, 0.0001f);
             e.setTrimFollowEnabled (false);
