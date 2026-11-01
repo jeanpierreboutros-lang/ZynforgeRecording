@@ -1063,6 +1063,18 @@ namespace zynforge
                 expectEquals (markers.indexOfId ("gone"), -1);
             }
 
+            beginTest ("The ruler repaints when a marker is renamed");
+            {
+                Show s (1, { 48000 });
+                auto& markers = s.engine.getMarkers();
+                markers.setContext (s.dir, 48000.0);
+                markers.drop (20000, "Marker 1");
+                EditTimeRuler ruler (s.engine);
+                const auto before = ruler.idleSignature();
+                markers.renameMarker (0, "Chorus");
+                expect (ruler.idleSignature() != before, "the idle ruler would keep the old name");
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

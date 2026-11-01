@@ -205,14 +205,7 @@ namespace zynforge
             // length): the unconditional 4 Hz repaint re-shaped the ruler's
             // text labels forever at idle.
             if (active) { repaint(); return; }
-            juce::int64 sig = engine.getPlayer().getPositionSamples()
-                            ^ (engine.getPlayer().getTotalLengthSamples() << 1)
-                            ^ (engine.getPlayer().getLoopStart() << 2)
-                            ^ (engine.getPlayer().getLoopEnd()   << 3)
-                            ^ (engine.getEditCursorSample()      << 4);
-            const auto& list = engine.getMarkers().getAll();
-            sig ^= (juce::int64) list.size() << 40;
-            for (const auto& m : list) sig += m.sampleOffset;
+            const auto sig = idleSignature();
             if (sig != lastIdleSig)
             {
                 lastIdleSig = sig;
@@ -509,6 +502,20 @@ namespace zynforge
         }
 
     public:
+        // Everything the ruler draws while the transport is idle.
+        juce::int64 idleSignature() const
+        {
+            juce::int64 sig = engine.getPlayer().getPositionSamples()
+                            ^ (engine.getPlayer().getTotalLengthSamples() << 1)
+                            ^ (engine.getPlayer().getLoopStart() << 2)
+                            ^ (engine.getPlayer().getLoopEnd()   << 3)
+                            ^ (engine.getEditCursorSample()      << 4);
+            const auto& list = engine.getMarkers().getAll();
+            sig ^= (juce::int64) list.size() << 40;
+            for (const auto& m : list) sig += m.sampleOffset + m.name.hashCode64();
+            return sig;
+        }
+
         // Wall-clock label. Below an hour: M:SS; an hour or more:
         // H:MM:SS. `decimals` appends fractional seconds (tenths) so the
         // scale stays readable when zoomed past one major-tick / second.
