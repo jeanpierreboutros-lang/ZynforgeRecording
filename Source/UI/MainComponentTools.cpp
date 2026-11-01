@@ -678,8 +678,18 @@ void MainComponent::wireConsoleLink()
     { if (self != nullptr) self->engine.getRemotes().logOsc (line); };
 }
 
+// A repatch or a head-amp write changes what the take records, so neither goes
+// to the desk while one rolls, whoever asks.
+bool MainComponent::refuseConsoleWriteDuringTake()
+{
+    if (! engine.isRecording() && ! captureMetadataPending) return false;
+    showStatus ("Console changes wait until the take has stopped");
+    return true;
+}
+
 void MainComponent::consoleToggleSoundcheck()
 {
+    if (refuseConsoleWriteDuringTake()) return;
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
     if (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
         || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
@@ -735,6 +745,7 @@ void MainComponent::consoleCaptureGains()
 
 void MainComponent::consoleRestoreGains()
 {
+    if (refuseConsoleWriteDuringTake()) return;
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
     if (consoleLink.getCapturedGains().empty())
     {

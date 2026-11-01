@@ -289,7 +289,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             // read-only, so grey the write items rather than offering an action
             // that would be refused.
             const bool consoleWritable = consoleLink.isConnected() && consoleLink.canWrite();
-            const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch;
+            const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch
+                                     && ! engine.isRecording() && ! captureMetadataPending;
             const bool consoleGains   = consoleWritable && consoleLink.getProfile().canCaptureGains;
             m.addItem (955, (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
                             || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
@@ -297,7 +298,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                : "Console: SOUNDCHECK patch (card returns)",
                        consoleRepatch);
             m.addItem (956, "Console: capture head-amp gains", consoleGains);
-            m.addItem (957, "Console: restore head-amp gains", consoleGains);
+            m.addItem (957, "Console: restore head-amp gains",
+                       consoleGains && ! engine.isRecording() && ! captureMetadataPending);
             m.addSeparator();
             m.addItem (963, "Console: follow scenes to markers (virtual soundcheck)",
                        true, engine.isSceneFollowEnabled());

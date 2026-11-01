@@ -290,6 +290,7 @@ private:
     void saveConsoleLog();
     void writeConsoleLog (const juce::File&);
     juce::String consoleLinkSummary() const;
+    bool refuseConsoleWriteDuringTake();
     void consoleToggleSoundcheck();
     void consoleCaptureGains();
     void consoleRestoreGains();
