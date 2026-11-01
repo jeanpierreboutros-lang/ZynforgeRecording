@@ -1,6 +1,5 @@
 #include "../Audio/AudioEngine.h"
 #include "../Network/CaptureLink.h"
-#include "../Network/CompanionServer.h"
 #include "../UI/MainComponent.h"
 
 #include <atomic>
@@ -42,18 +41,6 @@ namespace zynforge
             hooks->finished = std::move (finished);
             recorder.reportTestHooks = std::move (hooks);
         }
-
-        static int companionPort (const CompanionServer& server)
-        { return server.listener != nullptr ? server.listener->getBoundPort() : -1; }
-
-        static void streamFixture (CompanionServer& server, std::function<void()> hook)
-        {
-            server.streamRing.allocate (64);
-            server.streamReadTestHook = std::move (hook);
-        }
-
-        static bool streamActive (const CompanionServer& server)
-        { return server.streamRing.active.load() > 0; }
 
         static void constrainSocketBuffers (capture::CaptureClient& client,
                                             juce::StreamingSocket& peer)
@@ -680,27 +667,6 @@ namespace zynforge
                 expectEquals (engine.captureStatus().source, juce::String ("daemon-unavailable"));
             }
 
-            beginTest ("TSan: first companion start safely publishes to a running callback");
-            {
-                AudioEngine engine;
-                engine.setStripCount (1);
-                engine.prepareForTests (48000, 128);
-                std::atomic<bool> run { true };
-                std::thread audio ([&]
-                {
-                    juce::AudioBuffer<float> input (1, 128), output (2, 128);
-                    input.clear();
-                    while (run.load (std::memory_order_relaxed))
-                        engine.audioDeviceIOCallbackWithContext (input.getArrayOfReadPointers(), 1,
-                            output.getArrayOfWritePointers(), 2, 128, {});
-                });
-                expect (engine.getRemotes().startCompanionServer (0));
-                juce::Thread::sleep (30);
-                run.store (false, std::memory_order_relaxed);
-                audio.join();
-                engine.getRemotes().stopCompanionServer();
-            }
-
             beginTest ("TSan: capture status and structural channel changes share one lock");
             {
                 AudioEngine engine;
@@ -716,43 +682,6 @@ namespace zynforge
                 run.store (false, std::memory_order_relaxed);
                 poller.join();
                 expectEquals (engine.getRecorder().getNumTracks(), 2);
-            }
-
-            beginTest ("TSan: a lagged streaming reader remains safe while the audio ring wraps");
-            {
-                AudioEngine engine;
-                engine.prepareForTests (48000, 64);
-                CompanionServer server (engine);
-                auto entered = std::make_shared<std::atomic<bool>> (false);
-                ConcurrencyAuditAccess::streamFixture (server, [entered]
-                { entered->store (true, std::memory_order_relaxed); });
-                expect (server.start (0));
-                juce::StreamingSocket browser;
-                const bool connected = browser.connect ("127.0.0.1",
-                    ConcurrencyAuditAccess::companionPort (server), 500);
-                expect (connected);
-                if (connected)
-                {
-                    const auto request = "GET /stream.wav?t=" + server.getAccessToken()
-                        + " HTTP/1.1\r\nHost: localhost\r\n\r\n";
-                    browser.write (request.toRawUTF8(), (int) request.getNumBytesAsUTF8());
-                    expect (auditWait ([&] { return ConcurrencyAuditAccess::streamActive (server); }));
-                    juce::AudioBuffer<float> input (2, 64);
-                    juce::FloatVectorOperations::fill (input.getWritePointer (0), 0.1f, 64);
-                    juce::FloatVectorOperations::fill (input.getWritePointer (1), 0.2f, 64);
-                    std::atomic<bool> run { true };
-                    std::thread producer ([&]
-                    {
-                        while (run.load (std::memory_order_relaxed))
-                            server.feedStreamSamples (input.getReadPointer (0), input.getReadPointer (1), 64);
-                    });
-                    expect (auditWait ([entered] { return entered->load (std::memory_order_relaxed); }));
-                    juce::Thread::sleep (100);
-                    run.store (false, std::memory_order_relaxed);
-                    producer.join();
-                    browser.close();
-                }
-                server.stop();
             }
         }
     };

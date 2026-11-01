@@ -27,7 +27,6 @@ namespace zynforge
         };
 
         bool        on       { true };
-        bool        followMeter { false };  // reserved -- for meter changes
         Voice1Then2 click1;                  // accent / downbeat
         Voice1Then2 click2;                  // remaining beats
     };

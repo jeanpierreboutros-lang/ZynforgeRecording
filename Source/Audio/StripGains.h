@@ -31,12 +31,10 @@ namespace zynforge
         bool  hasGain (int channelIndex) const;
         float getGainDb (int channelIndex) const;
         void  setGainDb (int channelIndex, float dB);
-        void  clearGain (int channelIndex);
 
         bool  hasPan (int channelIndex) const;
         float getPan (int channelIndex) const;
         void  setPan (int channelIndex, float pan);
-        void  clearPan (int channelIndex);
 
         // Clear this module's overrides in [firstIndex, lastIndexExclusive)
         // with one shared-file reload/save, keeping its live cache consistent.

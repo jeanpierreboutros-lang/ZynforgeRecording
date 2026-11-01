@@ -163,10 +163,8 @@ namespace zynforge
             // file share ONE reader (L reads channel 0, R reads channel 1).
             std::shared_ptr<PlaybackReader> reader;
             juce::int64 length { 0 };
-            // Which file channel this logical track reads. For a mono file
-            // both are true (the single channel). For a stereo file the L
-            // track is (true,false) and the R track is (false,true).
-            bool        useLeft  { true };
+            // Which file channel this logical track reads: false for the L
+            // half of a stereo file, true for the R half and for a mono file.
             bool        useRight { true };
         };
 

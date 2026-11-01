@@ -11,7 +11,6 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Audio/TrackExporter.h"
-#include "../Audio/ProcessSearch.h"
 
 namespace zynforge
 {
@@ -380,26 +379,6 @@ namespace zynforge
                 expect (ex.exportTrack (src, stem, opts, err),
                         "32-bit FLAC request should clamp to 24 and succeed, not fail: " + err);
                 expect (stem.withFileExtension (".flac").existsAsFile(), "flac not written");
-                dir.deleteRecursively();
-            }
-
-            beginTest ("Executable lookup searches PATH directly without a child process");
-            {
-                auto dir = scratchDir ("path_lookup");
-                const auto first = dir.getChildFile ("missing");
-                const auto second = dir.getChildFile ("folder with spaces");
-                expect (first.createDirectory().wasOk());
-                expect (second.createDirectory().wasOk());
-                const auto fakeLame = second.getChildFile ("lame");
-                expect (fakeLame.replaceWithText ("test executable"));
-
-                expect (processsearch::findExecutableInPath (
-                            "lame", first.getFullPathName() + ":" + second.getFullPathName())
-                        == fakeLame);
-                expect (processsearch::findExecutableInPath ("missing", second.getFullPathName())
-                        == juce::File());
-                expect (processsearch::findExecutableInPath ({}, second.getFullPathName())
-                        == juce::File());
                 dir.deleteRecursively();
             }
 

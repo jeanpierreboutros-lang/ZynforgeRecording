@@ -9,7 +9,6 @@
 #include "../Audio/TrackExporter.h"
 #include "../Capture/CaptureSupervisor.h"
 #include "../Network/ConsoleLink.h"
-#include "../Network/SessionMirror.h"
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AlarmBanner.h"
@@ -30,9 +29,7 @@
 #include "SessionJobRunner.h"
 #include "SessionMetadataWriter.h"
 #include "../Audio/SettingsFile.h"
-#include "../Network/CloudUpload.h"
 #include "TempoBar.h"
-#include "TimelineStrip.h"
 #include "Toast.h"
 #include "PlaceholderView.h"
 #include "VcaPanel.h"
@@ -43,7 +40,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -79,11 +76,6 @@ private:
     zynforge::MenuCommandTable menuCommands;
     void registerMenuCommands();
     // Menu handlers too long to sit inline in the table.
-    void copyConfidenceUrl();
-    void runCloudUpload();
-    void toggleCompanionServer();
-    void editCloudUploadCommand();
-    void toggleNdiBroadcast();
 
     void rebuildStrips();
     void updateMixerPlaceholder();   // show/hide the MIXER empty-state overlay
@@ -134,18 +126,15 @@ private:
     void noteTwinStopIfEnded();
     void showTwinRecorderDialog();
     void updateTwinStatusLabel();
-    void onFileMenuClicked();
     void onSaveSessionState();
     void onSaveSessionAs();
-    void onExportAllTracks();
-    void onBounceStems();      // render the edited clip arrangement to flat stems
+    void onExportAudio();      // File > Export > Export Audio...
+    void chooseRawTakesFolder (std::vector<int> tracks, const zynforge::ExportOptions&);
+    void onBounceStems (std::vector<int> tracks);  // render the edited clip arrangement to flat stems
     void onBounceStereoMix();  // render the edited arrangement summed to stereo
-    void completeBounceStems (juce::File);
+    void completeBounceStems (juce::File, const std::vector<int>& tracks);
     void completeBounceStereoMix (juce::File);
     void completeAudioImport (const juce::Array<juce::File>&);
-    static juce::String noiseAnalysisSummary (const std::vector<zynforge::NoiseFinding>&);
-    void onExportIndividualTrack (int channelIndex);
-    void onExportIndividualTracks();   // tick-box picker → format → destination → export
     void exportShowHandoff();
     void exportDawProject (zynforge::projectexport::Format);
     void exportSongs();
@@ -159,7 +148,7 @@ private:
     void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();
-    void applyBackupFolder (const juce::File&);
+    bool applyBackupFolder (const juce::File&);
     void onVscClicked();
     void openPatchWindow();
     void openMetersWindow();
@@ -220,7 +209,6 @@ private:
                                   std::function<void (bool)> completion = {}, bool automatic = false);
     void requestUILayoutSave();
     void saveCueChanges (const juce::String& success);
-    zynforge::cloud::UploadRun cloudUpload;
     zynforge::SessionMetadataWriter metadataWriter;
     int pendingMetadataSaves = 0;
     juce::uint64 metadataRevision = 0;
@@ -239,7 +227,7 @@ private:
     // on the MESSAGE thread (it reads TrackStates), then does the actual
     // decode / resample / encode work on `sessionJobs` and reports the result
     // on the message thread. Running the whole thing inline used to freeze the app for
-    // the length of the export -- minutes for a 32-track MP3 batch, with no
+    // the length of the export -- minutes for a 32-track batch, with no
     // progress and no way to cancel.
     void startExportTracksTo (const juce::File& dir,
                               const std::vector<int>& channelIndices,
@@ -257,8 +245,6 @@ public:
     // Application/document hand-off for Finder-opened .zfproj files.
     bool openSessionDocument (const juce::File& document, bool confirmBeforeReplacing = false);
 private:
-    void applySessionSettings();
-
     // Edit menu actions.
     // Old Edit-menu stubs were renamed to edit*; declarations live in
     // the public-ish private section above (editUndo / editCutSelected
@@ -288,7 +274,6 @@ private:
     // when refused.
     bool setStereoLink (int leftIndex, bool link);
     void showBatchColourDialog();
-    void showSelectionMenu();
     void deleteSelectedStrips();
     // Stop every live strip's timers before a recorder-vector shrink frees the
     // TrackStates they reference (New Session / close / smaller open / console
@@ -308,7 +293,7 @@ private:
     int        selectionLayoutGen { -1 };
     juce::File selectionSession;
     void syncStripSelectionScope();
-    void showSessionProperties();
+    void showSessionInfo();
     // Move the active session folder (its recorded audio included) to a new
     // location, then re-pin everything from there. Stopped-only; the copy
     // runs on a background thread so a cross-volume move can't freeze the UI.
@@ -322,19 +307,17 @@ private:
     // Set the session's intended sample rate (the rate the mismatch guard
     // compares against) and try to bring the hardware along with it.
     void applySessionSampleRate (double sr);
-    void runSpectralAutoName();
     void writeSoundcheckReport();
     bool refuseAnalysisNow();
     void cancelAnalysisForTake();
     bool analysisResultWanted (const juce::File& scannedSession);
-    void runNoiseAnalysis();
     void runQcAnalysis();
     void detectSongsToMarkers();
     // Launch-time crash telemetry: offer the newest report since last run.
     void scanForCrashReports();
     void showCrashReportNotice (const juce::Array<juce::File>& reports);
-    void promptMirrorHost();
     bool configureCaptureDaemon();
+    juce::var captureDaemonSettings();   // what the daemon takes from this window, the device aside
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
     void toggleCaptureDaemon();
     void connectCaptureDaemon (bool announceReattach);
@@ -425,7 +408,6 @@ private:
     int  rippleTimeline (const juce::String& label, const std::vector<int>& tracks,
                          juce::int64 start, juce::int64 end);
     int  rippleSpans (const juce::String& label, const std::vector<zynforge::clipedit::RippleSpan>&);
-    void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
@@ -492,9 +474,7 @@ private:
     // Pro Tools-style marker drop + naming. dropMarkerAndPromptName
     // places the marker, picks the next default name ("Marker N+1"),
     // then opens the rename dialog. Cancel keeps the default name.
-    // showMarkersDialog opens the standalone Memory Locations table.
     void dropMarkerAndPromptName();
-    void showMarkersDialog();
 
     // The ONE gate for timeline mutations (clips, ranges, markers,
     // automation, undo/redo). Refuses -- with the reason on the status
@@ -521,8 +501,6 @@ private:
     void beginAutomationTransaction();
     void endAutomationTransaction (const juce::String& label);
 
-    int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
-    int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)
     double pendingSampleRate { 48000.0 };
     // Last device sample rate we warned about (mismatch vs the session rate);
     // 0 = no outstanding warning, so we warn once per distinct device rate.
@@ -536,10 +514,6 @@ private:
     bool   chaseParked { false };   // timecode is outside the session; chase is not following
     juce::String lastTrimFollowNotice;
     juce::String lastBusRoutingNotice;
-    void onFormatClicked();
-    void onPreRollClicked();
-    void refreshFormatButton();
-    void refreshPreRollButton();
     void updateTransportLabels();
     juce::File makeNewSessionDir() const;
     juce::File getSessionsRoot() const;
@@ -574,12 +548,6 @@ private:
     juce::File  getDefaultTemplate() const;
     void        setDefaultTemplate (const juce::File& templateFile);
 
-    // Push UI layout (view / strip width / VCA panel / EDIT zoom) into
-    // the active session's .zfproj. No-op when no session is active.
-    // Called on every layout change so reopening the show restores the
-    // exact workspace the engineer left.
-    bool  saveUILayoutToActiveSession();
-
     // Setlist printing -- writes setlist.html into the active session
     // dir and opens it in the default browser (engineer prints from
     // there, or saves as PDF via the browser's print dialog).
@@ -591,16 +559,13 @@ private:
     // Show pre-flight checklist -- one-screen view of every show-critical
     // setting (device, SR, inputs, armed, backup, disk, cues, recording state).
     void  showPreflightChecklist();
+    juce::String backupChecklistRow();
 
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
 
-    // These objects retain references/callbacks into `engine`, so declaration
-    // order is safety-critical: construct them after the engine and destroy
-    // them before it.  They previously appeared ~175 lines before `engine`,
-    // making SessionMirror bind a reference before the engine's lifetime began
-    // and letting its destructor run after the engine had already died.
-    zynforge::SessionMirror sessionMirror { engine };
+    // These objects retain callbacks into `engine`, so declaration order is
+    // safety-critical: construct them after the engine and destroy them before it.
     // X32/M32 console link: soundcheck repatch + head-amp gain capture.
     zynforge::ConsoleLink consoleLink;
     // Capture-process split, Phase 1d: out-of-process recording behind a
@@ -666,19 +631,12 @@ private:
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome -- IconButton paints a glyph next to each label so
     // the chrome reads as icons + words instead of monospace SHOUTING.
-    zynforge::IconButton recordButton  { zynforge::icons::Glyph::Record, "RECORD" };
     zynforge::IconButton deviceButton  { zynforge::icons::Glyph::Device, "DEVICE" };
-    zynforge::IconButton loadButton    { zynforge::icons::Glyph::File,   "FILE" };
-    juce::TextButton     playButton    { "PLAY" };
-    juce::TextButton     stopButton    { "STOP" };
-    zynforge::IconButton formatButton  { zynforge::icons::Glyph::Disk,   "WAV 24" };
-    juce::TextButton     preRollButton { "PRE 0s" };
     zynforge::IconButton lockButton    { zynforge::icons::Glyph::Lock,   "LOCK" };
     zynforge::IconButton backupButton  { zynforge::icons::Glyph::Disk,   "BACKUP" };
     zynforge::IconButton patchButton   { zynforge::icons::Glyph::Patch,  "PATCH" };
     zynforge::IconButton vscButton     { zynforge::icons::Glyph::Vsc,    "VSC" };
     zynforge::IconButton metersButton  { zynforge::icons::Glyph::Meters, "METERS" };
-    zynforge::IconButton oscButton     { zynforge::icons::Glyph::Osc,    "OSC" };
     zynforge::IconButton addChannelButton { zynforge::icons::Glyph::Plus, "CH" };
     zynforge::IconButton mixViewButton    { zynforge::icons::Glyph::Mix,  "MIXER" };
     zynforge::IconButton editViewButton   { zynforge::icons::Glyph::Edit, "EDIT" };
@@ -759,13 +717,6 @@ private:
 
     void loadSetlistFromActiveSession();
     bool saveSetlistToActiveSession (bool writeBackup = true) const;
-    // Snapshot the WHOLE session definition (mix + setlist/cues/automation/
-    // layout + settings + markers) into a timestamped sub-folder of the
-    // session's own "Session File Backups/" -- a restorable backup session.
-    // The immutable multi-GB audio is NOT copied (it lives once in Audio
-    // Files/); to restore, copy the snapshot's files back over the session
-    // root. Keeps the 10 most recent. Const: file ops only, no member writes.
-    bool writeSessionBackupSnapshot() const;
     void jumpToCue (int index);
     void addCueAtTransport();
     void updateCueAtTransport();
@@ -797,7 +748,7 @@ private:
     // (declared above) is still alive. Declared after sessionIoBusy, which it
     // references.
     zynforge::SessionJobRunner sessionJobs { sessionIoBusy };
-    // QC, noise analysis and song detection: owned and joined like a session
+    // QC and song detection: owned and joined like a session
     // job, but they only read, so they hold no session reservation. RECORD must
     // never wait for one; the 10 Hz timer stops it when a take starts.
     std::atomic<bool> analysisBusy { false };
@@ -805,7 +756,6 @@ private:
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);
-    std::unique_ptr<zynforge::TimelineStrip> timeline;
     std::unique_ptr<zynforge::TransportBar>  transportBar;
 
     juce::Viewport  stripsViewport;

@@ -11,8 +11,6 @@
 #include "MainComponent.h"
 #include "../Audio/AtomicFile.h"
 #include "../Theme/DialogChrome.h"
-#include "../Audio/SpectralClassifier.h"
-#include "../Audio/SessionBackup.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -241,11 +239,6 @@ bool MainComponent::saveSetlistToActiveSession (bool writeBackup) const
     snapshot.mixerOwner = engine.getMixerSession();
     snapshot.backup = writeBackup;
     return zynforge::writeSessionMetadata (snapshot).ok;
-}
-
-bool MainComponent::writeSessionBackupSnapshot() const
-{
-    return zynforge::sessionbackup::writeSnapshot (engine.getActiveSessionDir()).isDirectory();
 }
 
 void MainComponent::jumpToCue (int index)
@@ -633,80 +626,6 @@ void MainComponent::updateCueRamp()
     }
     if (t >= 1.0)
         cueRamp.active = false;
-}
-
-void MainComponent::runSpectralAutoName()
-{
-    auto& rec = engine.getRecorder();
-    const int n = rec.getNumTracks();
-    if (n <= 0) { showStatus ("No tracks to classify"); return; }
-
-    const double sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-        ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
-        : 48000.0;
-
-    int hits = 0;
-    for (int i = 0; i < n; ++i)
-    {
-        const auto r = SpectralClassifier::classify (rec.getTrack (i), sr);
-        if (r.name != "other")
-        {
-            engine.setTrackName (i, r.name + " " + juce::String (i + 1));
-            ++hits;
-        }
-    }
-    lastTrackCount = -1;
-    showStatus ("Spectral auto-name: confident guesses on "
-                + juce::String (hits) + " of " + juce::String (n) + " strip(s)");
-}
-
-void MainComponent::promptMirrorHost()
-{
-    if (sessionMirror.isMirroring())
-    {
-        sessionMirror.stop();
-        showStatus ("Mirror stopped");
-        return;
-    }
-
-    auto* aw = new juce::AlertWindow ("Mirror primary host",
-                                      "Enter the primary Mac's address (host:port) and the access "
-                                      "token from its companion server (Session > Companion "
-                                      "server on the primary shows the full URL -- the token is "
-                                      "the ?t= part). Without it the primary answers 401 and "
-                                      "nothing syncs.",
-                                      juce::MessageBoxIconType::NoIcon);
-    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
-    aw->addTextEditor ("addr", "192.168.1.42:9000", "Primary host:");
-    aw->addTextEditor ("token", "", "Access token:");
-    dialog::primeNameEditor (*aw, "addr");
-    aw->addButton ("Start", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([self, aw] (int result)
-        {
-            std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result != 1 || self == nullptr) return;
-            const auto addr = aw->getTextEditorContents ("addr").trim();
-            const auto colon = addr.indexOfChar (':');
-            const auto host = (colon > 0) ? addr.substring (0, colon) : addr;
-            const auto port = (colon > 0) ? addr.substring (colon + 1).getIntValue() : 9000;
-            auto tok = aw->getTextEditorContents ("token").trim();
-            // Accept a pasted full URL as well as a bare token -- that's what
-            // the primary puts on screen, so it's what gets copied.
-            if (tok.contains ("?t=")) tok = tok.fromLastOccurrenceOf ("?t=", false, false).trim();
-            if (tok.isEmpty())
-            {
-                self->showStatus ("Mirror needs the primary's access token -- nothing started");
-                return;
-            }
-            self->sessionMirror.onBeforeTrackCountChange = [self]
-            { if (self != nullptr) self->condemnAllStrips(); };
-            self->sessionMirror.start (host, port, tok);
-            self->showStatus ("Mirroring " + host + ":" + juce::String (port));
-        }), false);
 }
 
 void MainComponent::printSetlist()

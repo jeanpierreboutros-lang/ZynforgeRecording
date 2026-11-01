@@ -324,26 +324,19 @@ void MainComponent::showUserGuide()
         "follows console (solo-in-place) convention.\n\n"
         "DEVICE / FORMAT / BACKUP\n"
         "  DEVICE opens the audio interface picker. FILE > New Session "
-        "configures format + sample rate. BACKUP picks a second drive "
-        "where every track mirrors as you record.\n\n"
+        "configures format + sample rate. BACKUP opens Backup & Mirror "
+        "Drives: the drives every track is copied to as you record, each "
+        "in its own format.\n\n"
         "MIDI CLOCK\n"
         "  Session > MIDI clock out picks an output. Tempo drives "
         "24 PPQN; play / pause / stop send midi-start / continue / stop.\n\n"
-        "NOISE ANALYSIS\n"
-        "  Session > Analyse for noise scans every WAV for "
-        "50 / 60 Hz hum, mic bumps, and high noise floor.\n\n"
         "DANTE\n"
         "  Native Dante requires Audinate's paid SDK + NDA. Practical "
         "path: install Audinate's free Dante Virtual Soundcard (DVS) "
         "from audinate.com. DVS exposes up to 64\xC3\x97""64 Dante channels "
         "as a Core Audio device--just pick it in DEVICE and route "
         "strips to its channels via PATCH. ZynForge auto-detects DVS "
-        "and shows a 'DANTE' badge in the status bar.\n\n"
-        "NETWORK AUDIO (NDI)\n"
-        "  Session > NDI broadcast pushes the master mix onto your "
-        "LAN as an NDI Audio source. Any NDI receiver (NDI Tools, OBS, "
-        "TouchDesigner) on the same network can monitor your live "
-        "stream. Requires NDI runtime from ndi.tv--free.");
+        "and shows a 'DANTE' badge in the status bar.");
 
     auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
                                       juce::MessageBoxIconType::NoIcon);
@@ -379,8 +372,6 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
     n.location      = r.location;
     n.captureFormat = r.captureFormat;
     n.sampleRate    = r.sampleRate;
-    n.interleaved   = r.interleaved;
-    n.ioSettings    = r.ioSettings;
     const auto sessionFolder = createSessionFolderStructure (n);
     if (! sessionFolder.isDirectory())
     {
@@ -439,7 +430,6 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
     // inherits them on a freshly-added channel (see launchNewSessionDialog).
     engine.getPlayer().unload();
 
-    refreshFormatButton();
     const auto defaultTemplate = getDefaultTemplate();
     if (defaultTemplate.existsAsFile())
     {
@@ -563,12 +553,7 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
         // every future file dialog) and remember the chosen format
         // so the dB readout / capture matches.
         zynforge::updateSettings (self->engine.getAppProps(), [&r] (juce::PropertiesFile& props)
-        {
-            props.setValue ("sessionsRoot",      r.location.getFullPathName());
-            props.setValue ("sessionName",       r.name);
-            props.setValue ("interleavedFlag",   r.interleaved);
-            props.setValue ("ioPreset",          r.ioSettings);
-        });
+                                  { props.setValue ("sessionsRoot", r.location.getFullPathName()); });
 
         // Pin this folder as the active session so Save / Save As light
         // up immediately (engine.getActiveSessionDir() now reports it
@@ -579,7 +564,6 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
 
         self->engine.getRecorder().setCaptureFormat (r.captureFormat);
         self->pendingSampleRate = r.sampleRate;
-        self->refreshFormatButton();
 
         // Apply the chosen sample rate to the device immediately -- but never
         // while recording: the restart would stop the take.
@@ -593,7 +577,7 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
 
         // Start clean: clear every per-strip persisted override and
         // reset the strip count so the engineer dials in their own
-        // channels with +CH. Stop the live strips' meter/spectrum timers
+        // channels with +CH. Stop the live strips' meter timers
         // FIRST -- setStripCount(0) frees every TrackState the strips still
         // reference, and the 10 Hz rebuild only happens on the next tick.
         self->condemnAllStrips();

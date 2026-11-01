@@ -104,16 +104,7 @@ namespace zynforge::brand
     //   virtual sndchk → warm-amber (accentVS) -- lights the VSC button
     //   stream / send  → cool-teal  (featureEngaged)
     //   record danger  → red glow   (accentRecord)
-    //
-    // Use the named accessors below, not the raw colour tokens, so a
-    // future re-skin only touches this header.
-    inline juce::Colour signalRecord()      { return accentRecord; }
-    inline juce::Colour signalMonitor()     { return accentPlay;   }
     inline juce::Colour signalMute()        { return brandOrange;  }
-    inline juce::Colour signalSolo()        { return accentSolo;   }
-    inline juce::Colour signalVsc()         { return accentVS;     }
-    inline juce::Colour signalStream()      { return featureEngaged; }
-    inline juce::Colour signalPlayhead()    { return accentPlay;   }
     // Armed-but-not-rolling: BigClock border, future "ready" states.
     // Maps to engagedAmber (the BYPASS / LIVE / LOCK token) -- it's
     // semantically a 'primed but not active' colour. Keeps brandOrange

@@ -1,7 +1,6 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/OscRemote.h"
 #include "../Network/ConsoleLink.h"
-#include "../Network/SessionMirror.h"
 
 namespace zynforge
 {
@@ -137,42 +136,6 @@ public:
             expect (! engine.getMarkers().getLast().name.contains (token), "credential became marker text");
         }
 
-        beginTest ("Invalid mirror response preserves the last valid channel layout");
-        {
-            AudioEngine engine;
-            engine.clearAllStripOverrides();
-            const juce::ScopeGuard cleanup { [&] { engine.clearAllStripOverrides(); } };
-            SessionMirror mirror (engine);
-            // Exercise result consumption without a socket, timer or worker.
-            mirror.host = "fixture-no-network";
-            mirror.fetchActive.store (true);
-            for (const auto* body : { "{\"error\":\"unavailable\"}",
-                                     "{\"numTracks\":2,\"tracks\":{}}",
-                                     "{\"numTracks\":2,\"tracks\":[{}]}" })
-            {
-                engine.setStripCount (2);
-                engine.setTrackName (0, "preserved");
-                mirror.resultPayload = body;
-                mirror.resultReady.store (true);
-                mirror.timerCallback();
-                expectEquals (engine.getRecorder().getNumTracks(), 2, body);
-                if (engine.getRecorder().getNumTracks() > 0)
-                    expectEquals (engine.getRecorder().getTrack (0).getNameThreadSafe(), juce::String ("preserved"));
-                expect (mirror.getLastError().isNotEmpty(), "invalid mirror result reported successful sync");
-                expectEquals (mirror.getLastSyncMs(), (juce::int64) 0);
-            }
-            EngineStatus valid;
-            valid.numTracks = 1;
-            TrackStatus track; track.name = "mirrored"; track.colourARGB = 0xff225577;
-            valid.tracks.push_back (track);
-            mirror.resultPayload = juce::JSON::toString (valid.toJson());
-            mirror.resultReady.store (true);
-            mirror.timerCallback();
-            expectEquals (engine.getRecorder().getNumTracks(), 1);
-            expectEquals (engine.getRecorder().getTrack (0).getNameThreadSafe(), juce::String ("mirrored"));
-            expect (mirror.getLastError().isEmpty());
-            expect (mirror.getLastSyncMs() > 0);
-        }
     }
 };
 static ReviewNetworkRepairTests reviewNetworkRepairTests;

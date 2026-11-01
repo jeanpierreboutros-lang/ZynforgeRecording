@@ -3,9 +3,8 @@
 // 2026-05-24 god-class split.
 //
 // Includes: saveSessionStateTo, exportTracksTo, onSaveSessionState,
-// onImportAudioFiles, onSaveSessionAs, onExportAllTracks,
-// onExportIndividualTrack, warnIfSampleRateMismatch,
-// onLoadSessionClicked, getSessionsRoot, templatesDir,
+// onImportAudioFiles, onSaveSessionAs, onExportAudio,
+// warnIfSampleRateMismatch, onLoadSessionClicked, getSessionsRoot, templatesDir,
 // promptSaveSessionTemplate, applySessionTemplate,
 // loadUILayoutFromActiveSession, promptDeleteSessionTemplate,
 // makeNewSessionDir, createSessionFolderStructure.
@@ -26,7 +25,6 @@
 #include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
 #include "ExportDialog.h"
-#include "TrackSelectDialog.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -821,19 +819,6 @@ juce::var MainComponent::captureUILayoutJson() const
     return juce::var (ui.get());
 }
 
-bool MainComponent::saveUILayoutToActiveSession()
-{
-    if (pendingMetadataSaves != 0) return false;
-    zynforge::SessionMetadataSnapshot snapshot;
-    snapshot.directory = engine.getActiveSessionDir();
-    juce::DynamicObject::Ptr patch (new juce::DynamicObject());
-    patch->setProperty ("ui", captureUILayoutJson());
-    patch->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
-    snapshot.projectPatchJson = juce::JSON::toString (juce::var (patch.get()));
-    snapshot.backup = false;
-    return zynforge::writeSessionMetadata (snapshot).ok;
-}
-
 void MainComponent::startExportTracksTo (const juce::File& destDir,
                                          const std::vector<int>& channelIndices,
                                          const zynforge::ExportOptions& opts)
@@ -1037,7 +1022,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     });
 }
 
-void MainComponent::onBounceStems()
+void MainComponent::onBounceStems (std::vector<int> tracks)
 {
     if (sessionIoBusy.load()) { showStatus ("Another session operation is already running"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before bouncing stems"); return; }
@@ -1050,14 +1035,14 @@ void MainComponent::onBounceStems()
     juce::Component::SafePointer<MainComponent> chooserSelf (this);
     chooser->launchAsync (juce::FileBrowserComponent::saveMode
                           | juce::FileBrowserComponent::canSelectDirectories,
-        [chooserSelf, this] (const juce::FileChooser& fc)
+        [chooserSelf, this, tracks] (const juce::FileChooser& fc)
     {
         if (chooserSelf == nullptr) return;
-        completeBounceStems (fc.getResult());
+        completeBounceStems (fc.getResult(), tracks);
     });
 }
 
-void MainComponent::completeBounceStems (juce::File dest)
+void MainComponent::completeBounceStems (juce::File dest, const std::vector<int>& tracks)
 {
     if (dest.getFullPathName().isEmpty()) return;
     // The asynchronous picker may have been opened before a remote RECORD.
@@ -1070,11 +1055,19 @@ void MainComponent::completeBounceStems (juce::File dest)
     const double sr      = engine.getPlayer().getSampleRate() > 0.0
                              ? engine.getPlayer().getSampleRate() : 48000.0;
     if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
+    // The strips were ticked before the folder dialog; a session open or a
+    // remote can change the list meanwhile.
+    for (int t : tracks)
+        if (t < 0 || t >= nTracks)
+        {
+            showStatus ("The channel list changed while the export was set up -- choose the channels again");
+            return;
+        }
     if (! sessionJobs.reserve()) { showStatus ("Another session operation is already running"); return; }
     engine.setSessionTransitionActive (true);
     if (editPage != nullptr) editPage->setEnabled (false);
 
-    showStatus ("Bouncing " + juce::String (nTracks) + " edited stems...");
+    showStatus ("Bouncing " + juce::String ((int) tracks.size()) + " edited stems...");
     // Resolve every stem's name and layout HERE, on the message thread, and
     // hand the worker plain values. The worker used to read TrackStates under
     // the recorder's structure lock for the WHOLE bounce -- and the 10 Hz UI
@@ -1085,7 +1078,7 @@ void MainComponent::completeBounceStems (juce::File dest)
     std::vector<Stem> stems;
     {
         auto& rec = engine.getRecorder();
-        for (int t = 0; t < nTracks; ++t)
+        for (int t : tracks)
         {
             // A stereo pair bounces as ONE interleaved stereo stem from its
             // L half; skip the R half.
@@ -1613,84 +1606,7 @@ static double sessionAudioRateFor (zynforge::AudioEngine& engine)
     return engine.getSessionAudioRate();
 }
 
-void MainComponent::onExportAllTracks()
-{
-    const auto source = engine.getActiveSessionDir();
-    if (! source.isDirectory()) { showStatus ("No active session"); return; }
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    zynforge::ExportDialog::launch ("Export all tracks", sessionAudioRateFor (engine),
-        [self, this] (std::optional<zynforge::ExportOptions> opts)
-    {
-        if (self == nullptr || ! opts.has_value()) return;
-        const auto chosenOpts = *opts;
-
-        const auto activeSession = engine.getActiveSessionDir();
-        const auto exportDir    = activeSession.isDirectory()
-                                       ? activeSession.getChildFile ("Export Files")
-                                       : getSessionsRoot();
-        exportDir.createDirectory();
-        chooser = std::make_unique<juce::FileChooser> (
-            "Export all tracks to...", exportDir, "");
-
-        const auto flags = juce::FileBrowserComponent::saveMode
-                         | juce::FileBrowserComponent::canSelectDirectories;
-
-        chooser->launchAsync (flags,
-            [self, this, chosenOpts] (const juce::FileChooser& fc)
-        {
-            if (self == nullptr) return;
-            auto dest = fc.getResult();
-            if (dest.getFullPathName().isEmpty()) return;
-            if (! dest.exists()) dest.createDirectory();
-
-            std::vector<int> all;
-            for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i) all.push_back (i);
-
-            // Async: reports its own progress + completion (or the INCOMPLETE
-            // / failed warning) when the worker finishes.
-            startExportTracksTo (dest, all, chosenOpts);
-        });
-    });
-}
-
-void MainComponent::onExportIndividualTrack (int channelIndex)
-{
-    const auto source = engine.getActiveSessionDir();
-    if (! source.isDirectory()) { showStatus ("No active session"); return; }
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    zynforge::ExportDialog::launch ("Export track", sessionAudioRateFor (engine),
-        [self, this, channelIndex] (std::optional<zynforge::ExportOptions> opts)
-    {
-        if (self == nullptr || ! opts.has_value()) return;
-        const auto chosenOpts = *opts;
-
-        const auto activeSession = engine.getActiveSessionDir();
-        const auto exportDir    = activeSession.isDirectory()
-                                       ? activeSession.getChildFile ("Export Files")
-                                       : getSessionsRoot();
-        exportDir.createDirectory();
-        chooser = std::make_unique<juce::FileChooser> (
-            "Export track to...", exportDir, "");
-
-        const auto flags = juce::FileBrowserComponent::saveMode
-                         | juce::FileBrowserComponent::canSelectDirectories;
-
-        chooser->launchAsync (flags,
-            [self, this, channelIndex, chosenOpts] (const juce::FileChooser& fc)
-        {
-            if (self == nullptr) return;
-            auto dest = fc.getResult();
-            if (dest.getFullPathName().isEmpty()) return;
-            if (! dest.exists()) dest.createDirectory();
-
-            startExportTracksTo (dest, { channelIndex }, chosenOpts);
-        });
-    });
-}
-
-void MainComponent::onExportIndividualTracks()
+void MainComponent::onExportAudio()
 {
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory()) { showStatus ("No active session"); return; }
@@ -1698,10 +1614,9 @@ void MainComponent::onExportIndividualTracks()
     const int n = engine.getRecorder().getNumTracks();
     if (n <= 0) { showStatus ("No tracks to export"); return; }
 
-    // Step 1: tick-box picker. ONE row per logical strip -- a stereo pair
-    // shows as a single "(stereo)" entry, not two mono rows. Each row maps
-    // back to its physical channel index(es) so the export collapses the
-    // pair into one stereo file.
+    // ONE row per logical strip -- a stereo pair shows as a single "(stereo)"
+    // entry, not two mono rows. Each row maps back to its physical channel
+    // index(es) so the export collapses the pair into one stereo file.
     std::vector<juce::String> names;
     std::vector<std::vector<int>> rowChannels;   // dialog row -> physical channels
     for (int i = 0; i < n; )
@@ -1716,50 +1631,50 @@ void MainComponent::onExportIndividualTracks()
     }
 
     juce::Component::SafePointer<MainComponent> self (this);
-    zynforge::TrackSelectDialog::launch ("Export individual tracks", names,
-        [self, this, rowChannels] (std::optional<std::vector<int>> picked)
+    zynforge::ExportAudioDialog::launch (sessionAudioRateFor (engine), names,
+        [self, rowChannels] (std::optional<zynforge::ExportAudioContent::Result> choice)
     {
-        if (self == nullptr || ! picked.has_value() || picked->empty()) return;
+        if (self == nullptr || ! choice.has_value()) return;
 
-        // Map picked dialog rows back to physical channel indices (a stereo
-        // row expands to both halves; exportTracksTo writes them as one file).
-        std::vector<int> chosenTracks;
-        for (int row : *picked)
+        // Map ticked rows back to physical channel indices (a stereo row
+        // expands to both halves; the export writes them as one file).
+        std::vector<int> tracks;
+        for (int row : choice->rows)
             if (row >= 0 && row < (int) rowChannels.size())
                 for (int ch : rowChannels[(size_t) row])
-                    chosenTracks.push_back (ch);
-        if (chosenTracks.empty()) return;
+                    tracks.push_back (ch);
 
-        // Step 2: format / sample-rate / bit-depth (or MP3 bitrate).
-        zynforge::ExportDialog::launch ("Export format", sessionAudioRateFor (engine),
-            [self, this, chosenTracks] (std::optional<zynforge::ExportOptions> opts)
-        {
-            if (self == nullptr || ! opts.has_value()) return;
-            const auto chosenOpts = *opts;
+        using Source = zynforge::ExportAudioContent::Source;
+        if (choice->source == Source::stereoMix)         self->onBounceStereoMix();
+        else if (tracks.empty())                         return;
+        else if (choice->source == Source::editedTracks) self->onBounceStems (tracks);
+        else                                             self->chooseRawTakesFolder (tracks, choice->options);
+    });
+}
 
-            // Step 3: choose the destination folder, then export.
-            const auto activeSession = engine.getActiveSessionDir();
-            const auto exportDir = activeSession.isDirectory()
-                                       ? activeSession.getChildFile ("Export Files")
-                                       : getSessionsRoot();
-            exportDir.createDirectory();
-            chooser = std::make_unique<juce::FileChooser> (
-                "Export tracks to...", exportDir, "");
+void MainComponent::chooseRawTakesFolder (std::vector<int> tracks, const zynforge::ExportOptions& options)
+{
+    const auto activeSession = engine.getActiveSessionDir();
+    const auto exportDir = activeSession.isDirectory()
+                               ? activeSession.getChildFile ("Export Files")
+                               : getSessionsRoot();
+    exportDir.createDirectory();
+    chooser = std::make_unique<juce::FileChooser> ("Export tracks to...", exportDir, "");
 
-            const auto flags = juce::FileBrowserComponent::saveMode
-                             | juce::FileBrowserComponent::canSelectDirectories;
+    const auto flags = juce::FileBrowserComponent::saveMode
+                     | juce::FileBrowserComponent::canSelectDirectories;
 
-            chooser->launchAsync (flags,
-                [self, this, chosenTracks, chosenOpts] (const juce::FileChooser& fc)
-            {
-                if (self == nullptr) return;
-                auto dest = fc.getResult();
-                if (dest.getFullPathName().isEmpty()) return;
-                if (! dest.exists()) dest.createDirectory();
+    juce::Component::SafePointer<MainComponent> self (this);
+    chooser->launchAsync (flags, [self, this, tracks, options] (const juce::FileChooser& fc)
+    {
+        if (self == nullptr) return;
+        auto dest = fc.getResult();
+        if (dest.getFullPathName().isEmpty()) return;
+        if (! dest.exists()) dest.createDirectory();
 
-                startExportTracksTo (dest, chosenTracks, chosenOpts);
-            });
-        });
+        // Async: reports its own progress + completion (or the INCOMPLETE /
+        // failed warning) when the worker finishes.
+        startExportTracksTo (dest, tracks, options);
     });
 }
 
@@ -1811,8 +1726,6 @@ void MainComponent::applySessionSampleRate (double sr)
         setup.sampleRate = sr;
         engine.getDeviceManager().setAudioDeviceSetup (setup, true);
     }
-
-    refreshFormatButton();
 
     const double dev = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
                          ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
@@ -2300,7 +2213,6 @@ void MainComponent::completeOpenFolder (const juce::File& dir)
             : "No Track_* audio found in folder",
             juce::dontSendNotification);
     }
-    playButton.setButtonText ("PLAY");
     updateTransportLabels();
 }
 
@@ -2309,7 +2221,7 @@ juce::File MainComponent::getSessionsRoot() const
     // Engineer can override via the New Session / Welcome dialog ("Local
     // Storage:") -- stored in appProps as 'sessionsRoot', falling back to
     // ~/Music/Zynforge Sessions. The resolution lives on the ENGINE so the
-    // network remote-record paths (OSC, companion) share it instead of
+    // network remote-record paths (OSC, desk macros) share it instead of
     // hardcoding the Music folder.
     return engine.getSessionsRoot();
 }
@@ -2404,7 +2316,7 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
     // session-boundary path (open / close / new) already resets it.
     clickTrackIndex = -1;
 
-    // Stop the live strips' meter/spectrum timers before setStripCount frees
+    // Stop the live strips' meter timers before setStripCount frees
     // the TrackStates they reference (a template with fewer strips shrinks the
     // recorder vector); the strips rebuild on the next 10 Hz tick.
     condemnAllStrips();
@@ -2591,8 +2503,6 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         m->setProperty ("createdAt",       juce::Time::getCurrentTime().toISO8601 (true));
         m->setProperty ("sampleRate",      r.sampleRate);
         m->setProperty ("captureFormat",   (int) r.captureFormat);
-        m->setProperty ("interleaved",     r.interleaved);
-        m->setProperty ("ioPreset",        r.ioSettings);
         if (! zynforge::atomicfile::writeText (
                 sessionFolder.getChildFile (safeName + ".zfproj"),
                 juce::JSON::toString (juce::var (m.get()))))

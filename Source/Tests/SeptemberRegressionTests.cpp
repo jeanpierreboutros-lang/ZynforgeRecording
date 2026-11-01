@@ -3,7 +3,6 @@
 #include "../Audio/PathSafety.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/MultiPartReader.h"
-#include "../Network/CloudUpload.h"
 #include "../UI/SessionProjPath.h"
 #include "SavedTakes.h"
 
@@ -276,20 +275,6 @@ public:
             expect (pathsafety::isStrictDescendant (dir.file, nested));
             expect (! pathsafety::isStrictDescendant (dir.file, dir.file));
             outside.deleteRecursively();
-        }
-        beginTest ("Cloud uploader receives the exact session path and survives its process wrapper");
-        {
-            const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                  .getChildFile ("zf upload \"" + juce::Uuid().toString());
-            expect (root.createDirectory());
-            cloud::UploadRun upload;
-            expect (upload.start ("/usr/bin/touch {SESSION}/upload-finished", root, {}));
-            const auto marker = root.getChildFile ("upload-finished");
-            for (int waited = 0; waited < 2000 && ! marker.existsAsFile(); waited += 20)
-                juce::Thread::sleep (20);
-            expect (marker.existsAsFile(),
-                    "uploader did not receive the exact quoted path or exited with its wrapper");
-            root.deleteRecursively();
         }
         beginTest ("Loop boundary fills the entire device block without inserted silence");
         {

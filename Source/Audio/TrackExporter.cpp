@@ -3,7 +3,6 @@
 #include "FloatAiffWriter.h"
 #include "CheckedReaderSource.h"
 #include "MultiPartReader.h"
-#include "ProcessSearch.h"
 #include "SincResampler.h"
 
 #include <cmath>
@@ -72,29 +71,8 @@ namespace zynforge
             case ExportFormat::Wav24:  return ".wav";
             case ExportFormat::Aiff24: return ".aif";
             case ExportFormat::Flac24: return ".flac";
-            case ExportFormat::Mp3:    return ".mp3";
         }
         return ".wav";
-    }
-
-    juce::File TrackExporter::findLameBinary()
-    {
-        const juce::StringArray candidates {
-            "/opt/homebrew/bin/lame",
-            "/usr/local/bin/lame",
-            "/usr/bin/lame"
-        };
-        for (auto& path : candidates)
-        {
-            juce::File f (path);
-            if (f.existsAsFile()) return f;
-        }
-
-        // Inspect PATH directly. A previous `which` subprocess ignored its
-        // timeout result and then called readAllProcessOutput(), which can
-        // block forever if path lookup stalls on an unavailable volume.
-        return processsearch::findExecutableInPath (
-            "lame", juce::SystemStats::getEnvironmentVariable ("PATH", {}));
     }
 
     static std::unique_ptr<juce::AudioFormatWriter> makePcmWriter (
@@ -107,7 +85,6 @@ namespace zynforge
         switch (fmt)
         {
             case ExportFormat::Wav24:
-            case ExportFormat::Mp3:   // temp WAV in MP3 path
             {
                 juce::WavAudioFormat f;
                 return std::unique_ptr<juce::AudioFormatWriter> (
@@ -169,20 +146,14 @@ namespace zynforge
         outError = sizeRefusal (opts, channels, destLen);
         if (outError.isNotEmpty()) return false;
 
-        // For MP3 we first render to a temp WAV at the chosen sample rate,
-        // then call out to lame.
-        const bool isMp3   = (opts.format == ExportFormat::Mp3);
         const auto finalPcmFile = destWithoutExt.withFileExtension (extensionFor (opts.format));
         const auto destPcmFile = temporarySibling (finalPcmFile, ".wav");
         const auto closeFailed = CheckedFileStream::makeFailedFlag();
         auto outStream = CheckedFileStream::open (destPcmFile, closeFailed);
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
-        // For MP3 we always render the intermediate WAV at 24-bit.
-        const int bits = isMp3 ? 24 : bitsForFormat (opts.format, opts.bitsPerSample);
-        auto writer = makePcmWriter (isMp3 ? ExportFormat::Wav24 : opts.format,
-                                     outStream.get(), destSR, (unsigned int) channels,
-                                     bits);
+        auto writer = makePcmWriter (opts.format, outStream.get(), destSR, (unsigned int) channels,
+                                     bitsForFormat (opts.format, opts.bitsPerSample));
         if (writer == nullptr)
         {
             outStream.reset();
@@ -233,9 +204,7 @@ namespace zynforge
                 destPcmFile.deleteFile();
                 return false;
             }
-            if (! isMp3)
-                return installCompletedExport (destPcmFile, finalPcmFile, outError);
-            return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
+            return installCompletedExport (destPcmFile, finalPcmFile, outError);
         }
 
         // Keep the reader alive and propagate decoder/I/O failures through resampling.
@@ -291,9 +260,7 @@ namespace zynforge
             return false;
         }
 
-        if (! isMp3)
-            return installCompletedExport (destPcmFile, finalPcmFile, outError);
-        return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
+        return installCompletedExport (destPcmFile, finalPcmFile, outError);
     }
 
     bool TrackExporter::exportStereoPair (const juce::File& sourceL,
@@ -326,16 +293,14 @@ namespace zynforge
         outError = sizeRefusal (opts, 2, destLen);
         if (outError.isNotEmpty()) return false;
 
-        const bool isMp3 = (opts.format == ExportFormat::Mp3);
         const auto finalPcmFile = destWithoutExt.withFileExtension (extensionFor (opts.format));
         const auto destPcmFile = temporarySibling (finalPcmFile, ".wav");
         const auto closeFailed = CheckedFileStream::makeFailedFlag();
         auto outStream = CheckedFileStream::open (destPcmFile, closeFailed);
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
-        const int bits = isMp3 ? 24 : bitsForFormat (opts.format, opts.bitsPerSample);
-        auto writer = makePcmWriter (isMp3 ? ExportFormat::Wav24 : opts.format,
-                                     outStream.get(), destSR, 2, bits);   // 2 channels
+        auto writer = makePcmWriter (opts.format, outStream.get(), destSR, 2,   // 2 channels
+                                     bitsForFormat (opts.format, opts.bitsPerSample));
         if (writer == nullptr)
         {
             outStream.reset();
@@ -400,17 +365,14 @@ namespace zynforge
             return false;
         }
 
-        if (! isMp3)
-            return installCompletedExport (destPcmFile, finalPcmFile, outError);
-        return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
+        return installCompletedExport (destPcmFile, finalPcmFile, outError);
     }
 
     ExportFileStream::ExportFileStream (TrackExporter& e, const juce::File& dest,
                                         const ExportOptions& opts, double renderRate, int numChannels)
         : exporter (e), destWithoutExt (dest), options (opts)
     {
-        convertOnCommit = opts.format == ExportFormat::Mp3
-                       || ! juce::approximatelyEqual (renderRate, opts.sampleRate);
+        convertOnCommit = ! juce::approximatelyEqual (renderRate, opts.sampleRate);
         const auto finalFile = dest.withFileExtension (TrackExporter::extensionFor (opts.format));
         temporary = temporarySibling (finalFile, ".wav");
 
@@ -447,67 +409,5 @@ namespace zynforge
             return exporter.exportTrack (temporary, destWithoutExt, options, error);
         const auto finalFile = destWithoutExt.withFileExtension (TrackExporter::extensionFor (options.format));
         return installCompletedExport (temporary, finalFile, error);
-    }
-
-    int TrackExporter::mp3EncodeTimeoutMs (double durationSeconds)
-    {
-        if (! std::isfinite (durationSeconds) || durationSeconds < 0.0)
-            return 120000;
-        return (int) juce::jlimit (120000.0, 2147483647.0,
-                                   30000.0 + durationSeconds * 2000.0);
-    }
-
-    bool TrackExporter::encodeMp3 (const juce::File& tempWav,
-                                   const juce::File& destWithoutExt,
-                                   const ExportOptions& opts,
-                                   juce::String& outError)
-    {
-        const auto lame = findLameBinary();
-        if (lame == juce::File())
-        {
-            outError = "lame not found (install via `brew install lame`)";
-            tempWav.deleteFile();
-            return false;
-        }
-
-        const auto destMp3 = destWithoutExt.withFileExtension (".mp3");
-        const auto temporaryMp3 = temporarySibling (destMp3, ".mp3");
-
-        juce::ChildProcess proc;
-        const juce::StringArray cmd {
-            lame.getFullPathName(),
-            "-b", juce::String (opts.mp3Bitrate),
-            "--quiet",
-            tempWav.getFullPathName(),
-            temporaryMp3.getFullPathName()
-        };
-
-        const bool started = proc.start (cmd);
-        if (! started) { outError = "Failed to launch lame"; tempWav.deleteFile(); return false; }
-
-        double durationSeconds = 0.0;
-        if (std::unique_ptr<juce::AudioFormatReader> wav { formatManager.createReaderFor (tempWav) })
-            if (wav->sampleRate > 0.0)
-                durationSeconds = (double) wav->lengthInSamples / wav->sampleRate;
-        const bool finished = proc.waitForProcessToFinish (mp3EncodeTimeoutMs (durationSeconds));
-        if (! finished)
-        {
-            proc.kill();
-            proc.waitForProcessToFinish (5000);
-            tempWav.deleteFile();
-            temporaryMp3.deleteFile();
-            outError = "lame timed out";
-            return false;
-        }
-        const auto code = proc.getExitCode();
-        tempWav.deleteFile();
-
-        if (code != 0)
-        {
-            temporaryMp3.deleteFile();
-            outError = "lame exited with code " + juce::String (code);
-            return false;
-        }
-        return installCompletedExport (temporaryMp3, destMp3, outError);
     }
 }

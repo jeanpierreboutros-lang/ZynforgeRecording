@@ -121,7 +121,7 @@ namespace zynforge
                 // the real Track_NN.<ext> and was concatenated as part 1 of the
                 // take. Sidecars only survive a crash between the punch stash
                 // and the splice, which is exactly the recovery path. Excluded
-                // explicitly (matching NoiseAnalyzer / swapTracks / takeIsMultiPart).
+                // explicitly (matching swapTracks / takeIsMultiPart).
                 if (rest.containsIgnoreCase (".punchbase")) continue;
                 const int usc = rest.indexOfChar ('_');
                 if (usc >= 0 && ! rest.substring (usc + 1).startsWithIgnoreCase ("part"))
@@ -230,10 +230,10 @@ namespace zynforge
             if (p.stereo)
             {
                 if (p.index + 1 >= (int) prepared->tracks.size()) continue;
-                prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, false };
-                prepared->tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, false, true };
+                prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, false };
+                prepared->tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, true };
             }
-            else prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, true };
+            else prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, true };
         }
         prepared->sampleRate = sr;
         prepared->length = maxLen;

@@ -64,15 +64,6 @@ namespace zynforge
                    .getChildFile ("Zynforge Sessions");
     }
 
-    void AudioEngine::clearRecentSessions()
-    {
-        if (appProps == nullptr) return;
-        reloadAppPropsBeforeWrite();
-        for (int i = 0; i < kMaxRecent; ++i)
-            appProps->setValue ("recentSession_" + juce::String (i), juce::String());
-        appProps->saveIfNeeded();
-    }
-
     void AudioEngine::resetAllStripState()
     {
         // A live take records from inputRouting and captures stereo pairs by
@@ -246,7 +237,7 @@ namespace zynforge
         }
         // Bypass-proof guard: refuse to capture if the device clock disagrees
         // with the session rate (silent wrong-speed/pitch take). Covers every
-        // caller -- record button, transport bar, punch auto-record, companion.
+        // caller -- record button, transport bar, punch auto-record, remotes.
         if (isSampleRateMismatched())
         {
             recorder.discardTakeArms();
@@ -1076,7 +1067,7 @@ namespace zynforge
                     juce::Time::currentTimeMillis() - receivedAt);
                 // The daemon owns the capture meters and writer health, but
                 // mute/solo/name/colour are controlled by this GUI. Overlay
-                // those fields so companion controls reflect their true state.
+                // those fields so the snapshot reflects their true state.
                 const juce::ScopedLock sl (recorder.getStructureLock());
                 const int count = juce::jmin ((int) status.tracks.size(), recorder.getNumTracks());
                 for (int i = 0; i < count; ++i)
@@ -1146,7 +1137,7 @@ namespace zynforge
         {
             auto& t = recorder.getTrack (i);
             TrackStatus ts;
-            ts.name       = t.getNameThreadSafe();   // cross-thread (companion server)
+            ts.name       = t.getNameThreadSafe();   // locked: read off the message thread too
             ts.peak       = t.peak  .load (std::memory_order_relaxed);
             ts.rms        = t.rms   .load (std::memory_order_relaxed);
             ts.armed      = t.armed .load (std::memory_order_relaxed);
@@ -1417,12 +1408,6 @@ namespace zynforge
         return true;
     }
 
-    void AudioEngine::setPhasePair (int leftCh1Based, int rightCh1Based) noexcept
-    {
-        phaseLeft .store (juce::jmax (0, leftCh1Based  - 1), std::memory_order_relaxed);
-        phaseRight.store (juce::jmax (0, rightCh1Based - 1), std::memory_order_relaxed);
-    }
-
     void AudioEngine::setEditCursorSample (juce::int64 sample) noexcept
     {
         editCursorSample.store (sample, std::memory_order_release);
@@ -1473,11 +1458,6 @@ namespace zynforge
             for (const auto& dropped : markers.getAll())
                 if (dropped.runtimeId == markers.lastDroppedId) { onMarkerDropped (dropped.name); break; }
         return markers.getCount();
-    }
-
-    int AudioEngine::getStripCount() const
-    {
-        return appProps ? juce::jlimit (0, 256, appProps->getIntValue ("stripCount", 0)) : 0;
     }
 
     void AudioEngine::clearAllStripOverrides()
@@ -2067,6 +2047,11 @@ namespace zynforge
             const auto savedBackup = appProps->getValue ("backupDirectory", {});
             if (savedBackup.isNotEmpty())
                 recorder.setBackupDirectory (juce::File (savedBackup));
+            // WAV 24 unless the engineer chose otherwise; a value this build
+            // does not know leaves it there.
+            const int savedFormat = appProps->getIntValue ("backupFormat", (int) CaptureFormat::Wav24);
+            if (savedFormat >= 0 && savedFormat <= (int) CaptureFormat::Flac24)
+                recorder.setBackupCaptureFormat ((CaptureFormat) savedFormat);
         }
 
         // Retain configured mirrors while removable volumes are offline;
@@ -2195,10 +2180,6 @@ namespace zynforge
     void AudioEngine::applyDeviceConfiguration (double sr, int blockSize, juce::AudioWorkgroup workgroup)
     {
         deviceSampleRate.store (sr, std::memory_order_relaxed);
-        // Keep the NDI transmit's declared rate on the LIVE device rate --
-        // a rate change under a running transmit otherwise plays the rest of
-        // the show at the wrong pitch on every receiver.
-        ndi.setSampleRate (sr);
         deviceBlockSize .store (blockSize, std::memory_order_relaxed);
         audioLoadPct    .store (0.0f, std::memory_order_relaxed);
 
@@ -2222,7 +2203,6 @@ namespace zynforge
         // size so the audio thread never allocates when mix capture is on.
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
-        monitorFeed     .setSize (2, blockSize, false, true, true);
         // 64-bit output accumulator -- sized to the max supported channel
         // count (kMaxStrips) so a wide device (>64 outs) never forces an
         // allocation inside the callback.
@@ -2452,6 +2432,19 @@ namespace zynforge
         {
             reloadAppPropsBeforeWrite();
             appProps->setValue ("backupDirectory", dir.getFullPathName());
+            appProps->saveIfNeeded();
+        }
+        return true;
+    }
+
+    bool AudioEngine::setBackupFormat (CaptureFormat format)
+    {
+        recorder.setBackupCaptureFormat (format);
+        if (recorder.getBackupCaptureFormat() != format) return false;
+        if (appProps != nullptr)
+        {
+            reloadAppPropsBeforeWrite();
+            appProps->setValue ("backupFormat", (int) format);
             appProps->saveIfNeeded();
         }
         return true;
@@ -3340,31 +3333,6 @@ namespace zynforge
             }
         }
 
-        // Phase correlation between the selected pair (smoothed). The
-        // pair refers to strip indices, so we use the routed input pointers.
-        {
-            const int li = phaseLeft .load (std::memory_order_relaxed);
-            const int ri = phaseRight.load (std::memory_order_relaxed);
-            if (li < numTracks && ri < numTracks
-                && routedInputs[li] != nullptr && routedInputs[ri] != nullptr)
-            {
-                const float* L = routedInputs[li];
-                const float* R = routedInputs[ri];
-                float lr = 0.0f, ll = 0.0f, rr = 0.0f;
-                for (int i = 0; i < numSamples; ++i)
-                {
-                    lr += L[i] * R[i];
-                    ll += L[i] * L[i];
-                    rr += R[i] * R[i];
-                }
-                const float denom = std::sqrt (ll * rr) + 1.0e-12f;
-                const float instantaneous = juce::jlimit (-1.0f, 1.0f, lr / denom);
-                const float prev = phaseCorrelation.load (std::memory_order_relaxed);
-                phaseCorrelation.store (prev * 0.85f + instantaneous * 0.15f,
-                                        std::memory_order_relaxed);
-            }
-        }
-
         // ── Master bus ────────────────────────────────────────────────
         // Every audible channel's VSC playback contributes to the master
         // by default. Channels with MON=on ALSO contribute their live
@@ -3563,10 +3531,6 @@ namespace zynforge
                                                numSamples);
         }
 
-        // Companion stream feed -- runs at the very end so it captures
-        // EVERYTHING the engineer hears on the monitor bus (per-channel
-        // routing + stream-bus + monitor sum, all collapsed into the
-        // float output buffers by now).
         // ── Real-time click mix ────────────────────────────────────
         // Click runs on the audio thread so a tempo / voice change
         // takes effect on the next beat -- no file reload, no glitch.
@@ -3610,45 +3574,6 @@ namespace zynforge
             float* R = masterAudible && masterPair.right != outL ? outputs[masterPair.right] : nullptr;
             click.processBlock (L, R, numSamples);
         }
-
-        // What the companion stream and NDI hear. With no device pair to read,
-        // they take the monitor mix itself.
-        const float* feedL = nullptr;
-        const float* feedR = nullptr;
-        int feedSamples = numSamples;
-        const bool companionFeed = remotes.isCompanionServerRunning();
-        if (companionFeed || ndi.isEnabled())
-        {
-            if (masterAudible)
-            {
-                feedL = outputs[outL];
-                feedR = outputs[masterPair.right];
-            }
-            else
-            {
-                auto* floatL = monitorFeed.getWritePointer (0);
-                auto* floatR = monitorFeed.getWritePointer (1);
-                for (int i = 0; i < blk; ++i)
-                {
-                    floatL[i] = (float) (accL[i] * mGain);
-                    floatR[i] = (float) (accR[i] * mGain);
-                }
-                feedL = floatL;
-                feedR = stereo ? floatR : floatL;
-                feedSamples = blk;
-            }
-        }
-
-        if (companionFeed)
-            remotes.feedCompanionStream (feedL, feedR, feedSamples);
-
-        // NDI Audio transmit -- push the master mix onto the LAN as an
-        // NDI source. Reads from the monitor-bus output channels so the
-        // network feed matches what the engineer hears at the console.
-        // Cheap: pushStereo is a memcpy + one libndi call; a no-op when
-        // the runtime isn't installed.
-        if (ndi.isEnabled() && feedL != nullptr && feedR != nullptr)
-            ndi.pushStereo (feedL, feedR, feedSamples);
 
         // CPU-load: (callback wall time) / (block period). EMA-smoothed
         // with a fast attack and slower release so the engineer sees

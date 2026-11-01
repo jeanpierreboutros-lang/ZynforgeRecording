@@ -7,13 +7,11 @@
 #include "ClickEngine.h"
 #include "MidiClockOut.h"
 #include "VcaBus.h"
-#include "../Network/NDIBridge.h"
 #include "../Network/RemoteControl.h"
 
 #include <array>
 #include <functional>
 #include <map>
-#include "ITransport.h"
 #include "ClipModel.h"
 #include "EngineStatus.h"
 #include "MultitrackRecorder.h"
@@ -41,8 +39,7 @@ namespace zynforge
     class AudioCallbackTests;
 
     class AudioEngine final : public juce::AudioIODeviceCallback,
-                              public juce::MidiInputCallback,
-                              public ITransport
+                              public juce::MidiInputCallback
     {
         friend class SettingsBatchAuditTests;
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
@@ -51,7 +48,7 @@ namespace zynforge
         AudioEngine();
         ~AudioEngine() override;
 
-        // Remote transports (OSC, companion HTTP, control surfaces) all enter
+        // Remote transports (OSC, desk macros, control surfaces) all enter
         // through this one message-thread boundary.  The host may intercept a
         // command -- capture-daemon mode does this so a remote cannot silently
         // start/stop the in-process recorder instead of the protected daemon.
@@ -180,13 +177,12 @@ namespace zynforge
 
         // ── Master loudness (ITU-R BS.1770-style) ─────────────────────
         // Measured on the post-fader stereo master. Momentary/short-term
-        // are live; integrated is gated program loudness since the last
-        // resetLoudness(). True-peak is a 4x-oversampled estimate (dBTP).
+        // are live; integrated is gated program loudness since the device
+        // started. True-peak is a 4x-oversampled estimate (dBTP).
         float getMomentaryLufs()  const noexcept { return loudness.getMomentaryLufs(); }
         float getShortTermLufs()  const noexcept { return loudness.getShortTermLufs(); }
         float getIntegratedLufs() const noexcept { return loudness.getIntegratedLufs(); }
         float getTruePeakDb()     const noexcept { return loudness.getTruePeakDb(); }
-        void  resetLoudness()           noexcept { loudness.reset(); }
         float getMasterGainDb() const noexcept { return masterState.gainDb.load(); }
         bool  getMasterMuted()  const noexcept { return masterState.muted.load(); }
         void  setMasterGainDb (float dB);
@@ -196,8 +192,7 @@ namespace zynforge
         void  setMasterGainDbFast (float dB) noexcept { masterState.gainDb.store (dB, std::memory_order_relaxed); }
         void  setMasterMuted  (bool m);
         // setMasterOutputs (-1, -1) gives the master bus no output: it still
-        // meters and feeds the companion stream and NDI, and nothing lands on
-        // an interface channel.
+        // meters, and nothing lands on an interface channel.
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }
         void  setMasterOutputs (int l, int r);
@@ -219,15 +214,15 @@ namespace zynforge
         bool  getMasterStereo() const noexcept { return masterStereo.load(); }
         void  setMasterStereo (bool stereo);
 
-        bool startRecording (const juce::File& sessionDir) override;
-        void stopRecording() override;
+        bool startRecording (const juce::File& sessionDir);
+        void stopRecording();
         // UI entry: accepted once, completion on UI after media/player readiness
         // and reader retirement. A false return never invokes completion.
         bool stopRecordingAsync (std::function<void (bool)> completion);
         bool isCaptureFinalizing() const noexcept { return asyncCaptureFinalizing.load(); }
         // Excludes generated reference beds whose length is unrelated to a take.
         juce::int64 getCaptureLengthSamples();
-        bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
+        bool isRecording() const noexcept { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept;
         bool isExternalRecording() const noexcept { return externalRecording.load (std::memory_order_acquire); }
         // A daemon take is rolling into sessionDir: from here on it is this
@@ -284,7 +279,7 @@ namespace zynforge
         // another session.  Keeping this in AudioEngine makes non-UI entry
         // points obey the same boundary as File > Open/New.
         void clearSessionState();
-        void startPlayback() override
+        void startPlayback()
         {
             if (isCaptureFinalizing()) return;
             // Never play back on top of a live take. This is a recorder, not
@@ -304,7 +299,7 @@ namespace zynforge
             else if (pos <= 0) midiClockOut.sendStart();
             else               midiClockOut.sendContinueFrom (midiBeatsAt (pos));
         }
-        void stopPlayback() override
+        void stopPlayback()
         {
             player.stop();
             midiClockOut.sendStop();
@@ -317,7 +312,6 @@ namespace zynforge
         // MIDI clock master (24 PPQN) -- drives outboard synths /
         // drum machines / DAW slaves from the session tempo.
         MidiClockOut& getMidiClockOut() noexcept { return midiClockOut; }
-        NDIBridge&    getNDIBridge()    noexcept { return ndi; }
 
         // ── VCA buses ─────────────────────────────────────────────
         // 8 group "ghost faders". Strips opt-in via setTrackVcaGroup
@@ -369,10 +363,9 @@ namespace zynforge
         // so sends survive a relaunch.
         void  setTrackSend (int channelIndex, int sendSlot,
                             int targetBus, float levelDb, bool postFader);
-        bool isPlaying() const noexcept override           { return player.isPlaying(); }
+        bool isPlaying() const noexcept                    { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }
-        StripColours&   getStripColours() noexcept         { return stripColours; }
 
         // Updates TrackState colour (atomic) AND persists via StripColours.
         // Pass an empty colour (alpha == 0) to revert to the default.
@@ -421,7 +414,6 @@ namespace zynforge
         // first launch. setStripCount safely detaches the audio callback,
         // mutates the track vector, reapplies persisted per-strip state,
         // and re-attaches.
-        int  getStripCount() const;
         void setStripCount (int n);
 
         // Add / remove a single strip without disturbing the others.
@@ -503,15 +495,10 @@ namespace zynforge
             std::lock_guard<std::mutex> lock (externalStatusLock);
             return externalStatus.positionSamples;
         }
-        // True if `channel`'s existing take in `sessionDir` is auto-split into
-        // parts -- punch-in must refuse those (the single-file splice can't
-        // represent a multi-part base).
-        static bool punchTakeMultiPart (const juce::File& sessionDir, int channel)
-        { return MultitrackRecorder::takeIsMultiPart (sessionDir, channel); }
         // The loop region from SessionPlayer doubles as the punch window
         // -- there's only ever one 'do this between A and B' selection.
 
-        // Companion server, console OSC (log + channel-name capture) and the
+        // Console OSC (log + channel-name capture), desk macros and the
         // MIDI control surface. Owned here so their lifetime nests inside the
         // engine's; see Source/Network/RemoteControl.h.
         RemoteControl&       getRemotes() noexcept       { return remotes; }
@@ -520,7 +507,7 @@ namespace zynforge
         // Returns recording dir if recording, else loaded playback session,
         // else an empty File.
         // ── Pair-aware, thread-safe track toggles ──────────────────────────
-        // The ONE place remote surfaces (companion server, OSC, MCU) may flip
+        // The ONE place remote surfaces (OSC, MCU) may flip
         // mute / solo / arm. Two things they all got wrong doing it themselves:
         //
         //  1. STEREO. A pair is two adjacent strips with isStereo on the L, and
@@ -1080,7 +1067,6 @@ namespace zynforge
         static constexpr int kMaxRecent = 10;
         void rememberRecentSession (const juce::File& dir);
         juce::Array<juce::File> getRecentSessions() const;
-        void clearRecentSessions();
 
         // Where new sessions are created. Honours the engineer's "Local
         // Storage" override (appProps "sessionsRoot", set from the New Session
@@ -1098,6 +1084,7 @@ namespace zynforge
 
         // Forwards to MultitrackRecorder.
         bool setBackupDirectory (const juce::File& dir);   // persists only what the recorder took
+        bool setBackupFormat (CaptureFormat format);       // likewise
 
         // N-way mirror destinations. Wraps recorder.setMirrors and
         // persists via appProps so the engineer's mirror setup
@@ -1145,13 +1132,6 @@ namespace zynforge
         // still have a `recording.session` marker (i.e. were not stopped
         // cleanly).
         static juce::Array<juce::File> findIncompleteSessions (const juce::File& sessionsRoot);
-
-        // Phase correlation between two input channels (live, smoothed).
-        // Channels are 1-based for display, stored 0-based.
-        void setPhasePair (int leftCh1Based, int rightCh1Based) noexcept;
-        int  getPhaseLeftChannel()  const noexcept { return phaseLeft .load (std::memory_order_relaxed) + 1; }
-        int  getPhaseRightChannel() const noexcept { return phaseRight.load (std::memory_order_relaxed) + 1; }
-        float getPhaseCorrelation() const noexcept { return phaseCorrelation.load (std::memory_order_relaxed); }
 
         // Drops a marker at the current record or playback position. Pass a
         // name to set it atomically (drop re-sorts by position, so a separate
@@ -1215,10 +1195,6 @@ namespace zynforge
         StripGains               stripGains;
         StripRouting             stripRouting;
 
-        std::atomic<int>   phaseLeft         { 0 };  // 0-based
-        std::atomic<int>   phaseRight        { 1 };
-        std::atomic<float> phaseCorrelation  { 0.0f };
-
         std::atomic<int> streamOutL { -1 };
         std::atomic<int> streamOutR { -1 };
 
@@ -1246,9 +1222,6 @@ namespace zynforge
         // hot channels can't overshoot float headroom on the way to the
         // stereo master bus.
         juce::AudioBuffer<double>                               monitorAccum;
-        // The monitor mix as float, for the companion and NDI feeds while the
-        // master bus has no device output to read them from.
-        juce::AudioBuffer<float>                                monitorFeed;
 
         // 64-bit-float output accumulator. Per-strip / stream-bus
         // summing flows here in double precision; only the final
@@ -1279,13 +1252,12 @@ namespace zynforge
 
         ClickEngine        click;
         MidiClockOut       midiClockOut;
-        NDIBridge          ndi;
         std::atomic<bool> controlsLocked { false };
         std::array<VcaBus, kNumVcas> vcas;
     public:
         ClickEngine& getClickEngine() noexcept { return click; }
     private:
-        RemoteControl remotes { *this };   // companion server, OSC, control surface
+        RemoteControl remotes { *this };   // OSC, desk macros, control surface
         std::unique_ptr<juce::PropertiesFile> appProps;
         RemoteTransportHandler remoteTransportHandler;
 
@@ -1478,8 +1450,8 @@ namespace zynforge
         float  getAudioLoadPct() const noexcept { return audioLoadPct.load (std::memory_order_relaxed); }
 
         // Phase-0 status boundary: one serialisable snapshot of transport +
-        // disk + per-track state, so consumers (UI readouts, companion
-        // server, a future capture daemon) read this instead of reaching
+        // disk + per-track state, so consumers (UI readouts, the capture
+        // daemon) read this instead of reaching
         // into recorder/engine internals. Fills from the atomics; call from
         // the message thread.
         EngineStatus captureStatus();

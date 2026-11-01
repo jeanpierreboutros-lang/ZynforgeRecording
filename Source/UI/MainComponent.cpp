@@ -9,14 +9,12 @@
 #include "PatchPage.h"
 #include "EditToolsBar.h"
 #include "../Audio/MidiClockOut.h"
-#include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/PreflightProbes.h"
-#include "NoiseReportDialog.h"
+#include "BackupMirrorDialog.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
-#include "../Audio/SpectralClassifier.h"
-#include "SessionPropertiesDialog.h"
+#include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 #include "RecordPosition.h"
 
@@ -196,7 +194,6 @@ bool MainComponent::handleRecordPressDuringTake()
         engine.stopPlayback();
         engine.setPunchModeOn (false);
         punchSessionActive = false;
-        recordButton.setButtonText ("RECORD");
         if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
         return true;
     }
@@ -241,10 +238,10 @@ bool MainComponent::handleRecordPressDuringTake()
     if (engine.isRecording())
     {
         // Two-tap "protect the take" guard -- same pattern onStopClicked uses.
-        // While recording the RECORD button reads "STOP"; a stray press must
-        // not end a live take. First tap arms (toast); a second tap within 2 s
-        // actually stops. Shares stopArmedAtMs with onStopClicked so the two
-        // stop surfaces stay consistent. Unlike onStopClicked this does NOT
+        // A stray press must not end a live take. First tap arms (toast); a
+        // second tap within 2 s actually stops. Shares stopArmedAtMs with
+        // onStopClicked so the two stop surfaces stay consistent. Unlike
+        // onStopClicked this does NOT
         // rewind -- it keeps the take parked at its end so a subsequent RECORD
         // continues/appends (the live-recorder convention).
         const auto now = juce::Time::getMillisecondCounter();
@@ -516,7 +513,6 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
                              + (mixerInTakeFolder ? "  (take survives a GUI crash)"
                                                   : "  (mixer not saved to the take folder)"),
                              juce::dontSendNotification);
-        recordButton.setButtonText ("STOP");
     }
     else if (unanswered)
     {
@@ -528,7 +524,6 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         engine.noteLastCapture (dir);
         engine.snapshotCaptureInputGains();
         daemonStartUnansweredMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
-        recordButton.setButtonText ("REC ?");
         showStatus ("Daemon has not answered RECORD yet -- the take may be rolling");
     }
     else
@@ -587,7 +582,6 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
             punchSessionActive = true;
             wasInsidePunch    = false;
             engine.startPlayback();
-            recordButton.setButtonText ("STOP");
             statusLabel.setText ("Punch-in armed -- in " + juce::String (in / sr, 1)
                                  + "s, out " + juce::String (out / sr, 1)
                                  + "s, pre-roll " + juce::String (preRollSec) + "s",
@@ -640,7 +634,6 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
         else if (mins > 0)
             msg << "  --  ~" << mins << " min remaining";
         statusLabel.setText (msg, juce::dontSendNotification);
-        recordButton.setButtonText ("STOP");
     }
     else
     {
@@ -677,7 +670,6 @@ void MainComponent::onPlayClicked()
     if (player.isPlaying())
     {
         engine.stopPlayback();
-        playButton.setButtonText ("PLAY");
         statusLabel.setText ("Paused", juce::dontSendNotification);
     }
     else
@@ -691,7 +683,6 @@ void MainComponent::onPlayClicked()
             player.setPositionSamples (cursor);
 
         engine.startPlayback();
-        playButton.setButtonText ("PAUSE");
         statusLabel.setText ("Playing -> " + player.getSessionName(), juce::dontSendNotification);
     }
 }
@@ -759,9 +750,7 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
     {
         engine.stopPlayback();
         engine.getPlayer().rewind();
-        playButton.setButtonText ("PLAY");
     }
-    recordButton.setButtonText ("RECORD");
     statusLabel.setText (stopPlaybackAndRewind && engine.getPlayer().isLoaded()
                             ? "Stopped" : "Idle",
                          juce::dontSendNotification);
@@ -782,7 +771,6 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
     {
         engine.getPlayer().setPositionSamples (resumeAt);
         engine.startPlayback();
-        playButton.setButtonText ("PAUSE");
     }
     return true;
 }
@@ -866,7 +854,6 @@ void MainComponent::endDaemonTake (juce::String error, bool rewind, std::functio
     engine.setExternalRecording (false);
     daemonTakeAdopted = false;
     daemonStartUnansweredMs = 0;
-    recordButton.setButtonText ("RECORD");
     const auto session = engine.getActiveSessionDir();
     if (! session.isDirectory())
     {
@@ -891,7 +878,6 @@ void MainComponent::endDaemonTake (juce::String error, bool rewind, std::functio
             {
                 self->engine.stopPlayback();
                 self->engine.getPlayer().rewind();
-                self->playButton.setButtonText ("PLAY");
             }
             const auto why = error.isNotEmpty() || loaded ? error
                 : juce::String ("Recording stopped, but media could not be reopened");
@@ -918,7 +904,6 @@ void MainComponent::localTakeInterrupted()
         engine.setPunchModeOn (false);
         punchSessionActive = false;
     }
-    recordButton.setButtonText ("RECORD");
     saveFinalizedCaptureMetadata (false, "Capture device stopped during the take; check the audio and the device", {});
 }
 
@@ -954,15 +939,12 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
                 {
                     self->engine.stopPlayback();
                     self->engine.getPlayer().rewind();
-                    self->playButton.setButtonText ("PLAY");
                 }
                 else if (resumeManualPlayback && mediaOk)
                 {
                     self->engine.getPlayer().setPositionSamples (resumeAt);
                     self->engine.startPlayback();
-                    self->playButton.setButtonText ("PAUSE");
                 }
-                self->recordButton.setButtonText ("RECORD");
                 self->saveFinalizedCaptureMetadata (mediaOk, std::move (mediaError), completion);
             });
         if (! accepted)
@@ -977,7 +959,6 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
             return;
         }
         manualPunchActive = false;
-        recordButton.setButtonText ("RECORD");
         showStatus ("Recording stopped; finalization pending");
         return;
     }
@@ -1077,58 +1058,6 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     return std::nullopt;
 }
 
-void MainComponent::onFormatClicked()
-{
-    if (engine.isRecording()) return;
-
-    auto& recorder = engine.getRecorder();
-    using F = zynforge::CaptureFormat;
-    const auto cur = recorder.getCaptureFormat();
-    const auto next = cur == F::Wav24      ? F::Wav32Float
-                    : cur == F::Wav32Float ? F::Flac24
-                                            : F::Wav24;
-    recorder.setCaptureFormat (next);
-    refreshFormatButton();
-}
-
-void MainComponent::onPreRollClicked()
-{
-    if (engine.isRecording()) return;
-
-    auto& recorder = engine.getRecorder();
-    const int cur = recorder.getPreRollSeconds();
-    const int next = cur == 0  ? 5
-                   : cur == 5  ? 10
-                   : cur == 10 ? 30
-                               : 0;
-    recorder.setPreRollSeconds (next);
-    refreshPreRollButton();
-}
-
-void MainComponent::refreshFormatButton()
-{
-    using F = zynforge::CaptureFormat;
-    juce::String label;
-    switch (engine.getRecorder().getCaptureFormat())
-    {
-        case F::Wav16:       label = "WAV 16";   break;
-        case F::Wav24:       label = "WAV 24";   break;
-        case F::Wav32Float:  label = "WAV 32F";  break;
-        case F::Aiff16:      label = "AIFF 16";  break;
-        case F::Aiff24:      label = "AIFF 24";  break;
-        case F::Aiff32Float: label = "AIFF 32F"; break;
-        case F::Flac16:      label = "FLAC 16";  break;
-        case F::Flac24:      label = "FLAC 24";  break;
-    }
-    formatButton.setButtonText (label);
-}
-
-void MainComponent::refreshPreRollButton()
-{
-    const int s = engine.getRecorder().getPreRollSeconds();
-    preRollButton.setButtonText ("PRE " + juce::String (s) + "s");
-}
-
 void MainComponent::onLockToggled()
 {
     sessionLocked = ! sessionLocked;
@@ -1140,18 +1069,11 @@ void MainComponent::applyLockState()
     engine.setControlsLocked (sessionLocked.load());
     const bool e = ! sessionLocked;
 
-    recordButton .setEnabled (e);
     deviceButton .setEnabled (e);
-    formatButton .setEnabled (e && ! engine.isRecording());
-    preRollButton.setEnabled (e && ! engine.isRecording());
-    loadButton   .setEnabled (e);
-    playButton   .setEnabled (e);
-    stopButton   .setEnabled (e);
     backupButton .setEnabled (e);
     vscButton    .setEnabled (e);
     patchButton  .setEnabled (e);
     metersButton .setEnabled (e);
-    oscButton    .setEnabled (e);
     addChannelButton.setEnabled (e && ! engine.isRecording());
     setlistBar.setEnabled (e);
     tempoBar.setEnabled (e);
@@ -1246,99 +1168,28 @@ void MainComponent::onBackupClicked()
         return;
     }
 
-    chooser = std::make_unique<juce::FileChooser> (
-        "Pick a backup folder (recordings are mirrored here)",
-        engine.getBackupDirectory().exists() ? engine.getBackupDirectory()
-                                              : getSessionsRoot(),
-        "");
-
-    const auto flags = juce::FileBrowserComponent::openMode
-                     | juce::FileBrowserComponent::canSelectDirectories;
-
     juce::Component::SafePointer<MainComponent> self (this);
-    chooser->launchAsync (flags, [self] (const juce::FileChooser& fc)
-    {
-        if (self == nullptr) return;
-        auto dir = fc.getResult();
-        if (dir.getFullPathName().isEmpty()) return;
-        if ((! dir.isDirectory() && ! dir.createDirectory().wasOk())
-            || ! zynforge::preflight::volumeWritable (dir))
+    zynforge::BackupMirrorDialog::launch (engine, {
+        [self] (const juce::String& refusal)
         {
+            if (self == nullptr) return;
             self->backupButton.setButtonText ("BACKUP !");
-            self->showStatus ("Backup folder is not writable");
-            return;
-        }
-        const auto rejection = MultitrackRecorder::mirrorRootRejection (
-            dir, self->engine.getActiveSessionDir(), {}, {});
-        if (rejection.isNotEmpty())
-        {
-            self->backupButton.setButtonText ("BACKUP !");
-            self->showStatus ("Backup folder rejected: " + rejection);
-            return;
-        }
-        self->applyBackupFolder (dir);
-    });
+            self->showStatus (refusal);
+        },
+        [self] (const juce::File& dir) { return self != nullptr && self->applyBackupFolder (dir); } });
 }
 
-void MainComponent::applyBackupFolder (const juce::File& dir)
+bool MainComponent::applyBackupFolder (const juce::File& dir)
 {
-    // The chooser can close after a take started behind it.
+    // The dialog can close after a take started behind it.
     if (! engine.setBackupDirectory (dir))
     {
         showStatus ("Backup folder not changed -- a take is rolling or finalizing");
-        return;
+        return false;
     }
     backupButton.setButtonText ("BACKUP OK");
     showStatus ("Backup folder -> " + dir.getFileName());
-}
-
-
-void MainComponent::onFileMenuClicked()
-{
-    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
-    const auto activeDir   = engine.getActiveSessionDir();
-    const bool hasActive   = engine.hasSessionFolder();
-
-    juce::PopupMenu menu;
-    menu.addItem (1, "Open Session...");
-    menu.addItem (4, "Import Audio Files...",   ! engine.isRecording());
-    menu.addSeparator();
-    menu.addItem (2, "Save Session State",      hasActive);
-    menu.addItem (3, "Save Session As...");
-    menu.addSeparator();
-
-    juce::PopupMenu exportMenu;
-    exportMenu.addItem (10, "Export All Tracks...", hasActive);
-
-    juce::PopupMenu individualMenu;
-    const int trackCount = engine.getRecorder().getNumTracks();
-    for (int i = 0; i < trackCount; ++i)
-    {
-        const auto& t   = engine.getRecorder().getTrack (i);
-        const auto name = t.name.isNotEmpty() ? t.name
-                                              : juce::String (i + 1);
-        individualMenu.addItem (100 + i, name, hasActive);
-    }
-    exportMenu.addSubMenu ("Export Individual Track", individualMenu, hasActive && trackCount > 0);
-    menu.addSubMenu ("Export", exportMenu);
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loadButton),
-                        [self] (int chosen)
-    {
-        if (chosen == 0 || self == nullptr) return;
-        if (chosen == 1)
-        {
-            auto again = self;
-            self->confirmSessionReplacement ([again]
-            { if (again != nullptr) again->onLoadSessionClicked(); });
-        }
-        else if (chosen == 2)      self->onSaveSessionState();
-        else if (chosen == 3)      self->onSaveSessionAs();
-        else if (chosen == 4)      self->onImportAudioFiles();
-        else if (chosen == 10)     self->onExportAllTracks();
-        else if (chosen >= 100)    self->onExportIndividualTrack (chosen - 100);
-    });
+    return true;
 }
 
 void MainComponent::showStatus (const juce::String& msg)
@@ -1458,32 +1309,6 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
     return true;
 }
 
-
-void MainComponent::applySessionSettings()
-{
-    if (engine.isRecording()) { showStatus ("Stop recording before applying settings"); return; }
-
-    using F = zynforge::CaptureFormat;
-    F fmt;
-    if (pendingContainer == 0)
-        fmt = pendingBitDepth == 16 ? F::Wav16  : pendingBitDepth == 24 ? F::Wav24  : F::Wav32Float;
-    else if (pendingContainer == 1)
-        fmt = pendingBitDepth == 16 ? F::Aiff16 : pendingBitDepth == 24 ? F::Aiff24 : F::Aiff32Float;
-    else
-        fmt = pendingBitDepth == 16 ? F::Flac16 : F::Flac24;   // FLAC has no 32-float
-
-    engine.getRecorder().setCaptureFormat (fmt);
-    refreshFormatButton();
-
-    auto setup = engine.getDeviceManager().getAudioDeviceSetup();
-    setup.sampleRate = pendingSampleRate;
-    const auto err = engine.getDeviceManager().setAudioDeviceSetup (setup, true);
-    if (err.isEmpty())
-        showStatus ("Session settings applied (" + formatButton.getButtonText()
-                     + " @ " + juce::String (pendingSampleRate / 1000.0, 1) + " kHz)");
-    else
-        showStatus ("Sample rate change failed: " + err);
-}
 
 void MainComponent::confirmAndQuit()
 {
@@ -1648,6 +1473,47 @@ void MainComponent::confirmAndQuit()
         false);
 }
 
+static juce::String checklistFormatName (zynforge::CaptureFormat format)
+{
+    using F = zynforge::CaptureFormat;
+    return format == F::Wav24       ? "WAV/24"
+         : format == F::Wav16       ? "WAV/16"
+         : format == F::Wav32Float  ? "WAV/32f"
+         : format == F::Aiff24      ? "AIFF/24"
+         : format == F::Aiff16      ? "AIFF/16"
+         : format == F::Aiff32Float ? "AIFF/32f"
+         : format == F::Flac24      ? "FLAC/24"
+         : format == F::Flac16      ? "FLAC/16"
+                                    : "?";
+}
+
+juce::String MainComponent::backupChecklistRow()
+{
+    const auto backupDir = engine.getRecorder().getBackupDirectory();
+    const bool backupConfigured = backupDir.getFullPathName().isNotEmpty();
+    const bool backupWriterActive = captureSupervisor.isDaemonRecording()
+                                      ? captureSupervisor.lastStatus().backupActive
+                                      : engine.getRecorder().isBackupActive();
+    const bool backupWritable = ! engine.isRecording() && backupConfigured
+                                  && zynforge::preflight::volumeWritable (backupDir);
+    using BackupState = zynforge::preflight::RedundancyReadiness;
+    const auto backupState = zynforge::preflight::redundancyReadiness (
+        engine.isRecording(), backupConfigured, backupWritable, backupWriterActive);
+    const auto format = checklistFormatName (engine.getRecorder().getBackupCaptureFormat());
+    juce::String row;
+    row << (backupState == BackupState::Active
+              || backupState == BackupState::ConfiguredWritable ? "[OK]  " : "[X]  ")
+        << "Backup:      ";
+    if (backupState == BackupState::NotConfigured) row << "not configured";
+    else if (backupState == BackupState::ConfiguredWritable)
+        row << backupDir.getFullPathName() << " (configured + writable, " << format << ")";
+    else if (backupState == BackupState::ConfiguredUnavailable)
+        row << backupDir.getFullPathName() << " (NOT writable / missing, " << format << ")";
+    else if (backupState == BackupState::Active) row << "writer active (" << format << ")";
+    else row << "configured but NOT WRITING (" << format << ")";
+    return row;
+}
+
 void MainComponent::showPreflightChecklist()
 {
     // Every check below goes to the drives, from this thread.
@@ -1677,16 +1543,7 @@ void MainComponent::showPreflightChecklist()
     const auto root   = zynforge::preflight::storageRoot (sess, getSessionsRoot());
     const double freeGB = (root.exists() ? root.getBytesFreeOnVolume() : 0) / 1.0e9;
     const auto fmt    = engine.getRecorder().getCaptureFormat();
-    const juce::String fmtStr =
-          fmt == zynforge::CaptureFormat::Wav24      ? "WAV/24"
-        : fmt == zynforge::CaptureFormat::Wav16      ? "WAV/16"
-        : fmt == zynforge::CaptureFormat::Wav32Float ? "WAV/32f"
-        : fmt == zynforge::CaptureFormat::Aiff24     ? "AIFF/24"
-        : fmt == zynforge::CaptureFormat::Aiff16     ? "AIFF/16"
-        : fmt == zynforge::CaptureFormat::Aiff32Float? "AIFF/32f"
-        : fmt == zynforge::CaptureFormat::Flac24     ? "FLAC/24"
-        : fmt == zynforge::CaptureFormat::Flac16     ? "FLAC/16"
-                                                      : "?";
+    const auto fmtStr = checklistFormatName (fmt);
 
     // Headroom at the active configuration, by the rule RECORD refuses on, so
     // this list can never call a disk fine that RECORD then turns away.
@@ -1728,26 +1585,7 @@ void MainComponent::showPreflightChecklist()
                                                            : juce::String ("Idle"))
          << "\n";
 
-    const auto backupDir = engine.getRecorder().getBackupDirectory();
-    const bool backupConfigured = backupDir.getFullPathName().isNotEmpty();
-    const bool backupWriterActive = captureSupervisor.isDaemonRecording()
-                                      ? captureSupervisor.lastStatus().backupActive
-                                      : engine.getRecorder().isBackupActive();
-    const bool backupWritable = ! engine.isRecording() && backupConfigured
-                                  && zynforge::preflight::volumeWritable (backupDir);
-    using BackupState = zynforge::preflight::RedundancyReadiness;
-    const auto backupState = zynforge::preflight::redundancyReadiness (
-        engine.isRecording(), backupConfigured, backupWritable, backupWriterActive);
-    body << (backupState == BackupState::Active
-              || backupState == BackupState::ConfiguredWritable ? "[OK]  " : "[X]  ")
-         << "Backup:      ";
-    if (backupState == BackupState::NotConfigured) body << "not configured";
-    else if (backupState == BackupState::ConfiguredWritable)
-        body << backupDir.getFullPathName() << " (configured + writable)";
-    else if (backupState == BackupState::ConfiguredUnavailable)
-        body << backupDir.getFullPathName() << " (NOT writable / missing)";
-    else if (backupState == BackupState::Active) body << "writer active";
-    else body << "configured but NOT WRITING";
+    body << backupChecklistRow();
     body << "\n\n";
 
     if (engine.getMidiClockOut().isEnabled())

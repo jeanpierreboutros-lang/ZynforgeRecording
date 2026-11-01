@@ -156,14 +156,12 @@ namespace zynforge
                 styleCombo (rateBox);
                 styleCombo (bufferBox);
                 styleCombo (monitorOutLBox);
-                styleCombo (monitorOutRBox);
 
                 outputBox.onChange     = [this] { onDeviceChanged (false); };
                 inputBox .onChange     = [this] { onDeviceChanged (true);  };
                 rateBox  .onChange     = [this] { onSampleRateChanged();   };
                 bufferBox.onChange     = [this] { onBufferSizeChanged();   };
                 monitorOutLBox.onChange = [this] { onMonitorOutChanged(); };
-                monitorOutRBox.onChange = [this] { onMonitorOutChanged(); };
 
                 addAndMakeVisible (outputCard);
                 addAndMakeVisible (inputCard);
@@ -174,10 +172,8 @@ namespace zynforge
                 addAndMakeVisible (inputBox);
                 addAndMakeVisible (rateBox);
                 addAndMakeVisible (bufferBox);
-                // One stereo-pair picker for the monitor bus (e.g. "Out 1-2")
-                // instead of separate L / R combos -- the monitor is always a
-                // stereo pair, so picking the pair is clearer. monitorOutRBox /
-                // monitorRLabel are left unused (not shown).
+                // One stereo-pair picker for the monitor bus (e.g. "Out 1-2"):
+                // the monitor is always a stereo pair.
                 addAndMakeVisible (monitorOutLBox);
 
                 monitorLLabel.setText ("Monitor Output (stereo pair)", juce::dontSendNotification);
@@ -284,8 +280,7 @@ namespace zynforge
             // silently ENDED the take. The panel is a non-modal floating window
             // and can already be open when RECORD is pressed, so guarding the
             // launch alone isn't enough -- the guard has to be here, on the
-            // mutation. MainComponent::applySessionSettings guards the same
-            // operation at its own entry point; this was the one that didn't.
+            // mutation.
             void timerCallback() override
             {
                 const bool rec = engine.isRecording();
@@ -369,8 +364,7 @@ namespace zynforge
                 bufferBox.setBounds (bufBody.removeFromTop (brand::space::ctrlH));
 
                 // Monitor card -- a single full-width stereo-pair picker that
-                // drives engine.setMasterOutputs (master sum, click, NDI,
-                // companion stream all follow it).
+                // drives engine.setMasterOutputs (master sum and click follow it).
                 auto monBody = monitorCard.bodyArea().translated (monitorCard.getX(),
                                                                   monitorCard.getY());
                 monitorLLabel  .setBounds (monBody.removeFromTop (brand::space::xl));
@@ -484,7 +478,6 @@ namespace zynforge
                     outChanValue.setText ("--", juce::dontSendNotification);
                     inChanValue .setText ("--", juce::dontSendNotification);
                     monitorOutLBox.clear (juce::dontSendNotification);
-                    monitorOutRBox.clear (juce::dontSendNotification);
                 }
             }
 
@@ -632,9 +625,9 @@ namespace zynforge
             Card outputCard, inputCard, rateCard, bufferCard, monitorCard;
             juce::ComboBox outputBox, inputBox, rateBox, bufferBox;
             static constexpr int kMonitorOffId = 100000;   // past any device's channel count
-            juce::ComboBox monitorOutLBox, monitorOutRBox;
+            juce::ComboBox monitorOutLBox;
             juce::Label    outChanLabel, outChanValue, inChanLabel, inChanValue;
-            juce::Label    monitorLLabel, monitorRLabel;
+            juce::Label    monitorLLabel;
             InputMeter     inputMeter;
             juce::TextButton testButton   { "Test" };
             juce::TextButton applyButton  { "Apply" };
