@@ -460,7 +460,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     {
         const int kc = key.getKeyCode();
         if (kc == 'X' || kc == 'x') { editClipboardCut (true);  return true; }
-        if (kc == 'C' || kc == 'c') { editClipboardCut (false); return true; }
+        if (kc == 'C' || kc == 'c')
+        {
+            if (key.getModifiers().isCtrlDown()) editCropToLoopRange();
+            else                                 editClipboardCut (false);
+            return true;
+        }
         if (kc == 'V' || kc == 'v') { editClipboardPaste();     return true; }
         if (kc == 'H' || kc == 'h') { editHealSeparation();     return true; }   // Pro Tools Heal
         // Pro Tools 'Separate Clip' (Cmd+E): separate at the selected range

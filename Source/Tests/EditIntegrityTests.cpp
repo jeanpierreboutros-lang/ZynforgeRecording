@@ -964,6 +964,33 @@ namespace zynforge
                         "left to JUCE, Tab puts focus on a routing combo or transport button");
             }
 
+            beginTest ("Ctrl+Cmd+C runs Crop and bare Cmd+C stays Copy");
+            {
+                Show s (1, { 48000 });
+                s.engine.getPlayer().selectRange (12000, 36000);
+                auto* modals = juce::ModalComponentManager::getInstance();
+                const int modalsBefore = modals->getNumModalComponents();
+                const juce::KeyPress copy ('c', juce::ModifierKeys::commandModifier, 0);
+                const juce::KeyPress crop ('c', juce::ModifierKeys (juce::ModifierKeys::commandModifier
+                                                                    | juce::ModifierKeys::ctrlModifier), 0);
+
+                expect (s.main.keyPressed (copy, nullptr));
+                expectEquals (modals->getNumModalComponents(), modalsBefore, "bare Cmd+C asked to crop");
+                expect (s.engine.getPlayer().hasLoopRegion(), "bare Cmd+C ate the range");
+
+                expect (s.main.keyPressed (crop, nullptr));
+                auto* dialog = dynamic_cast<juce::AlertWindow*> (modals->getModalComponent (0));
+                expect (dialog != nullptr && dialog->getName() == "Crop to loop range?",
+                        "Ctrl+Cmd+C did not run Crop");
+                if (dialog != nullptr)
+                {
+                    dialog->exitModalState (1);
+                    expect (pumpUntil ([&] { return s.clips (0)[0].fileLengthSamples == 24000; }, 2000),
+                            "the prompt's Crop did not crop");
+                }
+                s.engine.getPlayer().clearLoopRegion();
+            }
+
             beginTest ("A clip pastes only onto a strip of its own stereo layout");
             {
                 Show s (3, { 48000, 48000, 48000 });
