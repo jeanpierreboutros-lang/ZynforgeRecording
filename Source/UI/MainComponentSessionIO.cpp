@@ -114,7 +114,16 @@ bool ensureSessionScaffold (const juce::File& dest)
 }
 }
 
-int MainComponent::openSessionFolder (const juce::File& dir)
+bool MainComponent::isSessionOpen (const juce::File& dir) const
+{
+    // Finder and a typed path can spell one folder differently (a link, say).
+    const auto current = engine.getActiveSessionDir();
+    return engine.mixerBelongsTo (current)
+        && pathsafety::isSameOrDescendant (current, dir)
+        && pathsafety::isSameOrDescendant (dir, current);
+}
+
+int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
 {
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before switching sessions"); return -1; }
@@ -123,6 +132,11 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     if (engine.isCaptureFinalizing())
     { showStatus ("Wait for recording finalization before switching sessions"); return -1; }
     if (! dir.isDirectory()) return 0;
+    if (! reload && isSessionOpen (dir))
+    {
+        showStatus (dir.getFileName() + " is already open");
+        return engine.getPlayer().getNumTracks();
+    }
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
     int interruptedPunches = 0;
@@ -273,6 +287,12 @@ bool MainComponent::openSessionDocument (const juce::File& document, bool confir
     const auto dir = document.isDirectory() ? document : document.getParentDirectory();
     if (! dir.isDirectory() || (! document.isDirectory() && ! document.hasFileExtension ("zfproj")))
         return false;
+    if (isSessionOpen (dir))
+    {
+        explicitDocumentOpened = true;
+        showStatus (dir.getFileName() + " is already open");
+        return true;
+    }
     const auto current = engine.getActiveSessionDir();
     if (confirmBeforeReplacing && current.isDirectory() && current != dir)
     {

@@ -651,7 +651,7 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
             // Clear the crash marker only once the session really opened: a
             // failed open (interrupted punch, incomplete move) keeps it listed
             // so the engineer can try again, and keeps its own error status.
-            if (self->openSessionFolder (dir) < 0) return;
+            if (self->openSessionFolder (dir, true) < 0) return;
             dir.getChildFile ("recording.session").deleteFile();
             self->showStatus ("Recovered: " + dir.getFileName());
             self->updateTransportLabels();

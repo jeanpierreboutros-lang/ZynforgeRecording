@@ -401,6 +401,54 @@ public:
         }
     }
 
+    void testOpeningTheOpenSession()
+    {
+        beginTest ("Opening the session that is already open keeps unsaved work");
+        {
+            Folder f; writeSavedShow (f, 2);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (f.dir), 0);
+            host.engine.setTrackName (0, "Unsaved edit");
+
+            expect (host.openSessionDocument (f.project(), true));
+            expectEquals (stripName (host, 0), juce::String ("Unsaved edit"));
+            expect (host.statusLabel.getText().contains ("already open"), host.statusLabel.getText());
+
+            // File > Open and Welcome reach the funnel directly.
+            host.openSessionFolder (f.dir);
+            expectEquals (stripName (host, 0), juce::String ("Unsaved edit"));
+
+            // The same folder through a link is still the same session.
+            const auto link = f.dir.getSiblingFile (f.dir.getFileName() + "-link");
+            const juce::ScopeGuard removeLink { [&] { link.deleteFile(); } };
+            expect (f.dir.createSymbolicLink (link, true));
+            expect (host.openSessionDocument (link.getChildFile (f.project().getFileName()), true));
+            expectEquals (stripName (host, 0), juce::String ("Unsaved edit"));
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A session pinned but not loaded still opens from its document");
+        {
+            Folder f; writeSavedShow (f, 2);
+            MainComponent host; pinUnloaded (host, f.dir);
+            expect (host.openSessionDocument (f.project(), true));
+            expectEquals (host.engine.getRecorder().getNumTracks(), 2);
+            expect (host.engine.mixerBelongsTo (f.dir));
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A forced reload reads the session again");
+        {
+            Folder f; writeSavedShow (f, 2);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (f.dir), 0);
+            f.mix().replaceWithText (mixJson (5));
+            expectEquals (host.openSessionFolder (f.dir, true), 0);
+            expectEquals (host.engine.getRecorder().getNumTracks(), 5);
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -409,6 +457,7 @@ public:
         const juce::ScopeGuard restoreConstruct { [previousTestConstruct]
         { MainComponent::s_testConstruct = previousTestConstruct; } };
         testMixerOwnership();
+        testOpeningTheOpenSession();
     }
 };
 

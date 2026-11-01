@@ -166,7 +166,11 @@ private:
     // restore setlist + UI layout, load the audio, restore the full mixer
     // state, force a strip rebuild. Returns the track count loaded. Used by
     // File > Open, the Welcome dialog, and the launch auto-reopen.
-    int  openSessionFolder (const juce::File& dir);
+    // `reload` re-reads the session that is already open: a recovered take or a
+    // restored backup changed its files. Nothing else may, because a reload
+    // replaces every unsaved edit.
+    int  openSessionFolder (const juce::File& dir, bool reload = false);
+    bool isSessionOpen (const juce::File& dir) const;
     void restoreSessionDocuments (const juce::File& dir);
     void adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs);
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
