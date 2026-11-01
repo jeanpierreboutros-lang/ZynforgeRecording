@@ -841,6 +841,26 @@ namespace zynforge
                 }
             }
 
+            beginTest ("Normalize that finishes after a strip move applies to nothing");
+            {
+                Show s (2, { 48000, 48000 });
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 2, "setup: two rows");
+                if (rows.size() == 2)
+                {
+                    rows[0]->applyClipMenuChoice (0, 414);
+                    expect (s.engine.reorderTracks ({ 1, 0 }));
+                    juce::Component::SafePointer<EditPage::TrackRow> row (rows[0]);
+                    expect (pumpUntil ([&] { return (row == nullptr || row->isEnabled()) && s.page().isEnabled()
+                                                 && ! s.main.sessionIoBusy.load(); }, 5000),
+                            "the scan never finished");
+                    for (int t : { 0, 1 })
+                        expectWithinAbsoluteError (s.clips (t)[0].gainDb, 0.0f, 0.001f,
+                                                   "the gain landed on the strip now at that index");
+                    expect (! s.main.undoManager.canUndo(), "a snapshot from before the move reached undo");
+                }
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

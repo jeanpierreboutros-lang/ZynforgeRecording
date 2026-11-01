@@ -120,6 +120,7 @@ namespace zynforge
                 commitClipUndo (clipUndoBefore, label);
             clipUndoBefore = juce::var();
         }
+        void abandonClipEdit() { clipUndoBefore = juce::var(); }
 
         // The host's timeline guard (capture, session jobs, LOCK), which says
         // why on the status line. Anything that acts after a menu or dialog

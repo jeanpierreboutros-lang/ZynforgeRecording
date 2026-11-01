@@ -3579,12 +3579,15 @@ namespace zynforge
                     self->setEnabled (false);
                     self->engine.normalizeClipGroupAsync (
                         targets, -0.3f,
-                        [self] (bool)
+                        [self] (bool applied)
                     {
                         if (self == nullptr) return;
                         self->setEnabled (true);
                         if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
-                            pageNow->commitClipEdit ("Normalize clip");
+                        {
+                            if (applied) pageNow->commitClipEdit ("Normalize clip");
+                            else         pageNow->abandonClipEdit();
+                        }
                         self->repaint();
                     });
                     return;

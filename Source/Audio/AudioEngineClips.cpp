@@ -1500,9 +1500,10 @@ namespace zynforge
         }
 
         const auto handle = asyncHandle;
+        const auto layout = recorder.getTrackGeneration();
         juce::Thread::launch (
             [handle, sessionDir, audioDir, sr, thresholdDb, minSilenceSamples,
-             minClipSamples, padSamples, jobs = std::move (jobs),
+             minClipSamples, padSamples, layout, jobs = std::move (jobs),
              completion = std::move (completion)] () mutable
         {
             bool allSucceeded = true;
@@ -1515,14 +1516,15 @@ namespace zynforge
             }
 
             juce::MessageManager::callAsync (
-                [handle, sessionDir, jobs = std::move (jobs), allSucceeded,
+                [handle, sessionDir, layout, jobs = std::move (jobs), allSucceeded,
                  completion = std::move (completion)] () mutable
             {
                 auto* engine = handle->load (std::memory_order_acquire);
                 if (engine == nullptr) return;
 
                 const bool current = engine->getActiveSessionDir() == sessionDir
-                                  && ! engine->isRecording();
+                                  && ! engine->isArrangementFrozen()
+                                  && engine->recorder.getTrackGeneration() == layout;
                 int processed = 0;
                 int clips = 0;
                 if (current)
@@ -1668,8 +1670,9 @@ namespace zynforge
         }
 
         const auto handle = asyncHandle;
+        const auto layout = recorder.getTrackGeneration();
         juce::Thread::launch (
-            [handle, sessionDir, audioDir, sr, start, end,
+            [handle, sessionDir, audioDir, sr, start, end, layout,
              jobs = std::move (jobs), completion = std::move (completion)] () mutable
         {
             bool allRendered = true;
@@ -1710,7 +1713,7 @@ namespace zynforge
             }
 
             juce::MessageManager::callAsync (
-                [handle, sessionDir, start, end, jobs = std::move (jobs), allRendered,
+                [handle, sessionDir, start, end, layout, jobs = std::move (jobs), allRendered,
                  completion = std::move (completion)] () mutable
             {
                 auto* engine = handle->load (std::memory_order_acquire);
@@ -1721,7 +1724,8 @@ namespace zynforge
                 }
 
                 const bool current = engine->getActiveSessionDir() == sessionDir
-                                  && ! engine->isArrangementFrozen();
+                                  && ! engine->isArrangementFrozen()
+                                  && engine->recorder.getTrackGeneration() == layout;
                 int completed = 0;
                 for (auto& job : jobs)
                 {
@@ -2278,7 +2282,8 @@ namespace zynforge
 
         const auto sessionDir = getActiveSessionDir();
         const auto handle = asyncHandle;
-        juce::Thread::launch ([handle, sessionDir, targetDbFS,
+        const auto layout = recorder.getTrackGeneration();
+        juce::Thread::launch ([handle, sessionDir, targetDbFS, layout,
                                jobs = std::move (jobs),
                                completion = std::move (completion)] () mutable
         {
@@ -2318,13 +2323,17 @@ namespace zynforge
             }
 
             juce::MessageManager::callAsync (
-                [handle, sessionDir, jobs = std::move (jobs), sharedGain, found,
+                [handle, sessionDir, layout, jobs = std::move (jobs), sharedGain, found,
                  completion = std::move (completion)] () mutable
             {
                 auto* engine = handle->load (std::memory_order_acquire);
                 if (engine == nullptr) return;
+                // Jobs name tracks by index. A strip move puts another channel
+                // at that index, often with a clip of the same position and
+                // length, so the file and span below cannot tell.
                 bool applied = found && engine->getActiveSessionDir() == sessionDir
-                                    && ! engine->isArrangementFrozen();
+                                    && ! engine->isArrangementFrozen()
+                                    && engine->recorder.getTrackGeneration() == layout;
                 if (applied)
                 {
                     // Do not apply a stale scan to a clip that was moved,
