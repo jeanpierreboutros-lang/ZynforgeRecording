@@ -1459,10 +1459,19 @@ namespace zynforge
         void setTrimFollowEnabled (bool on) noexcept { trimFollowEnabled.store (on, std::memory_order_relaxed); }
         bool isTrimFollowEnabled () const noexcept   { return trimFollowEnabled.load (std::memory_order_relaxed); }
         // Console preamp/trim gain for a 0-based channel (called from OSC,
-        // message thread). Updates the live value; if recording, also seeds
-        // the capture reference so a channel that arms mid-take is sane.
+        // message thread). Updates the live value only; the capture reference
+        // is fixed when a take starts.
         void setTrackLiveInputGain (int channelIndex, float dB);
-        float getTrackTrimDelta (int channelIndex);   // live - capture (0 if out of range)
+        // The offset playback gets: live - capture, limited, 0 with no reference.
+        float getTrackTrimDelta (int channelIndex);
+        // Take the desk's current reading as each armed strip's capture
+        // reference. Called when a take really starts, local or daemon.
+        void snapshotCaptureInputGains();
+        // Empty, or a line naming the strips Trim-Follow is not following:
+        // the desk reports them but no reference was captured, or the move
+        // is past the limit. For the status line.
+        juce::String getTrimFollowNotice();
+        int  getTrimFollowUnreferencedCount();
     private:
 
         void applyPersistedStripState();

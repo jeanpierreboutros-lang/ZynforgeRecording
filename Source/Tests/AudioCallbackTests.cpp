@@ -2370,12 +2370,15 @@ namespace zynforge
 
             beginTest ("Trim-follow shifts soundcheck playback by the console gain delta");
             {
-                // Captured at console gain 0 dB (recordTestSession arms the
-                // track, so startRecording snapshots captureInputGainDb=0).
                 const auto dir = recordTestSession (1, 0.5f);
                 {
                     CallbackFixture f (1, 1, 2);
                     f.engine.getPlayer().loadSession (dir);
+                    // The desk read 0 dB when this track was captured.
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    f.engine.setTrackLiveInputGain (0, 0.0f);
+                    f.engine.snapshotCaptureInputGains();
+                    f.engine.getRecorder().getTrack (0).armed.store (false);
                     f.engine.startPlayback();
                     const float baseline = fillPlaybackBuffer (f);
                     expect (baseline > 0.20f);

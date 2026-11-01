@@ -428,6 +428,8 @@ private:
     void   checkDeviceSampleRate (double deviceSampleRate);
     bool   chaseWasLive      { false };   // external-timecode chase: did we start playback?
     void   serviceTimecodeChase();
+    void   serviceTrimFollowNotice();
+    juce::String lastTrimFollowNotice;
     void onFormatClicked();
     void onPreRollClicked();
     void refreshFormatButton();

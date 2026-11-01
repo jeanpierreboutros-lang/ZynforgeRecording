@@ -229,7 +229,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                        engine.isAutoArmOnInputDetect());
             m.addSeparator();
             m.addItem (255, "Session Format & Recording...", ! engine.isRecording());
-            m.addItem (256, "Trim-Follow (console input gain -> soundcheck)",
+            const int noTrimReference = engine.isTrimFollowEnabled()
+                                          ? engine.getTrimFollowUnreferencedCount() : 0;
+            m.addItem (256, noTrimReference > 0
+                               ? "Trim-Follow (" + juce::String (noTrimReference) + " with no capture reference, held at 0 dB)"
+                               : juce::String ("Trim-Follow (console input gain -> soundcheck)"),
                        true, engine.isTrimFollowEnabled());
             // Transport Sync -- chase MTC / LTC with live status.
             m.addItem (600, engine.getChaseMode() != zynforge::AudioEngine::ChaseMode::Off
@@ -376,6 +380,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) cues.empty()
         << '|' << (int) stripClipboard.isObject()
         << '|' << (int) engine.isTrimFollowEnabled()
+        << '|' << (engine.isTrimFollowEnabled() ? engine.getTrimFollowUnreferencedCount() : 0)
         << '|' << (int) engine.getChaseMode()
         << '|' << engine.getLtcSourceStrip()
         << '|' << (int) twinLink.isEnabled()
@@ -503,8 +508,10 @@ void MainComponent::registerMenuCommands()
     {
         const bool on = ! engine.isTrimFollowEnabled();
         engine.setTrimFollowEnabled (on);
-        showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
-                       : "Trim-Follow OFF -- recorded tracks play at their printed level");
+        const auto notice = on ? engine.getTrimFollowNotice() : juce::String();
+        showStatus (notice.isNotEmpty() ? notice
+                    : on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
+                         : "Trim-Follow OFF -- recorded tracks play at their printed level");
     });
     m.add (280, [this] { runSpectralAutoName(); });
     m.add (281, [this] { writeSoundcheckReport(); });

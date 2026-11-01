@@ -31,6 +31,7 @@ namespace zynforge
             #define ZF_COPY_FIELD(field) field.store (other.field.load());
             ZF_COPY_FIELD(armed) ZF_COPY_FIELD(monitor) ZF_COPY_FIELD(muted) ZF_COPY_FIELD(soloed)
             ZF_COPY_FIELD(gainDb) ZF_COPY_FIELD(pan) ZF_COPY_FIELD(liveInputGainDb) ZF_COPY_FIELD(captureInputGainDb)
+            ZF_COPY_FIELD(liveInputGainKnown) ZF_COPY_FIELD(captureInputGainKnown)
             ZF_COPY_FIELD(outputMuted) ZF_COPY_FIELD(vcaGroup) ZF_COPY_FIELD(editGroup) ZF_COPY_FIELD(isBus)
             ZF_COPY_FIELD(inputRouting) ZF_COPY_FIELD(outputRouting) ZF_COPY_FIELD(streamSend)
             ZF_COPY_FIELD(isStereo) ZF_COPY_FIELD(colourARGB)
@@ -67,8 +68,14 @@ namespace zynforge
         // value snapshotted at record-start. When trim-follow is on, playback
         // adds (live - capture) dB so adjusting the desk's input gain during
         // soundcheck moves the recorded track exactly as it would the live mic.
+        // The Known flags say a value really came from the desk: 0 dB is a
+        // valid preamp setting, so a value alone cannot say "never reported".
+        // With no reference the offset is 0 dB (mix::trimFollowDb), or the
+        // desk's whole preamp value would land on the PA as a "change".
         std::atomic<float> liveInputGainDb    { 0.0f };
         std::atomic<float> captureInputGainDb { 0.0f };
+        std::atomic<bool>  liveInputGainKnown    { false };
+        std::atomic<bool>  captureInputGainKnown { false };
 
         // Soft-takeover targets used during cue recall -- the audio thread
         // ramps gainDb / pan from their current value to these targets

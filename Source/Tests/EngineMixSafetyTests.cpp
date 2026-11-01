@@ -225,6 +225,124 @@ namespace zynforge
                 }
             }
 
+            beginTest ("Trim-Follow with no capture reference holds the channel at 0 dB");
+            {
+                Rig r (1, 1, 2);
+                auto& e = r.engine; auto& t = e.getRecorder().getTrack (0);
+                t.monitor.store (true);
+                e.setTrimFollowEnabled (true);
+                // The desk reports its absolute preamp. No take ever saw a
+                // reading, so there is no move to follow.
+                e.setTrackLiveInputGain (0, 36.0f);
+                expectWithinAbsoluteError (e.getTrackTrimDelta (0), 0.0f, 0.001f,
+                                           "the absolute preamp value became an offset");
+                e.setTrackLiveInputGain (0, 37.0f);
+                expectWithinAbsoluteError (e.getTrackTrimDelta (0), 0.0f, 0.001f,
+                                           "a 1 dB nudge moved a channel with no reference");
+                expect (e.getTrimFollowUnreferencedCount() == 1);
+                expect (e.getTrimFollowNotice().contains ("no capture reference"),
+                        "nothing says the channel is held");
+            }
+
+            beginTest ("Trim-Follow with no reference leaves recorded playback untouched on every route");
+            {
+                TempFolder f;
+                {
+                    Rig r (1, 1, 2);
+                    r.engine.setTrackArmed (0, true);
+                    expect (r.engine.startRecording (f.dir));
+                    r.input (0, 0.25f);
+                    for (int b = 0; b < 64; ++b) r.process();
+                    r.engine.stopRecording();
+                }
+                Rig r (1, 1, 4);
+                auto& e = r.engine;
+                e.setTrackOutputRouting (0, 2);
+                e.setStreamOutputs (-1, -1);
+                e.getPlayer().loadSession (f.dir);
+                e.startPlayback();
+                float reference = 0.0f;
+                for (int attempt = 0; attempt < 80 && reference < 0.1f; ++attempt)
+                {
+                    e.getPlayer().setPositionSamples (0);
+                    r.process();
+                    reference = r.peak (2);
+                    if (reference < 0.1f) juce::Thread::sleep (15);
+                }
+                expect (reference > 0.1f, "no playback reached the direct output");
+                e.setTrimFollowEnabled (true);
+                e.setTrackLiveInputGain (0, 36.0f);
+                e.getPlayer().setPositionSamples (0);
+                r.process();
+                expectWithinAbsoluteError (r.peak (2), reference, reference * 0.02f,
+                                           "the preamp's absolute value reached the direct output");
+                e.stopPlayback();
+            }
+
+            beginTest ("Trim-Follow follows a real move and clamps at the PA limit");
+            {
+                Rig r (1, 1, 2);
+                auto& e = r.engine; auto& t = e.getRecorder().getTrack (0);
+                e.setTrackLiveInputGain (0, 30.0f);
+                t.armed.store (true);
+                e.snapshotCaptureInputGains();
+                t.armed.store (false);
+                expect (t.captureInputGainKnown.load());
+                e.setTrackLiveInputGain (0, 31.0f);
+                expectWithinAbsoluteError (e.getTrackTrimDelta (0), 1.0f, 0.001f);
+                e.setTrackLiveInputGain (0, 72.0f);
+                expectWithinAbsoluteError (e.getTrackTrimDelta (0), mix::kTrimFollowMaxUpDb, 0.001f);
+                e.setTrimFollowEnabled (true);
+                expect (e.getTrimFollowNotice().contains ("limit"), "a held-back move is not reported");
+                e.setTrackLiveInputGain (0, -96.0f);
+                expectWithinAbsoluteError (e.getTrackTrimDelta (0), mix::kTrimFollowMaxDownDb, 0.001f);
+            }
+
+            beginTest ("A take started with no desk reading records no reference, and that survives a reopen");
+            {
+                TempFolder f;
+                {
+                    Rig r (1, 1, 2);
+                    auto& e = r.engine; auto& t = e.getRecorder().getTrack (0);
+                    e.setTrackArmed (0, true);
+                    expect (e.startRecording (f.dir));
+                    r.input (0, 0.25f);
+                    for (int b = 0; b < 8; ++b) r.process();
+                    e.stopRecording();
+                    expect (! t.captureInputGainKnown.load());
+                    expect (e.saveSessionMixTo (f.dir));
+                }
+                Rig r (1, 1, 2);
+                auto& e = r.engine;
+                expect (e.loadSessionMixFrom (f.dir));
+                e.setTrackLiveInputGain (0, 36.0f);
+                expectWithinAbsoluteError (e.getTrackTrimDelta (0), 0.0f, 0.001f);
+            }
+
+            beginTest ("A session from before the reference flag treats a stored 0 dB as no reference");
+            {
+                TempFolder f;
+                {
+                    Rig r (2, 2, 2);
+                    expect (r.engine.saveSessionMixTo (f.dir));
+                }
+                editMix (f.dir, [] (juce::Array<juce::var>& strips)
+                {
+                    for (auto& s : strips) s.getDynamicObject()->removeProperty ("captureInputGainKnown");
+                    strips.getReference (0).getDynamicObject()->setProperty ("captureInputGainDb", 0.0);
+                    strips.getReference (1).getDynamicObject()->setProperty ("captureInputGainDb", 30.0);
+                });
+                Rig r (2, 2, 2);
+                auto& e = r.engine;
+                expect (e.loadSessionMixFrom (f.dir));
+                e.setTrackLiveInputGain (0, 36.0f);
+                e.setTrackLiveInputGain (1, 33.0f);
+                expectWithinAbsoluteError (e.getTrackTrimDelta (0), 0.0f, 0.001f,
+                                           "an unknown old reference produced an offset");
+                expectWithinAbsoluteError (e.getTrackTrimDelta (1), 3.0f, 0.001f,
+                                           "a real old reference stopped following");
+            }
+
             beginTest ("A saved send level outside the fader range is clamped on load");
             {
                 TempFolder f;
@@ -245,6 +363,45 @@ namespace zynforge
                                            "a damaged level reached the bus");
             }
 
+            beginTest ("Trim-Follow stays off live input on the stream bus and StereoMix");
+            {
+                TempFolder f;
+                Rig r (2, 2, 4);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                e.setStreamOutputs (2, 3);
+                e.setTrackStream (0, true);
+                e.setTrackStream (1, true);
+                e.setTrackLiveInputGain (0, 30.0f);
+                e.setTrackLiveInputGain (1, 30.0f);
+                rec.getTrack (0).armed.store (true);
+                rec.getTrack (1).armed.store (true);
+                e.snapshotCaptureInputGains();
+                rec.getTrack (1).armed.store (false);      // keeps a reference from an earlier take
+                expect (e.startRecording (f.dir));
+                r.input (0, 0.25f); r.input (1, 0.25f);
+                r.process();
+                const float level = r.peak (2);
+                expect (level > 0.1f);
+                e.setTrimFollowEnabled (true);
+                e.setTrackLiveInputGain (0, 36.0f);
+                e.setTrackLiveInputGain (1, 36.0f);
+                r.process();
+                expectWithinAbsoluteError (r.peak (2), level, 0.001f, "a preamp move was applied twice to live input");
+                e.stopRecording();
+            }
+
+            beginTest ("A new session clears Trim-Follow references");
+            {
+                Rig r (1, 1, 2);
+                auto& e = r.engine; auto& t = e.getRecorder().getTrack (0);
+                e.setTrackLiveInputGain (0, 30.0f);
+                t.armed.store (true);
+                e.snapshotCaptureInputGains();
+                t.armed.store (false);
+                e.clearSessionState();
+                expect (! e.getRecorder().getTrack (0).captureInputGainKnown.load());
+                expect (! e.getRecorder().getTrack (0).liveInputGainKnown.load());
+            }
         }
     };
 

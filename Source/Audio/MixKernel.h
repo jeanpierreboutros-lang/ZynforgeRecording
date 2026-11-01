@@ -124,6 +124,21 @@ namespace zynforge::mix
         return juce::Decibels::decibelsToGain (sendDb, -60.0f) * (postFader ? postFaderGain : 1.0f);
     }
 
+    // Trim-Follow: the desk's preamp move since the take was captured, added
+    // to recorded playback. With no capture reference there is no "move" to
+    // follow, only the preamp's absolute value, so the offset is 0 dB. The
+    // limits are a PA backstop against a wrong reference or a spoofed reading:
+    // louder is the dangerous side, so it gets the tighter limit.
+    inline constexpr float kTrimFollowMaxUpDb   =  12.0f;
+    inline constexpr float kTrimFollowMaxDownDb = -30.0f;
+    constexpr float trimFollowDb (bool referenceKnown, float liveDb, float captureDb) noexcept
+    {
+        if (! referenceKnown) return 0.0f;
+        const float move = liveDb - captureDb;
+        return move > kTrimFollowMaxUpDb ? kTrimFollowMaxUpDb
+             : move < kTrimFollowMaxDownDb ? kTrimFollowMaxDownDb : move;
+    }
+
     struct PanGains { double left { 0.0 }, right { 0.0 }; };
 
     // Constant-power pan law (-3 dB at centre). Pan is clamped to [-1, 1].

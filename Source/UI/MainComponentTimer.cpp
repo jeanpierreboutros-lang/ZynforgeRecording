@@ -72,6 +72,7 @@ void MainComponent::timerCallback()
     checkDeviceSampleRate (deviceSR);
     // External timecode chase: drive the transport from incoming LTC / MTC.
     serviceTimecodeChase();
+    serviceTrimFollowNotice();
 
     // Auto-arm on input detect -- only meaningful while NOT recording. Arms a
     // strip after 12 ticks (1.2 s at 10 Hz) of input above -40 dBFS. Cheap;
@@ -565,6 +566,17 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }), false);
+}
+
+// Say so when Trim-Follow is holding a channel back. Shown when the set
+// changes, so a desk reading on a channel with no reference is reported as it
+// arrives; the Session menu item keeps the count on show.
+void MainComponent::serviceTrimFollowNotice()
+{
+    const auto notice = engine.isTrimFollowEnabled() ? engine.getTrimFollowNotice() : juce::String();
+    if (notice == lastTrimFollowNotice) return;
+    lastTrimFollowNotice = notice;
+    if (notice.isNotEmpty()) showStatus (notice);
 }
 
 // Drive the transport from an external timecode master (LTC decoded off an

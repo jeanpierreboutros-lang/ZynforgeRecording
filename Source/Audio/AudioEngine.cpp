@@ -101,6 +101,7 @@ namespace zynforge
             t.isBus.store (false); t.vcaGroup.store (-1); t.editGroup.store (-1);
             t.outputMuted.store (false); t.streamSend.store (false);
             t.liveInputGainDb.store (0); t.captureInputGainDb.store (0);
+            t.liveInputGainKnown.store (false); t.captureInputGainKnown.store (false);
             t.referenceMedia.store (false); t.inputPeak.store (0);
             t.rampSamplesRemaining.store (0);
             for (auto& send : t.sends)
@@ -140,16 +141,86 @@ namespace zynforge
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         auto& t = recorder.getTrack (channelIndex);
         t.liveInputGainDb.store (juce::jlimit (-96.0f, 72.0f, dB), std::memory_order_relaxed);
+        t.liveInputGainKnown.store (true, std::memory_order_relaxed);
         // The reference is fixed at capture start. Zero dB is a valid gain,
         // never a sentinel permitting a console update to rebaseline a take.
+    }
+
+    void AudioEngine::snapshotCaptureInputGains()
+    {
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            if (! t.armed.load()) continue;
+            t.captureInputGainDb.store (t.liveInputGainDb.load (std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
+            t.captureInputGainKnown.store (t.liveInputGainKnown.load (std::memory_order_relaxed),
+                                           std::memory_order_relaxed);
+        }
+    }
+
+    int AudioEngine::getTrimFollowUnreferencedCount()
+    {
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        int count = 0;
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            if (t.liveInputGainKnown.load (std::memory_order_relaxed)
+                && ! t.captureInputGainKnown.load (std::memory_order_relaxed)) ++count;
+        }
+        return count;
+    }
+
+    juce::String AudioEngine::getTrimFollowNotice()
+    {
+        juce::StringArray noReference, limited;
+        {
+            const juce::ScopedLock sl (recorder.getStructureLock());
+            for (int i = 0; i < recorder.getNumTracks(); ++i)
+            {
+                auto& t = recorder.getTrack (i);
+                const auto name = t.getNameThreadSafe();
+                const auto label = name.isNotEmpty() ? name : juce::String (i + 1);
+                if (! t.captureInputGainKnown.load (std::memory_order_relaxed))
+                {
+                    if (t.liveInputGainKnown.load (std::memory_order_relaxed)) noReference.add (label);
+                    continue;
+                }
+                const float move = t.liveInputGainDb.load (std::memory_order_relaxed)
+                                 - t.captureInputGainDb.load (std::memory_order_relaxed);
+                if (move > mix::kTrimFollowMaxUpDb || move < mix::kTrimFollowMaxDownDb)
+                    limited.add (label);
+            }
+        }
+        const auto names = [] (const juce::StringArray& list)
+        {
+            constexpr int kNamed = 4;
+            juce::StringArray shown;
+            for (int i = 0; i < juce::jmin (kNamed, list.size()); ++i) shown.add (list[i]);
+            auto text = shown.joinIntoString (", ");
+            if (list.size() > kNamed) text << " +" << (list.size() - kNamed) << " more";
+            return text;
+        };
+        juce::String notice;
+        if (! noReference.isEmpty())
+            notice << "Trim-Follow: no capture reference on " << names (noReference)
+                   << " -- held at 0 dB offset";
+        if (! limited.isEmpty())
+            notice << (notice.isEmpty() ? "Trim-Follow: " : "; ")
+                   << "move past the " << (int) mix::kTrimFollowMaxUpDb << " dB up / "
+                   << (int) -mix::kTrimFollowMaxDownDb << " dB down limit on " << names (limited);
+        return notice;
     }
 
     float AudioEngine::getTrackTrimDelta (int channelIndex)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return 0.0f;
         auto& t = recorder.getTrack (channelIndex);
-        return t.liveInputGainDb.load (std::memory_order_relaxed)
-             - t.captureInputGainDb.load (std::memory_order_relaxed);
+        return mix::trimFollowDb (t.captureInputGainKnown.load (std::memory_order_relaxed),
+                                  t.liveInputGainDb.load (std::memory_order_relaxed),
+                                  t.captureInputGainDb.load (std::memory_order_relaxed));
     }
 
     juce::int64 AudioEngine::getCaptureLengthSamples()
@@ -207,13 +278,7 @@ namespace zynforge
         // record-start from a re-sent OSC/tablet command) still re-baselined the
         // references mid-take, so trim-follow deltas were measured wrong for the
         // rest of the session.
-        for (int i = 0; i < recorder.getNumTracks(); ++i)
-        {
-            auto& t = recorder.getTrack (i);
-            if (! t.armed.load()) continue;
-            t.captureInputGainDb.store (t.liveInputGainDb.load (std::memory_order_relaxed),
-                                        std::memory_order_relaxed);
-        }
+        snapshotCaptureInputGains();
 
         rememberRecentSession (sessionDir);
         double sr = 48000.0;
@@ -979,6 +1044,7 @@ namespace zynforge
             o->setProperty ("stereo",    t.isStereo .load (std::memory_order_relaxed));
             o->setProperty ("referenceMedia", t.referenceMedia.load());
             o->setProperty ("captureInputGainDb", (double) t.captureInputGainDb.load());
+            o->setProperty ("captureInputGainKnown", t.captureInputGainKnown.load());
             o->setProperty ("isBus",     t.isBus    .load (std::memory_order_relaxed));
             o->setProperty ("vcaGroup",  t.vcaGroup .load (std::memory_order_relaxed));
             o->setProperty ("editGroup", t.editGroup.load (std::memory_order_relaxed));
@@ -1121,9 +1187,18 @@ namespace zynforge
                         ? (bool) o->getProperty ("referenceMedia")
                         : t.getNameThreadSafe() == "Click" && t.inputRouting.load() < 0);
                     const float captureGain = (float) (double) o->getProperty ("captureInputGainDb");
-                    t.captureInputGainDb.store (std::isfinite (captureGain) ? captureGain : 0.0f);
+                    const bool  captureFinite = std::isfinite (captureGain);
+                    t.captureInputGainDb.store (captureFinite ? captureGain : 0.0f);
+                    // A session from before the flag cannot tell a real 0 dB
+                    // reference from a strip the desk never reported, so 0
+                    // reads as no reference: no follow is the safe failure.
+                    t.captureInputGainKnown.store (captureFinite
+                        && (o->hasProperty ("captureInputGainKnown")
+                                ? (bool) o->getProperty ("captureInputGainKnown")
+                                : captureGain != 0.0f));
                     // Until a new desk reading arrives, reopening has no trim delta.
                     t.liveInputGainDb.store (t.captureInputGainDb.load());
+                    t.liveInputGainKnown.store (false);
                     // isBus is per-session authoritative (was global appProps,
                     // which leaked the bus layout across sessions). Pre-v1
                     // session_mix.json has no key -> default to a normal strip.
@@ -2961,7 +3036,22 @@ namespace zynforge
             }
         }
 
-        const auto effectiveGainDb = [this] (int i) noexcept -> float
+        // Trim-Follow moves recorded playback only. A take with the transport
+        // stopped feeds live input to the stream bus on every strip, and a
+        // punch puts it in the armed strip's own playback row.
+        const bool trimFollowing = trimFollowEnabled.load (std::memory_order_relaxed);
+        const bool capturing     = recorder.isRecording();
+        const auto trimFollowDb = [this, trimFollowing, capturing, playerWasRolling] (int i) noexcept -> float
+        {
+            if (! trimFollowing) return 0.0f;
+            const auto& t = recorder.getTrack (i);
+            if (capturing && (! playerWasRolling || t.armed.load (std::memory_order_relaxed))) return 0.0f;
+            return mix::trimFollowDb (t.captureInputGainKnown.load (std::memory_order_relaxed),
+                                      t.liveInputGainDb.load (std::memory_order_relaxed),
+                                      t.captureInputGainDb.load (std::memory_order_relaxed));
+        };
+
+        const auto effectiveGainDb = [this, &trimFollowDb] (int i) noexcept -> float
         {
             auto& t = recorder.getTrack (i);
             float dB = i < kMaxResolvedStrips ? resolvedMix[(size_t) i].volDb
@@ -2971,10 +3061,7 @@ namespace zynforge
                                      ? vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : 0.0f);
             // Trim-follow: track the console's input-gain change since capture
             // so soundcheck preamp moves shift the recorded track like a live mic.
-            if (trimFollowEnabled.load (std::memory_order_relaxed))
-                dB += t.liveInputGainDb.load (std::memory_order_relaxed)
-                    - t.captureInputGainDb.load (std::memory_order_relaxed);
-            return dB;
+            return dB + trimFollowDb (i);
         };
 
         // Aux sends → bus tracks. For every non-bus strip with a send
@@ -3009,8 +3096,7 @@ namespace zynforge
                 i < kMaxResolvedStrips && resolvedMix[(size_t) i].muteLane);
             const float postGain = stripMuted ? 0.0f : stripGain;
             // Trim-follow compensates recorded playback, never the live mic.
-            const float liveDb = effectiveGainDb (i)
-                - (trimFollowEnabled.load() ? getTrackTrimDelta (i) : 0.0f);
+            const float liveDb = effectiveGainDb (i) - trimFollowDb (i);
             const float livePostGain = stripMuted ? 0.0f : juce::Decibels::decibelsToGain (liveDb, -60.0f);
 
             for (int s = 0; s < TrackState::kNumSends; ++s)
@@ -3316,10 +3402,9 @@ namespace zynforge
                 if (psrc != nullptr)
                 {
                     double gLp = gL, gRp = gR;
-                    if (trimFollowEnabled.load (std::memory_order_relaxed))
+                    if (trimFollowing)
                     {
-                        const double trim = (double) (t.liveInputGainDb.load (std::memory_order_relaxed)
-                                                    - t.captureInputGainDb.load (std::memory_order_relaxed));
+                        const double trim = (double) trimFollowDb (ch);
                         const double m = juce::Decibels::decibelsToGain (dB + trim, -60.0) / juce::jmax (1.0e-9, gain);
                         gLp = gL * m; gRp = gR * m;
                     }
