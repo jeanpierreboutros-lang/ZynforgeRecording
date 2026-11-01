@@ -1263,6 +1263,13 @@ void MainComponent::rebuildStrips()
         {
             engine.setTrackSend (i, 0, target, 0.0f /* dB */, true /* post */);
         };
+        s->onStreamSendChanged = [this, i] (bool on)
+        {
+            engine.setTrackStream (i, on);
+            if (on && engine.getStreamOutputL() < 0 && ! engine.getRecordStereoMix())
+                showStatus ("STREAM send is on, but the stream bus has no output: pick one in "
+                            "Session > Recording & Sync > Stream Bus Output, or record StereoMix");
+        };
 
         // Per-track Automation Safe lock. When on, the engine
         // refuses every write to this track (Add, Remove, Paste,

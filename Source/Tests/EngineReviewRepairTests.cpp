@@ -148,6 +148,91 @@ namespace zynforge
                 e.setStripCount (0);
             }
 
+            beginTest ("MIDI clock: a rolling locate or a loop wrap tells slaves the new position");
+            {
+                const auto dir = writeSession (4.0);
+                AudioEngine e;
+                e.setStripCount (1);
+                e.prepareForTests (kRate, 512);
+                expect (e.loadSession (dir) == 1);
+                e.setSessionTempoBpm (120.0f);
+                e.clearTempoMap();
+                auto& p = e.getPlayer();
+
+                MidiLog log;
+                e.getMidiClockOut().setMessageSinkForTests ([&log] (const juce::MidiMessage& m) { log.add (m); });
+                e.getMidiClockOut().setEnabled (true);
+                std::vector<float> buf (512);
+                float* out[1] = { buf.data() };
+                const auto roll = [&] (int blocks) { for (int b = 0; b < blocks; ++b) p.processBlock (out, 1, 512); };
+
+                p.setPositionSamples (0);
+                e.startPlayback();
+                roll (4);
+                juce::Thread::sleep (20);
+                log.clear();
+
+                p.setPositionSamples ((juce::int64) kRate);   // 1 s = 2 beats = 8 sixteenths
+                roll (1);
+                expect (log.waitFor (0xFB, 1000), "a rolling locate did not reach the slave");
+                expectEquals (log.songPosition(), 8);
+                expect (log.has (0xFC), "a running slave ignores Song Position");
+                expect (! log.has (0xFA), "a locate restarted the slave at bar 1");
+
+                juce::Thread::sleep (20);
+                log.clear();
+                p.setLoopRegion ((juce::int64) (kRate / 2.0), (juce::int64) kRate + 2048);
+                p.setLoopEnabled (true);
+                for (int b = 0; b < 200 && ! log.has (0xFB); ++b) { roll (1); juce::Thread::sleep (1); }
+                expect (log.waitFor (0xFB, 1000), "a loop wrap did not reach the slave");
+                expectEquals (log.songPosition(), 4, "the wrap sent the wrong position");
+
+                e.stopPlayback();
+                p.setLoopEnabled (false);
+                p.clearLoopRegion();
+                e.getMidiClockOut().setEnabled (false);
+                e.getMidiClockOut().setMessageSinkForTests ({});
+                e.setStripCount (0);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("MIDI clock: turned on mid-play it sends the position, not a burst of pulses");
+            {
+                const auto dir = writeSession (4.0);
+                AudioEngine e;
+                e.setStripCount (1);
+                e.prepareForTests (kRate, 512);
+                expect (e.loadSession (dir) == 1);
+                e.setSessionTempoBpm (120.0f);
+                e.clearTempoMap();
+                auto& p = e.getPlayer();
+
+                p.setPositionSamples ((juce::int64) kRate);
+                e.startPlayback();
+                std::vector<float> buf (512);
+                float* out[1] = { buf.data() };
+                p.processBlock (out, 1, 512);
+                juce::Thread::sleep (300);                    // 14 pulses' worth at 120 BPM
+
+                MidiLog log;
+                std::atomic<int> pulses { 0 };
+                e.getMidiClockOut().setMessageSinkForTests ([&] (const juce::MidiMessage& m)
+                {
+                    if (m.isMidiClock()) ++pulses;
+                    log.add (m);
+                });
+                e.getMidiClockOut().setEnabled (true);
+                expect (log.waitFor (0xFB, 1000), "the slave was not told where the transport is");
+                expectEquals (log.songPosition(), 8);
+                expect (pulses.load() <= 2, "enabling mid-play sent " + juce::String (pulses.load()) + " pulses at once");
+
+                e.stopPlayback();
+                e.getMidiClockOut().setEnabled (false);
+                e.getMidiClockOut().setMessageSinkForTests ({});
+                e.setStripCount (0);
+                dir.deleteRecursively();
+            }
+
             beginTest ("MIDI clock: Start at the top, Song Position + Continue mid-session, Stop when playback ends");
             {
                 const auto dir = writeSession (2.0);

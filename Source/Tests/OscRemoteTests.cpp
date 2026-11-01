@@ -101,11 +101,13 @@ namespace zynforge
                 OscRemote osc (engine);
                 osc.setDialect (OscRemote::Dialect::Generic);
 
+                const auto& t = engine.getRecorder().getTrack (0);
                 osc.dispatchForTest (juce::OSCMessage ("/zynforge/channel/1/gain", (float) -6.0f));
-                expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -6.0f, 0.001f);
+                expectWithinAbsoluteError (t.liveInputGainDb.load(), -6.0f, 0.001f);
+                expect (t.liveInputGainKnown.load());
                 // "fader" is deliberately NOT a trim source.
                 osc.dispatchForTest (juce::OSCMessage ("/zynforge/channel/1/fader", (float) 3.0f));
-                expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -6.0f, 0.001f);
+                expectWithinAbsoluteError (t.liveInputGainDb.load(), -6.0f, 0.001f);
             }
 
             beginTest ("DiGiCo metadata works but unauthenticated control is ignored");
@@ -234,21 +236,22 @@ namespace zynforge
                 OscRemote osc (engine);
                 osc.setDialect (OscRemote::Dialect::DiGiCo);
 
+                const auto& t = engine.getRecorder().getTrack (0);
                 osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/1/gain", -6.0f));
-                expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -6.0f, 0.001f);
+                expectWithinAbsoluteError (t.liveInputGainDb.load(), -6.0f, 0.001f);
                 for (const float bad : { std::numeric_limits<float>::infinity(),
                                          -std::numeric_limits<float>::infinity(),
                                          std::numeric_limits<float>::quiet_NaN() })
                 {
                     osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/1/gain", bad));
-                    expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -6.0f, 0.001f,
+                    expectWithinAbsoluteError (t.liveInputGainDb.load(), -6.0f, 0.001f,
                                                "a non-finite trim replaced the last real reading");
                 }
                 osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/1/gain", 200.0f));
-                expectWithinAbsoluteError (engine.getTrackTrimDelta (0), 72.0f, 0.001f,
+                expectWithinAbsoluteError (t.liveInputGainDb.load(), 72.0f, 0.001f,
                                            "a trim above any desk's preamp range was not clamped");
                 engine.setTrackLiveInputGain (0, -1000.0f);   // every caller goes through the setter
-                expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -96.0f, 0.001f);
+                expectWithinAbsoluteError (t.liveInputGainDb.load(), -96.0f, 0.001f);
             }
 
             beginTest ("The bounded OSC parser reads what JUCE writes and refuses deep or malformed packets");

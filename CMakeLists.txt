@@ -248,6 +248,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/EditTrackRowTests.cpp
     Source/Tests/EditViewFixTests.cpp
     Source/Tests/EditingFixTests.cpp
+    Source/Tests/EngineMixSafetyTests.cpp
     Source/Tests/EngineReviewRepairTests.cpp
     Source/Tests/EngineStateTests.cpp
     Source/Tests/EngineStatusTests.cpp

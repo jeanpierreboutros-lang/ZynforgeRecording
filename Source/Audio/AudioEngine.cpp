@@ -4,6 +4,7 @@
 #include "AtomicFile.h"
 #include "FastAccumulate.h"
 #include "TransientDetector.h"
+#include "MultiPartReader.h"
 
 namespace zynforge
 {
@@ -101,6 +102,7 @@ namespace zynforge
             t.isBus.store (false); t.vcaGroup.store (-1); t.editGroup.store (-1);
             t.outputMuted.store (false); t.streamSend.store (false);
             t.liveInputGainDb.store (0); t.captureInputGainDb.store (0);
+            t.liveInputGainKnown.store (false); t.captureInputGainKnown.store (false);
             t.referenceMedia.store (false); t.inputPeak.store (0);
             t.rampSamplesRemaining.store (0);
             for (auto& send : t.sends)
@@ -140,16 +142,86 @@ namespace zynforge
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         auto& t = recorder.getTrack (channelIndex);
         t.liveInputGainDb.store (juce::jlimit (-96.0f, 72.0f, dB), std::memory_order_relaxed);
+        t.liveInputGainKnown.store (true, std::memory_order_relaxed);
         // The reference is fixed at capture start. Zero dB is a valid gain,
         // never a sentinel permitting a console update to rebaseline a take.
+    }
+
+    void AudioEngine::snapshotCaptureInputGains()
+    {
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            if (! t.armed.load()) continue;
+            t.captureInputGainDb.store (t.liveInputGainDb.load (std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
+            t.captureInputGainKnown.store (t.liveInputGainKnown.load (std::memory_order_relaxed),
+                                           std::memory_order_relaxed);
+        }
+    }
+
+    int AudioEngine::getTrimFollowUnreferencedCount()
+    {
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        int count = 0;
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            if (t.liveInputGainKnown.load (std::memory_order_relaxed)
+                && ! t.captureInputGainKnown.load (std::memory_order_relaxed)) ++count;
+        }
+        return count;
+    }
+
+    juce::String AudioEngine::getTrimFollowNotice()
+    {
+        juce::StringArray noReference, limited;
+        {
+            const juce::ScopedLock sl (recorder.getStructureLock());
+            for (int i = 0; i < recorder.getNumTracks(); ++i)
+            {
+                auto& t = recorder.getTrack (i);
+                const auto name = t.getNameThreadSafe();
+                const auto label = name.isNotEmpty() ? name : juce::String (i + 1);
+                if (! t.captureInputGainKnown.load (std::memory_order_relaxed))
+                {
+                    if (t.liveInputGainKnown.load (std::memory_order_relaxed)) noReference.add (label);
+                    continue;
+                }
+                const float move = t.liveInputGainDb.load (std::memory_order_relaxed)
+                                 - t.captureInputGainDb.load (std::memory_order_relaxed);
+                if (move > mix::kTrimFollowMaxUpDb || move < mix::kTrimFollowMaxDownDb)
+                    limited.add (label);
+            }
+        }
+        const auto names = [] (const juce::StringArray& list)
+        {
+            constexpr int kNamed = 4;
+            juce::StringArray shown;
+            for (int i = 0; i < juce::jmin (kNamed, list.size()); ++i) shown.add (list[i]);
+            auto text = shown.joinIntoString (", ");
+            if (list.size() > kNamed) text << " +" << (list.size() - kNamed) << " more";
+            return text;
+        };
+        juce::String notice;
+        if (! noReference.isEmpty())
+            notice << "Trim-Follow: no capture reference on " << names (noReference)
+                   << " -- held at 0 dB offset";
+        if (! limited.isEmpty())
+            notice << (notice.isEmpty() ? "Trim-Follow: " : "; ")
+                   << "move past the " << (int) mix::kTrimFollowMaxUpDb << " dB up / "
+                   << (int) -mix::kTrimFollowMaxDownDb << " dB down limit on " << names (limited);
+        return notice;
     }
 
     float AudioEngine::getTrackTrimDelta (int channelIndex)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return 0.0f;
         auto& t = recorder.getTrack (channelIndex);
-        return t.liveInputGainDb.load (std::memory_order_relaxed)
-             - t.captureInputGainDb.load (std::memory_order_relaxed);
+        return mix::trimFollowDb (t.captureInputGainKnown.load (std::memory_order_relaxed),
+                                  t.liveInputGainDb.load (std::memory_order_relaxed),
+                                  t.captureInputGainDb.load (std::memory_order_relaxed));
     }
 
     juce::int64 AudioEngine::getCaptureLengthSamples()
@@ -207,13 +279,7 @@ namespace zynforge
         // record-start from a re-sent OSC/tablet command) still re-baselined the
         // references mid-take, so trim-follow deltas were measured wrong for the
         // rest of the session.
-        for (int i = 0; i < recorder.getNumTracks(); ++i)
-        {
-            auto& t = recorder.getTrack (i);
-            if (! t.armed.load()) continue;
-            t.captureInputGainDb.store (t.liveInputGainDb.load (std::memory_order_relaxed),
-                                        std::memory_order_relaxed);
-        }
+        snapshotCaptureInputGains();
 
         rememberRecentSession (sessionDir);
         double sr = 48000.0;
@@ -499,6 +565,34 @@ namespace zynforge
             appProps->saveIfNeeded();
         }
     }
+    void AudioEngine::setMixMayShareStripOutputs (bool allowed)
+    {
+        mixMaySharePatchedOutputs.store (allowed, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            reloadAppPropsBeforeWrite();
+            appProps->setValue ("mixMaySharePatchedOutputs", allowed);
+            appProps->saveIfNeeded();
+        }
+    }
+
+    juce::String AudioEngine::getBusRoutingNotice() const
+    {
+        const auto outs = [] (int l, int r)
+        {
+            return "Out " + juce::String (l + 1) + (r != l ? "-" + juce::String (r + 1) : juce::String());
+        };
+        juce::String notice;
+        if (isMasterHeldOff())
+            notice << "Master mix is off " << outs (getMasterOutputL(), getMasterOutputR())
+                   << ": a strip is patched there. Pick a spare pair on the master strip";
+        if (isStreamHeldOff())
+            notice << (notice.isEmpty() ? "" : "; ")
+                   << "Stream bus is off " << outs (getStreamOutputL(), getStreamOutputR())
+                   << ": a strip is patched there";
+        return notice;
+    }
+
     void AudioEngine::setMasterStereo (bool s)
     {
         masterStereo.store (s, std::memory_order_release);
@@ -575,11 +669,74 @@ namespace zynforge
         const double rate = player.getSampleRate() > 0.0 ? player.getSampleRate()
                           : (deviceManager.getCurrentAudioDevice() != nullptr
                                 ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 48000.0);
-        const double secs = (double) timecodeChase.getHours()   * 3600.0
-                          + (double) timecodeChase.getMinutes() * 60.0
-                          + (double) timecodeChase.getSeconds()
-                          + (double) timecodeChase.getFrames()  / fps;
-        return (juce::int64) (secs * rate + 0.5);
+        const auto start = chaseStartLabel.load (std::memory_order_relaxed);
+        double secs = timecodeChase.timeOfDaySeconds (0)
+                    - ((double) (start >> 24) * 3600.0 + (double) ((start >> 16) & 0xFF) * 60.0
+                       + (double) ((start >> 8) & 0xFF) + (double) (start & 0xFF) / fps);
+        // House timecode wraps at midnight; a show running across it is still
+        // the same show.
+        constexpr double kDay = 24.0 * 3600.0;
+        if (secs < -kDay / 2.0) secs += kDay;
+        return (juce::int64) std::floor (secs * rate + 0.5);
+    }
+
+    juce::String AudioEngine::getChaseStartTimecode() const
+    {
+        const auto start = chaseStartLabel.load (std::memory_order_relaxed);
+        return juce::String::formatted ("%02d:%02d:%02d:%02d", (int) (start >> 24), (int) ((start >> 16) & 0xFF),
+                                        (int) ((start >> 8) & 0xFF), (int) (start & 0xFF));
+    }
+
+    bool AudioEngine::setChaseStartTimecode (const juce::String& hhmmssff)
+    {
+        juce::StringArray fields;
+        fields.addTokens (hhmmssff.trim(), ":;.", {});
+        if (fields.size() != 4) return false;
+        int value[4] {};
+        for (int i = 0; i < 4; ++i)
+        {
+            if (fields[i].isEmpty() || ! fields[i].containsOnly ("0123456789")) return false;
+            value[i] = fields[i].getIntValue();
+        }
+        if (value[0] > 23 || value[1] > 59 || value[2] > 59 || value[3] > 29) return false;
+        chaseStartLabel.store (((juce::uint32) value[0] << 24) | ((juce::uint32) value[1] << 16)
+                                   | ((juce::uint32) value[2] << 8) | (juce::uint32) value[3],
+                               std::memory_order_relaxed);
+        return true;
+    }
+
+    bool AudioEngine::setChaseStartFromTake()
+    {
+        const auto folder = getActiveSessionDir().getChildFile ("Audio Files");
+        auto files = folder.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "Track_*");
+        files.sort();
+        const double rate = player.getSampleRate();
+        double fps = timecodeChase.getFps();
+        if (fps <= 0.0) fps = 30.0;
+        if (rate <= 0.0) return false;
+        for (const auto& file : files)
+        {
+            juce::uint64 stamp = 0;
+            if (file.getFileName().contains (".punchbase") || mainTakeTrackNumber (file) <= 0
+                || bwf::readTimeReference (file, stamp) != bwf::StampResult::ok) continue;
+            const double seconds = (double) stamp / rate;
+            const int whole = (int) seconds;
+            return setChaseStartTimecode (juce::String::formatted ("%02d:%02d:%02d:%02d",
+                (whole / 3600) % 24, (whole / 60) % 60, whole % 60,
+                juce::jmin (29, (int) ((seconds - whole) * fps))));
+        }
+        return false;
+    }
+
+    juce::String AudioEngine::getChaseParkReason() const
+    {
+        const auto total  = player.getTotalLengthSamples();
+        const auto target = getChaseTargetSamples();
+        if (target >= 0 && target < total) return {};
+        if (total <= 0) return "Chase is holding: no audio is loaded";
+        return "Chase is holding: timecode " + getChaseTimecodeString()
+             + (target < 0 ? " is before the session start (" : " is past the end of the session (starts at ")
+             + getChaseStartTimecode() + "). Set the start in Transport Sync";
     }
 
     bool AudioEngine::getTimecodeAnchor (bwf::TimeAnchor& anchor) const
@@ -760,6 +917,25 @@ namespace zynforge
             && rec.getTrack (index - 1).isStereo.load (std::memory_order_relaxed))
             return index - 1;
         return -1;
+    }
+
+    static float sendLevelInRange (float dB) noexcept
+    {
+        return std::isfinite (dB) ? juce::jlimit (-60.0f, 12.0f, dB) : -60.0f;
+    }
+
+    // The bus the other half of a stereo strip sends to, given where this half
+    // goes: the matching half of a stereo bus, or the same bus when it is mono.
+    static int stereoPartnerBusLocked (MultitrackRecorder& rec, int bus, bool partnerIsRight)
+    {
+        if (bus < 0 || bus >= rec.getNumTracks()) return bus;
+        if (partnerIsRight && bus + 1 < rec.getNumTracks()
+            && rec.getTrack (bus).isStereo.load (std::memory_order_relaxed))
+            return bus + 1;
+        if (! partnerIsRight && bus > 0
+            && rec.getTrack (bus - 1).isStereo.load (std::memory_order_relaxed))
+            return bus - 1;
+        return bus;
     }
 
     template <typename Member>
@@ -960,6 +1136,7 @@ namespace zynforge
             o->setProperty ("stereo",    t.isStereo .load (std::memory_order_relaxed));
             o->setProperty ("referenceMedia", t.referenceMedia.load());
             o->setProperty ("captureInputGainDb", (double) t.captureInputGainDb.load());
+            o->setProperty ("captureInputGainKnown", t.captureInputGainKnown.load());
             o->setProperty ("isBus",     t.isBus    .load (std::memory_order_relaxed));
             o->setProperty ("vcaGroup",  t.vcaGroup .load (std::memory_order_relaxed));
             o->setProperty ("editGroup", t.editGroup.load (std::memory_order_relaxed));
@@ -1000,6 +1177,9 @@ namespace zynforge
         // Session-level tempo state (BPM, time signature, and the multi-point
         // tempo map) -- per session, not global appProps.
         root->setProperty ("tempoBpm",   (double) currentTempoBpm.load (std::memory_order_relaxed));
+        root->setProperty ("chaseStartTimecode", getChaseStartTimecode());
+        root->setProperty ("streamOutL", streamOutL.load (std::memory_order_relaxed));
+        root->setProperty ("streamOutR", streamOutR.load (std::memory_order_relaxed));
         root->setProperty ("timeSigNum",   timeSigNumerator  .load (std::memory_order_relaxed));
         root->setProperty ("timeSigDenom", timeSigDenominator.load (std::memory_order_relaxed));
         juce::Array<juce::var> tmap;
@@ -1058,6 +1238,14 @@ namespace zynforge
         for (int i = 0; i < recorder.getNumTracks(); ++i)
             recorder.getTrack (i).isStereo.store (false);
 
+        if (! setChaseStartTimecode (root->getProperty ("chaseStartTimecode").toString()))
+            chaseStartLabel.store (0, std::memory_order_relaxed);
+
+        // An older session has no stream outputs: the bus stays off them
+        // rather than landing on whatever pair the last session used.
+        setStreamOutputs (root->hasProperty ("streamOutL") ? (int) root->getProperty ("streamOutL") : -1,
+                          root->hasProperty ("streamOutR") ? (int) root->getProperty ("streamOutR") : -1);
+
         // Session tempo state. Guarded so an older session (no keys) keeps
         // whatever's current rather than snapping to 0 BPM / 4-4.
         if (root->hasProperty ("tempoBpm"))
@@ -1102,9 +1290,18 @@ namespace zynforge
                         ? (bool) o->getProperty ("referenceMedia")
                         : t.getNameThreadSafe() == "Click" && t.inputRouting.load() < 0);
                     const float captureGain = (float) (double) o->getProperty ("captureInputGainDb");
-                    t.captureInputGainDb.store (std::isfinite (captureGain) ? captureGain : 0.0f);
+                    const bool  captureFinite = std::isfinite (captureGain);
+                    t.captureInputGainDb.store (captureFinite ? captureGain : 0.0f);
+                    // A session from before the flag cannot tell a real 0 dB
+                    // reference from a strip the desk never reported, so 0
+                    // reads as no reference: no follow is the safe failure.
+                    t.captureInputGainKnown.store (captureFinite
+                        && (o->hasProperty ("captureInputGainKnown")
+                                ? (bool) o->getProperty ("captureInputGainKnown")
+                                : captureGain != 0.0f));
                     // Until a new desk reading arrives, reopening has no trim delta.
                     t.liveInputGainDb.store (t.captureInputGainDb.load());
+                    t.liveInputGainKnown.store (false);
                     // isBus is per-session authoritative (was global appProps,
                     // which leaked the bus layout across sessions). Pre-v1
                     // session_mix.json has no key -> default to a normal strip.
@@ -1136,12 +1333,27 @@ namespace zynforge
                                     so->hasProperty ("bus") ? (int) so->getProperty ("bus") : -1,
                                     std::memory_order_relaxed);
                                 t.sends[(size_t) s].levelDb.store (
-                                    (float) (double) so->getProperty ("dB"), std::memory_order_relaxed);
+                                    sendLevelInRange ((float) (double) so->getProperty ("dB")),
+                                    std::memory_order_relaxed);
                                 t.sends[(size_t) s].postFader.store (
                                     ! so->hasProperty ("post") || (bool) so->getProperty ("post"),
                                     std::memory_order_relaxed);
                             }
                 }
+
+        // The strip shows L, so L is what the engineer set. A session saved
+        // while these controls wrote L alone can hold R out of step with it.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            if (! t.isStereo.load (std::memory_order_relaxed)) continue;
+            setTrackStream (i, t.streamSend.load (std::memory_order_relaxed));
+            for (int s = 0; s < TrackState::kNumSends; ++s)
+                setTrackSend (i, s, t.sends[(size_t) s].targetBus.load (std::memory_order_relaxed),
+                              t.sends[(size_t) s].levelDb.load (std::memory_order_relaxed),
+                              t.sends[(size_t) s].postFader.load (std::memory_order_relaxed));
+        }
+
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();
@@ -1663,6 +1875,10 @@ namespace zynforge
             const int out = l.outputRouting.load (std::memory_order_relaxed);
             if (in  != -2) setTrackInputRouting  (channelIndex + 1, in  >= 0 ? in  + 1 : -1);
             if (out != -2) setTrackOutputRouting (channelIndex + 1, out >= 0 ? out + 1 : -1);
+            for (int s = 0; s < TrackState::kNumSends; ++s)
+                setTrackSend (channelIndex, s, l.sends[(size_t) s].targetBus.load (std::memory_order_relaxed),
+                              l.sends[(size_t) s].levelDb.load (std::memory_order_relaxed),
+                              l.sends[(size_t) s].postFader.load (std::memory_order_relaxed));
         }
         // Bump the track generation so EVERY view (MIXER, EDIT, and the
         // meterbridge) rebuilds and re-collapses the pair -- a stereo link from
@@ -1968,6 +2184,8 @@ namespace zynforge
         // (session end, reorder, session load, device stop). midiClockOut is
         // declared after player, so its timer is stopped before player dies.
         midiClockOut.setTransportProbe ([this] { return player.isPlaying(); });
+        midiClockOut.setPositionProbes ([this] { return player.getJumpCount(); },
+                                        [this] { return midiBeatsAt (player.getPositionSamples()); });
 
         // Restore the stereo-mix-recording flag from the prefs file so the
         // engineer's preference survives restart.
@@ -2048,6 +2266,7 @@ namespace zynforge
         masterStateR.name = "MASTER R";
         masterState.gainDb.store ((float) appProps->getDoubleValue ("masterGainDb", 0.0));
         masterState.muted .store (appProps->getBoolValue ("masterMuted", false));
+        mixMaySharePatchedOutputs.store (appProps->getBoolValue ("mixMaySharePatchedOutputs", false));
         masterOutL  .store (appProps->getIntValue  ("masterOutL", 0));
         masterOutR  .store (appProps->getIntValue  ("masterOutR", 1));
         masterStereo.store (appProps->getBoolValue ("masterStereo", true),
@@ -2139,6 +2358,7 @@ namespace zynforge
         // size so the audio thread never allocates when mix capture is on.
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
+        monitorFeed     .setSize (2, blockSize, false, true, true);
         // 64-bit output accumulator -- sized to the max supported channel
         // count (kMaxStrips) so a wide device (>64 outs) never forces an
         // allocation inside the callback.
@@ -2222,6 +2442,8 @@ namespace zynforge
         }
         clearAllAutomationTrims();
         resetAllStripState();
+        setStreamOutputs (-1, -1);
+        chaseStartLabel.store (0, std::memory_order_relaxed);
         for (auto& v : vcas)
         {
             v.gainDb.store (0); v.muted.store (false); v.soloed.store (false);
@@ -2344,8 +2566,8 @@ namespace zynforge
 
     void AudioEngine::setTrackStream (int channelIndex, bool enabled)
     {
-        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
-        recorder.getTrack (channelIndex).streamSend.store (enabled, std::memory_order_relaxed);
+        applyToPair (recorder, channelIndex, &TrackState::streamSend, enabled,
+                     recorder.getStructureLock());
     }
 
     int AudioEngine::getCurrentDeviceInputCount() const
@@ -2535,14 +2757,24 @@ namespace zynforge
     void AudioEngine::setTrackSend (int channelIndex, int slot,
                                      int targetBus, float levelDb, bool postFader)
     {
+        const juce::ScopedLock sl (recorder.getStructureLock());
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         if (slot < 0 || slot >= TrackState::kNumSends) return;
-        levelDb = juce::jlimit (-60.0f, 12.0f, levelDb);
+        levelDb = sendLevelInRange (levelDb);
 
-        auto& s = recorder.getTrack (channelIndex).sends[(size_t) slot];
-        s.targetBus.store (targetBus,  std::memory_order_relaxed);
-        s.levelDb  .store (levelDb,    std::memory_order_relaxed);
-        s.postFader.store (postFader,  std::memory_order_relaxed);
+        const auto write = [&] (int track, int bus)
+        {
+            auto& s = recorder.getTrack (track).sends[(size_t) slot];
+            s.targetBus.store (bus,       std::memory_order_relaxed);
+            s.levelDb  .store (levelDb,   std::memory_order_relaxed);
+            s.postFader.store (postFader, std::memory_order_relaxed);
+        };
+        write (channelIndex, targetBus);
+        // A pair is one strip, so a send is one send: both halves feed the
+        // bus. A stereo bus takes L on its L half and R on its R half.
+        const int partner = stereoPartnerIndexLocked (recorder, channelIndex);
+        if (partner >= 0 && partner < recorder.getNumTracks())
+            write (partner, stereoPartnerBusLocked (recorder, targetBus, partner > channelIndex));
         // Sends persist per-session via session_mix.json (saveSessionMixTo),
         // NOT global appProps -- writing them to appProps keyed by index made
         // routing leak from one session into the next.
@@ -2891,8 +3123,7 @@ namespace zynforge
                     i, autoCh,
                     t.gainDb.load (std::memory_order_relaxed),
                     t.pan.load (std::memory_order_relaxed),
-                    t.muted.load (std::memory_order_relaxed),
-                    autoPlayPos, rolling, readLanes);
+                    autoPlayPos, readLanes);
             }
             if (! holdLanes)
             {
@@ -2902,7 +3133,22 @@ namespace zynforge
             }
         }
 
-        const auto effectiveGainDb = [this] (int i) noexcept -> float
+        // Trim-Follow moves recorded playback only. A take with the transport
+        // stopped feeds live input to the stream bus on every strip, and a
+        // punch puts it in the armed strip's own playback row.
+        const bool trimFollowing = trimFollowEnabled.load (std::memory_order_relaxed);
+        const bool capturing     = recorder.isRecording();
+        const auto trimFollowDb = [this, trimFollowing, capturing, playerWasRolling] (int i) noexcept -> float
+        {
+            if (! trimFollowing) return 0.0f;
+            const auto& t = recorder.getTrack (i);
+            if (capturing && (! playerWasRolling || t.armed.load (std::memory_order_relaxed))) return 0.0f;
+            return mix::trimFollowDb (t.captureInputGainKnown.load (std::memory_order_relaxed),
+                                      t.liveInputGainDb.load (std::memory_order_relaxed),
+                                      t.captureInputGainDb.load (std::memory_order_relaxed));
+        };
+
+        const auto effectiveGainDb = [this, &trimFollowDb] (int i) noexcept -> float
         {
             auto& t = recorder.getTrack (i);
             float dB = i < kMaxResolvedStrips ? resolvedMix[(size_t) i].volDb
@@ -2912,10 +3158,7 @@ namespace zynforge
                                      ? vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : 0.0f);
             // Trim-follow: track the console's input-gain change since capture
             // so soundcheck preamp moves shift the recorded track like a live mic.
-            if (trimFollowEnabled.load (std::memory_order_relaxed))
-                dB += t.liveInputGainDb.load (std::memory_order_relaxed)
-                    - t.captureInputGainDb.load (std::memory_order_relaxed);
-            return dB;
+            return dB + trimFollowDb (i);
         };
 
         // Aux sends → bus tracks. For every non-bus strip with a send
@@ -2950,9 +3193,14 @@ namespace zynforge
                 i < kMaxResolvedStrips && resolvedMix[(size_t) i].muteLane);
             const float postGain = stripMuted ? 0.0f : stripGain;
             // Trim-follow compensates recorded playback, never the live mic.
-            const float liveDb = effectiveGainDb (i)
-                - (trimFollowEnabled.load() ? getTrackTrimDelta (i) : 0.0f);
+            const float liveDb = effectiveGainDb (i) - trimFollowDb (i);
             const float livePostGain = stripMuted ? 0.0f : juce::Decibels::decibelsToGain (liveDb, -60.0f);
+
+            const auto isStereoHalf = [this] (int t)
+            {
+                return recorder.getTrack (t).isStereo.load (std::memory_order_relaxed)
+                    || (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed));
+            };
 
             for (int s = 0; s < TrackState::kNumSends; ++s)
             {
@@ -2963,13 +3211,14 @@ namespace zynforge
 
                 const float sendDb   = snd.levelDb.load (std::memory_order_relaxed);
                 const bool  postFader = snd.postFader.load (std::memory_order_relaxed);
-                const float gain = mix::sendGain (sendDb, postFader, postGain);
+                const float fold = mix::sendFoldGain (isStereoHalf (i), isStereoHalf (bus));
+                const float gain = fold * mix::sendGain (sendDb, postFader, postGain);
                 float* dst = playerScratch.getWritePointer (bus);
                 if (gain >= 0.00001f)
                     juce::FloatVectorOperations::addWithMultiply (dst, srcAudio, gain, numSamples);
                 if (liveAudio != nullptr)
                 {
-                    const float liveGain = mix::sendGain (sendDb, postFader, livePostGain);
+                    const float liveGain = fold * mix::sendGain (sendDb, postFader, livePostGain);
                     if (liveGain >= 0.00001f)
                         juce::FloatVectorOperations::addWithMultiply (dst, liveAudio, liveGain, numSamples);
                 }
@@ -3029,6 +3278,16 @@ namespace zynforge
         for (const auto& v : vcas)
             if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
 
+        const auto vcaGateFor = [this] (const TrackState& t) noexcept
+        {
+            mix::VcaGate vca;
+            const int g = t.vcaGroup.load (std::memory_order_relaxed);
+            if (g >= 0 && g < kNumVcas)
+                vca = { true, vcas[(size_t) g].muted.load (std::memory_order_relaxed),
+                              vcas[(size_t) g].soloed.load (std::memory_order_relaxed) };
+            return vca;
+        };
+
         auto channelAudible = [&] (int i) -> bool
         {
             auto& t = recorder.getTrack (i);
@@ -3041,14 +3300,9 @@ namespace zynforge
             // reflects only the lane; the static mute is handled below.
             if (i < kMaxResolvedStrips && resolvedMix[(size_t) i].muteLane)
                 return false;
-            const int g = t.vcaGroup.load (std::memory_order_relaxed);
-            mix::VcaGate vca;
-            if (g >= 0 && g < kNumVcas)
-                vca = { true, vcas[(size_t) g].muted.load (std::memory_order_relaxed),
-                              vcas[(size_t) g].soloed.load (std::memory_order_relaxed) };
             return mix::audible (t.muted.load (std::memory_order_relaxed),
                                  t.soloed.load (std::memory_order_relaxed),
-                                 vca, anySolo, anyVcaSolo);
+                                 vcaGateFor (t), anySolo, anyVcaSolo);
         };
 
         // Mix the routed track scratch onto the device outputs honoring
@@ -3112,7 +3366,16 @@ namespace zynforge
             stereoMixScratch.clear();
         }
 
-        const bool haveStreamOutputs = sL >= 0 && sR >= 0 && sL < numOutputs && sR < numOutputs;
+        const bool mayShare = mixMaySharePatchedOutputs.load (std::memory_order_relaxed);
+        bool stripOnStreamOutput = false;
+        for (int i = 0; i < trackCount; ++i)
+        {
+            const int out = recorder.getTrack (i).outputRouting.load (std::memory_order_relaxed);
+            stripOnStreamOutput = stripOnStreamOutput || (out >= 0 && (out == sL || out == sR));
+        }
+        const bool streamHeld = mix::busHeldOffOutputs (stripOnStreamOutput, numOutputs, mayShare);
+        streamHeldOff.store (streamHeld, std::memory_order_relaxed);
+        const bool haveStreamOutputs = sL >= 0 && sR >= 0 && sL < numOutputs && sR < numOutputs && ! streamHeld;
         // File capture must not depend on physical stream outputs being
         // configured. A recording-only rig often has no spare output pair but
         // still expects StereoMix.wav to contain the selected live inputs.
@@ -3122,7 +3385,9 @@ namespace zynforge
             {
                 auto& t = recorder.getTrack (i);
                 if (! t.streamSend.load (std::memory_order_relaxed)) continue;
-                if (! channelAudible (i)) continue;
+                if (! mix::streamAudible (t.muted.load (std::memory_order_relaxed), vcaGateFor (t),
+                                          i < kMaxResolvedStrips && resolvedMix[(size_t) i].muteLane))
+                    continue;
 
                 const float dB   = effectiveGainDb (i);
                 const double gain = (double) juce::Decibels::decibelsToGain (dB, -60.0f);
@@ -3232,7 +3497,6 @@ namespace zynforge
             const bool resolved = ch < kMaxResolvedStrips;
             float dBVal  = resolved ? resolvedMix[(size_t) ch].volDb : t.gainDb.load (std::memory_order_relaxed);
             float panVal = resolved ? resolvedMix[(size_t) ch].pan   : t.pan   .load (std::memory_order_relaxed);
-            if (resolved && resolvedMix[(size_t) ch].monitorMuted) continue;
 
             // VCA group gain. The monitor sum was applying ONLY the strip's
             // own fader, so pulling a VCA master down did nothing here even
@@ -3257,10 +3521,9 @@ namespace zynforge
                 if (psrc != nullptr)
                 {
                     double gLp = gL, gRp = gR;
-                    if (trimFollowEnabled.load (std::memory_order_relaxed))
+                    if (trimFollowing)
                     {
-                        const double trim = (double) (t.liveInputGainDb.load (std::memory_order_relaxed)
-                                                    - t.captureInputGainDb.load (std::memory_order_relaxed));
+                        const double trim = (double) trimFollowDb (ch);
                         const double m = juce::Decibels::decibelsToGain (dB + trim, -60.0) / juce::jmax (1.0e-9, gain);
                         gLp = gL * m; gRp = gR * m;
                     }
@@ -3299,8 +3562,13 @@ namespace zynforge
         const double mGain = mix::masterGain (mMute, masterState.gainDb.load (std::memory_order_relaxed));
 
         // If mono, collapse L+R into accL (and zero accR) so a single
-        // output gets the sum and the meter reads as one bar.
-        const bool stereo = masterStereo.load (std::memory_order_relaxed);
+        // output gets the sum and the meter reads as one bar. A one-output
+        // device is mono whatever the mode says.
+        const auto masterPair = mix::masterOutputs (masterOutL.load (std::memory_order_relaxed),
+                                                    masterOutR.load (std::memory_order_relaxed),
+                                                    numOutputs);
+        const bool stereo = masterStereo.load (std::memory_order_relaxed)
+                         && masterPair.left != masterPair.right;
         if (! stereo)
         {
             for (int i = 0; i < blk; ++i)
@@ -3347,13 +3615,24 @@ namespace zynforge
         // fixed-size filter / histogram state.
         loudness.processMasterDouble (accL, accR, mGain, blk);
 
-        // Guard against a device with zero outputs (e.g. an input-only
-        // interface selected as the output device): numOutputs - 1 == -1
-        // would make jlimit return -1 and getWritePointer(-1) segfault.
-        const int outL = numOutputs > 0
-                       ? juce::jlimit (0, numOutputs - 1, masterOutL.load (std::memory_order_relaxed))
-                       : -1;
-        if (outL >= 0 && outL < numOutputs)
+        const int outL = masterPair.left;
+        const int outR = stereo ? masterPair.right : -1;
+
+        // Whether the mix reaches its pair, decided from the patch and not
+        // from what is audible, so a strip muted for a moment cannot let the
+        // whole mix drop onto its console channel.
+        bool stripOnMasterOutput = false;
+        for (int i = 0; i < trackCount; ++i)
+        {
+            const int out = recorder.getTrack (i).outputRouting.load (std::memory_order_relaxed);
+            stripOnMasterOutput = stripOnMasterOutput || (out >= 0 && (out == outL || out == outR));
+        }
+        const bool masterHeld = mix::busHeldOffOutputs (stripOnMasterOutput, numOutputs,
+                                                        mixMaySharePatchedOutputs.load (std::memory_order_relaxed));
+        masterHeldOff.store (masterHeld, std::memory_order_relaxed);
+        const bool masterAudible = outL >= 0 && ! masterHeld;
+
+        if (masterAudible)
         {
             // Monitor sum lands in the 64-bit accumulator so the master
             // bus stays double-precision until the final downcast below.
@@ -3362,11 +3641,7 @@ namespace zynforge
                 dstL[i] += accL[i] * mGain;
         }
 
-        const int outR = stereo && numOutputs > 0
-                       ? juce::jlimit (0, numOutputs - 1,
-                                       masterOutR.load (std::memory_order_relaxed))
-                       : -1;
-        if (outR >= 0 && outR != outL)
+        if (masterAudible && outR >= 0)
         {
             double* dstR = outputAccum.getWritePointer (outR);
             for (int i = 0; i < blk; ++i)
@@ -3434,42 +3709,53 @@ namespace zynforge
         // the monitor sum, so muting the master used to leave the metronome
         // audible on the monitor bus it rides -- surprising, and loud, in a
         // "kill the monitors" moment.
+        // It stays off a held pair with the mix, or it would be the one thing
+        // on those console channels. It still counts, so the beat holds.
         if (click.isEnabled() && ! masterState.muted.load (std::memory_order_relaxed))
         {
-            const int cOutL = juce::jlimit (0, numOutputs - 1,
-                                            masterOutL.load (std::memory_order_relaxed));
-            const int cOutR = juce::jlimit (0, numOutputs - 1,
-                                            masterOutR.load (std::memory_order_relaxed));
-            float* L = (cOutL >= 0 && cOutL < numOutputs) ? outputs[cOutL] : nullptr;
-            float* R = (cOutR >= 0 && cOutR < numOutputs && cOutR != cOutL) ? outputs[cOutR] : nullptr;
+            float* L = masterAudible ? outputs[outL] : nullptr;
+            float* R = masterAudible && masterPair.right != outL ? outputs[masterPair.right] : nullptr;
             click.processBlock (L, R, numSamples);
         }
 
-        if (remotes.isCompanionServerRunning())
+        // What the companion stream and NDI hear. With no device pair to read,
+        // they take the monitor mix itself.
+        const float* feedL = nullptr;
+        const float* feedR = nullptr;
+        int feedSamples = numSamples;
+        const bool companionFeed = remotes.isCompanionServerRunning();
+        if (companionFeed || ndi.isEnabled())
         {
-            const int sOutL = juce::jlimit (0, numOutputs - 1,
-                                            masterOutL.load (std::memory_order_relaxed));
-            const int sOutR = juce::jlimit (0, numOutputs - 1,
-                                            masterOutR.load (std::memory_order_relaxed));
-            const float* L = (sOutL >= 0 && sOutL < numOutputs) ? outputs[sOutL] : nullptr;
-            const float* R = (sOutR >= 0 && sOutR < numOutputs) ? outputs[sOutR] : nullptr;
-            remotes.feedCompanionStream (L, R, numSamples);
+            if (masterAudible)
+            {
+                feedL = outputs[outL];
+                feedR = outputs[masterPair.right];
+            }
+            else
+            {
+                auto* floatL = monitorFeed.getWritePointer (0);
+                auto* floatR = monitorFeed.getWritePointer (1);
+                for (int i = 0; i < blk; ++i)
+                {
+                    floatL[i] = (float) (accL[i] * mGain);
+                    floatR[i] = (float) (accR[i] * mGain);
+                }
+                feedL = floatL;
+                feedR = stereo ? floatR : floatL;
+                feedSamples = blk;
+            }
         }
+
+        if (companionFeed)
+            remotes.feedCompanionStream (feedL, feedR, feedSamples);
 
         // NDI Audio transmit -- push the master mix onto the LAN as an
         // NDI source. Reads from the monitor-bus output channels so the
         // network feed matches what the engineer hears at the console.
         // Cheap: pushStereo is a memcpy + one libndi call; a no-op when
         // the runtime isn't installed.
-        if (ndi.isEnabled() && numOutputs >= 2)
-        {
-            const int nOutL = juce::jlimit (0, numOutputs - 1,
-                                            masterOutL.load (std::memory_order_relaxed));
-            const int nOutR = juce::jlimit (0, numOutputs - 1,
-                                            masterOutR.load (std::memory_order_relaxed));
-            if (outputs[nOutL] != nullptr && outputs[nOutR] != nullptr)
-                ndi.pushStereo (outputs[nOutL], outputs[nOutR], numSamples);
-        }
+        if (ndi.isEnabled() && feedL != nullptr && feedR != nullptr)
+            ndi.pushStereo (feedL, feedR, feedSamples);
 
         // CPU-load: (callback wall time) / (block period). EMA-smoothed
         // with a fast attack and slower release so the engineer sees

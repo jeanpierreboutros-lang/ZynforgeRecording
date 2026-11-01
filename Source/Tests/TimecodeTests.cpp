@@ -87,6 +87,84 @@ namespace zynforge
                 expect (! tc.isRunning());
             }
 
+            // One quarter-frame message of the group that labels hh:mm:ss:ff.
+            const auto quarterFrame = [] (int type, int hr, int mn, int sc, int fr, int rate)
+            {
+                const int nib[8] = { fr & 0x0F, (fr >> 4) & 0x01, sc & 0x0F, (sc >> 4) & 0x03,
+                                     mn & 0x0F, (mn >> 4) & 0x03, hr & 0x0F,
+                                     ((hr >> 4) & 0x01) | (rate << 1) };
+                return (juce::uint8) ((type << 4) | nib[type]);
+            };
+
+            beginTest ("MTC joined at any phase never publishes a time mixed from two groups");
+            {
+                // A boundary where every field changes: 05:28 frame 28 to 06:00
+                // frame 0 in the top digits, the case that read an hour wrong.
+                for (int phase = 0; phase < 8; ++phase)
+                {
+                    TimecodeChase tc;
+                    for (int type = phase; type < 8; ++type)
+                        tc.feedMtcQuarterFrame (quarterFrame (type, 5, 59, 59, 28, 3));
+                    for (int type = 0; type < 8; ++type)
+                    {
+                        tc.feedMtcQuarterFrame (quarterFrame (type, 6, 0, 0, 0, 3));
+                        if (type < 7 && phase != 0)
+                            expect (! tc.isRunning() , "a part-run time was published");
+                    }
+                    expectEquals ((int) tc.getHours(),   6);
+                    expectEquals ((int) tc.getMinutes(), 0);
+                    expectEquals ((int) tc.getSeconds(), 0);
+                    expectEquals ((int) tc.getFrames(),  0);
+                }
+            }
+
+            beginTest ("A running MTC stream joined late reads every time in order");
+            {
+                for (int phase = 1; phase < 8; ++phase)
+                {
+                    TimecodeChase tc;
+                    int published = -1, seconds = 9 * 30 + 24;   // 00:00:09:24 at 30 fps, frame count
+                    for (int group = 0; group < 12; ++group, seconds += 2)
+                    {
+                        const int fr = seconds % 30, sc = seconds / 30;
+                        for (int type = group == 0 ? phase : 0; type < 8; ++type)
+                            tc.feedMtcQuarterFrame (quarterFrame (type, 0, 0, sc, fr, 3));
+                        if (! tc.isRunning()) continue;
+                        const int now = (int) tc.getSeconds() * 30 + (int) tc.getFrames();
+                        expect (published < 0 || now == published + 2,
+                                "phase " + juce::String (phase) + ": " + juce::String (published)
+                                    + " jumped to " + juce::String (now));
+                        published = now;
+                    }
+                    expect (published > 0, "nothing was read");
+                }
+            }
+
+            beginTest ("A lost MTC quarter-frame drops that run instead of mixing groups");
+            {
+                TimecodeChase tc;
+                for (int type = 0; type < 8; ++type)
+                    tc.feedMtcQuarterFrame (quarterFrame (type, 1, 2, 3, 4, 3));
+                for (int type = 0; type < 8; ++type)
+                    if (type != 3)   // lost on the wire
+                        tc.feedMtcQuarterFrame (quarterFrame (type, 9, 9, 9, 8, 3));
+                expectEquals ((int) tc.getHours(), 1, "the damaged run replaced a good time");
+                for (int type = 0; type < 8; ++type)
+                    tc.feedMtcQuarterFrame (quarterFrame (type, 2, 2, 3, 6, 3));
+                expectEquals ((int) tc.getHours(), 2, "the next whole run was not read");
+            }
+
+            beginTest ("MTC running backwards is read from its own direction");
+            {
+                TimecodeChase tc;
+                for (int type = 7; type >= 0; --type)
+                    tc.feedMtcQuarterFrame (quarterFrame (type, 1, 2, 3, 4, 1));
+                expect (tc.isRunning());
+                expectEquals ((int) tc.getMinutes(), 2);
+                expectEquals ((int) tc.getFrames(),  4);
+                expectWithinAbsoluteError (tc.getFps(), 25.0f, 0.01f);
+            }
+
             beginTest ("LTC: a square wave at the bit-clock rate never reads LOCK");
             {
                 // A square wave crosses zero at a steady rate inside the old
