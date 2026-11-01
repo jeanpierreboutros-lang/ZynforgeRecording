@@ -31,10 +31,12 @@ namespace zynforge
                           { return a.sampleOffset < b.sampleOffset; });
     }
 
-    void MarkersManager::drop (juce::int64 sampleOffset, const juce::String& name)
+    void MarkersManager::drop (juce::int64 sampleOffset, const juce::String& name,
+                               const juce::String& type)
     {
         Marker m;
         m.sampleOffset = sampleOffset;
+        m.type = type;
 
         if (name.isNotEmpty())
         {

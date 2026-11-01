@@ -652,8 +652,8 @@ void MainComponent::editSetRangeToLoopRange()
         return;
     }
     auto& m = engine.getMarkers();
-    m.drop (player.getLoopStart(), "Range In");
-    m.drop (player.getLoopEnd(),   "Range Out");
+    m.drop (player.getLoopStart(), "Range In", "range");
+    m.drop (player.getLoopEnd(),   "Range Out", "range");
     showStatus ("Range markers placed at loop boundaries");
 }
 
@@ -843,14 +843,24 @@ void MainComponent::editSplitAtPlayhead()
     if (zeroCrossSnap && ! targets.empty())
         pos = engine.nearestZeroCrossing (targets.front(), pos, 240);
 
-    engine.getMarkers().drop (pos, "Split");
+    engine.getMarkers().drop (pos, "Split", "split");
+    const auto splitMarkerId = engine.getMarkers().lastDroppedId;
 
     const auto before = engine.playlistsToJson();   // clip-aware undo
     int splits = 0;
     for (int phys : targets)
         if (engine.splitTrackAtSample (phys, pos)) ++splits;
     if (splits > 0)
+    {
         pushClipUndo ("Split clips at playhead", before);
+        // In the split's transaction: its marker goes when the split does.
+        for (const auto& marker : engine.getMarkers().getAll())
+            if (marker.runtimeId == splitMarkerId)
+            {
+                undoManager.perform (new MarkerDropAction (engine.getMarkers(), marker));
+                break;
+            }
+    }
 
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     showStatus ((splits > 0
@@ -1337,7 +1347,7 @@ void MainComponent::editStartRange()
     // playhead is at/past the existing loop end, keep end > start instead of
     // passing an inverted range that setLoopRegion treats as "clear".
     player.setLoopRegion (pos, juce::jmax (end, pos + 1));
-    engine.getMarkers().drop (pos, "Range In");
+    engine.getMarkers().drop (pos, "Range In", "range");
     showStatus ("Range In set at playhead");
 }
 
@@ -1351,7 +1361,7 @@ void MainComponent::editFinishRange()
     // playhead is at/before the existing loop start, keep start < end instead
     // of passing an inverted range that setLoopRegion treats as "clear".
     player.setLoopRegion (juce::jmin (start, pos - 1), pos);
-    engine.getMarkers().drop (pos, "Range Out");
+    engine.getMarkers().drop (pos, "Range Out", "range");
     showStatus ("Range Out set at playhead");
 }
 

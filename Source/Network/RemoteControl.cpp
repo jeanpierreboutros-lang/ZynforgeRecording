@@ -299,7 +299,7 @@ namespace zynforge
         switch (decision.action)
         {
             case Action::DropMarker:
-                if (engine.dropMarkerAtCurrentPosition (label) >= 0)
+                if (engine.dropMarkerAtCurrentPosition (label, "scene") >= 0)
                     tell ("marker dropped");
                 break;
 

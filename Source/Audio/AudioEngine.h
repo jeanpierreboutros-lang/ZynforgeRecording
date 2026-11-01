@@ -1164,7 +1164,8 @@ namespace zynforge
         // name to set it atomically (drop re-sorts by position, so a separate
         // rename-by-index afterwards can hit the wrong marker). Returns the new
         // marker count, or -1 if no session active.
-        int dropMarkerAtCurrentPosition (const juce::String& name = {});
+        int dropMarkerAtCurrentPosition (const juce::String& name = {},
+                                         const juce::String& type = "user");
 
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;

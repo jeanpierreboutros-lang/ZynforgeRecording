@@ -6,8 +6,26 @@
 
 namespace zynforge::songexport
 {
+    namespace
+    {
+        // Sessions saved before markers carried these types hold them as "user".
+        bool marksAPlaceOnly (const Marker& marker)
+        {
+            return marker.type == "split" || marker.type == "range" || marker.type == "scene"
+                || (marker.type == "user"
+                    && (marker.name == "Split" || marker.name == "Range In" || marker.name == "Range Out"));
+        }
+    }
+
     std::vector<Range> rangesFromMarkers (std::vector<Marker> markers, juce::int64 sessionEnd)
     {
+        const bool hasSongMarkers = std::any_of (markers.begin(), markers.end(),
+            [] (const Marker& marker) { return ! marksAPlaceOnly (marker); });
+        markers.erase (std::remove_if (markers.begin(), markers.end(), [hasSongMarkers] (const Marker& marker)
+                       {
+                           return hasSongMarkers ? marksAPlaceOnly (marker) : marker.type != "scene";
+                       }), markers.end());
+
         std::stable_sort (markers.begin(), markers.end(), [] (const Marker& a, const Marker& b)
                           { return a.sampleOffset < b.sampleOffset; });
 

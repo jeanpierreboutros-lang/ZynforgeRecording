@@ -24,10 +24,14 @@ namespace zynforge
             juce::String name;
         };
 
-        // Each marker to the next, the last to sessionEnd. Markers at the same
-        // spot make one song (the first named one names it), and one at or past
-        // the end starts nothing. No markers, no songs: a session with no cuts
-        // has nothing to divide, and the whole-show bounces already exist.
+        // Each song marker to the next, the last to sessionEnd. A marker that
+        // only marks a place (a split, a range edge) cuts nothing. A scene
+        // recall can happen inside a song, so scenes cut only a session with no
+        // other song markers, where they are all there is to go by. Markers at
+        // the same spot make one song (the first named one names it), and one
+        // at or past the end starts nothing. No markers, no songs: a session
+        // with no cuts has nothing to divide, and the whole-show bounces
+        // already exist.
         std::vector<Range> rangesFromMarkers (std::vector<Marker> markers, juce::int64 sessionEnd);
 
         // Safe as one path component. '.' goes too: withFileExtension would

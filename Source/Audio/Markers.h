@@ -10,7 +10,9 @@ namespace zynforge
     {
         juce::int64  sampleOffset { 0 };
         juce::String name;
-        juce::String type { "user" };   // "user", "scene", "song", ...
+        // "user" and "song" divide a show into songs. The rest mark a place:
+        // "split" (where a clip was cut), "range" (range in/out), "scene".
+        juce::String type { "user" };
 
         // Pro Tools-style "Memory Location" recall fields. When set,
         // a Cmd+N jump to this marker also restores the EDIT-view
@@ -37,7 +39,8 @@ namespace zynforge
         juce::File getSessionDir() const       { return sessionDir; }
         double     getSampleRate() const       { return sampleRate; }
 
-        void  drop (juce::int64 sampleOffset, const juce::String& name = {});
+        void  drop (juce::int64 sampleOffset, const juce::String& name = {},
+                    const juce::String& type = "user");
         void  clear();
         int   getCount() const                 { return (int) markers.size(); }
         Marker getLast() const;
