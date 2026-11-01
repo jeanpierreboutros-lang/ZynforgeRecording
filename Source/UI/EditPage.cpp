@@ -877,6 +877,7 @@ namespace zynforge
         if (gen != selectionTrackGen || sessionDir != selectionSessionDir)
         {
             clearSelectedClip();
+            setActiveRowTrackIndex (-1);   // a position, like the selection
             selectionTrackGen   = gen;
             selectionSessionDir = sessionDir;
         }

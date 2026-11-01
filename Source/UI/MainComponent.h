@@ -253,6 +253,10 @@ private:
     // Multi-select: indices are LOGICAL strip indices (stereo pairs
     // counted as one). Engineer toggles via shift/cmd-click on a strip.
     std::set<int> selectedLogical;
+    // The layout and session those positions mean; see syncStripSelectionScope.
+    int        selectionLayoutGen { -1 };
+    juce::File selectionSession;
+    void syncStripSelectionScope();
     void showSessionProperties();
     // Move the active session folder (its recorded audio included) to a new
     // location, then re-pin everything from there. Stopped-only; the copy

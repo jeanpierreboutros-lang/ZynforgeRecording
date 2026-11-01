@@ -45,7 +45,12 @@ void MainComponent::moveSelectedStrips (int delta)
     }
     if (! moved) { showStatus ("Selected strips are already at the edge"); return; }
     if (engine.reorderTracks (trackorder::flatten (blocks)))
-    { selectedLogical = std::move (next); showStatus ("Moved selected strips"); }
+    {
+        // These strips were moved on purpose, so the selection stays with them.
+        selectedLogical = std::move (next);
+        selectionLayoutGen = engine.getRecorder().getTrackGeneration();
+        showStatus ("Moved selected strips");
+    }
     else showStatus ("Move failed; check disk permissions and Session File Backups before retrying");
 }
 

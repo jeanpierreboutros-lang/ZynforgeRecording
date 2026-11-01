@@ -892,6 +892,57 @@ namespace zynforge
                 }
             }
 
+            beginTest ("Strip selection and active row do not outlive their layout or session");
+            {
+                Show s (3, { 48000, 48000, 48000 });
+                s.main.rebuildStrips();
+                s.main.selectedLogical = { 2 };
+                s.page().setActiveRowTrackIndex (2);
+                s.main.rebuildStrips();
+                expect (s.main.selectedLogical.count (2) > 0, "a rebuild with no change must keep it");
+
+                expect (s.engine.reorderTracks ({ 2, 0, 1 }));
+                s.page().refresh();
+                s.main.rebuildStrips();
+                expectEquals (s.page().getActiveRowTrackIndex(), -1, "the active row names another strip now");
+                expect (s.main.selectedLogical.empty(), "the selection names another strip now");
+
+                s.main.selectedLogical = { 0 };
+                s.main.moveSelectedStrips (1);
+                s.main.rebuildStrips();
+                expect (s.main.selectedLogical == std::set<int> { 1 }, "strips moved on purpose stay selected");
+
+                const auto other = s.dir.getSiblingFile (s.dir.getFileName() + "-other");
+                expect (other.createDirectory().wasOk());
+                s.page().setActiveRowTrackIndex (1);
+                s.engine.setActiveSessionDir (other);
+                s.page().refresh();
+                s.main.rebuildStrips();
+                expect (s.main.selectedLogical.empty(), "another session kept the selection");
+                expectEquals (s.page().getActiveRowTrackIndex(), -1);
+                other.deleteRecursively();
+            }
+
+            beginTest ("A generated click row unlocks with its session and follows its strip");
+            {
+                Show s (3, { 48000, 48000, 48000 });
+                s.main.clickTrackIndex = 2;
+                s.main.rebuildStrips();
+                s.page().refresh();
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 3 && rows[2]->clickRowIdx == 2, "setup: the click row is known");
+
+                s.main.clickTrackIndex = -1;       // what every session swap does
+                s.main.rebuildStrips();
+                if (rows.size() == 3)
+                    expectEquals (rows[2]->clickRowIdx, -1, "strip 3 stayed locked in the next session");
+
+                s.main.clickTrackIndex = 2;
+                expect (s.engine.reorderTracks ({ 2, 0, 1 }));
+                expectEquals (s.main.clickTrackIndex, 0, "the click index must follow its strip");
+                s.main.clickTrackIndex = -1;
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

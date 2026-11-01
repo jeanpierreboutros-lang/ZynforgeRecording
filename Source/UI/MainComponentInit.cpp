@@ -51,6 +51,8 @@ MainComponent::MainComponent()
                 cue.automation = juce::var (remapped);
             }
         clipClipboard = juce::var(); // any copied implicit track index is now stale
+        if (clickTrackIndex >= 0 && clickTrackIndex < (int) destination.size())
+            clickTrackIndex = destination[(size_t) clickTrackIndex];
         undoManager.clearUndoHistory(); // old per-index snapshots must not undo onto different audio
         rebaselineMixerUndo();
         // reorderTracks bumps the track generation, so the strips rebuild on
@@ -962,9 +964,27 @@ void MainComponent::switchView (View v)
     resized();
 }
 
+// Every session swap and layout change comes through rebuildStrips. The strip
+// selection and the click row are positions in ONE layout of ONE session: left
+// alone, a range edit, Delete or a paste hits whatever now sits at the old index.
+void MainComponent::syncStripSelectionScope()
+{
+    const int layout = engine.getRecorder().getTrackGeneration();
+    const auto session = engine.getActiveSessionDir();
+    if (layout != selectionLayoutGen || session != selectionSession)
+    {
+        selectedLogical.clear();
+        selectionLayoutGen = layout;
+        selectionSession   = session;
+    }
+    if (editPage != nullptr)
+        editPage->setClickTrackPresent (clickTrackIndex >= 0, clickTrackIndex);
+}
+
 void MainComponent::rebuildStrips()
 {
     const juce::ScopedValueSetter<bool> guard (rebuildingStrips, true);
+    syncStripSelectionScope();
     auto& recorder = engine.getRecorder();
     const int n = recorder.getNumTracks();
 
