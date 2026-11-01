@@ -126,7 +126,7 @@ add_library(ZynforgeCore STATIC
     Source/UI/NewSessionDialog.cpp
     Source/UI/WelcomeDialog.cpp
     Source/UI/PerfDashboard.cpp
-    Source/UI/SessionPropertiesDialog.cpp
+    Source/UI/SessionInfoDialog.cpp
     Source/UI/SetlistBar.cpp
     Source/UI/TempoBar.cpp
     Source/UI/ClickSettingsDialog.cpp

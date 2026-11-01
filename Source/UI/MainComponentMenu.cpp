@@ -325,7 +325,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         }
 
         menu.addSeparator();
-        menu.addItem (251, "Session Info & Notes...", engine.hasSessionFolder());
+        menu.addItem (251, "Session Info...", engine.hasSessionFolder());
     }
     else if (topLevelIndex == 4)  // Help
     {
@@ -480,7 +480,7 @@ void MainComponent::registerMenuCommands()
         showStatus (engine.isAutoArmOnInputDetect() ? "Auto-arm on input detect: ON"
                                                     : "Auto-arm on input detect: OFF");
     });
-    m.add (251, [this] { showSessionProperties(); });
+    m.add (251, [this] { showSessionInfo(); });
     m.add (255, [this]
     {
         SessionSettingsDialog::launch (engine,

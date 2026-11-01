@@ -13,7 +13,7 @@
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
-#include "SessionPropertiesDialog.h"
+#include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 #include "RecordPosition.h"
 

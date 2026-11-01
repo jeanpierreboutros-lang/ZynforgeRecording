@@ -1,6 +1,6 @@
 #include "../UI/MainComponent.h"
 #include "../UI/SessionMetadataWriter.h"
-#include "../UI/SessionPropertiesDialog.h"
+#include "../UI/SessionInfoDialog.h"
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -121,36 +121,32 @@ public:
             expectEquals (saved["playlists"][0].toString(), juce::String ("keep"));
         }
 
-        beginTest ("Session Properties preserves a newer full save completed while its dialog was open");
+        beginTest ("Session Info only reads, and a later save keeps what it does not own");
         {
             Folder f;
             MainComponent host; prepare (host, f);
-            expect (f.project().replaceWithText (R"({"name":"Original","playlists":["old"],"automation":{"revision":"old"}})"));
-            SessionPropertiesDialog::SaveCallback save;
-            SessionPropertiesDialog::Fields fields;
-            SessionPropertiesDialog::launchForTests = [&] (auto initial, auto callback)
-            { fields = std::move (initial); save = std::move (callback); };
-            const juce::ScopeGuard resetHook { [] { SessionPropertiesDialog::launchForTests = {}; } };
-            host.showSessionProperties();
-            expect ((bool) save, "actual properties callback was not captured");
+            expect (f.project().replaceWithText (R"({"name":"Original","artist":"Earlier Build","playlists":["old"],"automation":{"revision":"old"}})"));
+            SessionInfoDialog::Fields shown;
+            SessionInfoDialog::launchForTests = [&] (auto fields) { shown = std::move (fields); };
+            const juce::ScopeGuard resetHook { [] { SessionInfoDialog::launchForTests = {}; } };
+            const auto before = f.project().loadFileAsString();
+            host.showSessionInfo();
+            expectEquals (shown.name, juce::String ("Original"));
+            expect (pumpUntil ([&] { return host.pendingMetadataSaves == 0; }));
+            expectEquals (f.project().loadFileAsString(), before, "showing the session changed its project");
+
+            // An earlier build's fields and anything a newer one wrote stay put.
             SessionMetadataSnapshot newer;
             newer.directory = f.dir;
             newer.mixerOwner = f.dir;
             newer.projectPatchJson = R"({"playlists":["new saved edit"],"automation":{"revision":"new"},"unknownFutureField":17})";
             newer.backup = false;
-            // Same persistence path as an autosave; complete it before the deferred dialog callback.
             expect (writeSessionMetadata (newer).ok);
-            fields.artist = "Edited Artist";
-            host.lastSavedUndoUnits = -1; // unrelated edits are still dirty
-            if (save) save (fields);
-            expect (pumpUntil ([&] { return host.pendingMetadataSaves == 0; }));
             const auto saved = juce::JSON::parse (f.project());
-            expectEquals (saved["artist"].toString(), fields.artist);
+            expectEquals (saved["artist"].toString(), juce::String ("Earlier Build"));
             expectEquals (saved["playlists"][0].toString(), juce::String ("new saved edit"));
             expectEquals (saved["automation"]["revision"].toString(), juce::String ("new"));
             expectEquals ((int) saved["unknownFutureField"], 17);
-            expectEquals (host.lastSavedUndoUnits, -1,
-                          "descriptive-only Properties save marked unrelated edits clean");
             host.engine.clearAllStripOverrides();
         }
 

@@ -1036,6 +1036,8 @@ public:
             auto* saved = project.getDynamicObject();
             saved->setProperty ("interleaved", true);
             saved->setProperty ("ioPreset", "Last Used");
+            for (const auto* key : { "artist", "venue", "fohEngineer", "date", "notes" })
+                saved->setProperty (key, "Left by an earlier build");
             expect (f.project().replaceWithText (juce::JSON::toString (project)));
 
             MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
@@ -1045,6 +1047,8 @@ public:
             expectEquals (stripName (host, 2), juce::String ("Saved 3"));
             expectEquals ((int) host.cues.size(), 1, "the session's cues were not loaded");
             expect (host.saveSessionStateTo (f.dir));
+            expectEquals (juce::JSON::parse (f.project())["venue"].toString(), juce::String ("Left by an earlier build"),
+                          "a save dropped a field it does not own");
             host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
         }
 

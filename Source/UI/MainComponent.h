@@ -293,7 +293,7 @@ private:
     int        selectionLayoutGen { -1 };
     juce::File selectionSession;
     void syncStripSelectionScope();
-    void showSessionProperties();
+    void showSessionInfo();
     // Move the active session folder (its recorded audio included) to a new
     // location, then re-pin everything from there. Stopped-only; the copy
     // runs on a background thread so a cross-volume move can't freeze the UI.

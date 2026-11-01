@@ -1257,7 +1257,7 @@ namespace zynforge
             {
                 Window w;
                 w.recorder().setCaptureFormat (CaptureFormat::Flac16);
-                w.main.showSessionProperties();
+                w.main.showSessionInfo();
                 juce::StringArray texts;
                 if (auto* dialog = juce::ModalComponentManager::getInstance()->getModalComponent (0))
                 {

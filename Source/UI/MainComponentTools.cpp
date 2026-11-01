@@ -4,8 +4,7 @@
 // Includes: generateOrRefreshClickTrack (renders an offline click WAV
 // matching the live ClickEngine voicing), togglePunchMode + servicePunch
 // (loop-region punch-in/out), writeSoundcheckReport (JSON dump of
-// per-track levels and band energies), showSessionProperties (edit the
-// .zfproj metadata).
+// per-track levels and band energies), showSessionInfo (read-only summary).
 
 #include "MainComponent.h"
 #include "../Audio/ClickTrackRenderer.h"
@@ -15,7 +14,7 @@
 #include "../Audio/SongDetector.h"
 #include "../Audio/SpectrumBands.h"
 #include "QcReportDialog.h"
-#include "SessionPropertiesDialog.h"
+#include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -1092,7 +1091,7 @@ void MainComponent::writeSoundcheckReport()
                     : "Soundcheck report NOT saved -- check permissions / free space");
 }
 
-void MainComponent::showSessionProperties()
+void MainComponent::showSessionInfo()
 {
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
@@ -1138,14 +1137,8 @@ void MainComponent::showSessionProperties()
         return "--";
     };
 
-    SessionPropertiesDialog::Fields fields;
-    fields.name        = readString ("name", sessionDir.getFileName());
-    fields.artist      = readString ("artist");
-    fields.venue       = readString ("venue");
-    fields.fohEngineer = readString ("fohEngineer");
-    fields.date        = readString ("date",
-                                     juce::Time::getCurrentTime().formatted ("%Y-%m-%d"));
-    fields.notes       = readString ("notes");
+    SessionInfoDialog::Fields fields;
+    fields.name = readString ("name", sessionDir.getFileName());
     {
         const auto sr = obj ? (double) obj->getProperty ("sampleRate") : 0.0;
         fields.sampleRate = sr > 0.0
@@ -1162,34 +1155,7 @@ void MainComponent::showSessionProperties()
                                                                                                                           : "24-bit";
     }
 
-    juce::Component::SafePointer<MainComponent> self (this);
-    SessionPropertiesDialog::launch (fields,
-        [self, sessionDir] (const SessionPropertiesDialog::Fields& edited)
-        {
-            if (self == nullptr) return;
-            // Submit only fields owned by this dialog. The serialized worker
-            // merges them with the latest project after preceding autosaves.
-            juce::DynamicObject::Ptr merged (new juce::DynamicObject());
-            merged->setProperty ("zynforgeSession", true);
-            merged->setProperty ("name",            edited.name);
-            merged->setProperty ("artist",          edited.artist);
-            merged->setProperty ("venue",           edited.venue);
-            merged->setProperty ("fohEngineer",     edited.fohEngineer);
-            merged->setProperty ("date",            edited.date);
-            merged->setProperty ("notes",           edited.notes);
-            merged->setProperty ("updatedAt",
-                                 juce::Time::getCurrentTime().toISO8601 (true));
-
-            SessionMetadataSnapshot snapshot;
-            snapshot.directory = sessionDir;
-            snapshot.projectPatchJson = juce::JSON::toString (juce::var (merged.get()));
-            self->enqueueMetadataSnapshot (std::move (snapshot), {},
-                [self, sessionDir] (bool ok)
-                {
-                    if (self != nullptr && ok)
-                        self->showStatus ("Saved session properties -- " + sessionDir.getFileName());
-                });
-        });
+    SessionInfoDialog::launch (fields);
 }
 
 void MainComponent::promptStreamOutputs()
