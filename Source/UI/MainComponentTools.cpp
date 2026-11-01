@@ -625,7 +625,9 @@ void MainComponent::promptConsoleConnect()
 
             if (! self->consoleLink.connect (host))
             {
-                self->showStatus ("Console link failed -- check the IP and the network");
+                self->showStatus (zynforge::oscwire::normaliseSourceIp (host).isEmpty()
+                    ? "Enter the console's IP address as numbers, like 192.168.1.50"
+                    : "Console link failed -- check the IP and the network");
                 return;
             }
             if (auto* p = self->engine.getAppProps())

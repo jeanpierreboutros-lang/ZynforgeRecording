@@ -239,6 +239,7 @@ namespace zynforge
             testMirrorLayout();
             testOscFlood();
             testConsoleState();
+            testConsoleAddress();
         }
 
     private:
@@ -790,6 +791,29 @@ namespace zynforge
                 a.deleteRecursively();
                 b.deleteRecursively();
             }
+        }
+
+        void testConsoleAddress()
+        {
+            beginTest ("A console address is a number, never a name to look up");
+            {
+                ConsoleLink link;
+                for (const auto* bad : { "192.168.1.300", "x32.local", "mixer", "", "192.168.1", "0.0.0.0", "255.255.255.255" })
+                {
+                    expect (! link.connect (bad), bad);
+                    expect (! link.isConnected(), bad);
+                }
+
+                AudioEngine engine;
+                expect (! engine.getRemotes().requestConsoleChannelNames ("x32.local", 10023));
+
+                juce::DatagramSocket desk (false);
+                expect (desk.bindToPort (0, "127.0.0.1"));
+                expect (link.connect (" 127.000.000.001 ", desk.getBoundPort()));
+                expectEquals (link.getHost(), juce::String ("127.0.0.1"));
+                link.disconnect();
+            }
+
         }
 
     };

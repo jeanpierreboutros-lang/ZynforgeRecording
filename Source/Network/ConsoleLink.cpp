@@ -26,6 +26,13 @@ namespace zynforge
         disconnect();
         const int usePort = port > 0 ? port : profile.defaultPort;
 
+        // Only a numeric address. A name is looked up on every UDP send, on this
+        // thread, and a lookup that fails is not cached, so one typo stalled the
+        // message thread on each heartbeat for as long as the network's resolver
+        // took to give up, including during a take.
+        const auto address = oscwire::normaliseSourceIp (targetHost);
+        if (address.isEmpty()) return false;
+
         switch (profile.transport)
         {
             case ConsoleProfile::Transport::TextLineTcp:
@@ -40,13 +47,13 @@ namespace zynforge
         transport->onMessage = [this] (const ConsoleMessage& m) { logInbound (m); handleMessage (m); };
         transport->onUnhandledTraffic = [this] (const juce::String& from, const juce::String& what)
         { if (onTraffic) onTraffic ("link <- " + from + "  " + what); };
-        if (! transport->connect (targetHost, usePort))
+        if (! transport->connect (address, usePort))
         {
             transport.reset();
             return false;
         }
 
-        host      = targetHost;
+        host      = address;
         connectedPort = usePort;
         connected = true;
         patch     = Patch::Unknown;
@@ -68,7 +75,7 @@ namespace zynforge
         startHeartbeat();
 
         if (onStatus)
-            onStatus (profile.displayName + " link up: " + targetHost + ":"
+            onStatus (profile.displayName + " link up: " + address + ":"
                       + juce::String (usePort) + "  (" + transport->getName() + ")");
         return true;
     }

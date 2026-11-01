@@ -88,10 +88,13 @@ namespace zynforge
 
     bool RemoteControl::requestConsoleChannelNames (const juce::String& consoleHost, int port, int dialect)
     {
-        if (consoleHost.trim().isEmpty() || port <= 0 || port > 65535) return false;
+        // Numeric only: every send below would otherwise be a blocking name
+        // lookup on the message thread.
+        const auto address = oscwire::normaliseSourceIp (consoleHost);
+        if (address.isEmpty() || port <= 0 || port > 65535) return false;
         juce::OSCSender sender;
-        if (! sender.connect (consoleHost.trim(), port)) return false;
-        const auto target = consoleHost.trim() + ":" + juce::String (port);
+        if (! sender.connect (address, port)) return false;
+        const auto target = address + ":" + juce::String (port);
         const auto send = [&] (const juce::OSCMessage& m)
         {
             sender.send (m);

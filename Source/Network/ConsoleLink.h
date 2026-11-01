@@ -50,7 +50,8 @@ namespace zynforge
         void                  setProfile (ConsoleProfile::Kind);
         const ConsoleProfile& getProfile() const noexcept { return profile; }
 
-        // 0 port = use the active profile's default port.
+        // 0 port = use the active profile's default port. `host` is a numeric
+        // IPv4 address; anything else (a name, a typo) is refused.
         bool connect (const juce::String& host, int port = 0);
         void disconnect();
         bool isConnected() const noexcept { return connected; }
