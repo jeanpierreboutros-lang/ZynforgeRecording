@@ -1098,9 +1098,8 @@ namespace zynforge
                 expect (player.isLoaded());
 
                 const juce::int64 in = 100 * kBlock, outPoint = 200 * kBlock;
-                player.setLoopRegion (in, outPoint);
+                player.selectRange (in, outPoint);
                 engine.setPunchModeOn (true);
-                engine.setTrackPunchArmed (0, true);
                 player.setPositionSamples (90 * kBlock);
                 engine.startPlayback();
                 std::fill (samples.begin(), samples.end(), 0.75f);
@@ -1150,9 +1149,8 @@ namespace zynforge
                 for (int b = 0; b < 400; ++b) { rec.processBlock (inputs, 1, kBlock); rec.drainPendingForTests(); }
                 engine.stopRecording();
 
-                player.setLoopRegion (100 * kBlock, 200 * kBlock);
+                player.selectRange (100 * kBlock, 200 * kBlock);
                 engine.setPunchModeOn (true);
-                engine.setTrackPunchArmed (0, true);
                 player.setPositionSamples (90 * kBlock);
                 engine.startPlayback();
                 expect (player.isPlaying());
