@@ -416,8 +416,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 
     // ── Single-letter edit-tool selection (EDIT view only). Picks the tool
     // on the Pro Tools-style EditToolsBar so the engineer never has to reach
-    // for the mouse:  S Smart · T Trim · R Range · G Grabber/Move · F Fade ·
-    // B Scrub. Gated on the EDIT view so MIX-view typing isn't hijacked, and
+    // for the mouse:  S Smart · T Trim · R Range · G Grabber/Move · F Fade.
+    // Gated on the EDIT view so MIX-view typing isn't hijacked, and
     // on 'no modifier' so it never shadows the Cmd+ shortcuts below; the
     // text-editor focus guard earlier in this method keeps renames safe.
     if (currentView == View::Edit && editPage != nullptr
@@ -433,7 +433,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
                 case 'r': tb->setTool (Tool::Selector); return true;
                 case 'g': tb->setTool (Tool::Grabber);  return true;
                 case 'f': tb->setTool (Tool::Fade);     return true;
-                case 'b': tb->setTool (Tool::Scrubber); return true;
                 default:  break;   // fall through to the editing commands
             }
         }
@@ -465,8 +464,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         if (kc == 'V' || kc == 'v') { editClipboardPaste();     return true; }
         if (kc == 'H' || kc == 'h') { editHealSeparation();     return true; }   // Pro Tools Heal
         // Pro Tools 'Separate Clip' (Cmd+E): separate at the selected range
-        // if one is set, else split at the playhead. Relocated off the bare
-        // 's' / 'b' keys, which now pick the Selector / Scrubber tools.
+        // if one is set, else split at the playhead.
         if (kc == 'E' || kc == 'e')
         {
             if (engine.getPlayer().hasLoopRegion()) editSeparateAtSelection();

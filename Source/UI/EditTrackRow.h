@@ -156,7 +156,7 @@ namespace zynforge
         // Clip-edit drag tracking. When the engineer grabs a clip's
         // left edge, right edge, body, a fade handle or its gain line,
         // draggingClipIdx pins which clip is moving and draggingClipMode
-        // picks the edit (Scrub / SelectRange are tool drags on the lane).
+        // picks the edit (SelectRange is a tool drag on the lane).
         enum class ClipDrag
         {
             TrimLeft,     // slip-trim the left edge
@@ -164,7 +164,6 @@ namespace zynforge
             Move,         // slide on the timeline
             FadeIn,       // drag the fade-in apex
             FadeOut,      // drag the fade-out apex
-            Scrub,        // Scrubber tool
             SelectRange,  // Selector tool range
             ClipGain      // clip-gain line (relative ride)
         };
@@ -2471,7 +2470,7 @@ namespace zynforge
                 return;
             }
 
-            // Pro Tools-style edit tool -- Scrubber, Selector, and Fade
+            // Pro Tools-style edit tool -- Selector and Fade
             // intercept the left-click before the normal clip-drag
             // hit-test. Trim / Grabber bias the clip-body branch below.
             // None (nothing selected) behaves identically to Smart.
@@ -2480,8 +2479,7 @@ namespace zynforge
                                       : EditToolsBar::Tool::None;
 
             if (laneMode == LaneMode::Waveform && inWavePane (e.x)
-                && (activeTool == EditToolsBar::Tool::Scrubber
-                 || activeTool == EditToolsBar::Tool::Selector
+                && (activeTool == EditToolsBar::Tool::Selector
                  || activeTool == EditToolsBar::Tool::Fade))
             {
                 auto& player = engine.getPlayer();
@@ -2512,40 +2510,32 @@ namespace zynforge
                         return;
                     }
 
-                    // Scrubber + Selector: park the playhead at the
-                    // click sample. Selector additionally seeds a loop
-                    // region whose end follows mouseDrag.
+                    // Selector: park the playhead at the click sample and
+                    // seed a loop region whose end follows mouseDrag.
                     const auto sx = xToSample (e.x);
                     player.setPositionSamples (sx);
-                    if (activeTool == EditToolsBar::Tool::Selector)
+                    player.clearLoopRegion();
+                    // Tie the range to THIS track: select it (Shift to add
+                    // more tracks). Option/Alt-drag selects the range across
+                    // ALL tracks. The range shading then highlights the
+                    // selected track(s) -- or all of them -- and range edits
+                    // (Delete / Crop) apply to the same set.
+                    if (auto* pg = findParentComponentOfClass<EditPage>())
                     {
-                        player.clearLoopRegion();
-                        // Tie the range to THIS track: select it (Shift to add
-                        // more tracks). Option/Alt-drag selects the range across
-                        // ALL tracks. The range shading then highlights the
-                        // selected track(s) -- or all of them -- and range edits
-                        // (Delete / Crop) apply to the same set.
-                        if (auto* pg = findParentComponentOfClass<EditPage>())
+                        // The range is the target now. Delete and Cmd+X take a
+                        // selected clip first, so an old one would answer for it.
+                        pg->clearSelectedClip();
+                        if (e.mods.isAltDown())
                         {
-                            // The range is the target now. Delete and Cmd+X take a
-                            // selected clip first, so an old one would answer for it.
-                            pg->clearSelectedClip();
-                            if (e.mods.isAltDown())
-                            {
-                                if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();
-                            }
-                            else if (pg->onRowSelect)
-                                pg->onRowSelect (index, e.mods.isShiftDown());
+                            if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();
                         }
-                        dragStartX          = e.x;
-                        lastDragSamples     = sx;     // store anchor sample
-                        draggingClipIdx     = -1;
-                        draggingClipMode = ClipDrag::SelectRange;
+                        else if (pg->onRowSelect)
+                            pg->onRowSelect (index, e.mods.isShiftDown());
                     }
-                    else
-                    {
-                        draggingClipMode = ClipDrag::Scrub;
-                    }
+                    dragStartX          = e.x;
+                    lastDragSamples     = sx;     // store anchor sample
+                    draggingClipIdx     = -1;
+                    draggingClipMode = ClipDrag::SelectRange;
                     repaint();
                     return;
                 }
@@ -3008,10 +2998,9 @@ namespace zynforge
                 return;
             }
 
-            // Scrubber / Selector drag -- playhead chases the mouse;
-            // Selector additionally seeds a loop region anchored at the
-            // mouseDown position.
-            if (draggingClipMode == ClipDrag::Scrub || draggingClipMode == ClipDrag::SelectRange)
+            // Selector drag -- a loop region anchored at the mouseDown
+            // position follows the mouse.
+            if (draggingClipMode == ClipDrag::SelectRange)
             {
                 auto& player = engine.getPlayer();
                 const juce::int64 totalSamples = player.isLoaded()
@@ -3022,16 +3011,9 @@ namespace zynforge
                     const double prop = juce::jlimit (0.0, 1.0,
                         (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
                     const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
-                    if (draggingClipMode == ClipDrag::Scrub)
-                    {
-                        player.setPositionSamples (sx);
-                    }
-                    else
-                    {
-                        const juce::int64 a = juce::jmin (lastDragSamples, sx);
-                        const juce::int64 b = juce::jmax (lastDragSamples, sx);
-                        if (b > a) player.selectRange (a, b);
-                    }
+                    const juce::int64 a = juce::jmin (lastDragSamples, sx);
+                    const juce::int64 b = juce::jmax (lastDragSamples, sx);
+                    if (b > a) player.selectRange (a, b);
                     repaint();
                 }
                 return;

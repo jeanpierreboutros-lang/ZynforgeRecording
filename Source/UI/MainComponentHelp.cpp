@@ -297,7 +297,7 @@ void MainComponent::showUserGuide()
         "colour, stereo link, stream send, VCA assign, output mute.\n\n"
         "EDIT VIEW\n"
         "  Waveform of each Track_NN.wav. Edit tools palette top-right: "
-        "Smart / Selector / Trim / Grabber / Fade / Scrubber. "
+        "Smart / Selector / Trim / Grabber / Fade. "
         "Right-click a row for size; right-click a clip for "
         "mute / lock / duplicate / delete / gain / fades. "
         "Wheel scrolls tracks; Shift+wheel or a horizontal trackpad gesture "

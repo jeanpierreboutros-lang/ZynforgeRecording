@@ -43,7 +43,7 @@ namespace zynforge
         void setAutomationToolbar (AutomationToolbar* t);
 
         // Pro Tools-style edit-mode toolbar (Smart / Selector / Trim /
-        // Grabber / Fade / Scrubber). EditPage owns it and lays it out
+        // Grabber / Fade). EditPage owns it and lays it out
         // along the top edge; TrackRow consults it on every left-click
         // to bias the hit-test.
         EditToolsBar* getEditToolsBar() noexcept { return toolsBar.get(); }

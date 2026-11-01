@@ -17,13 +17,12 @@ namespace zynforge
     //  - Trim      → body clicks trim from the nearer edge
     //  - Grabber   → body clicks always move
     //  - Fade      → body clicks open the fade preset menu
-    //  - Scrubber  → drag sets the playhead per-pixel
     //
     // Header-only on purpose -- no extra .cpp in CMakeLists.
     class EditToolsBar final : public juce::Component
     {
     public:
-        enum class Tool : int { None = -1, Smart = 0, Selector, Trim, Grabber, Fade, Scrubber };
+        enum class Tool : int { None = -1, Smart = 0, Selector, Trim, Grabber, Fade };
 
         EditToolsBar()
         {
@@ -31,7 +30,7 @@ namespace zynforge
             // what it is without hovering) and a plain-language tooltip
             // (what it actually does on a click/drag in the lane).
             struct Item { Tool t; const char* name; const char* caption; const char* tip; };
-            const std::array<Item, 6> items {{
+            const std::array<Item, 5> items {{
                 { Tool::Smart,    "Smart",    "Smart",
                   "Smart tool (S) -- the all-in-one. Near a clip edge it trims; the clip's "
                   "top edge grabs a fade handle; the body moves the clip. Pick this when unsure." },
@@ -49,10 +48,7 @@ namespace zynforge
                   "Alt+Left/Right or numpad +/- nudge by the N-step." },
                 { Tool::Fade,     "Fade",     "Fade",
                   "Fade (F) -- click a clip to open its fade menu (fade-in / fade-out / crossfade "
-                  "shapes and lengths)." },
-                { Tool::Scrubber, "Scrubber", "Scrub",
-                  "Scrub (B) -- drag across the waveform to move the playhead sample-by-sample and "
-                  "audition exactly where an edit should land." }
+                  "shapes and lengths)." }
             }};
 
             for (auto& it : items)
@@ -247,20 +243,6 @@ namespace zynforge
                         p.lineTo            (cx + 6, cy + 5);
                         p.closeSubPath();
                         g.fillPath (p);
-                        break;
-
-                    case Tool::Scrubber:
-                        // Speaker + diagonal motion lines
-                        p.startNewSubPath (cx - 5, cy - 3);
-                        p.lineTo            (cx - 2, cy - 3);
-                        p.lineTo            (cx + 1, cy - 6);
-                        p.lineTo            (cx + 1, cy + 6);
-                        p.lineTo            (cx - 2, cy + 3);
-                        p.lineTo            (cx - 5, cy + 3);
-                        p.closeSubPath();
-                        g.fillPath (p);
-                        // sound arcs
-                        g.drawEllipse (cx + 2, cy - 4, 6, 8, 1.2f);
                         break;
                 }
             }

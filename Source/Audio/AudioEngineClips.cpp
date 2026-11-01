@@ -64,7 +64,7 @@ namespace zynforge
     void AudioEngine::seedDefaultClips (bool preserveEdits, bool appendRecordedAudio)
     {
         // Give every track a single full-range clip so the EDIT tools
-        // (Trim / Grabber / Fade / Selector / Scrubber) have something
+        // (Trim / Grabber / Fade / Selector) have something
         // to grab. Without an active clip list, TrackRow's clip-edit
         // hit-test short-circuits and the tools feel dead.
         //
