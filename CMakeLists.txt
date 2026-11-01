@@ -115,7 +115,6 @@ add_library(ZynforgeCore STATIC
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp
-    Source/UI/TimelineStrip.cpp
     Source/UI/StripColourPicker.cpp
     Source/UI/ExportDialog.cpp
     Source/UI/ExportSongsDialog.cpp

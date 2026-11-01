@@ -32,7 +32,6 @@
 #include "../Audio/SettingsFile.h"
 #include "../Network/CloudUpload.h"
 #include "TempoBar.h"
-#include "TimelineStrip.h"
 #include "Toast.h"
 #include "PlaceholderView.h"
 #include "VcaPanel.h"
@@ -791,7 +790,6 @@ private:
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);
-    std::unique_ptr<zynforge::TimelineStrip> timeline;
     std::unique_ptr<zynforge::TransportBar>  transportBar;
 
     juce::Viewport  stripsViewport;

@@ -582,13 +582,6 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (tempoBar);
 
-
-    // TimelineStrip exists for marker bookkeeping but is no longer
-    // painted in either MIX or EDIT -- the empty "Load a session..."
-    // band added visual noise without working state. Keep the
-    // instance for marker APIs that reference it; just don't show it.
-    timeline = std::make_unique<zynforge::TimelineStrip> (engine);
-
     transportBar = std::make_unique<zynforge::TransportBar> (engine);
     transportBar->onRequestPlay   = [this] { onPlayClicked();   };
     transportBar->onRequestStop   = [this] { onStopClicked();   };

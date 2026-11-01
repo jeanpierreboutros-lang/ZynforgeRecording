@@ -251,9 +251,6 @@ void MainComponent::resized()
     bar.removeFromRight (brand::space::sm);
     setlistBar.setBounds (bar);
 
-    if (timeline != nullptr)
-        timeline->setBounds ({});
-
     // Per-preset strip sizing. floorW = minimum width (so the strip stays
     // readable); ceilW = MAXIMUM width so strips don't stretch wastefully wide
     // on a big window -- M now stays compact (≤140) so a normal window fits
