@@ -464,6 +464,22 @@ report "deployment target is accepted by the supported Xcode toolchain" \
        "Xcode 27 rejects macOS 11, while a target assigned after project() silently links a clean build for the host OS" \
        "$HITS"
 
+# The recorder's strips are not always a session's mixer, and a write of an
+# unloaded mixer replaced a whole show's session_mix.json with zero strips. So
+# only SessionMixFile.h names that file for writing. The listed files read it,
+# copy it into backups or journal it; they never write the in-memory mixer.
+HITS=$(grep -rnE '"session_mix\.json"' $SCOPE 2>/dev/null \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
+    | grep -vE '^Source/Audio/(SessionMixFile|SessionBackup|ShowHandoff|TrackFileTransaction)\.h:' \
+    | grep -vE '^Source/UI/(MainComponentCues|MainComponentHelp)\.cpp:')
+grep -q 'sessionmix::refusal' Source/UI/SessionMetadataWriter.h \
+    || HITS+=$'\nSource/UI/SessionMetadataWriter.h: the metadata writer no longer applies the mixer guard'
+grep -q 'sessionmix::write' Source/Audio/AudioEngine.cpp \
+    || HITS+=$'\nSource/Audio/AudioEngine.cpp: the engine no longer writes the mix through the mixer guard'
+report "session_mix.json is written only through the mixer guard" \
+       "use sessionmix::write (Source/Audio/SessionMixFile.h); it refuses a mixer that is not this session's" \
+       "$HITS"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     green "invariants audit: CLEAN"

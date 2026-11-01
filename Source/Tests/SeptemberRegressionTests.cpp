@@ -116,7 +116,7 @@ public:
         beginTest ("Deleted arrangements remain silent in bounce and crop");
         {
             Directory dir; expect (write (dir.track (1), 0.3f)); expect (write (dir.track (2), 0.2f));
-            AudioEngine e; e.setActiveSessionDir (dir.file); e.loadSession (dir.file); e.setStripCount (2);
+            AudioEngine e; e.setActiveSessionDir (dir.file); e.claimMixerFor (dir.file); e.loadSession (dir.file); e.setStripCount (2);
             expect (e.deleteClip (0, 0));
             float peak = 0;
             expect (e.forEachArrangementWindow (0, 0, 4800, [&] (const float* p, juce::int64, int n)
@@ -128,7 +128,7 @@ public:
         beginTest ("Pasted media on an unrecorded track extends playback and survives JSON");
         {
             Directory dir; expect (write (dir.track (1), 0.3f));
-            AudioEngine e; e.setActiveSessionDir (dir.file); e.loadSession (dir.file); e.setStripCount (3);
+            AudioEngine e; e.setActiveSessionDir (dir.file); e.claimMixerFor (dir.file); e.loadSession (dir.file); e.setStripCount (3);
             expect (e.pasteClip (2, 9600, 0, 4800, 0, 0, 0, "external", dir.track (1), 0, 1) >= 0);
             expectEquals (e.getPlayer().getNumTracks(), 3);
             expect (e.getPlayer().getTotalLengthSamples() >= 14400);
@@ -144,7 +144,7 @@ public:
         beginTest ("Missing explicit media never falls back to own audio");
         {
             Directory dir; expect (write (dir.track (1), 0.3f));
-            AudioEngine e; e.setActiveSessionDir (dir.file); e.loadSession (dir.file); e.setStripCount (1);
+            AudioEngine e; e.setActiveSessionDir (dir.file); e.claimMixerFor (dir.file); e.loadSession (dir.file); e.setStripCount (1);
             e.deleteClip (0, 0); e.pasteClip (0, 0, 0, 1000, 0, 0, 0, "missing", dir.file.getChildFile ("missing.wav"));
             float peak = 0;
             expect (! e.forEachArrangementWindow (0, 0, 1000, [&] (const float* p, juce::int64, int n)
@@ -155,7 +155,7 @@ public:
         beginTest ("Locked clips cannot split or ripple; deleting earlier take retains active identity");
         {
             Directory dir; expect (write (dir.track (1), 0.3f));
-            AudioEngine e; e.setActiveSessionDir (dir.file); e.loadSession (dir.file); e.setStripCount (1);
+            AudioEngine e; e.setActiveSessionDir (dir.file); e.claimMixerFor (dir.file); e.loadSession (dir.file); e.setStripCount (1);
             e.setClipLocked (0, 0, true);
             expect (! splitClipAt (e.clipsFor (0), 0, 100));
             e.rippleDeleteRange (0, 100, 200);
@@ -174,6 +174,7 @@ public:
             Directory dir; AudioEngine e; e.setStripCount (2);
             const auto id0 = e.getRecorder().getTrack (0).stripId;
             const auto id1 = e.getRecorder().getTrack (1).stripId;
+            e.claimMixerFor (dir.file);
             expect (e.saveSessionMixTo (dir.file));
             e.getRecorder().getTrack (0).stripId = "another-session-0";
             e.getRecorder().getTrack (1).stripId = "another-session-1";
@@ -187,7 +188,7 @@ public:
         beginTest ("Reorder and deletion preserve audio, UUID, automation and persisted gains");
         {
             Directory dir; expect (write (dir.track (1), 0.1f)); expect (write (dir.track (2), 0.2f)); expect (write (dir.track (3), 0.3f));
-            AudioEngine e; e.setActiveSessionDir (dir.file); e.loadSession (dir.file); e.setStripCount (3);
+            AudioEngine e; e.setActiveSessionDir (dir.file); e.claimMixerFor (dir.file); e.loadSession (dir.file); e.setStripCount (3);
             e.setTrackName (0, "A"); e.setTrackName (1, "B"); e.setTrackName (2, "C"); e.setTrackGainDb (1, -7);
             const auto id = e.getRecorder().getTrack (1).stripId;
             e.addAutomationPoint (1, AudioEngine::AutomationParam::Volume, 100, -12);
@@ -204,7 +205,7 @@ public:
         beginTest ("Moving stereo past mono keeps both halves adjacent to their native file");
         {
             Directory dir; expect (write (dir.track (1), 0.1f, 4800, 2)); expect (write (dir.track (3), 0.3f));
-            AudioEngine e; e.setActiveSessionDir (dir.file); e.loadSession (dir.file); e.setStripCount (3);
+            AudioEngine e; e.setActiveSessionDir (dir.file); e.claimMixerFor (dir.file); e.loadSession (dir.file); e.setStripCount (3);
             e.setTrackStereo (0, true);
             expect (e.reorderTracks ({ 2, 0, 1 }));
             expect (! e.getRecorder().getTrack (0).isStereo.load()); expect (e.getRecorder().getTrack (1).isStereo.load());

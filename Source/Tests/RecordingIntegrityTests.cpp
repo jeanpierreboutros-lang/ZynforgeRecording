@@ -264,6 +264,7 @@ namespace zynforge
                 expect (eng.loadSession (dir) > 0, "session failed to load");
                 eng.setStripCount (numCh);       // size the recorder (openSessionFolder does this in-app)
                 eng.setActiveSessionDir (dir);   // swapTracks needs the dir to rename + reload
+                eng.claimMixerFor (dir);
 
                 // Split track 0 -> two clips; track 1 stays the default single clip.
                 eng.getPlayer().setPositionSamples (total / 2);
@@ -301,6 +302,7 @@ namespace zynforge
                 expect (eng.loadSession (dir) > 0, "session load failed");
                 eng.setStripCount (numCh);
                 eng.setActiveSessionDir (dir);
+                eng.claimMixerFor (dir);
 
                 expect (eng.swapTracks (0, 1), "swapTracks failed");
 

@@ -1168,7 +1168,9 @@ void MainComponent::rebuildStrips()
             condemnAllStrips();
             const bool ok = engine.reorderTracks (order);
             lastTrackCount = -1;
-            showStatus (ok ? "Strip removed; audio retained in Removed Tracks" : "Could not remove strip safely");
+            showStatus (ok ? "Strip removed; audio retained in Removed Tracks"
+                        : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
+                        : "Could not remove strip safely");
         };
         auto addCb        = [this] { engine.addOneStrip(); };
         auto linkStereoCb = [this, i]

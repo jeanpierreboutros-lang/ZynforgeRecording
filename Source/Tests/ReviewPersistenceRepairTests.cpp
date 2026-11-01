@@ -62,6 +62,7 @@ public:
         host.engine.setStripCount (tracks);
         host.engine.prepareForTests (48000, 256);
         host.engine.setActiveSessionDir (folder.dir);
+        host.engine.claimMixerFor (folder.dir);
         host.engine.loadSession (folder.dir);
         for (int i = 0; i < tracks; ++i)
         {
@@ -120,8 +121,9 @@ public:
             expect (mix.replaceWithText (R"({"revision":"original"})"));
             SessionMetadataSnapshot snapshot;
             snapshot.directory = f.dir;
+            snapshot.mixerOwner = f.dir;
             snapshot.projectPatchJson = R"({"playlists":["new"]})";
-            snapshot.mixJson = R"({"revision":"new"})";
+            snapshot.mixJson = R"({"trackCount":1,"revision":"new"})";
             snapshot.backup = false;
             expect (! writeSessionMetadata (snapshot).ok);
             expectEquals (mix.loadFileAsString(), juce::String (R"({"revision":"original"})"));
@@ -132,6 +134,7 @@ public:
             Folder f;
             SessionMetadataSnapshot snapshot;
             snapshot.directory = f.dir;
+            snapshot.mixerOwner = f.dir;
             snapshot.projectPatchJson = R"({"playlists":["keep"],"artist":"Artist"})";
             snapshot.backup = false;
             expect (writeSessionMetadata (snapshot).ok);
@@ -156,6 +159,7 @@ public:
             expect ((bool) save, "actual properties callback was not captured");
             SessionMetadataSnapshot newer;
             newer.directory = f.dir;
+            newer.mixerOwner = f.dir;
             newer.projectPatchJson = R"({"playlists":["new saved edit"],"automation":{"revision":"new"},"unknownFutureField":17})";
             newer.backup = false;
             // Same persistence path as an autosave; complete it before the deferred dialog callback.

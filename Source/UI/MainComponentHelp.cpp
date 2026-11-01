@@ -385,6 +385,10 @@ void MainComponent::showStartupWelcome()
             if (openSessionFolder (last) > 0)
                 return;   // reopened -- no welcome dialog
         }
+        // A pinned folder with nothing to open stays unloaded for good, and
+        // would refuse every save of whatever is built here. Release it.
+        else if (last.isDirectory() && ! engine.isRecording() && ! engine.mixerBelongsTo (last))
+            engine.setActiveSessionDir ({});
     }
 
     // Pro Tools-style two-pane welcome: side rail with New / Open,

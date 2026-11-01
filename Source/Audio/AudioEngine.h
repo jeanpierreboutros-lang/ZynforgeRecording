@@ -504,6 +504,15 @@ namespace zynforge
         // -- which left Save / Save As greyed out right after creating an
         // empty session. Cleared by passing an empty / non-directory file.
         void setActiveSessionDir (const juce::File& dir);
+        // Which session the recorder's strips are the mixer of. Pinning a
+        // session says nothing about this: the launch pin and a reattached
+        // daemon take pin one before its mixer exists in memory. Claim only
+        // after the mixer was loaded from `dir` or created for it. Every save
+        // of mixer state is refused anywhere else.
+        void claimMixerFor (const juce::File& dir) { mixerSession = dir; }
+        juce::File getMixerSession() const { return mixerSession; }
+        bool mixerBelongsTo (const juce::File& dir) const
+        { return dir != juce::File() && mixerSession == dir; }
 
         // Edit cursor (Pro Tools-style insertion point). Distinct from
         // the playhead: a single click in the EDIT wave pane sets it,
@@ -1170,6 +1179,7 @@ namespace zynforge
         SessionPlayer            player;
         MarkersManager           markers;
         juce::File               activeSession;
+        juce::File               mixerSession;
         std::atomic<bool>        sessionTransitionActive { false };
         std::atomic<bool>        externalRecording { false };
         std::mutex               externalStatusLock;

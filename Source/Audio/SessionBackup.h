@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "SessionMixFile.h"
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -112,8 +113,16 @@ namespace zynforge::sessionbackup
         entries.push_back ({ snap, stamp, sequence });
         const auto removeCount = entries.size() > (size_t) keepNewest
             ? entries.size() - (size_t) keepNewest : 0;
+        // An emptied mix can fill the whole window. The last copy that still
+        // has strips is then the only way back, so retention keeps it too.
+        const auto hasStrips = [] (const Entry& e) { return sessionmix::stripCountIn (e.file) > 0; };
+        auto keepPopulated = entries.size();
+        if (std::none_of (entries.begin() + (std::ptrdiff_t) removeCount, entries.end(), hasStrips))
+            for (auto i = removeCount; i-- > 0 && keepPopulated == entries.size();)
+                if (hasStrips (entries[i])) keepPopulated = i;
         for (size_t i = 0; i < removeCount; ++i)
-            if (! entries[i].file.isSymbolicLink()) entries[i].file.deleteRecursively (false);
+            if (i != keepPopulated && ! entries[i].file.isSymbolicLink())
+                entries[i].file.deleteRecursively (false);
         return snap;
     }
 }

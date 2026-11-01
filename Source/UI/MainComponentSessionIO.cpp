@@ -118,6 +118,10 @@ int MainComponent::openSessionFolder (const juce::File& dir)
 {
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before switching sessions"); return -1; }
+    // Every step below no-ops under finalization, so the old mixer would be
+    // left in place and claimed as this session's.
+    if (engine.isCaptureFinalizing())
+    { showStatus ("Wait for recording finalization before switching sessions"); return -1; }
     if (! dir.isDirectory()) return 0;
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
@@ -138,14 +142,36 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     engine.clearSessionState();
     engine.setActiveSessionDir (dir);        // pin so Save / Save As / Export stay lit
     const int n = engine.loadSession (dir);  // audio -> player + clips
+    if (n < 0)
+    {
+        showStatus ("Session could not be loaded; its files were left untouched");
+        return -1;
+    }
     const bool loadedMix = engine.loadSessionMixFrom (dir);
     // Recovery fallback: a session recorded but never explicitly Saved has no
     // session_mix.json, so loadSessionMixFrom can't size the mixer and the app
     // would show "No channels yet" with every Edit / Track / Export menu grey.
     // Size one strip per loaded audio track so the channels (and the menus)
-    // come back.
-    if (! loadedMix)
+    // come back. A mix saved with no strips over a session that has audio is
+    // the same case, not an authoritative empty mixer.
+    if (! loadedMix || (engine.getRecorder().getNumTracks() == 0 && n > 0))
         engine.setStripCount (n);
+    restoreSessionDocuments (dir);
+    engine.claimMixerFor (dir);
+    if (n > 0)
+    {
+        statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
+        warnIfSampleRateMismatch();
+    }
+    if (interruptedPunches > 0)
+        toast.show ("Recovered " + juce::String (interruptedPunches)
+                    + " interrupted punch file(s); partial audio is in Session File Backups",
+                    Toast::Kind::Warning);
+    return n;
+}
+
+void MainComponent::restoreSessionDocuments (const juce::File& dir)
+{
     // Playlists/automation must be restored after loadSession seeds its default
     // clips; loading them first caused the seed to erase the restored edits.
     loadSetlistFromActiveSession();
@@ -190,16 +216,49 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     lastTrackCount = -1;                      // force a strip rebuild on the next tick
     undoManager.clearUndoHistory();           // a fresh session starts with a clean undo stack
     rebaselineMixerUndo();                    // don't record the load itself as a mixer undo step
-    if (n > 0)
+}
+
+// A daemon take outlives the GUI that started it, so a relaunch finds the
+// session pinned by the daemon's status and no mixer in memory. This is the
+// session open without its media: the audio is still being written, its files
+// and punch sidecars belong to the daemon, and STOP loads them. Runs before
+// the engine reports a take, because strips cannot be resized under one.
+void MainComponent::adoptDaemonTakeSession (const zynforge::EngineStatus& status)
+{
+    const juce::File dir (status.sessionPath);
+    if (status.sessionPath.isEmpty() || engine.isRecording() || engine.mixerBelongsTo (dir))
+        return;
+
+    // A session opened before the daemon was found still holds unsaved work.
+    if (const auto held = engine.getMixerSession(); held.isDirectory())
+        saveSessionStateTo (held);
+
+    condemnAllStrips();
+    engine.stopPlayback();
+    engine.clearSessionState();
+    engine.setActiveSessionDir (dir);
+    if (! engine.loadSessionMixFrom (dir) || engine.getRecorder().getNumTracks() == 0)
     {
-        statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
-        warnIfSampleRateMismatch();
+        // Nothing saved to load (a take started by an older build): the daemon
+        // still knows the channels it is recording.
+        const int strips = (int) status.tracks.size();
+        engine.setStripCount (strips);
+        for (int i = 0; i < juce::jmin (strips, engine.getRecorder().getNumTracks()); ++i)
+        {
+            const auto& track = status.tracks[(size_t) i];
+            if (track.name.isNotEmpty()) engine.setTrackName (i, track.name);
+            engine.setTrackStereo (i, track.stereoLeft);
+            engine.setTrackArmed (i, track.armed);
+        }
     }
-    if (interruptedPunches > 0)
-        toast.show ("Recovered " + juce::String (interruptedPunches)
-                    + " interrupted punch file(s); partial audio is in Session File Backups",
-                    Toast::Kind::Warning);
-    return n;
+    restoreSessionDocuments (dir);
+    if (status.sampleRate > 0.0)
+    {
+        pendingSampleRate = status.sampleRate;
+        engine.setSessionSampleRate (pendingSampleRate);
+    }
+    engine.getMarkers().setContext (dir, pendingSampleRate);
+    engine.claimMixerFor (dir);
 }
 
 bool MainComponent::openSessionDocument (const juce::File& document, bool confirmBeforeReplacing)
@@ -238,7 +297,8 @@ void MainComponent::confirmSessionReplacement (std::function<void()> continuatio
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before replacing the session"); return; }
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) { continuation(); return; }
+    // Pinned but never loaded means nothing in memory belongs to it.
+    if (! dir.isDirectory() || ! engine.mixerBelongsTo (dir)) { continuation(); return; }
 
     auto* aw = new juce::AlertWindow (
         "Replace current session?",
@@ -381,6 +441,7 @@ zynforge::SessionMetadataSnapshot MainComponent::captureMetadataSnapshot (const 
     snapshot.directory = dir;
     snapshot.settingsJson = juce::JSON::toString (juce::var (root.get()), true);
     snapshot.mixJson = engine.captureSessionMixJson();
+    snapshot.mixerOwner = engine.getMixerSession();
     auto patch = juce::JSON::parse (captureProjectPatchJson());
     patch.getDynamicObject()->setProperty ("ui", captureUILayoutJson());
     snapshot.projectPatchJson = juce::JSON::toString (patch);
@@ -392,8 +453,13 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
 {
     // Transactional callers must defer rather than wait on an interactive save
     // on the message thread. The immutable writer is shared by both paths.
-    if (pendingMetadataSaves != 0) return false;
+    if (pendingMetadataSaves != 0)
+    {
+        lastMetadataSaveError = "another save is still finishing";
+        return false;
+    }
     const auto result = zynforge::writeSessionMetadata (captureMetadataSnapshot (dir));
+    lastMetadataSaveError = result.error;
     if (result.ok) lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
     return result.ok;
 }
@@ -455,6 +521,7 @@ void MainComponent::enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot s
                 self->engine.setSessionTransitionActive (false);
             }
             if (result.superseded) return; // retired layout request; replacement still owns persistence
+            self->lastMetadataSaveError = result.error;
             const bool sameSession = self->engine.getActiveSessionDir() == dir;
             bool snapshotStillCurrent = true;
             if (sameSession && result.ok && fullSave)
@@ -495,7 +562,7 @@ void MainComponent::requestUILayoutSave()
 {
     if (restoringUILayout || engine.isRecording()) return;
     const auto dir = engine.getActiveSessionDir();
-    if (dir == juce::File()) return;
+    if (! engine.mixerBelongsTo (dir)) return; // never replace a layout that was not loaded
     // A session job (export, bounce, import, Save As...) owns the I/O. Layout
     // is cosmetic: save it when the job ends instead of failing loudly.
     if (sessionIoBusy.load() && pendingMetadataSaves == 0 && ! captureMetadataPending)
@@ -539,6 +606,14 @@ void MainComponent::serviceAutosave()
     // undo manager (recording, routing, cue recall, imports).  Saving on each
     // configured interval is the only reliable way not to miss those changes.
     lastAutosaveMs = now; // coalesce subsequent ticks while the worker owns I/O
+    // Pinned but not opened: the launch pin under a dialog, or a failed reopen.
+    // A retry can't help, so this waits for the next interval and says why.
+    if (! engine.mixerBelongsTo (dir))
+    {
+        showStatus ("Auto-save skipped -- " + dir.getFileName()
+                    + " is not loaded; open it to save it");
+        return;
+    }
     juce::Component::SafePointer<MainComponent> self (this);
     enqueueMetadataSave (dir, "Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
         [self, intervalMs = (juce::uint32) mins * 60000u] (bool ok)
@@ -1045,6 +1120,14 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     // session-I/O worker below.
     const auto originalSession = engine.getActiveSessionDir();
     const bool newSession = ! originalSession.isDirectory();
+    // The new strips would land in a session whose own mixer was never loaded,
+    // and its state could not be saved afterwards.
+    if (! newSession && ! engine.mixerBelongsTo (originalSession))
+    {
+        sessionJobs.release();
+        showStatus ("Import refused -- " + originalSession.getFileName() + " is not loaded; open it first");
+        return;
+    }
     // makeNewSessionDir may reuse a persisted named folder even when the
     // engine has no active session. Import must start in its own unique
     // folder in that case, never write into an unrelated old take.
@@ -1162,6 +1245,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
             const auto savedEdits = newSession ? juce::var() : self->engine.playlistsToJson();
             const int loaded = self->engine.loadSession (sessionDir, ! newSession);
             if (! newSession) self->engine.loadPlaylistsFromJson (savedEdits);
+            else if (loaded > 0) self->engine.claimMixerFor (sessionDir);
             const bool saved = self->saveSessionStateTo (sessionDir);
             self->engine.setSessionTransitionActive (false);
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
@@ -1263,6 +1347,7 @@ void MainComponent::onSaveSessionAs()
                 return;
             }
             engine.setActiveSessionDir (dest);
+            engine.claimMixerFor (dest);
             const bool ok = saveSessionStateTo (dest);
             sessionJobs.release();
             showStatus (ok ? "Saved As -> " + dest.getFileName()
@@ -2182,8 +2267,10 @@ juce::File MainComponent::makeNewSessionDir() const
         const auto saved = props->getValue ("activeSessionDir", {});
         if (saved.isNotEmpty())
         {
+            // A folder pinned but never loaded has its own mixer on disk, and
+            // this take must neither join those tracks nor replace that mixer.
             juce::File f (saved);
-            if (f.isDirectory() || f.createDirectory().wasOk())
+            if (engine.mixerBelongsTo (f) && (f.isDirectory() || f.createDirectory().wasOk()))
                 return f;
         }
     }
@@ -2263,6 +2350,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // succeeded; a permissions/disk failure must leave the current work open.
     engine.clearSessionState();
     engine.clearAllStripOverrides();
+    engine.claimMixerFor (sessionFolder);
     clickTrackIndex = -1;
     // The previous session's undo steps would apply to this one's files and
     // strips. Retake the mixer baseline on the next idle tick, after the

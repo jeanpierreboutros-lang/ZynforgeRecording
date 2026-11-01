@@ -382,7 +382,8 @@ void MainComponent::deleteSelectedStrips()
     const bool ok = engine.reorderTracks (order);
     selectedLogical.clear(); lastTrackCount = -1;
     showStatus (ok ? "Strips removed; recorded audio retained in Removed Tracks"
-                   : "Could not remove strips; check disk permissions and Session File Backups");
+                : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
+                : "Could not remove strips; check disk permissions and Session File Backups");
 }
 
 void MainComponent::colourSelectedStrips()

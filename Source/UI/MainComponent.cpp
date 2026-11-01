@@ -280,7 +280,10 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     const bool existingTakeMedia = takeScanDir.isDirectory()
         && ! takeScanDir.findChildFiles (juce::File::findFiles, false,
                                          "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
+    // Continuing joins these strips to that session's tracks, so it needs that
+    // session's mixer. One pinned but not loaded gets a new folder instead.
     plan.continueTake = activeDir.isDirectory()
+                        && engine.mixerBelongsTo (activeDir)
                         && (engine.getPlayer().isLoaded() || existingTakeMedia)
                         && ! daemonModeActive();
     // While playback rolls, a manual punch uses its CURRENT playhead. The EDIT
@@ -382,6 +385,18 @@ void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
     plan.autoRouted = autoRouted;
 }
 
+// The daemon outlives this process. The take's folder gets this mixer before it
+// rolls, because a relaunch has nothing else to load the take's strips from.
+// plan.dir is this mixer's session or a new folder (makeNewSessionDir), never
+// another session's.
+bool MainComponent::saveMixerToTakeFolder (const juce::File& dir)
+{
+    if (! dir.isDirectory() && dir.createDirectory().failed()) return false;
+    auto snapshot = captureMetadataSnapshot (dir, false);
+    snapshot.mixerOwner = dir;
+    return zynforge::writeSessionMetadata (snapshot).ok;
+}
+
 // Phase 1d (flagged): route the take through the capture daemon. The GUI keeps
 // its own device open for monitoring/meters/playback; the daemon writes the
 // files, so a GUI death can no longer stop the take.
@@ -390,6 +405,7 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
     auto& recorder = engine.getRecorder();
     if (! configureCaptureDaemon())
     { showStatus ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
+    const bool mixerInTakeFolder = saveMixerToTakeFolder (plan.dir);
     juce::BigInteger arms;
     for (int i = 0; i < plan.numTracks; ++i)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
@@ -404,9 +420,11 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
         lastCaptureFinalizationError.clear();
         engine.setExternalRecording (true);
         engine.setActiveSessionDir (plan.dir);
+        engine.claimMixerFor (plan.dir);
         statusLabel.setText ("DAEMON recording " + juce::String (plan.armed) + "/"
                              + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
-                             + "  (take survives a GUI crash)",
+                             + (mixerInTakeFolder ? "  (take survives a GUI crash)"
+                                                  : "  (mixer not saved to the take folder)"),
                              juce::dontSendNotification);
         recordButton.setButtonText ("STOP");
     }
@@ -687,6 +705,8 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
                 ? "Punch could not be spliced into the take -- original audio was retained; check disk and session files"
             : recorder.hasReportWriteFailed()
                 ? "Recording stopped, but the integrity report could not be saved -- check disk permissions / free space"
+            : lastMetadataSaveError.isNotEmpty()
+                ? "Recording stopped, but session state could not be saved: " + lastMetadataSaveError
                 : "Recording stopped, but session state could not be saved -- check disk permissions / free space");
         return false;
     }
@@ -726,7 +746,10 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
                 }
                 const bool ok = mediaOk && saved;
                 self->lastCaptureFinalizationError = ok ? juce::String()
-                    : ! mediaOk ? mediaError : "Recording stopped, but session metadata could not be saved";
+                    : ! mediaOk ? mediaError
+                    : "Recording stopped, but session metadata could not be saved"
+                        + (self->lastMetadataSaveError.isNotEmpty() ? ": " + self->lastMetadataSaveError
+                                                                    : juce::String());
                 self->showStatus (ok
                     ? self->lastSavedUndoUnits < 0
                         ? "Recording stopped; captured state saved, newer changes remain unsaved"
@@ -1238,7 +1261,7 @@ void MainComponent::confirmAndQuit()
     }
     const bool recording = engine.isRecording() || captureSupervisor.isDaemonRecording();
     const auto activeDir = engine.getActiveSessionDir();
-    const bool hasActiveSession = activeDir.isDirectory();
+    const bool hasActiveSession = activeDir.isDirectory() && engine.mixerBelongsTo (activeDir);
 
     // Recording in progress is its own conversation -- two buttons,
     // primary "Stop & Quit" / Cancel. No Save question because the

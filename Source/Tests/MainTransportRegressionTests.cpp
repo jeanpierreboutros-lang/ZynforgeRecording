@@ -76,6 +76,7 @@ namespace zynforge
             probe->host->engine.setStripCount (stripCount);
             probe->host->engine.setTrackName (0, "Revision A");
             probe->host->engine.setActiveSessionDir (probe->session);
+            probe->host->engine.claimMixerFor (probe->session);
             probe->host->statusLabel.setText ("Not saved yet", juce::dontSendNotification);
             if (stopTake)
             {
@@ -249,6 +250,7 @@ namespace zynforge
                 expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
                 main.engine.setExternalRecording (true);
                 main.engine.setActiveSessionDir (first);
+                main.engine.claimMixerFor (first);
                 juce::String error;
                 expect (! main.engine.performRemoteTransport (
                             AudioEngine::RemoteTransportAction::StopRecord, error));
@@ -299,6 +301,7 @@ namespace zynforge
                 expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
                 main.engine.setExternalRecording (true);
                 main.engine.setActiveSessionDir (second);
+                main.engine.claimMixerFor (second);
                 const auto stale = main.captureSupervisor.lastStatus();
                 main.captureSupervisor.disconnect();
                 main.engine.setExternalCaptureStatus (stale, juce::Time::currentTimeMillis() - 5000);
@@ -326,6 +329,7 @@ namespace zynforge
                 auto vanishedMetadataTarget = makeSession();
                 expect (vanishedMetadataTarget.createDirectory());
                 main.engine.setActiveSessionDir (vanishedMetadataTarget);
+                main.engine.claimMixerFor (vanishedMetadataTarget);
                 expect (main.engine.getActiveSessionDir() == vanishedMetadataTarget,
                         "an explicit daemon-session pin was hidden by the previously loaded take");
                 expect (vanishedMetadataTarget.deleteRecursively());
@@ -344,6 +348,7 @@ namespace zynforge
                 auto missingRemoteMetadata = makeSession();
                 expect (missingRemoteMetadata.createDirectory().wasOk());
                 main.engine.setActiveSessionDir (missingRemoteMetadata);
+                main.engine.claimMixerFor (missingRemoteMetadata);
                 expect (missingRemoteMetadata.deleteRecursively());
                 main.stopArmedAtMs = 0;
                 error.clear();
@@ -391,6 +396,7 @@ namespace zynforge
                 auto& recorder = main.engine.getRecorder();
                 recorder.prepare (48000.0, 256, 1);
                 recorder.getTrack (0).armed.store (true, std::memory_order_relaxed);
+                main.engine.claimMixerFor (local); // the engine's start does this
                 expect (recorder.startRecording (local));
                 std::vector<float> audio (256, 0.2f);
                 const float* input = audio.data();
@@ -422,6 +428,7 @@ namespace zynforge
                     rec.prepare (48000.0, 256, 1);
                     rec.getTrack (0).armed.store (true);
                     failed.engine.setActiveSessionDir (failureSession);
+                    failed.engine.claimMixerFor (failureSession);
                     expect (rec.startRecording (failureSession));
                     std::array<float, 256> samples {};
                     const float* inputBlock = samples.data();
@@ -468,6 +475,7 @@ namespace zynforge
                 auto cueSession = makeSession();
                 expect (cueSession.createDirectory().wasOk());
                 main.engine.setActiveSessionDir (cueSession);
+                main.engine.claimMixerFor (cueSession);
                 // A directory where the project must be installed fails reliably
                 // even for privileged test users; no chmod or real volume needed.
                 const auto blockedProject = cueSession.getChildFile (cueSession.getFileName() + ".zfproj");
@@ -495,6 +503,7 @@ namespace zynforge
                 auto slowSaveSession = makeSession();
                 expect (slowSaveSession.createDirectory().wasOk());
                 main.engine.setActiveSessionDir (slowSaveSession);
+                main.engine.claimMixerFor (slowSaveSession);
                 main.statusLabel.setText ("Save has not completed", juce::dontSendNotification);
                 struct SaveGate
                 {

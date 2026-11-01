@@ -39,7 +39,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -167,6 +167,9 @@ private:
     // state, force a strip rebuild. Returns the track count loaded. Used by
     // File > Open, the Welcome dialog, and the launch auto-reopen.
     int  openSessionFolder (const juce::File& dir);
+    void restoreSessionDocuments (const juce::File& dir);
+    void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
+    bool saveMixerToTakeFolder (const juce::File& dir);
     bool saveSessionStateTo (const juce::File& dir);
     zynforge::SessionMetadataSnapshot captureMetadataSnapshot (const juce::File& dir, bool backup = true);
     juce::String captureProjectPatchJson() const;
@@ -323,6 +326,7 @@ private:
     // Auto-save bookkeeping (see serviceAutosave / showAutosaveSettings).
     juce::uint32 lastAutosaveMs    { 0 };   // 0 = clock not started yet
     int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
+    juce::String lastMetadataSaveError;     // why the last save failed, for the STOP message
     juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
     int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
     void recordUndoSnapshot (const juce::String& label);
@@ -512,6 +516,7 @@ private:
     friend class zynforge::ConsoleVscTests;
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
+    friend class zynforge::SessionSafetyTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.
