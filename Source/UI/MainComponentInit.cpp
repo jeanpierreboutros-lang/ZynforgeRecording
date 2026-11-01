@@ -455,10 +455,10 @@ MainComponent::MainComponent()
         if (currentCueIndex >= 0) jumpToCue (currentCueIndex);
         else                      showStatus ("Pick a cue first, then Recall");
     };
-    setlistBar.onRenameCue  = [this] { renameCurrentCue(); };
+    setlistBar.onRenameCue  = [this] { if (! sessionLocked) renameCurrentCue(); };
     setlistBar.onMoveCue    = [this] (int dir)
     {
-        if (currentCueIndex < 0 || currentCueIndex >= (int) cues.size()) return;
+        if (sessionLocked || currentCueIndex < 0 || currentCueIndex >= (int) cues.size()) return;
         const int target = currentCueIndex + dir;
         if (target < 0 || target >= (int) cues.size()) return;
         std::swap (cues[(size_t) currentCueIndex], cues[(size_t) target]);
@@ -468,7 +468,7 @@ MainComponent::MainComponent()
     };
     setlistBar.onDeleteCue  = [this]
     {
-        if (currentCueIndex < 0 || currentCueIndex >= (int) cues.size()) return;
+        if (sessionLocked || currentCueIndex < 0 || currentCueIndex >= (int) cues.size()) return;
         const auto gone = cues[(size_t) currentCueIndex].name;
         cues.erase (cues.begin() + currentCueIndex);
         currentCueIndex = juce::jmin (currentCueIndex, (int) cues.size() - 1);
@@ -1157,14 +1157,15 @@ void MainComponent::rebuildStrips()
         // Right-click menu wiring.
         auto deleteCb     = [this, i, step]
         {
-            if (engine.isRecording() || sessionIoBusy.load())
+            if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
             {
                 // The strip already stopped its meter timer (ChannelStrip
                 // invalidates before calling this). Rebuild it, or it stays
                 // frozen for the rest of the show.
                 lastTrackCount = -1;
-                showStatus (engine.isRecording() ? "Stop recording before removing a strip"
-                                                 : "Wait for the session operation to finish");
+                showStatus (sessionLocked         ? "LOCKED -- click UNLOCK to resume control"
+                            : engine.isRecording() ? "Stop recording before removing a strip"
+                                                   : "Wait for the session operation to finish");
                 return;
             }
             std::vector<int> order;
@@ -1175,7 +1176,7 @@ void MainComponent::rebuildStrips()
             lastTrackCount = -1;
             showStatus (ok ? "Strip removed; audio retained in Removed Tracks" : "Could not remove strip safely");
         };
-        auto addCb        = [this] { engine.addOneStrip(); };
+        auto addCb        = [this] { if (! sessionLocked) engine.addOneStrip(); };
         auto linkStereoCb = [this, i]
         {
             if (i + 1 < engine.getRecorder().getNumTracks())
@@ -1324,6 +1325,9 @@ void MainComponent::rebuildStrips()
 
         s->setAvailableInputs  (numIns);
         s->setAvailableOutputs (numOuts);
+        // Any rebuild (GRID, a job finishing, a device change) makes new
+        // strips, and LOCK must hold for those too.
+        s->setEnabled (! sessionLocked);
         stripsContainer.addAndMakeVisible (*s);
         strips.push_back (std::move (s));
 

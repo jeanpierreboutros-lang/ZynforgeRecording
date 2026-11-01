@@ -196,7 +196,7 @@ namespace zynforge
             g.drawRoundedRectangle (r, brand::radius::sm, 1.0f);
         }
 
-        void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
+        void mouseDown (const juce::MouseEvent&) override { if (onClick && isEnabled()) onClick(); }
     };
 
     class ChannelStrip::StripTimer final : public juce::Timer
@@ -445,6 +445,10 @@ namespace zynforge
 
     void ChannelStrip::mouseDown (const juce::MouseEvent& e)
     {
+        // JUCE delivers mouseDown to a disabled component, so LOCK has to be
+        // checked here: only stock widgets refuse by themselves.
+        if (! isEnabled()) return;
+
         // Right-click → context menu, from ANYWHERE on the strip including
         // over its child controls (name, combos, knobs, meter, buttons).
         // Checked BEFORE the child-origin guard below: the children cover
@@ -578,6 +582,7 @@ namespace zynforge
                             [this, safe = juce::Component::SafePointer<ChannelStrip> (this)] (int chosen)
         {
             if (safe == nullptr) return;   // strip rebuilt (cue recall / console session / device restart) while the menu was open
+            if (! isEnabled()) return;     // LOCK engaged while the menu was open
             switch (chosen)
             {
                 case 1: openRenameDialog();           break;

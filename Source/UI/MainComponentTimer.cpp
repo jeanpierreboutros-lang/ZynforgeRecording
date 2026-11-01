@@ -345,7 +345,8 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     // own the entire editor; metadata persistence only locks its mutations.
     if (editPage != nullptr)
     {
-        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0 || captureMetadataPending);
+        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0
+                                             || captureMetadataPending || sessionLocked);
         const bool enableEditor = (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending) && ! sessionLocked;
         if (editPage->isEnabled() != enableEditor)
             editPage->setEnabled (enableEditor);

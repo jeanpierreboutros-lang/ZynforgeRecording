@@ -1334,6 +1334,8 @@ namespace zynforge
     {
         if (readOnlyWhileRecording == readOnly) return;
         readOnlyWhileRecording = readOnly;
+        recordingEditLabel.setText (engine.isRecording() ? "REC  EDIT LOCKED" : "EDIT LOCKED",
+                                    juce::dontSendNotification);
         recordingEditLabel.setVisible (readOnly);
         // Passing mouse events through the rows keeps the viewport's pan and
         // scroll gestures available. The ruler's marker/range edits stay inert.

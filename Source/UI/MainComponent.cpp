@@ -963,6 +963,9 @@ void MainComponent::applyLockState()
     if (editPage != nullptr)
     {
         editPage->setEnabled (e && (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending));
+        // Rows and ruler take the mouse by hand, so disabling them is not enough.
+        editPage->setReadOnlyWhileRecording (sessionLocked || engine.isRecording()
+                                             || pendingMetadataSaves != 0 || captureMetadataPending);
         if (auto* tools = editPage->getEditToolsBar()) tools->setEnabled (e);
     }
     if (automationToolbar != nullptr) automationToolbar->setEnabled (e);
