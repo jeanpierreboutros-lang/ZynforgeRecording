@@ -1,5 +1,26 @@
 # Project Tasks
 
+## Fix pass — 2026-11-01
+
+Everything below landed on `main` on 2026-11-01. None of it is installed on either Mac, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
+
+- [x] Punch safety: only a range selected in this run punches, and once; Loop makes no region; a parked playhead appends; a stopped cursor asks first; PUNCH mode has no arm state; a remote RECORD never punches; the header pill.
+- [x] Main window: alarm banner, LOCK on custom mouse code and on quitting, report scans on their own runner, tracked Patch and Meterbridge windows, pre-roll control, OSC token in its panel, dead dialog controls removed.
+- [x] Capture: one thread and ring per copy; STOP leaves a stalled copy behind; AIFF and FLAC crash repair; clips follow media after a crash; spliced results across several files; a full or read-only copy is left out and named.
+- [x] Capture daemon: a lost daemon is a state with three answers; daemon STOP off the message thread; Reconnect Capture Daemon; reattach restores the session.
+- [x] Sessions: mixer ownership on every save path; damaged files moved aside; Save As, Move and Handoff from a session that cannot be saved; Remove Last Capture to the Trash; cloud upload through a shell; the copy buffer on the heap.
+- [x] Editing and export: undo keeps recordings; Crop and Ripple move the whole timeline; offline renders ignore master MUTE; checked final writes; windowed-sinc conversion with a phase table.
+- [x] EDIT view: clip commands resolve targets in one place; the selection follows the clip; rows draw the file a clip plays; the waveform cache off the message thread; the arrangement frozen under a take.
+- [x] Network and console: one JSON guard; a bounded OSC backlog; a remote marker budget; the show patch on disk before the desk moves; console state per session; numeric console addresses; `/stream.wav` through a stall; MCU bank refresh; the report file lock.
+- [x] Engine and sync: stereo sends carry both channels; Trim-Follow follows a move; solo stays out of the stream bus; a mix bus stays off patched outputs; `PlaybackReader` and held jumps; whole-run MTC; session start timecode; MIDI clock follows a jump.
+- [x] Threads: every `stopThread` takes `-1`, each `TimeSliceThread` is stopped before its destructor, `SerialWorker` replaces the `ThreadPool`, and a gate holds it.
+- [ ] Owner: install a build from `main` on purpose, then run *2026-11-01 fix-pass acceptance* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig.
+- [ ] Owner: check Yamaha SCP scene notifications on a CL/QL/RIVAGE. Whether a desk pushes them unasked is UNVERIFIED.
+- [ ] Owner: check the noise report's -70 dBFS hum gate against a known hum on a real channel. It is a judgment value.
+- [ ] Decide: removing every strip from a saved session is refused, to keep the zero-strip rule without exceptions (see the ADR). Owner review welcome.
+- [ ] Time a real multitrack conversion export on the show Mac. The roughly 18 minutes for a 3-hour 56-channel file set was measured under load.
+- [ ] Help text (`MainComponentHelp.cpp`) does not yet mention the *Replace audio?* question at a stopped cursor.
+
 ## Market moves — 2026-11-01
 
 The market review produced 13 items. Twelve are built or waiting on the owner; Windows was cancelled by the owner.

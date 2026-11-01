@@ -4,6 +4,8 @@ This procedure installs a locally built macOS app; it does not create a notarize
 
 ## Current two-Mac installation — 2026-10-29
 
+`main` is ahead of this build, and nothing newer is installed on either Mac. Everything below describes `281c6c0`.
+
 Both Macs now have source build `281c6c0` (the October bug-hunt fixes, deferred
 lead-ins and exact split fades; code identical to `abb83bf`) and its matching
 protocol-4 capture helper at `/Applications/Zynforge Recording.app`.

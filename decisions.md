@@ -1,5 +1,240 @@
 # Decisions Log
 
+## RECORD punches only what the engineer chose — 2026-11-01
+
+**Status:** Accepted. Amends the Trigger paragraph of *Punch-in is an offline splice on stop* (2026-06-14).
+
+**Context:** A punch is the one thing RECORD can do that destroys audio: the replaced span is gone from every copy once the splice commits, and recording is not undoable. RECORD chose to punch from state nobody had chosen. The Loop button stored a whole-take region and left it behind, and `session_settings.json` kept it across reopens. PUNCH mode held a private per-index copy of the arms that ignored the R buttons, did not follow a strip move and survived a session switch. A remote RECORD followed the same punch rules as a local press. A stopped playhead left inside the take also punched, although the ADR only ever named a rolling playhead or a placed cursor.
+
+**Decision:**
+
+- The loop region does three jobs: loop range, EDIT selection, punch range. Only the third is dangerous, so it needs a mark of its own. `SessionPlayer::selectRange` is the only way to arm a range, and only a gesture that sets both edges calls it: a Selector drag, or moving an edge of a range that already exists. `setLoopRegion` makes a region that loops and edits but never punches. New code that forgets the difference fails safe: RECORD appends.
+- The Loop button makes no region at all. Loop-play with no region wraps the whole session, so the implicit region cannot count, cannot be saved and cannot outlive Loop, because it does not exist. Every `hasLoopRegion` caller (ruler, rows, edit commands, menus) is right without being touched.
+- A saved range comes back through `setLoopRegion`: it keeps working for Loop and edits and never arms a punch until the engineer touches it. A saved region that spans the whole timeline is dropped on open, because the earlier builds' Loop button is what wrote those. A region written before a take was continued no longer spans the timeline, so it comes back as an ordinary unarmed range, which is safe but may look like a stale selection.
+- Half a range arms nothing. Range In or Range Out alone, Set as Loop In/Out with no range, and the default 2 s range all use `setLoopRegion`.
+- One selection, one punch. A selection punch disarms its range when it starts, because the next RECORD may be the one meant to carry on with the show. The range stays visible for Loop and edits. A refused start keeps it armed.
+- A parked playhead never punches. Only a rolling playhead or a placed EDIT cursor does; anything else appends, which never touches the take. Without this, disarming the range would only have moved the danger, because a selection punch leaves the playhead mid-take.
+- A stopped cursor asks. A cursor takes one click to place and can be left anywhere, so with the transport stopped, RECORD at a placed EDIT cursor asks first (*Replace audio?*). Return is Record After Take, which clears the cursor and appends. Replace From Cursor punches. Esc cancels. The answer is a fresh press through every refusal, and does nothing if the transport moved while the question was open. A punch during playback and a selected range do not ask: both are deliberate. A remote press is refused, so it never reaches the question (`MainComponent::cursorPunchNeedsAnswer`).
+- PUNCH mode has no arm state of its own. It punches the armed tracks at punch-in, as the R buttons show, and `startRecording` freezes them as in any take. It holds loop-play off from inside `AudioEngine::setPunchModeOn`, it ends in `clearSessionState`, and only a take it opened can be ended by crossing out of the range or by turning the mode off. A live take keeps its two-tap STOP. In PUNCH mode the mode itself is the arm, so each pass through the selected range punches until the mode goes off.
+- A loop that is already on stays inert for a punch take, because `SessionPlayer` will not wrap while the seek lock holds.
+- The main window says so: a pill beside the transport time shows PUNCH MODE, or which RECORD will replace audio (range, cursor, rolling playhead), using the same rules RECORD uses. Daemon mode shows nothing because a daemon take is always a fresh take, which cannot punch.
+
+**Alternatives considered:** Keeping an implicit region with a flag (rejected: every `hasLoopRegion` caller would have to learn to ignore it, and edit commands would still see a whole-take selection). Leaving a selection armed after a punch for quick retakes (rejected: the cost of re-dragging a range is seconds, the cost of a stale arm is a missed show; PUNCH mode keeps the retake workflow, visibly). Confirming every punch with a dialog (rejected: a modal in the transport path, and a rolling punch and a selected range are deliberate; only the stopped cursor asks).
+
+**Consequences:** RECORD can now append where it used to punch, for example at a marker reached without placing a cursor. That is the safe direction and the status line says what happened. Re-punching the same range means selecting it again, or using PUNCH mode. A deliberate cursor punch takes one more click, and Return never replaces audio.
+
+## No thread is killed — 2026-11-01
+
+**Status:** Accepted.
+
+**Context:** JUCE kills a thread that outlives a `stopThread` timeout (`0` kills at once), with its locks held and its writes half done. `~TimeSliceThread` does that after 2 s and `juce::ThreadPool` after 500 ms, so a thread that was merely slow at shutdown could take the process down.
+
+**Decision:** Every `stopThread` in `Source` takes `-1`. Every `juce::TimeSliceThread` is stopped explicitly before its destructor runs: recorder writers, player reader, mix writer, EDIT scan threads. A job that needs a worker uses `Source/UI/SerialWorker.h`, which always joins, not a `ThreadPool`. The gate *no thread can be killed by force* enforces all of it.
+
+**Consequences:** A thread stuck on a dead drive now makes quit wait rather than crash.
+
+## LOCK covers quitting — 2026-11-01
+
+**Status:** Accepted.
+**Context:** File > Quit refused under LOCK, but Cmd+Q and the window's close box went straight to `confirmAndQuit`, where Return means Stop & Quit, so two keys ended a locked take.
+**Decision:** `confirmAndQuit` refuses under LOCK, idle or not, the same as the menu item, and says to unlock.
+**Consequences:** A locked app also refuses a logout's request to quit, so macOS reports that it would not close. The engineer unlocks first. Under LOCK the system cannot end a take behind the engineer's back.
+
+## Report scans have their own reservation, and a take cancels them — 2026-11-01
+
+**Status:** Accepted. A deliberate second instance of the `sessionJobs` pattern.
+
+**Context:** The noise, QC and song scans ran on detached threads and read every take file, which should not continue under a take. CLAUDE.md puts unbounded session-file jobs on `sessionJobs`, but that runner shares `sessionIoBusy`, and RECORD refuses while `sessionIoBusy` is set. A scan on it would make RECORD wait for a report, which is worse than the bug.
+
+**Decision:** Scans run on `analysisJobs`, a second `SessionJobRunner` with its own `analysisBusy` flag: owned, joined, cancellable and structurally released, without touching `sessionIoBusy`. RECORD never waits for one. `cancelAnalysisForTake` runs on the 10 Hz timer, because a take can start from the button, a remote, a daemon or a punch window; the scan stops at its next read and writes no report. `analysisResultWanted` is the single gate at delivery: no modal over a take or finalization, and none for a session that is no longer open.
+
+**Consequences:** A scan can overlap up to about 100 ms of a starting take. A session job can start during a scan, which only reads. Leaving a session cancels any scan.
+
+## Each copy of a take has its own thread and ring — 2026-11-01
+
+**Status:** Accepted (supersedes *Single writer thread for capture*)
+**Context:** All copies were written in sequence on one thread with one FIFO per channel. A NAS mirror or dying USB backup that blocked a write for about 5.5 s put silence on every channel of every copy, the healthy primary included, so a redundant copy could damage the copy it was added to protect. STOP blocked on the same call.
+**Decision:** The shard thread becomes a distributor that does no disk work. Each destination has its own thread and its own ring. A copy that falls a ring behind overwrites its own oldest audio and writes silence for it when it returns. STOP waits for the primary without limit and for a copy while it makes progress, leaving behind one that stalls for 30 s. All of a copy's state is shared, so its thread can outlive the recorder.
+**Why it is safe to have more than one writer thread again:** the 2026-05-25 ADR could not find the race behind the white-noise channels. It is in that commit's parent: `drainShard` ended with `for (auto& w : writers) { w.writer->flush(); ... }`, run from whichever shard crossed the five-second mark. JUCE's `flush` seeks to the header and back, so it moved the file position under another thread's write. That landed audio at misaligned byte offsets, which read as full-scale noise, worse with more channels. That loop is gone. A writer now belongs to exactly one thread, and that rule is the fix. ThreadSanitizer runs clean on *Capture copies*, including a stalled copy on each destination, a copy left behind, and 32 tracks on three copies at live pace.
+**Why a distributor, not a tee from the primary's thread:** a stalled primary would then hold up the copies. Why not several rings written by the audio thread: more work and memory on the real-time path for no gain. The audio thread's path is untouched.
+**Why overwrite-oldest under a mutex, not a lock-free ring:** neither side is real-time. Both hold the lock for a memcpy of one chunk, never across a disk call, so the distributor waits on memory at most. It makes a lag a single number instead of a gap list and is clean under TSan.
+**Physical volumes:** the code groups by volume only to estimate time, so writers are per destination, not per volume. Two copies on one drive compete for it, as they did.
+**Consequences:** Ring memory is per take: 1 MiB per channel per copy at 48 kHz, cut down to stay under 1 GiB total, and pages are touched only as used. Two copies can drift by up to a ring while healthy; they line up by sample in the files. A stuck primary still holds STOP, deliberately: the primary is the take. Hard limits: a thread stuck in a write can't be killed, so an abandoned one lives until the kernel returns. Roll parts stamp from the estimate taken at start; the exact stamp at STOP replaces it, and a crash survivor keeps it, good to milliseconds.
+
+## A lost capture daemon: three answers, and only proof ends a take — 2026-11-01
+
+**Status:** Accepted
+**Context:** After the daemon died or the link dropped, `lastStatus()` said recording forever, so RECORD, STOP, the toggle and Quit all refused and only a relaunch cleared it.
+**Decision:** A reattach attempt (attach only, never launch) gives three answers. It answered: adopt what it says. Nothing listening: no daemon, so no take; end it and load what is on disk. Something holds the port and will not prove itself: unknown. Unknown keeps the guard and STOP says it could not confirm. Quit and turning daemon mode off work by asking, and say that nothing was stopped. Nothing kills a daemon on stale status.
+**Consequences:** Retries back off to 30 s and each can hold the message thread for the 1.5 s handshake, only while something on that port does not answer. A refused connect is taken as proof. On loopback a live daemon's listener only refuses if the socket itself is gone.
+
+## Whose mixer is in memory is tracked explicitly, and only that session is written — 2026-11-01
+
+**Context.** The engine restores the active session's folder at launch so Save stays lit, but the recorder has no strips until the session is opened. Nothing connected the two, so `serviceAutosave`, which only checked that the folder existed, wrote the empty recorder over the real `session_mix.json` under the crash-recovery dialog, after a failed reopen, and after a daemon reattach. `trackCount: 0` is valid JSON, so the audio-count fallback never ran on the next open, and ten more autosaves pushed every good backup out of retention. The `.zfproj` and `session_settings.json` were overwritten the same way.
+
+**Decision.** `AudioEngine` records which session the strips belong to (`mixerSession`), set only by paths that really loaded or created that mixer. Every writer of mixer-derived state goes through a guard at the write, not at its callers: `sessionmix::refusal` for the mix file, and `writeSessionMetadata` for the whole snapshot before any file changes. Separately, a zero-strip mix can never replace a file that has strips, whoever owns it. Retention keeps the newest snapshot with strips when empty mixes would otherwise fill the window. Reattach loads the session's mixer and documents, and a daemon take writes its mixer into its folder before it rolls.
+
+**Why positive identity.** The alternative, flagging known-unloaded states, is safe only until someone adds a new way to pin a session. Here a new path fails closed: its save is refused and says so.
+
+**Why RECORD is not refused on an unloaded session.** Capture outranks tidiness. A take in that state goes to a new folder, so nothing is lost and the unloaded session is untouched.
+
+**Removing every strip from a saved session is refused (owner review welcome).** The rule "a zero-strip write can never replace a populated file" collides with one deliberate action: selecting all strips and deleting them. Two ways out were weighed. An exception for that action keeps a rarely used gesture, but the guard is then no longer absolute, and any future bug that reaches the same path is unguarded. Refusing is a small loss, since Close and New Session both start over, and it keeps the rule true without exceptions. Refused, before any file moves, with the message "A saved session keeps at least one strip; nothing was removed". A session that has never saved a populated mix can still go to zero.
+
+**Consequences.** Tests and new code that pin a session and then save must claim the mixer. A session already emptied by an older build now opens with one strip per audio track. Offering its newest good backup is covered in *Damaged session files move aside at open*.
+
+## Session copies keep their buffer on the heap — 2026-11-01
+
+**Context.** `copyDirectoryCancellable` held a 1 MiB `std::array` on the stack and runs on a session job's `std::thread`, which has 512 KiB on macOS, so Save As, Show Handoff and a move between drives could crash the app. The code dates from 2026-08-18 and is in the installed `281c6c0`. The fault was reproduced in the test app; the installed app was not launched to confirm it. Nothing ran these copies end to end, so no test saw it.
+
+**Decision.** The buffer is on the heap, a gate refuses a megabyte buffer on a stack, and `completeSaveAs`, `completeRelocate` and `completeShowHandoff` were split out of their file chooser callbacks so the copies now run headless in tests.
+
+## Damaged session files move aside at open — 2026-11-01
+
+**Context.** A truncated `session_mix.json` or `markers.json` loaded as defaults, and the next save destroyed the repairable bytes. A damaged `.zfproj` opened with no warning and then blocked every save.
+
+**Decision.** Opening moves each unreadable file to a dated sibling before anything loads, tells the engineer, and offers the newest backup that holds a good copy. Restoring reopens the session. The name keeps the original extension out of the end of the file so nothing treats it as live.
+
+**Why move rather than copy.** Moving a damaged `.zfproj` is what unblocks saving: the writer refuses an unreadable project on purpose, and that refusal stays. On read-only media the move fails, the engineer is told, and the file stays.
+
+## Save As, Move and Handoff from a session that cannot be saved — 2026-11-01
+
+**Context.** All three aborted when the source could not be saved, so a read-only or damaged session could only be copied in Finder.
+
+**Decision.** They ask, then continue from the files on disk. Save As and Move write the in-memory state into the new copy afterwards. A handoff does not, because it is verified file by file against its source.
+
+## Remove Last Capture moves to the Trash — 2026-11-01
+
+**Decision.** It targets the recorded capture by path and identity, names it, and moves the whole session to the Trash. If the Trash refuses, nothing is removed; it never falls back to a permanent delete. JUCE polls up to 8 s on the message thread when a volume has no Trash. That is accepted: it runs only on an explicit, confirmed action with no take rolling.
+
+## Cloud upload runs through a shell — 2026-11-01
+
+**Decision.** The dialog promises a shell command, and engineers write `~` and `&&`, so `/bin/sh -c` runs it with Homebrew's folders on PATH, because launchd's PATH has neither. The session path is `$1`, never text pasted into the script.
+
+**Consequence.** A template that relied on one word holding spaces with no quotes now gets shell splitting, as any shell command would.
+
+## Crop and Ripple Delete move the whole timeline under one rule — 2026-11-01
+
+**Context:** Both changed only the active take's clips. Rides, cues, the tempo map and other takes stayed on the old timeline, and the undo step restored only the clips.
+**Decision:** One mapping (`timelinecut::Cut`) applied to clips on every take, automation, markers, tempo and cues, as one undo step holding a snapshot of each. A locked clip that would move refuses the edit (it used to stay put while everything slid under it), and so does Automation Safe on a lane with points. A cue or marker in the removed audio goes, and undo brings it back. A ripple on a subset of strips moves those strips' takes and automation and leaves markers, tempo and cue positions: most of the session is where it was.
+**Consequences:** Marker and cue edits are not on the undo stack, so a step's undo keeps ones added since, at their own position, even though a position made after the cut no longer means the same place. Edits to an existing cue or the tempo map made after the step are replaced by undo. A shaped automation segment cut in two keeps its end values but only approximately its shape. Cue positions are dropped rather than clamped: piling them at the join would keep cues that point at nothing.
+
+## Recording is kept by undo, not by clearing the undo stack — 2026-11-01
+
+**Context:** Undo snapshots hold every track, and clearing the stack at each STOP would lose every edit's undo across a show.
+**Decision:** Each snapshot records the media length it knew; `restorePlaylistSnapshot` adds what was recorded since. It is keyed on length, so any growth of a track's media counts as recorded, including a click regenerated longer.
+**Consequences:** A span deleted by hand after the take stays deleted through its own undo and redo, because that step's snapshots already know the longer length.
+
+## Offline renders ignore master MUTE and follow solo — 2026-11-01
+
+**Context:** Engineers mute the master to keep playback out of the PA; that is monitoring. Solo also changes what is heard, but soloing to print something is a normal use of a bounce.
+**Decision:** Master MUTE is out of the render; the master fader stays in. Solo stays in, with a note on the status line. A mix with no signal at all warns.
+**Consequences:** `MixKernel` stays the one definition: the render passes `muted = false` to `mix::masterGain`. Live and offline deliberately differ here, alongside the differences already listed in CLAUDE.md. The DAW exports still carry master mute, since they describe the session rather than render it.
+
+## Scene markers cut songs only when nothing else does — 2026-11-01
+
+**Context:** A scene recall can land inside a song, but some shows run one scene per song and have no other markers.
+**Decision:** Scenes are excluded when a session has any user or song marker, and used when it has none.
+**Consequences:** Adding a single user marker to a scene-run show changes what Export Songs offers. The dialog shows the rows before anything is written.
+
+## Hum gate at -70 dBFS — 2026-11-01
+
+**Context:** The `-40 dBFS` gate read an unnormalised FFT, so it really sat near -100 dBFS. Normalising alone would have put it at a true -40 dBFS, hiding clearly audible hum.
+**Decision:** Normalise, and set the gate at -70 dBFS: above that, hum is audible in a quiet passage at ordinary gain.
+**Consequences:** A judgment value, not a measured one. It should meet a real rig before anyone relies on it.
+
+## A native windowed-sinc converter — 2026-11-01
+
+**Context:** `juce::ResamplingAudioSource` is linear interpolation plus a biquad. No new dependency is allowed.
+**Decision:** `SincResampler`: Kaiser window, 48 zero crossings a side, aliases about 100 dB down. The kernel is worked out once for 1024 positions between samples, each output blends the nearest two, and the sum runs through vDSP.
+**Consequences:** The phase table made it about 7.5 times faster than the first version, which computed every coefficient per sample. A 3-hour 56-channel file set still takes roughly 18 minutes under load. Same-rate exports are unaffected: they stay bit-exact.
+
+## EDIT clip commands resolve their targets in one place, and a selection follows the clip — 2026-11-01
+
+**Status:** Accepted.
+**Context:** The right-click clip menu resolved a stereo clip's R half and edit-group peers, but Shift+Delete, D and Shift+click took one (track, index). Because a row paints only L's list, a half-edited pair looked right while it played out of time, and bounces carried the error. Selections were indices, so anything that shifted a list silently moved them to a neighbour: D, Cmd+Z, Delete removed the clip after the original.
+**Decision:** All clip commands go through `Source/UI/ClipEditTargets.h`. A locked clip anywhere in the targets refuses Delete, Duplicate, Ripple and Cut whole, because skipping it leaves its peers changed and it behind. Selection identity is a runtime `Clip::selectionId`, never saved, and every read resolves it. Clearing the selection after each edit was rejected: it needs a hook at every mutation, several of which are in other files, and one missed hook is the original bug. Comparing clip contents was rejected because a Move or trim changes them while the clip stays the same clip.
+**Consequences:** A selection drops on undo, since undo rebuilds clips. A multi-selection containing one locked clip now refuses as a whole, where it used to delete the rest. Ripple on an edit group removes the clicked clip's span from every member, so a member split differently is cut at that span's edges.
+
+## Cmd+X on a range clears it — 2026-11-01
+
+**Status:** Accepted.
+**Context:** There is no range clipboard. With no clip selected, Cmd+X fell through to the strip cut, and a Range drag selects its strip, so a range cut removed the channel with no prompt.
+**Decision:** In EDIT a range outranks the strip selection, as it does for Delete, so Cmd+X runs the Delete-range confirmation and clears the range. A strip cut always goes through `confirmDeleteChannels`. Copying a range to the clipboard is a new feature and was left out: the prompt and status say the audio was cleared, and nothing claims it can be pasted.
+**Consequences:** Cmd+X on a range does not fill the clipboard.
+
+## Rows wait for saved peaks; the cache runs on its own thread — 2026-11-01
+
+**Status:** Accepted.
+**Context:** `WaveCache.wfm` can reach hundreds of megabytes and was read and written on the message thread, which the rule against blocking it forbids. It cannot use `sessionJobs`: a reservation holds `sessionIoBusy`, and a cache save must never refuse RECORD.
+**Decision:** One owned background worker on `EditPage` (`SerialWorker`, see *No thread is killed*), joined in the destructor, with a cancel token polled per megabyte. A session's rows stay blank until its peaks load, because they must be in the caches before thumbnails ask for them, or every file rescans.
+**Consequences:** Lanes on a large session are blank for the moment the cache takes to read, instead of the app freezing for it. The quit-time flush stays synchronous, as it was, and runs only when the timer has not already saved.
+
+## Long clip jobs publish only into the layout they started from — 2026-11-01
+
+**Status:** Accepted.
+**Decision:** Normalize, Consolidate and Strip Silence record the track generation at launch and publish nothing if it changed. Row Normalize is a session job on the host, so reorders from the UI are refused while it runs, and the generation check covers what bypasses the UI.
+**Consequences:** A job overtaken by a strip move fails with a status line and no undo step.
+
+## A console's show patch is saved before the desk moves — 2026-11-01
+
+**Context.** The stash lived in memory until someone captured gains, and reloading the session's file erased it. A crash in SOUNDCHECK stranded the desk on card returns, and the next SOUNDCHECK stashed those card returns as the show patch. The state also outlived the session, so Restore could write the last show's preamps to this one.
+
+**Decision.** `console_state.json` gains `deskPatch` (`soundcheck` or `stage`). The stash is written before the first card-return message, and a failed write leaves the desk where it is. SOUNDCHECK refuses with no session open. A read where every block is already on card returns is refused. The link's state follows the active session through `setSessionDir`, polled from the 10 Hz timer and called before every console action, instead of a hook in each session-swap path. The one exception is a desk this run moved: its stash is about the desk, not the session, so it survives the change until STAGE restores it.
+
+**Consequences.** A session opened after a crash offers STAGE straight away. Reopening session A after STAGE was restored under session B still says `soundcheck` in A's file; going to STAGE then writes the same show patch again, which is harmless if the rig hasn't changed. A file with no `deskPatch` behaves as before (Unknown plus a stash offers STAGE). `Reconnect preserves stage patch` now sets a session first, because the old behaviour it exercised (moving a desk with no session open) was the bug.
+
+## Network OSC is bounded and takes turns — 2026-11-01
+
+**Context.** Every parseable datagram became a message on JUCE's unbounded FIFO queue, so a sender faster than the message thread put timers, meters and STOP behind an ever longer line.
+
+**Decision.** Packets wait in a per-receiver backlog (2048 packets, 4 MB) and drain 4 ms at a time, then requeue. Overflow is dropped on the reader thread, counted, and logged 10 times a second at most. Markers from the network are held to 8 at once, then one a second.
+
+**Consequences.** A burst past 2048 packets while the message thread is stalled loses the excess, as UDP may anyway. The largest real burst we know of is a desk's name dump of a few hundred short packets. A real engineer can't reach the marker limit by hand, but a desk programmed to fire more than 8 scenes in under a second would lose markers past the eighth, and the status line says so.
+
+## `session.report.json` is locked across processes — 2026-11-01
+
+**Context.** The GUI's twin merge and the daemon's hash publish are separate processes doing read-modify-write on one file, so either could undo the other within a window of milliseconds.
+
+**Decision.** `flock` on a file in the per-user capture folder, one lock for all sessions, held alongside `publication`, with a 3 s bounded wait. `juce::InterProcessLock` was rejected: it uses `fcntl` locks, which don't exclude within a process (so it can't be tested without a second process), and which a process drops when it closes any descriptor on the file.
+
+**Consequences.** One lock for all sessions is fine: each hold is one small read and write. Past the 3 s wait the writer goes ahead, so a stuck holder brings back the old race rather than losing the report.
+
+## A mix bus stays off patched outputs — 2026-11-01
+
+**Context.** Strip N patched to output N is the standard virtual soundcheck, and this app makes that patch from the strip combos, PATCH and import (`setTrackLinkedRouting`). The master pair defaults to Out 1-2. Direct routes and the master sum add into the same channels, so on a rig whose outputs are all console returns, console channels 1 and 2 carried their own track plus the whole mix at master level. There was no way to give the master no output. The app cannot tell a console return from a speaker.
+
+**Decision.** On a device with more than two outputs, the master bus and the click stay off their pair when any strip is patched to either output of it, and the stream bus likewise. It is one decision for the pair: holding only the shared channel would leave half a mix on the other console channel. It reads the patch, not what is audible, so a momentary mute cannot release the mix. A two-output device is exempt: there the pair is the monitor, and it has nowhere else. The master can be set to Off. An opt-in setting, default off, restores summing for a rig whose first outputs are monitors. Master MUTE still kills the selected pair: that guard is not weakened.
+
+**Consequences.** A multi-output interface used for prep with speakers on Out 1-2 and strips patched 1:1 now hears only strips 1 and 2 until the engineer moves the master pair or turns on the setting. Import makes that patch, so this will be met. It is the safe failure: too little signal on a monitor, against the whole mix on a PA channel, and the master strip and status line say what happened and what to do. On a held pair there is no click anywhere until a spare pair is chosen. Meters, LUFS, the companion stream and NDI carry on from the monitor mix.
+
+**Rejected.** Warning only: the wrong signal still reaches the PA. Moving the master off when VSC is pressed: PATCH and import make the same patch by other paths. Keying on routes beyond the device's outputs: a 16-out rig with 32 strips would still put the mix on channels 1-2.
+
+## Trim-Follow follows a move, never a value — 2026-11-01
+
+**Context.** The offset was live minus capture, with 0 as both "the desk read 0 dB" and "the desk never reported". A take with no reading left capture at 0, and the first push on reopen became the offset: a 1 dB nudge moved the channel by the preamp's whole value, on direct outputs, master and stream.
+
+**Decision.** Explicit Known flags on both values, saved with the session. No reference: 0 dB offset, and the UI names the channels. A take started with no reading on a strip clears that strip's reference, even on a continue: the new audio's gain is unknown, and not following is the safe failure. A session from before the flag reads a stored 0 as no reference, so a real 0 dB reference in an old session stops following until the next take. The offset is limited to +12 dB up and -30 dB down. Louder is the PA risk, so it gets the tighter limit; a real move past it under-follows and the status line says so. The step is not ramped: a preamp move on the desk is not either, and the limit bounds it.
+
+A real zero read from the desk is still a real reference; only a file from before the flag cannot prove one.
+
+## Solo stays out of the recorded mix — 2026-11-01
+
+**Decision.** The stream bus and StereoMix.wav ignore strip and VCA solo; mutes and the Mute lane still apply. The file is a record of the show, and an engineer checking a mic must not empty it without warning. The earlier code comment calling the send post-solo described the code, not a decision.
+
+## The player owns its disk reader — 2026-11-01
+
+**Context.** `juce::BufferingAudioReader` buffers ahead of the last read and notices a new position only when a read has missed, with an idle reader polled every 100 ms. Each loop wrap, locate and far edit lost up to 100 ms per track, by a different amount on each.
+
+**Decision.** `PlaybackReader` replaces it: the same RAM-block design, plus a cue, two read positions and `isBuffered`, lock-free on the audio side. The player cues known jumps ahead of time and holds unknown ones, silent and with the position still, until every track has the target. A hold is capped at 2 s, after which the jump plays and a dead source reads as silence. A seek-locked player never holds.
+
+**Consequences.** A locate is a short silence, all tracks entering on one sample, rather than an immediate staggered entry. RAM per reader rises from 3 blocks to 5 (32768 samples each, at 48 kHz). Idle readers poll every 10 ms rather than 100. Timecode chase and the clock see the position stand still for the hold; a slave clock gets its Continue before the audio enters, by the length of the hold.
+
+**Rejected.** Rendering ahead on the timeline: a rewrite of clip playback, and every edit would have to invalidate it. Waking the reader from the callback: `TimeSliceThread` takes a lock to do that.
+
+## Chase runs from the session's start timecode — 2026-11-01
+
+**Decision.** A start timecode saved in `session_mix.json`, typed in Transport Sync or taken from the first take's BWF stamp, which lines a session up with the same timecode it was recorded against. Timecode outside the session parks: no locate, playback chase started is stopped once, and a status line says why. Manual locates survive. A hold is not an alarm: chase resumes when timecode comes back inside.
+
 ## macOS only — 2026-10-31
 
 **Status:** Accepted.
@@ -22,7 +257,9 @@
 
 **Decision:** Add an opt-in listener with its own UDP port (default 9301) that accepts datagrams from one configured IPv4 source, checked on the reader thread before parsing. It takes only eight exact addresses, address-only or integer. It is off on every launch. It refuses under LOCK. Every transport command goes through `performRemoteTransport`, so RECORD runs full pre-flight and STOP keeps the two-tap guard. Identical commands inside 250 ms count once.
 
-**Residual risk, stated plainly:** UDP has no handshake, so a source address is not an identity. Any host on the LAN can forge a datagram that appears to come from the desk, and an attacker who can see the traffic gets the address list too; the messages are plaintext and carry no secret. While the listener is on, such a host can do what a desk macro can: start a take that pre-flight allows, play, pause, drop markers, move the playhead outside a take, and STOP (needing two sends more than 250 ms and less than 2 s apart, which a deliberate attacker can do). It can therefore end a live take. It cannot arm, mute, patch, rename, delete or overwrite anything: a fresh take never replaces a take, and a stopped take is finalized normally.
+**Residual risk, stated plainly:** UDP has no handshake, so a source address is not an identity. Any host on the LAN can forge a datagram that appears to come from the desk, and an attacker who can see the traffic gets the address list too; the messages are plaintext and carry no secret. While the listener is on, such a host can do what a desk macro can: start a take that pre-flight allows, play, pause, drop markers, move the playhead outside a take, and STOP (needing two sends more than 250 ms and less than 2 s apart, which a deliberate attacker can do). It can therefore end a live take. It cannot arm, mute, patch, rename, delete or overwrite anything: a fresh take never replaces a take, a remote RECORD that would punch is refused (see *RECORD punches only what the engineer chose*), a remote PLAY is refused while PUNCH mode is on, and a stopped take is finalized normally.
+
+**Correction, 2026-11-01:** this paragraph used to say that without the remote punch refusal behind it, and it was not true: a remote RECORD followed the same punch rules as a local press. Since then `handleRemoteTransport` marks the press as remote and `runRecordPlan` refuses a punch from it, on every remote surface.
 
 **Why that is acceptable here:** the 2026-08-18 rejection was about making an allowlist THE authorization for the whole Generic command set, on by default for any OSC client, with arm, mute and channel control behind it. This listener is different in each of those: the engineer opts in on every launch, it is reachable only from one named address, and its command set is the short list above, each behind an entry point that already refuses for itself. A show network is normally a closed console network, and an attacker on it can already send a desk anything the desk accepts. A DHCP change fails closed: the desk stops being heard, and the setup panel shows the count of dropped datagrams and the latest sender.
 
@@ -193,6 +430,8 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ## Capture truth and background-edit decisions — 2026-09-20
 
+**Amended 2026-11-01. Recover saves before clearing the crash marker.** The marker asks an older project to rebuild its clips, so it goes only once that rebuild is on disk. A save that fails leaves the session on the recovery list.
+
 ### Redundancy health is latched truth, not current object shape
 
 **Context.** Backup and mirror failures disappeared when failed writers were cleared, and a configured path was enough to make the UI/report call a copy active. A STOP reply could therefore look clean after losing redundancy or failing final metadata.
@@ -333,6 +572,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Ship console families you can't test, safely — 2026-08-13
 
+**Correction, 2026-11-01:** Yamaha SCP sends no subscription. The earlier `ssrecall_ex "scene"` was the scene-recall verb, in a section that promises never to change a desk. Whether a Yamaha desk pushes scene notifications to a connected client without being asked is UNVERIFIED; see FIELD-TEST.
+
 **Context.** The console layer was OSC-only, so four of the six console families in the picker were honest stubs. Meanwhile a direct competitor shipped DiGiCo + Allen & Heath + SSL integration at $39.99. Going up-market means supporting desks nobody here owns — which collides head-on with the standing rule that untested desk control is the project's largest liability.
 
 **The resolution is to separate two things that were conflated.** "Is this address model correct?" and "is the desk on the other end who we think it is?" are different questions with different answers and different blast radii.
@@ -466,6 +707,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Punch-in is an offline splice on stop, not a real-time write into the take — 2026-06-14
 
+**Amended 2026-11-01.** What RECORD may punch is now narrower; see *RECORD punches only what the engineer chose*. The splice itself is unchanged.
+
 **Amended 2026-09-24.** The offline-splice decision remains. The trigger, recovery, multipart, alignment and monitoring details below supersede the original timer-driven selection trigger and v1 gaps; they remain part of the current capture implementation.
 
 **Context.** JP asked to re-record a section of an existing take and keep the audio before/after (classic punch-in). The naive implementation — have the recorder seek into the existing file and overwrite the punched region in real time — would put destructive, position-offset writes on the audio thread, against the file the player may be reading, with RF64/backup/mirror finalisation all needing to stay consistent. That is the single most dangerous thing this app could do; a glitch loses or corrupts a take.
@@ -474,7 +717,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 **Rationale.** Keeping the audio thread out of it means punch-in cannot regress capture integrity — the worst case is a clean fresh take plus an untouched original. The splice is ordinary read-only offline DSP (same class as Consolidate/Bounce), unit-tested in isolation (`PunchSpliceTests`) and end-to-end (`PunchRecordTests`). Splicing every copy honours the redundancy guarantee the backup/mirror feature exists for.
 
-**Trigger.** RECORD branches by context: (1) a selected range on a loaded take opens the punch writer before playback, rolls from a playback-only pre-roll lead-in, and lets the audio callback capture exactly `[in,out)` even within one device block; the UI timer finalizes and resumes post-roll, while loop wrapping is suspended; (2) a loaded take without selection punches at the rolling playhead or an explicitly placed stopped cursor, or appends a continuation at the end; (3) no existing take starts a fresh recording. Manual punch ends with one RECORD or STOP press; normal live capture keeps its two-press STOP guard. PUNCH mode remains available for a hands-free position window.
+**Trigger.** RECORD branches by context: (1) a range the engineer selected in this run, on a loaded take, opens the punch writer before playback, rolls from a playback-only pre-roll lead-in, and lets the audio callback capture exactly `[in,out)` even within one device block; the UI timer finalizes and resumes post-roll, while loop wrapping is suspended; (2) a loaded take without an armed range punches at the rolling playhead or, after asking, at an explicitly placed stopped cursor, and otherwise appends a continuation at the end, wherever a stopped playhead happens to be parked; (3) no existing take starts a fresh recording. Manual punch ends with one RECORD or STOP press; normal live capture keeps its two-press STOP guard. PUNCH mode remains available for a hands-free position window: it punches the tracks armed at the moment of punch-in, into a range selected in this run, and it ends with its session.
 
 **Consequences.** Stop still performs a synchronous offline splice, which can be noticeable for a long take and needs free space for its temporary result; a verified bundle is not proof of real-device throughput. The selected punch's exact capture window is distinct from the playback pre/post-roll and from the recorder's history buffer, which is included only on fresh takes. During a rolling punch, armed-track monitoring/direct routes use live input in place of the old take inside the captured span; the old take remains audible before/after. Silent lead-ins for newly armed tracks preserve alignment but add start-time I/O and disk usage on long sessions. A true redo from scratch still requires a new/cleared take. Crash recovery protects originals, but backup/mirror consistency and physical monitoring must be verified on disposable real-device sessions before show use.
 
@@ -658,7 +901,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Single writer thread for capture (multi-shard parallelism disabled) — 2026-05-25
 
-**Status:** Accepted
+**Status:** Superseded by *Each copy of a take has its own thread and ring — 2026-11-01*. The cause in the Context below was found: see that ADR.
 **Context:** The recorder drained its per-channel lock-free FIFOs to disk on a *pool* of `juce::TimeSliceThread`s — one shard per channel-range, round-robined across threads — to "parallelise" disk writes. In practice this corrupted recordings: under real multi-core parallelism whole channels came back as **white-noise garbage** (lag-1 autocorrelation ≈ 0 instead of ≈ 1 for a real signal), **non-deterministically**, and **worse with more channels**. Real takes also showed on-disk truncation (WAV header claiming the full length, far less data actually written). A new headless integrity test (`RecordingIntegrityTests`) pushes a known per-channel signal through the recorder and re-reads every WAV; it reproduces the garbage at **2+ writer threads** and passes with **0 failures at 1** across 8/16/48-channel configs. Per-FIFO single-producer/single-consumer usage, the JUCE `AbstractFifo` scoped API, and `writeFromFloatArrays` (channel-local buffers) were each verified correct in isolation — yet parallel draining still corrupts, so the race is in the multi-shard interaction and was not worth the risk to keep hunting while shipping a broken recorder.
 **Decision:** Serialise all disk writing onto a **single** writer thread (`chooseShardCount()` returns 1 → one shard covering every channel). The shard machinery is retained so re-enabling parallelism is a one-line change once the race is found and a test proves it safe.
 **Rationale:**
@@ -684,6 +927,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 ---
 
 ## Reopen the last session on launch; never start in an empty all-grey window — 2026-06-04
+
+**Amended 2026-11-01.** Still true, but the restored pin no longer permits saving. Until the open succeeds the session is pinned but not loaded, and saves to it are refused.
 
 **Status:** Accepted
 **Context:** On launch the engine restored the active-session *folder* (so Save stayed enabled) but never loaded its *content*. The app came up with 0 channels and a Welcome dialog; combined with the menu-cache bug above, the whole UI read as dead. A session recorded but never explicitly **Saved** has no `session_mix.json`, so even when opened the mixer wasn't sized → "No channels yet".
