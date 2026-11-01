@@ -33,6 +33,8 @@ MainComponent::MainComponent()
                                    { if (editPage != nullptr) editPage->scrollToSample (sample); } });
     wireConsoleLink();
     engine.onMarkerDropped = [this] (const juce::String& name) { twinLink.noteLocalMarker (name); };
+    engine.getMarkers().onDamagedFileKept = [this] (const juce::File& kept)
+    { toast.show ("markers.json was damaged and is kept as " + kept.getFileName(), Toast::Kind::Warning); };
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {
@@ -862,6 +864,7 @@ MainComponent::~MainComponent()
     engine.setRemoteTransportHandler ({});
     engine.getRemotes().setHost ({});
     engine.onMarkerDropped = nullptr;
+    engine.getMarkers().onDamagedFileKept = nullptr;
     delete twinDialog.getComponent();
     twinLink.stop();
     sessionMirror.stop();

@@ -449,6 +449,161 @@ public:
         }
     }
 
+    static juce::Array<juce::File> keptCopies (const juce::File& dir, const juce::String& name)
+    { return dir.findChildFiles (juce::File::findFiles, false, name + ".damaged-*"); }
+
+    static juce::String keptCopy (const juce::File& dir, const juce::String& name)
+    {
+        const auto copies = keptCopies (dir, name);
+        return copies.isEmpty() ? juce::String() : copies.getFirst().loadFileAsString();
+    }
+
+    // A backup taken while the show was healthy, the way a save writes one.
+    static juce::File healthyBackup (const Folder& f, int strips = 4)
+    {
+        writeSavedShow (f, strips);
+        f.dir.getChildFile ("markers.json").replaceWithText (R"({"sampleRate":48000,"markers":[{"sample":100,"name":"Verse"}]})");
+        return sessionbackup::writeSnapshot (f.dir);
+    }
+
+    void testDamagedFiles()
+    {
+        beginTest ("A damaged mix is kept under a dated name and its newest good backup is offered");
+        {
+            Folder f; expect (healthyBackup (f).isDirectory());
+            const juce::String damaged ("{\"trackCount\": 4, \"strips\": [{\"name\":");
+            expect (f.mix().replaceWithText (damaged));
+            expect (writeAudio (f.track (1)));
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            std::vector<sessionrepair::DamagedFile> offered;
+            host.damagedFilesPromptForTests = [&] (const auto& files) { offered = files; };
+            expectEquals (host.openSessionFolder (f.dir), 1);
+
+            expectEquals ((int) offered.size(), 1, "the engineer was not told");
+            if (! offered.empty())
+            {
+                expectEquals (offered[0].name, juce::String ("session_mix.json"));
+                expect (offered[0].keptAs.existsAsFile());
+                expectEquals (offered[0].keptAs.loadFileAsString(), damaged, "the kept copy is not the damaged file");
+                expect (offered[0].backup.isDirectory(), "no backup was offered");
+            }
+            expectEquals (keptCopies (f.dir, "session_mix.json").size(), 1);
+            expectEquals (host.engine.getRecorder().getNumTracks(), 1, "strips did not fall back to the audio");
+
+            // Nothing later replaces the repairable bytes.
+            expect (host.saveSessionStateTo (f.dir));
+            expectEquals (keptCopy (f.dir, "session_mix.json"), damaged);
+
+            expect (host.restoreDamagedFiles (f.dir, offered));
+            expectEquals (host.engine.getRecorder().getNumTracks(), 4, "the backup's strips did not come back");
+            expectEquals (stripName (host, 3), juce::String ("Saved 4"));
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("Damaged markers are kept, not replaced by the next marker");
+        {
+            Folder f; expect (healthyBackup (f).isDirectory());
+            const auto markers = f.dir.getChildFile ("markers.json");
+            const juce::String damaged ("{\"markers\": [ {\"sample\": 1");
+            expect (markers.replaceWithText (damaged));
+            expect (writeAudio (f.track (1))); // markers need a session with audio
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            std::vector<sessionrepair::DamagedFile> offered;
+            host.damagedFilesPromptForTests = [&] (const auto& files) { offered = files; };
+            host.openSessionFolder (f.dir);
+            expectEquals ((int) offered.size(), 1);
+            expectEquals (keptCopies (f.dir, "markers.json").size(), 1);
+            host.engine.getMarkers().drop (480, "After the damage");
+            expect (host.engine.getMarkers().save());
+            expectEquals (keptCopy (f.dir, "markers.json"), damaged);
+            expect (host.restoreDamagedFiles (f.dir, offered));
+            expectEquals (host.engine.getMarkers().getCount(), 1);
+            expectEquals (host.engine.getMarkers().getMarker (0).name, juce::String ("Verse"));
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A file damaged after opening is kept before a save replaces it");
+        {
+            Folder f; writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (f.dir), 1);
+            expect (f.mix().replaceWithText ("{ truncated"));
+            expect (host.saveSessionStateTo (f.dir));
+            expectEquals (keptCopies (f.dir, "session_mix.json").size(), 1);
+            expectEquals (keptCopy (f.dir, "session_mix.json"), juce::String ("{ truncated"));
+            expect (host.lastMetadataSaveNotice.contains ("session_mix.json"), host.lastMetadataSaveNotice);
+
+            const auto markers = f.dir.getChildFile ("markers.json");
+            expect (markers.replaceWithText ("{ also truncated"));
+            host.engine.getMarkers().drop (480, "New");
+            expect (host.engine.getMarkers().save());
+            expectEquals (keptCopies (f.dir, "markers.json").size(), 1);
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A damaged project opens with a warning and no longer blocks saving");
+        {
+            Folder f; expect (healthyBackup (f).isDirectory());
+            const juce::String damaged ("{\"setlist\": [ {\"name\": ");
+            expect (f.project().replaceWithText (damaged));
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            std::vector<sessionrepair::DamagedFile> offered;
+            host.damagedFilesPromptForTests = [&] (const auto& files) { offered = files; };
+            host.openSessionFolder (f.dir);
+            expectEquals ((int) offered.size(), 1, "the engineer was not told");
+            expectEquals (keptCopy (f.dir, f.project().getFileName()), damaged);
+            expect (host.saveSessionStateTo (f.dir), "the session could not be saved afterwards");
+
+            expect (host.restoreDamagedFiles (f.dir, offered));
+            expectEquals ((int) host.cues.size(), 1, "the backup's cues did not come back");
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A mix emptied by an older build offers the backup that still has strips");
+        {
+            Folder f; expect (healthyBackup (f, 6).isDirectory());
+            expect (f.mix().replaceWithText (mixJson (0)));
+            expect (writeAudio (f.track (1)));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            std::vector<sessionrepair::DamagedFile> offered;
+            host.damagedFilesPromptForTests = [&] (const auto& files) { offered = files; };
+            expectEquals (host.openSessionFolder (f.dir), 1);
+            expectEquals ((int) offered.size(), 1);
+            expect (host.restoreDamagedFiles (f.dir, offered));
+            expectEquals (host.engine.getRecorder().getNumTracks(), 6);
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("With no good backup the damage is still reported and nothing is offered to restore");
+        {
+            Folder f; expect (f.mix().replaceWithText ("garbage"));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            std::vector<sessionrepair::DamagedFile> offered;
+            host.damagedFilesPromptForTests = [&] (const auto& files) { offered = files; };
+            host.openSessionFolder (f.dir);
+            expectEquals ((int) offered.size(), 1);
+            expect (! offered.empty() && offered[0].backup == juce::File());
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A healthy session reports nothing and moves nothing");
+        {
+            Folder f; writeSavedShow (f, 2);
+            f.dir.getChildFile ("markers.json").replaceWithText (R"({"markers":[]})");
+            const auto files = f.dir.getNumberOfChildFiles (juce::File::findFiles);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            bool told = false;
+            host.damagedFilesPromptForTests = [&] (const auto&) { told = true; };
+            host.openSessionFolder (f.dir);
+            expect (! told);
+            expectEquals (f.dir.getNumberOfChildFiles (juce::File::findFiles), files);
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -458,6 +613,7 @@ public:
         { MainComponent::s_testConstruct = previousTestConstruct; } };
         testMixerOwnership();
         testOpeningTheOpenSession();
+        testDamagedFiles();
     }
 };
 

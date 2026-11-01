@@ -151,6 +151,10 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
 
     // Condemn the current strips before loading -- a smaller session shrinks
     // the recorder vector and frees TrackStates the live strips still point at.
+    // Before anything loads: a damaged file read as empty, and the next save
+    // would then replace the only copy of what was in it.
+    const auto damaged = zynforge::sessionrepair::quarantineDamagedFiles (dir);
+
     condemnAllStrips();
     engine.stopPlayback();
     engine.clearSessionState();
@@ -181,7 +185,62 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         toast.show ("Recovered " + juce::String (interruptedPunches)
                     + " interrupted punch file(s); partial audio is in Session File Backups",
                     Toast::Kind::Warning);
+    if (! damaged.empty()) reportDamagedFiles (dir, damaged);
     return n;
+}
+
+void MainComponent::reportDamagedFiles (const juce::File& dir,
+                                        const std::vector<zynforge::sessionrepair::DamagedFile>& files)
+{
+    showStatus ("! " + dir.getFileName() + " has damaged session files; defaults are in use");
+    if (damagedFilesPromptForTests) { damagedFilesPromptForTests (files); return; }
+
+    juce::String text;
+    bool canRestore = false;
+    for (const auto& file : files)
+    {
+        text << file.name << " " << file.problem << ".\n"
+             << (file.keptAs != juce::File() ? "It was kept as " + file.keptAs.getFileName()
+                                             : juce::String ("It could not be moved aside (the session may be read-only)"))
+             << ".\n"
+             << (file.backup != juce::File() ? "Newest good backup: " + file.backup.getFileName()
+                                             : juce::String ("No backup holds a good copy"))
+             << ".\n\n";
+        canRestore = canRestore || file.backup != juce::File();
+    }
+    text << "Until then the session uses defaults for what is missing. Audio is not affected.";
+
+    auto* aw = new juce::AlertWindow ("Session files are damaged", text, juce::MessageBoxIconType::NoIcon, this);
+    aw->setLookAndFeel (&laf);
+    if (canRestore) aw->addButton ("Restore Backup", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton (canRestore ? "Keep Going" : "OK", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [self, aw, dir, files] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (self != nullptr && result == 1) self->restoreDamagedFiles (dir, files);
+        }), false);
+}
+
+bool MainComponent::restoreDamagedFiles (const juce::File& dir,
+                                         const std::vector<zynforge::sessionrepair::DamagedFile>& files)
+{
+    // The dialog can sit open across a remote RECORD or a session change.
+    if (engine.isRecording() || sessionIoBusy.load() || ! isSessionOpen (dir))
+    {
+        showStatus ("Restore cancelled -- a recording, a save or another session is active");
+        return false;
+    }
+    const auto failed = zynforge::sessionrepair::restoreFromBackups (dir, files);
+    if (! failed.isEmpty())
+    {
+        showStatus ("Could not restore " + failed.joinIntoString (", ") + " -- check the session volume");
+        return false;
+    }
+    if (openSessionFolder (dir, true) < 0) return false;
+    showStatus ("Restored from backup: " + dir.getFileName());
+    return true;
 }
 
 void MainComponent::restoreSessionDocuments (const juce::File& dir)
@@ -480,6 +539,8 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     }
     const auto result = zynforge::writeSessionMetadata (captureMetadataSnapshot (dir));
     lastMetadataSaveError = result.error;
+    lastMetadataSaveNotice = result.notice;
+    if (result.notice.isNotEmpty()) toast.show (result.notice, Toast::Kind::Warning);
     if (result.ok) lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
     return result.ok;
 }
@@ -542,6 +603,8 @@ void MainComponent::enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot s
             }
             if (result.superseded) return; // retired layout request; replacement still owns persistence
             self->lastMetadataSaveError = result.error;
+            self->lastMetadataSaveNotice = result.notice;
+            if (result.notice.isNotEmpty()) self->toast.show (result.notice, Toast::Kind::Warning);
             const bool sameSession = self->engine.getActiveSessionDir() == dir;
             bool snapshotStillCurrent = true;
             if (sameSession && result.ok && fullSave)

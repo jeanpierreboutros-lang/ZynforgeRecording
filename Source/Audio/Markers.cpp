@@ -1,5 +1,6 @@
 #include "Markers.h"
 #include "AtomicFile.h"
+#include "SessionRepair.h"
 
 #include <algorithm>
 
@@ -129,6 +130,9 @@ namespace zynforge
         root->setProperty ("markers", arr);
 
         const auto json = juce::JSON::toString (juce::var (root.get()), true);
+        if (const auto kept = sessionrepair::keepIfUnreadable (markersFileFor (sessionDir));
+            kept != juce::File() && onDamagedFileKept)
+            onDamagedFileKept (kept);
         return atomicfile::writeText (markersFileFor (sessionDir), json);
     }
 

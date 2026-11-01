@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <juce_core/juce_core.h>
 
 #include <vector>
@@ -51,6 +53,8 @@ namespace zynforge
 
         bool save() const;
         bool load();
+        // A save moved a damaged markers.json aside rather than replace it.
+        std::function<void (const juce::File& kept)> onDamagedFileKept;
 
     private:
         // Keep `markers` ascending by sampleOffset (stable, so equal-position

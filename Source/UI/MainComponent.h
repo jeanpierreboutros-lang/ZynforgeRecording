@@ -171,6 +171,10 @@ private:
     // replaces every unsaved edit.
     int  openSessionFolder (const juce::File& dir, bool reload = false);
     bool isSessionOpen (const juce::File& dir) const;
+    void reportDamagedFiles (const juce::File& dir, const std::vector<zynforge::sessionrepair::DamagedFile>& files);
+    bool restoreDamagedFiles (const juce::File& dir, const std::vector<zynforge::sessionrepair::DamagedFile>& files);
+    // Stands in for the dialog, which a headless test cannot answer.
+    std::function<void (const std::vector<zynforge::sessionrepair::DamagedFile>&)> damagedFilesPromptForTests;
     void restoreSessionDocuments (const juce::File& dir);
     void adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs);
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
@@ -332,6 +336,7 @@ private:
     juce::uint32 lastAutosaveMs    { 0 };   // 0 = clock not started yet
     int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
     juce::String lastMetadataSaveError;     // why the last save failed, for the STOP message
+    juce::String lastMetadataSaveNotice;    // what the last good save had to set aside
     juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
     int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
     void recordUndoSnapshot (const juce::String& label);

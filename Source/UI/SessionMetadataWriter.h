@@ -3,6 +3,7 @@
 #include "../Audio/AtomicFile.h"
 #include "../Audio/SessionBackup.h"
 #include "../Audio/SessionMixFile.h"
+#include "../Audio/SessionRepair.h"
 #include "SessionProjPath.h"
 #include <condition_variable>
 #include <deque>
@@ -25,6 +26,7 @@ namespace zynforge
         bool ok = false;
         juce::String error;
         bool superseded = false; // only an unstarted layout-only request can retire this way
+        juce::String notice;     // the save worked, and the engineer should hear this too
     };
 
     // The worker receives serialized values, never engine/UI objects or shared
@@ -57,6 +59,17 @@ namespace zynforge
                                                             : new juce::DynamicObject();
         for (const auto& property : patch.getDynamicObject()->getProperties())
             merged->setProperty (property.name, property.value);
+        // A file damaged since the session opened: opening already moved aside
+        // anything damaged then. The replacement must not be its only trace.
+        juce::StringArray keptAside;
+        const auto keepDamaged = [&] (const juce::File& file, const juce::String& json)
+        {
+            if (json.isNotEmpty())
+                if (const auto kept = sessionrepair::keepIfUnreadable (file); kept != juce::File())
+                    keptAside.add (file.getFileName() + " was damaged and is kept as " + kept.getFileName());
+        };
+        keepDamaged (snapshot.directory.getChildFile ("session_settings.json"), snapshot.settingsJson);
+        keepDamaged (snapshot.directory.getChildFile (sessionmix::kFileName), snapshot.mixJson);
         if (snapshot.settingsJson.isNotEmpty()
             && ! atomicfile::writeText (snapshot.directory.getChildFile ("session_settings.json"), snapshot.settingsJson))
             return { false, "Could not save session_settings.json" };
@@ -68,7 +81,7 @@ namespace zynforge
             return { false, "Could not save session project" };
         if (snapshot.backup && ! sessionbackup::writeSnapshot (snapshot.directory).isDirectory())
             return { false, "Could not save session backup snapshot" };
-        return { true, {} };
+        return { true, {}, false, keptAside.joinIntoString ("; ") };
     }
 
     class SessionMetadataWriter
