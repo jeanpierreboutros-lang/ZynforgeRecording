@@ -265,7 +265,7 @@ namespace zynforge
         // Load a session's audio into the player + seed clips. preserveEdits
         // is false for a genuine session OPEN (wipe stale clips; the caller's
         // .zfproj playlist restore repopulates) and true for a SAME-session
-        // reload (click-track regen) that must keep the engineer's comps.
+        // reload (click-track regen) that must keep the engineer's edits.
         int  loadSession (const juce::File& sessionDir, bool preserveEdits = false, bool appendRecordedAudio = false);
 
         // Per-SESSION strip mix state: name, colour, gain, pan, mute, solo,
@@ -859,10 +859,10 @@ namespace zynforge
         // tools have something to grab. Called after loadSession() or
         // when stopRecording() auto-loads the just-captured files.
         //   preserveEdits == false (session OPEN): wipe every track's clips
-        //     + comp takes and reseed defaults. The .zfproj playlist restore
+        //     + takes and reseed defaults. The .zfproj playlist restore
         //     that follows a real session open overwrites these anyway.
         //   preserveEdits == true  (SAME-session reload: stop-recording,
-        //     strip reorder): keep every edited track's splits/fades/comps
+        //     strip reorder): keep every edited track's splits/fades/takes
         //     verbatim and only (re)seed tracks that are still the plain
         //     full-range default -- never silently discard edits.
         void seedDefaultClips (bool preserveEdits = false, bool appendRecordedAudio = false);
@@ -949,31 +949,11 @@ namespace zynforge
         // it reads the clip lists, which only that thread edits.
         interchange::SessionInput captureInterchange();
 
-        // ── Comp playlists (Take swap) ─────────────────────────────
+        // ── Playlists ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's
-        // clips are what the player renders. Engineer captures the
-        // current clip list as a named take, switches between takes for
-        // comping, deletes takes they don't want.
-        int   getTakeCount     (int track) const;
+        // clips are what the player renders.
         int   getActiveTakeIdx (int track) const;
         juce::String getTakeName (int track, int takeIdx) const;
-        // Copy of a take's clip list -- used by the comp-lanes view to draw
-        // each take's arrangement. The active take mirrors the live clips.
-        std::vector<Clip> getTakeClips (int track, int takeIdx) const;
-        void  setActiveTake   (int track, int takeIdx);
-        int   newTakeFromCurrent (int track, const juce::String& name);
-        void  deleteTake      (int track, int takeIdx);
-        void  renameTake      (int track, int takeIdx, const juce::String& name);
-        // Comp: splice `sourceTakeIdx`'s audio for the timeline range
-        // [start, end) into the ACTIVE take, replacing whatever was there.
-        // This is the swipe-comp primitive -- build one keeper by pulling
-        // the best section from each take. Undoable / persisted via the
-        // active take. Returns true if the comp changed anything.
-        bool  compRangeFromTake (int track, int sourceTakeIdx,
-                                 juce::int64 start, juce::int64 end);
-        // A locked clip stays, so a comp over it would play both takes on top
-        // of each other. compRangeFromTake refuses this, as consolidate does.
-        bool  compRangeHitsLockedClip (int track, juce::int64 start, juce::int64 end) const;
         // Serialise / deserialise the full playlist (every track's
         // takes + their clip lists) for .zfproj persistence. Without
         // this, Takes are RAM-only and lost on app quit.
@@ -1557,9 +1537,7 @@ namespace zynforge
         void addRecordedSpan (int track, juce::int64 from, juce::int64 to);
         // Per-track Playlist storing every Take (named clip list). The
         // active take's clips mirror trackClips above so the player
-        // path doesn't need to know about takes. setActiveTake swaps
-        // the active take's contents into trackClips + republishes
-        // to the player.
+        // path doesn't need to know about takes.
         std::vector<Playlist> trackPlaylists;
         std::vector<AutomationPoint> emptyAutomation;   // returned by ref when none
 

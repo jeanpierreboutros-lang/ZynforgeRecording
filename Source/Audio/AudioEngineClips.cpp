@@ -5,10 +5,8 @@
 // setClipFades, setClipMuted, setClipLocked, setClipGainDb,
 // deleteClip, duplicateClip.
 //
-// Takes / playlist surface: getTakeCount, getActiveTakeIdx,
-// getTakeName, setActiveTake, newTakeFromCurrent, deleteTake,
-// renameTake, playlistsToJson, loadPlaylistsFromJson,
-// seedDefaultClips.
+// Takes / playlist surface: getActiveTakeIdx, getTakeName,
+// playlistsToJson, loadPlaylistsFromJson, seedDefaultClips.
 
 #include "AudioEngine.h"
 #include "CheckedFileStream.h"
@@ -70,7 +68,7 @@ namespace zynforge
         // to grab. Without an active clip list, TrackRow's clip-edit
         // hit-test short-circuits and the tools feel dead.
         //
-        // preserveEdits guards against silently wiping comp takes / splits /
+        // preserveEdits guards against silently wiping takes / splits /
         // fades on a SAME-session reload (stop-recording, strip reorder). Only
         // the true session-OPEN path passes false, and its .zfproj restore
         // overwrites these seeds anyway. See the seedDefaultClips ADR.
@@ -81,8 +79,8 @@ namespace zynforge
             return;
         }
 
-        // A track is "edited" (must be preserved) when it has been comped
-        // (>1 take) or its single clip has been shaped away from the plain
+        // A track is "edited" (must be preserved) when it holds several
+        // takes or its single clip has been shaped away from the plain
         // full-range default (split, front-trimmed, faded, gained, muted,
         // moved, or repointed at a cross-track file).
         //
@@ -126,7 +124,7 @@ namespace zynforge
             if (preserveEdits && trackIsEdited (i))
             {
                 // A continuation adds source media after the prior end. Keep
-                // every existing split/trim/comp verbatim and expose only the
+                // every existing split/trim verbatim and expose only the
                 // newly recorded span as a new clip on the active take. A
                 // strip with no media before (oldLength 0) whose arrangement
                 // holds pasted clips gets its whole new take the same way --
@@ -155,8 +153,7 @@ namespace zynforge
             trackClips[(size_t) i].push_back (c);
             player.setTrackClips (i, trackClips[(size_t) i]);
 
-            // Seed Take 1 = current single-clip layout so the engineer
-            // can immediately stamp "Take 2 from current" mid-comp.
+            // Seed Take 1 = current single-clip layout.
             Take t1;
             t1.name  = "Take 1";
             t1.clips = trackClips[(size_t) i];
@@ -262,7 +259,7 @@ namespace zynforge
             syncActiveTake (t);   // keep the active take == trackClips
 
             // A take not playing now still has to line up with the one that
-            // is, or a later comp from it lands on the wrong audio.
+            // is, on the session's one timeline.
             auto& playlist = trackPlaylists[(size_t) t];
             for (int k = 0; k < (int) playlist.takes.size(); ++k)
                 if (k != playlist.activeTake)
@@ -345,12 +342,6 @@ namespace zynforge
         setTempoMap (state.tempoMap);
     }
 
-    int AudioEngine::getTakeCount (int track) const
-    {
-        if (track < 0 || track >= (int) trackPlaylists.size()) return 0;
-        return (int) trackPlaylists[(size_t) track].takes.size();
-    }
-
     int AudioEngine::getActiveTakeIdx (int track) const
     {
         if (track < 0 || track >= (int) trackPlaylists.size()) return -1;
@@ -365,74 +356,8 @@ namespace zynforge
         return p.takes[(size_t) takeIdx].name;
     }
 
-    std::vector<Clip> AudioEngine::getTakeClips (int track, int takeIdx) const
-    {
-        if (track < 0 || track >= (int) trackPlaylists.size()) return {};
-        const auto& p = trackPlaylists[(size_t) track];
-        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return {};
-        // The active take's authoritative clips are the live trackClips.
-        if (takeIdx == p.activeTake && track < (int) trackClips.size())
-            return trackClips[(size_t) track];
-        return p.takes[(size_t) takeIdx].clips;
-    }
-
-    void AudioEngine::setActiveTake (int track, int takeIdx)
-    {
-        if (isArrangementFrozen()) return;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return;
-        auto& p = trackPlaylists[(size_t) track];
-        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
-
-        // Save the current trackClips into the OUTGOING take so a
-        // mid-edit switch doesn't lose work, THEN load the incoming
-        // take into trackClips + republish to the player.
-        if (p.activeTake >= 0 && p.activeTake < (int) p.takes.size())
-            p.takes[(size_t) p.activeTake].clips = trackClips[(size_t) track];
-
-        p.activeTake = takeIdx;
-        trackClips[(size_t) track] = p.takes[(size_t) takeIdx].clips;
-        player.setTrackClips (track, trackClips[(size_t) track]);
-    }
-
-    int AudioEngine::newTakeFromCurrent (int track, const juce::String& name)
-    {
-        if (isArrangementFrozen()) return -1;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return -1;
-        auto& p = trackPlaylists[(size_t) track];
-        Take t;
-        t.name  = name.isNotEmpty() ? name : ("Take " + juce::String ((int) p.takes.size() + 1));
-        t.clips = trackClips[(size_t) track];
-        p.takes.push_back (std::move (t));
-        p.activeTake = (int) p.takes.size() - 1;
-        return p.activeTake;
-    }
-
-    void AudioEngine::deleteTake (int track, int takeIdx)
-    {
-        if (isArrangementFrozen()) return;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return;
-        auto& p = trackPlaylists[(size_t) track];
-        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
-        if (p.takes.size() <= 1) return;   // never delete the last take
-
-        p.takes.erase (p.takes.begin() + takeIdx);
-        if (takeIdx < p.activeTake) --p.activeTake;
-        if (p.activeTake >= (int) p.takes.size()) p.activeTake = (int) p.takes.size() - 1;
-        trackClips[(size_t) track] = p.takes[(size_t) p.activeTake].clips;
-        player.setTrackClips (track, trackClips[(size_t) track]);
-    }
-
-    void AudioEngine::renameTake (int track, int takeIdx, const juce::String& name)
-    {
-        if (isArrangementFrozen()) return;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return;
-        auto& p = trackPlaylists[(size_t) track];
-        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
-        p.takes[(size_t) takeIdx].name = name.isNotEmpty() ? name : ("Take " + juce::String (takeIdx + 1));
-    }
-
     // Serialise the full per-track playlist (every Take + every Clip
-    // inside it) so .zfproj round-trips the engineer's comping work.
+    // inside it) so .zfproj round-trips the engineer's work.
     // Without this Takes are RAM-only and lost on app quit -- real
     // data-loss bug fixed here.
     juce::var AudioEngine::playlistsToJson() const
@@ -732,7 +657,7 @@ namespace zynforge
         // Returns true if at least one cut landed (sample strictly inside a
         // clip). Clips may overlap (a paste or move over a neighbour), so
         // stopping at the first one left the others crossing a range edge:
-        // Clear / Ripple / Comp kept them playing inside the range, and
+        // Clear / Ripple kept them playing inside the range, and
         // Consolidate played them again on top of its own render.
         bool splitListAtTimeline (std::vector<Clip>& list, juce::int64 timelineSample)
         {
@@ -2200,62 +2125,6 @@ namespace zynforge
         // the markers and tempo map stay with it.
         if (namesEveryStrip (tracks)) cutSessionTimeline (cut);
         return changed;
-    }
-
-    bool AudioEngine::compRangeHitsLockedClip (int track, juce::int64 start, juce::int64 end) const
-    {
-        if (const auto* clips = tryClipsFor (track))
-            for (const auto& clip : *clips)
-                if (clip.locked && clip.timelineStartSamples < end
-                    && clip.timelineStartSamples + clip.fileLengthSamples > start) return true;
-        return false;
-    }
-
-    bool AudioEngine::compRangeFromTake (int track, int sourceTakeIdx,
-                                         juce::int64 start, juce::int64 end)
-    {
-        if (isArrangementFrozen()) return false;
-        if (end <= start) return false;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return false;
-        auto& p = trackPlaylists[(size_t) track];
-        if (sourceTakeIdx < 0 || sourceTakeIdx >= (int) p.takes.size()) return false;
-        // Keep the active take == trackClips before we splice.
-        syncActiveTake (track);
-        if (track >= (int) trackClips.size()) return false;
-        auto& dst = trackClips[(size_t) track];
-
-        if (compRangeHitsLockedClip (track, start, end)) return false;
-
-        // 1. Clear [start, end) in the active comp.
-        splitListAtTimeline (dst, start);
-        splitListAtTimeline (dst, end);
-        for (int i = (int) dst.size() - 1; i >= 0; --i)
-        {
-            const auto cs = dst[(size_t) i].timelineStartSamples;
-            const auto ce = cs + dst[(size_t) i].fileLengthSamples;
-            if (cs >= start && ce <= end && ! dst[(size_t) i].locked)
-                dst.erase (dst.begin() + i);
-        }
-
-        // 2. Splice in the source take's clips intersected with [start, end).
-        const auto srcClips = p.takes[(size_t) sourceTakeIdx].clips;
-        for (const auto& c : srcClips)
-        {
-            const auto cs = c.timelineStartSamples;
-            const auto ce = cs + c.fileLengthSamples;
-            const auto is = juce::jmax (cs, start);
-            const auto ie = juce::jmin (ce, end);
-            if (ie <= is) continue;
-            // The source take's audio exactly as that take played it.
-            dst.push_back (clipSlice (c, is - cs, ie - is));
-        }
-
-        std::sort (dst.begin(), dst.end(),
-                   [] (const Clip& a, const Clip& b)
-                   { return a.timelineStartSamples < b.timelineStartSamples; });
-        player.setTrackClips (track, dst);
-        syncActiveTake (track);
-        return true;
     }
 
     int AudioEngine::pasteClip (int track, juce::int64 timelineStart,

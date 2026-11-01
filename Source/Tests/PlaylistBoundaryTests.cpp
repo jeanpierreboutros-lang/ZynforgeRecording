@@ -74,7 +74,6 @@ public:
             AudioEngine engine;
             engine.loadPlaylistsFromJson (input.document);
             expect (engine.isTrackArrangementEmpty (0), "invalid clip was published to the player");
-            expectEquals (engine.getTakeCount (0), 1, "invalid clip erased the initialized take");
             const auto serialized = engine.playlistsToJson();
             const auto* tracks = serialized.getArray();
             expect (tracks != nullptr && tracks->size() == 1);

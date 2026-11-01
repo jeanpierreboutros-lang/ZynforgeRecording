@@ -523,47 +523,6 @@ namespace zynforge
                 }
             }
 
-            // ── #3: takes and comps on a stereo row move BOTH halves ─────────
-            beginTest ("Take and comp operations on a stereo row keep L and R on one arrangement");
-            {
-                Session s (2, { 48000, 48000 });
-                s.engine.setTrackStereo (0, true);
-                EditPage::TrackRow row (0, true, s.engine, s.formats, s.cache);
-                sizeRow (row);
-                const int takesBefore = s.engine.getTakeCount (0);
-                expectEquals (s.engine.getTakeCount (1), takesBefore, "setup");
-
-                row.applyTakeMenuChoice (850);   // New take from current
-                expectEquals (s.engine.getTakeCount (0), takesBefore + 1);
-                expectEquals (s.engine.getTakeCount (1), takesBefore + 1, "R missed the new take");
-
-                // Edit the new take on both halves (as a stereo clip edit does).
-                expect (s.engine.splitTrackAtSample (0, 24000));
-                expect (s.engine.splitTrackAtSample (1, 24000));
-                row.applyTakeMenuChoice (800);   // back to the first take
-                expectEquals ((int) s.clips (0).size(), 1);
-                expectEquals ((int) s.clips (1).size(), 1, "R kept the edited take");
-
-                // Comp a range of the edited take into the first take.
-                s.engine.getPlayer().setLoopRegion (30000, 40000);
-                row.applyTakeMenuChoice (870 + takesBefore);
-                expectEquals ((int) s.clips (0).size(), (int) s.clips (1).size(),
-                              "comp selection spliced only one half");
-                s.engine.getPlayer().clearLoopRegion();
-
-                // Comp-lane swipe pulls the swiped range into BOTH halves.
-                row.applyTakeMenuChoice (860);   // show take lanes
-                const int before0 = (int) s.clips (0).size();
-                drag (row, { laneX (row, 0.05), 70 }, { laneX (row, 0.3), 70 });   // the second take's lane
-                expect ((int) s.clips (0).size() != before0, "setup: the swipe comped L");
-                expectEquals ((int) s.clips (0).size(), (int) s.clips (1).size(),
-                              "the swipe comped only L");
-
-                row.applyTakeMenuChoice (852);   // delete the active take
-                expectEquals (s.engine.getTakeCount (0), s.engine.getTakeCount (1),
-                              "delete take left L and R with different take lists");
-            }
-
             // ── #4: deep zoom draws only the visible columns ────────────────
             beginTest ("Deep zoom reads only the visible part of a waveform, and normal zoom draws the same pixels");
             {

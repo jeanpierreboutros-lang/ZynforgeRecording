@@ -16,6 +16,7 @@
 #include "../Audio/SongExport.h"
 #include "../Audio/TrackExporter.h"
 #include "../UI/MainComponent.h"
+#include "SavedTakes.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <sys/resource.h>
@@ -155,7 +156,7 @@ public:
             expect (write (f.track (2)));
             e.loadSession (f.dir, true, true);
             e.loadPlaylistsFromJson (juce::var (noTakes));
-            expect (e.getTakeCount (1) >= 1, "the kept clips fell out of the playlist the save writes");
+            expect (savedtakes::count (e, 1) >= 1, "the kept clips fell out of the playlist the save writes");
         }
     }
 
@@ -166,7 +167,7 @@ public:
         {
             Folder f; expect (write (f.track()));
             AudioEngine e; setup (e); e.loadSession (f.dir);
-            e.newTakeFromCurrent (0, "Take 2");
+            savedtakes::addTake (e, 0, "Take 2");
             const auto saved = e.playlistsToJson();
             auto* obj = saved[0].getDynamicObject();
             expect (obj != nullptr);
@@ -176,10 +177,13 @@ public:
             doc.add (juce::var (entry.get()));
             e.loadPlaylistsFromJson (juce::var (doc));
             const int active = e.getActiveTakeIdx (0);
-            expect (active >= 0 && active < e.getTakeCount (0));
-            e.deleteTake (0, 1 - active);
-            expectEquals (e.getTakeCount (0), 1);
+            expect (active >= 0 && active < savedtakes::count (e, 0));
             expect (! e.clipsFor (0).empty());
+            // The live clips are that take's own: an edit lands there and
+            // nowhere else.
+            expect (e.splitTrackAtSample (0, 24000));
+            expectEquals ((int) savedtakes::clips (e, 0, active).size(), 2);
+            expectEquals ((int) savedtakes::clips (e, 0, 1 - active).size(), 1);
         }
     }
 
@@ -195,7 +199,7 @@ public:
             e.addAutomationPoint (0, Param::Volume, 0, -6.0f);
             e.addAutomationPoint (0, Param::Volume, 40000, -6.0f);
             e.setTempoMap ({ { 1000, 100.0f }, { 15000, 120.0f }, { 30000, 140.0f } });
-            e.newTakeFromCurrent (0, "Take 2");
+            savedtakes::addTake (e, 0, "Take 2");
 
             expectEquals (e.rippleDeleteTracks ({ 0, 1 }, 10000, 20000), 1);
 
@@ -214,8 +218,9 @@ public:
             expectWithinAbsoluteError (tempo[1].bpm, 120.0f, 0.01f, "the tempo in force at the join was lost");
             expectEquals (tempo[2].samplePos, (juce::int64) 20000);
 
-            for (int take = 0; take < e.getTakeCount (0); ++take)
-                expectEquals (clipSpan (e.getTakeClips (0, take)), (juce::int64) 38000,
+            expectEquals (savedtakes::count (e, 0), 2);
+            for (int take = 0; take < savedtakes::count (e, 0); ++take)
+                expectEquals (clipSpan (savedtakes::clips (e, 0, take)), (juce::int64) 38000,
                               "another take stayed on the old timeline");
         }
 
@@ -260,7 +265,7 @@ public:
             const float atStart = e.automationValueAtOffline (0, Param::Volume, 10000, 99.0f);
             const float inRange = e.automationValueAtOffline (0, Param::Volume, 15000, 99.0f);
             e.setTempoMap ({ { 5000, 100.0f }, { 15000, 120.0f } });
-            e.newTakeFromCurrent (0, "Take 2");
+            savedtakes::addTake (e, 0, "Take 2");
 
             expectEquals (e.cropToRange (10000, 20000), 1);
 
@@ -273,10 +278,13 @@ public:
             expectEquals (tempo[0].samplePos, (juce::int64) 0);
             expectWithinAbsoluteError (tempo[0].bpm, 100.0f, 0.01f);
             expectEquals (tempo[1].samplePos, (juce::int64) 5000);
-            for (int take = 0; take < e.getTakeCount (0); ++take)
+            expectEquals (savedtakes::count (e, 0), 2);
+            for (int take = 0; take < savedtakes::count (e, 0); ++take)
             {
-                expectEquals (clipSpan (e.getTakeClips (0, take)), (juce::int64) 10000);
-                expectEquals (e.getTakeClips (0, take)[0].timelineStartSamples, (juce::int64) 0);
+                const auto clips = savedtakes::clips (e, 0, take);
+                expectEquals (clipSpan (clips), (juce::int64) 10000);
+                if (! clips.empty())
+                    expectEquals (clips[0].timelineStartSamples, (juce::int64) 0);
             }
         }
 
@@ -692,19 +700,6 @@ public:
 
     void compAndStrip()
     {
-        beginTest ("Comp refuses to play two takes over a locked clip");
-        {
-            Folder f; expect (write (f.track()));
-            AudioEngine e; setup (e); e.loadSession (f.dir);
-            expectEquals (e.newTakeFromCurrent (0, "Take 2"), 1);
-            e.setClipLocked (0, 0, true);
-            const auto before = e.playlistsToJson();
-            expect (e.compRangeHitsLockedClip (0, 12000, 24000));
-            expect (! e.compRangeFromTake (0, 0, 12000, 24000));
-            expect (juce::JSON::toString (before) == juce::JSON::toString (e.playlistsToJson()));
-            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 15000), 0.25f, 0.001f, "the range plays both takes");
-        }
-
         beginTest ("Strip Silence keeps the rest of a long fade at an edge it makes");
         {
             Folder f; expect (write (f.track(), 480000, 0.5f));

@@ -452,6 +452,41 @@ public:
             expectEquals (host.engine.getRecorder().getNumTracks(), 5);
             host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
         }
+
+        beginTest ("A session saved with several takes opens, plays its active take and saves them all");
+        {
+            Folder f; writeSavedShow (f, 1); expect (writeAudio (f.track (1)));
+            f.project().replaceWithText (R"({"zynforgeSession":true,"setlist":[],"automation":[],
+                "playlists":[{"track":0,"activeTake":1,"takes":[
+                    {"name":"First", "clips":[{"tlStart":0,"fileStart":0,"fileLen":4800}]},
+                    {"name":"Second","clips":[{"tlStart":0,"fileStart":0,"fileLen":2400}]},
+                    {"name":"Third", "clips":[{"tlStart":3600,"fileStart":0,"fileLen":1200}]}]}]})");
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) > 0);
+            expectEquals (host.engine.getActiveTakeIdx (0), 1);
+            expectEquals (host.engine.getTakeName (0, 1), juce::String ("Second"));
+
+            juce::AudioBuffer<float> played;
+            expect (host.engine.renderTrackArrangement (0, played, 4800));
+            expect (played.getMagnitude (0, 0, 2400) > 0.2f, "the active take does not play");
+            expectLessThan (played.getMagnitude (0, 2400, 2400), 0.001f, "another take plays too");
+
+            host.onSaveSessionState();
+            expect (pumpUntil ([&] { return host.pendingMetadataSaves == 0; }));
+            const auto saved = juce::JSON::parse (f.project());
+            expectEquals ((int) saved["playlists"][0]["activeTake"], 1);
+            const auto* takes = saved["playlists"][0]["takes"].getArray();
+            expect (takes != nullptr && takes->size() == 3, "a take was lost on the way back to disk");
+            if (takes != nullptr && takes->size() == 3)
+            {
+                expectEquals ((*takes)[0]["name"].toString(), juce::String ("First"));
+                expectEquals ((int) (*takes)[0]["clips"][0]["fileLen"], 4800);
+                expectEquals ((*takes)[2]["name"].toString(), juce::String ("Third"));
+                expectEquals ((int) (*takes)[2]["clips"][0]["tlStart"], 3600);
+            }
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
     }
 
     static juce::Array<juce::File> keptCopies (const juce::File& dir, const juce::String& name)

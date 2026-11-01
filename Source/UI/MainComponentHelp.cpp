@@ -86,7 +86,7 @@ namespace
                                       "Rename / Colour / Stereo / Stream send / VCA assign / Output-mute" },
                 }},
                 { "Edit view", {
-                    { "Right-click row",  "Row size + Take swap (comp playlists)" },
+                    { "Right-click row",  "Row size" },
                     { "Right-click clip", "Mute / Lock / Duplicate / Delete / Gain / Fade in & out" },
                     { "Drag swatch",      "Reorder strip (paused only)" },
                 }},
@@ -298,7 +298,7 @@ void MainComponent::showUserGuide()
         "EDIT VIEW\n"
         "  Waveform of each Track_NN.wav. Edit tools palette top-right: "
         "Smart / Selector / Trim / Grabber / Fade / Scrubber. "
-        "Right-click a row for size + take swap; right-click a clip for "
+        "Right-click a row for size; right-click a clip for "
         "mute / lock / duplicate / delete / gain / fades. "
         "Wheel scrolls tracks; Shift+wheel or a horizontal trackpad gesture "
         "pans time. Cmd+wheel zooms time; Cmd+Shift+wheel zooms waveform "
@@ -322,10 +322,6 @@ void MainComponent::showUserGuide()
         "  8 group faders. Assign strips via right-click > Assign to VCA. "
         "VCA fader sums into each assigned strip's gain. VCA mute / solo "
         "follows console (solo-in-place) convention.\n\n"
-        "TAKE SWAP (EDIT row right-click)\n"
-        "  Each track holds N named takes (clip lists). Capture the "
-        "current state as a new take mid-comp; switch between takes "
-        "without losing edits.\n\n"
         "DEVICE / FORMAT / BACKUP\n"
         "  DEVICE opens the audio interface picker. FILE > New Session "
         "configures format + sample rate. BACKUP picks a second drive "

@@ -14,6 +14,7 @@
 #include "../Audio/ProjectExport.h"
 #include "../Audio/ShowHandoff.h"
 #include "../UI/MainComponent.h"
+#include "SavedTakes.h"
 
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
@@ -257,19 +258,18 @@ namespace zynforge
                         "DAWproject has no channel selection and must say so");
             }
 
-            beginTest ("Only the active comp take is exported");
+            beginTest ("Only the active take is exported");
             {
                 Folder f;
                 expect (writeAudio (f.audio().getChildFile ("Track_01.wav"), 4800, 1, 1));
                 AudioEngine e; setup (e, 1);
                 e.loadSession (f.dir);
-                expectEquals (e.newTakeFromCurrent (0, "Take 2"), 1);
-                e.setActiveTake (0, 1);
+                expectEquals (savedtakes::addTake (e, 0, "Take 2"), 1);
                 expect (e.splitTrackAtSample (0, 2400));
 
                 expectEquals ((int) resolved (e).tracks[0].items.size(), 2, "the active take has two clips");
-                e.setActiveTake (0, 0);
-                expectEquals ((int) resolved (e).tracks[0].items.size(), 1, "switching take must change the export");
+                savedtakes::makeActive (e, 0, 0);
+                expectEquals ((int) resolved (e).tracks[0].items.size(), 1, "another active take must change the export");
             }
 
             beginTest ("A bus plays no media, even after a stereo take");

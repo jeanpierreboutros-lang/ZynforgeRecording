@@ -133,7 +133,7 @@ void MainComponent::loadSetlistFromActiveSession()
     }
     setlistBar.setCues (cues, currentCueIndex);
 
-    // Restore comp playlists (Takes) from the .zfproj if present.
+    // Restore playlists (Takes) from the .zfproj if present.
     // seedDefaultClips ran earlier and populated trackPlaylists with
     // Take 1; loadPlaylistsFromJson now overwrites that with whatever
     // the engineer had saved. Re-parse the .zfproj here -- the earlier
@@ -216,7 +216,7 @@ juce::String MainComponent::captureProjectPatchJson() const
         arr.add (juce::var (entry.get()));
     }
     obj->setProperty ("setlist",   juce::var (arr));
-    // Persist comp playlists (Takes) -- RAM-only before this fix
+    // Persist playlists (Takes) -- RAM-only before this fix
     // meant every alternate take was lost on app quit.
     obj->setProperty ("playlists",  engine.playlistsToJson());
     obj->setProperty ("mediaLengths", engine.mediaLengthsToJson());

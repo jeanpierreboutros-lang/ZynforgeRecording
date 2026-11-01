@@ -363,7 +363,7 @@ namespace zynforge
         // Fail closed when not recording. Otherwise a stray transport-stop
         // from a network source (OSC/console recordStop, a tablet double-tap)
         // would still run the whole tail below -- reload the last-recorded
-        // session, reseed clips, yank the playhead -- destroying clip/comp
+        // session, reseed clips, yank the playhead -- destroying clip
         // edits on a session that is merely idle or playing back. The UI STOP
         // button is already gated, but the engine entry point was not.
         if (! recorder.isRecording()) return;
@@ -398,7 +398,7 @@ namespace zynforge
         {
             player.loadSession (sessionDir);
             setActiveSessionDir (sessionDir);
-            // Preserve every comp take / split / fade the engineer made
+            // Preserve every take / split / fade the engineer made
             // during soundcheck. A stop after a punch or continue must not
             // wipe edits on OTHER tracks; only the just-captured track's
             // plain default clip is refreshed to the new take length.

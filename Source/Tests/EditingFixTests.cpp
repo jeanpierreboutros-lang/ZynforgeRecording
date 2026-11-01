@@ -7,6 +7,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/NoiseAnalyzer.h"
+#include "SavedTakes.h"
 
 #include <atomic>
 #if JUCE_MAC
@@ -107,17 +108,6 @@ public:
             expectWithinAbsoluteError (renderedAt (e, 0, 48000, 30000), 0.5f, 0.001f);
         }
 
-        beginTest ("Comp from a take replaces every overlapping clip in the range");
-        {
-            Folder f; expect (write (f.track()));
-            AudioEngine e; setup (e); e.loadSession (f.dir);
-            expectEquals (e.newTakeFromCurrent (0, "Take 2"), 1);
-            e.pasteClip (0, 12000, 0, 24000, 0, 0, 0.0f, "B", juce::File(), -1);
-            expect (e.compRangeFromTake (0, 0, 18000, 24000));
-            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 20000), 0.25f, 0.001f,
-                                       "the comped range must hold Take 1's audio only");
-        }
-
         beginTest ("Undo of a paste onto a never-recorded strip removes the pasted clip");
         {
             Folder f; expect (write (f.track()));
@@ -125,11 +115,11 @@ public:
             const auto before = e.playlistsToJson();       // strip 4 has no Track_04 and no playlist
             expect (e.pasteClip (3, 0, 0, 4800, 0, 0, 0.0f, "copied", f.track(), 0) >= 0);
             const auto after = e.playlistsToJson();
-            expectEquals (e.getTakeCount (3), 1);
+            expectEquals (savedtakes::count (e, 3), 1);
 
             e.loadPlaylistsFromJson (before);                // ClipSnapshotAction::undo
             expect (e.tryClipsFor (3) == nullptr, "the pasted clip survived the undo");
-            expectEquals (e.getTakeCount (3), 0);
+            expectEquals (savedtakes::count (e, 3), 0);
             expectWithinAbsoluteError (renderedAt (e, 3, 4800, 1000), 0.0f, 0.00001f,
                                        "the undone paste still renders");
 
@@ -321,7 +311,7 @@ public:
             expectLessThan (maxDiff (before, after, 12000), 1.0e-6f, "the extended half lost the ramp");
         }
 
-        beginTest ("Crop and comp keep the audio a fade played inside the range");
+        beginTest ("Crop keeps the audio a fade played inside the range");
         {
             Folder f; expect (writeSine (f.track()));
             AudioEngine e; setup (e); e.loadSession (f.dir);
@@ -333,17 +323,6 @@ public:
             for (int i = 0; i < 22000; ++i)
                 worst = juce::jmax (worst, std::abs (cropped.getSample (0, i) - before.getSample (0, 8000 + i)));
             expectLessThan (worst, 1.0e-6f, "the cropped piece got a fresh fade-in");
-
-            AudioEngine c; setup (c); c.loadSession (f.dir);
-            expect (c.setClipFades (0, 0, 20000, 0));               // Take 1: faded
-            expectEquals (c.newTakeFromCurrent (0, "Take 2"), 1);
-            expect (c.setClipFades (0, 0, 0, 0));                   // Take 2: plain
-            expect (c.compRangeFromTake (0, 0, 8000, 16000));
-            const auto comped = render (c, 0, 48000);
-            float worstComp = 0.0f;
-            for (int i = 8000; i < 16000; ++i)
-                worstComp = juce::jmax (worstComp, std::abs (comped.getSample (0, i) - before.getSample (0, i)));
-            expectLessThan (worstComp, 1.0e-6f, "the comped range does not play Take 1's audio");
         }
 
         beginTest ("Split fades survive a playlist JSON round trip; old JSON loads unchanged");
