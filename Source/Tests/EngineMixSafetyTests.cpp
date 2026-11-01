@@ -157,6 +157,7 @@ namespace zynforge
                     auto& e = r.engine;
                     e.setTrackStereo (0, true);
                     e.setTrackIsBus (2, true);
+                    e.claimMixerFor (f.dir);
                     expect (e.saveSessionMixTo (f.dir));
                     e.setTrackStereo (0, false);
                 }
@@ -486,6 +487,7 @@ namespace zynforge
                     for (int b = 0; b < 8; ++b) r.process();
                     e.stopRecording();
                     expect (! t.captureInputGainKnown.load());
+                    e.claimMixerFor (f.dir);
                     expect (e.saveSessionMixTo (f.dir));
                 }
                 Rig r (1, 1, 2);
@@ -500,6 +502,7 @@ namespace zynforge
                 TempFolder f;
                 {
                     Rig r (2, 2, 2);
+                    r.engine.claimMixerFor (f.dir);
                     expect (r.engine.saveSessionMixTo (f.dir));
                 }
                 editMix (f.dir, [] (juce::Array<juce::var>& strips)
@@ -526,6 +529,7 @@ namespace zynforge
                     Rig r (2, 2, 2);
                     r.engine.setTrackIsBus (1, true);
                     r.engine.setTrackSend (0, 0, 1, 0.0f, true);
+                    r.engine.claimMixerFor (f.dir);
                     expect (r.engine.saveSessionMixTo (f.dir));
                 }
                 editMix (f.dir, [] (juce::Array<juce::var>& strips)
@@ -545,6 +549,7 @@ namespace zynforge
                 Rig r (2, 2, 4);
                 auto& e = r.engine;
                 e.setStreamOutputs (2, 3);
+                e.claimMixerFor (f.dir);
                 expect (e.saveSessionMixTo (f.dir));
                 e.clearSessionState();
                 expectEquals (e.getStreamOutputL(), -1, "a stream route leaked out of its session");
@@ -645,6 +650,7 @@ namespace zynforge
                                            "a show running over midnight lost its place");
 
                 expect (e.setChaseStartTimecode ("10:20:30:04"));
+                e.claimMixerFor (f.dir);
                 expect (e.saveSessionMixTo (f.dir));
                 e.clearSessionState();
                 expectEquals (e.getChaseStartTimecode(), juce::String ("00:00:00:00"), "the start leaked past its session");

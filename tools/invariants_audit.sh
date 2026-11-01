@@ -316,7 +316,7 @@ report "asynchronous component callbacks carry a SafePointer" \
        "$(printf '%s' "$HITS")"
 
 HITS=""
-grep -q "child.start (arguments, 0)" Source/Network/CloudUpload.h \
+grep -q "child->start (arguments, 0)" Source/Network/CloudUpload.h \
     || HITS="Source/Network/CloudUpload.h: uploader captures pipes owned by a short-lived ChildProcess"
 report "detached uploads do not inherit short-lived output pipes" \
        "closing an undrained pipe can SIGPIPE a verbose uploader while the UI reports success" \
@@ -474,6 +474,39 @@ elif [[ -z "$PROJECT_LINE" || "$DEPLOY_LINE" -ge "$PROJECT_LINE" ]]; then
 fi
 report "deployment target is accepted by the supported Xcode toolchain" \
        "Xcode 27 rejects macOS 11, while a target assigned after project() silently links a clean build for the host OS" \
+       "$HITS"
+
+# A worker's stack is 512 KiB on macOS. A 1 MiB array in a function that ran on
+# a job thread faulted on entry, so Save As, Handoff and cross-volume Move took
+# the app down. Large buffers go on the heap.
+HITS=$(grep -rnE '(std::array<[a-zA-Z_:0-9 ]+, *[0-9]+ *\* *1024|(char|float|double|juce::uint8) +[a-zA-Z_]+\[[0-9]+ *\* *1024\])' $SCOPE 2>/dev/null \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//')
+report "no megabyte buffers on a thread's stack" \
+       "use std::vector or juce::HeapBlock; a worker thread has only 512 KiB of stack" \
+       "$HITS"
+
+# Every PropertiesFile shares one .settings file and saves its whole copy, so a
+# UI writer that skips the reload silently undoes a strip's patch or name.
+HITS=$(grep -rn 'saveIfNeeded' Source/UI 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
+    | grep -v '^Source/UI/TwinRecorderDialog\.h:')
+report "UI settings writes reload first" \
+       "use zynforge::updateSettings (Source/Audio/SettingsFile.h); TwinRecorderDialog reloads through its host" \
+       "$HITS"
+
+# The recorder's strips are not always a session's mixer, and a write of an
+# unloaded mixer replaced a whole show's session_mix.json with zero strips. So
+# only SessionMixFile.h names that file for writing. The listed files read it,
+# copy it into backups or journal it; they never write the in-memory mixer.
+HITS=$(grep -rnE '"session_mix\.json"' $SCOPE 2>/dev/null \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
+    | grep -vE '^Source/Audio/(SessionMixFile|SessionBackup|ShowHandoff|TrackFileTransaction)\.h:' \
+    | grep -vE '^Source/UI/(MainComponentCues|MainComponentHelp)\.cpp:')
+grep -q 'sessionmix::refusal' Source/UI/SessionMetadataWriter.h \
+    || HITS+=$'\nSource/UI/SessionMetadataWriter.h: the metadata writer no longer applies the mixer guard'
+grep -q 'sessionmix::write' Source/Audio/AudioEngine.cpp \
+    || HITS+=$'\nSource/Audio/AudioEngine.cpp: the engine no longer writes the mix through the mixer guard'
+report "session_mix.json is written only through the mixer guard" \
+       "use sessionmix::write (Source/Audio/SessionMixFile.h); it refuses a mixer that is not this session's" \
        "$HITS"
 
 echo

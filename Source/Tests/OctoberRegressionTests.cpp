@@ -177,6 +177,7 @@ public:
         {
             Folder f; AudioEngine e; setup (e);
             e.setVcaGainDb (0, -18); e.setVcaMuted (0, true); e.setVcaSoloed (0, true);
+            e.claimMixerFor (f.dir);
             expect (e.saveSessionMixTo (f.dir));
             e.getRecorder().getTrack (0).muted = true; e.setTrackIsBus (0, true);
             e.clearSessionState();

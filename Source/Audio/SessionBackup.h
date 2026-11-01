@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "SessionMixFile.h"
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -22,6 +23,41 @@ namespace zynforge::sessionbackup
     // Test-only delay seam. Load a shared callback before invocation so a test
     // can remove its hook safely after a worker has entered it.
     inline std::shared_ptr<const std::function<void()>> beforeSnapshotForTests;
+
+    // Retention counts snapshots, so a save that changed nothing must not take a
+    // place: left alone, an idle hour would push every earlier state out. The
+    // project's save time changes on every save and is not a change.
+    inline bool snapshotMatchesSession (const juce::File& snapshot, const juce::File& sessionDir)
+    {
+        const auto content = [] (const juce::File& file) -> juce::String
+        {
+            auto parsed = juce::JSON::parse (file);
+            if (auto* project = parsed.getDynamicObject(); project != nullptr && file.hasFileExtension ("zfproj"))
+            {
+                project->removeProperty ("updatedAt");
+                return juce::JSON::toString (parsed);
+            }
+            return file.loadFileAsString();
+        };
+        const auto projects = sessionDir.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
+                                                         false, "*.zfproj");
+        if (projects.size() != snapshot.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
+                                                        false, "*.zfproj").size())
+            return false;
+        for (const auto& project : projects)
+        {
+            const auto saved = snapshot.getChildFile (project.getFileName());
+            if (! saved.existsAsFile() || content (project) != content (saved)) return false;
+        }
+        for (const auto* name : { "session_mix.json", "session_settings.json", "markers.json" })
+        {
+            const auto file = sessionDir.getChildFile (name), saved = snapshot.getChildFile (name);
+            if (file.existsAsFile() != saved.existsAsFile()
+                || (file.existsAsFile() && content (file) != content (saved)))
+                return false;
+        }
+        return true;
+    }
 
     // Optional clock input makes retention tests deterministic; ordinary callers
     // retain the existing current-time behaviour.
@@ -78,6 +114,9 @@ namespace zynforge::sessionbackup
             if (a.sequence != b.sequence) return a.sequence < b.sequence;
             return a.file.getFileName() < b.file.getFileName();
         });
+        if (! entries.empty() && snapshotMatchesSession (entries.back().file, sessionDir))
+            return entries.back().file;
+
         auto stamp = snapshotTime.formatted ("%Y-%m-%d_%H-%M-%S");
         juce::int64 sequence = 0;
         if (! entries.empty() && stamp <= entries.back().stamp)
@@ -112,8 +151,16 @@ namespace zynforge::sessionbackup
         entries.push_back ({ snap, stamp, sequence });
         const auto removeCount = entries.size() > (size_t) keepNewest
             ? entries.size() - (size_t) keepNewest : 0;
+        // An emptied mix can fill the whole window. The last copy that still
+        // has strips is then the only way back, so retention keeps it too.
+        const auto hasStrips = [] (const Entry& e) { return sessionmix::stripCountIn (e.file) > 0; };
+        auto keepPopulated = entries.size();
+        if (std::none_of (entries.begin() + (std::ptrdiff_t) removeCount, entries.end(), hasStrips))
+            for (auto i = removeCount; i-- > 0 && keepPopulated == entries.size();)
+                if (hasStrips (entries[i])) keepPopulated = i;
         for (size_t i = 0; i < removeCount; ++i)
-            if (! entries[i].file.isSymbolicLink()) entries[i].file.deleteRecursively (false);
+            if (i != keepPopulated && ! entries[i].file.isSymbolicLink())
+                entries[i].file.deleteRecursively (false);
         return snap;
     }
 }

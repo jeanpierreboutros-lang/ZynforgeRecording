@@ -15,8 +15,11 @@
 # Usage:
 #   tools/verify_take.sh [SESSION_DIR]
 #
-# With no argument it picks the most-recently-modified session under
-# ~/Music/Zynforge Sessions. Exit code 0 = all green, 1 = a problem was found.
+# With no argument it verifies the capture the app last recorded, then its
+# active session, as stored in the app's settings. It never guesses from folder
+# dates: an older session that was only opened looks newest, and a pass on it
+# would say nothing about the show.
+# Exit code 0 = all green, 1 = a problem was found, 2 = nothing could be checked.
 #
 # Requires: ffprobe, xxd, shasum, jq, python3.
 
@@ -36,10 +39,23 @@ done
 # ── Resolve the session directory ───────────────────────────────────────────
 SESSION="${1:-}"
 if [[ -z "$SESSION" ]]; then
-    base="$HOME/Music/Zynforge Sessions"
-    [[ -d "$base" ]] || { red "no session dir given and $base does not exist"; exit 2; }
-    SESSION=$(ls -dt "$base"/*/ 2>/dev/null | head -1)
-    [[ -n "$SESSION" ]] || { red "no sessions found under $base"; exit 2; }
+    settings="$HOME/Library/Application Support/Zynforge Recording/Zynforge Recording.settings"
+    # The first key that has a value decides: a recorded capture that has since
+    # gone must stop here, not fall through to some other session.
+    SESSION=$(python3 -I - "$settings" 2>/dev/null <<'PY'
+import sys
+import xml.etree.ElementTree as ElementTree
+
+values = {row.get("name"): row.get("val", "") for row in ElementTree.parse(sys.argv[1]).getroot().iter("VALUE")}
+print(values.get("lastCaptureDir") or values.get("activeSessionDir") or "")
+PY
+)
+    if [[ -z "$SESSION" ]]; then
+        red "no session given and the app's settings name no recorded session"
+        red "pass the session folder: tools/verify_take.sh \"/path/to/session\""
+        exit 2
+    fi
+    ylw "No session given; verifying the one the app last recorded."
 fi
 SESSION="${SESSION%/}"
 [[ -d "$SESSION" ]] || { red "not a directory: $SESSION"; exit 2; }

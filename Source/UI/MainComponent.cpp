@@ -64,7 +64,19 @@ void MainComponent::updateMixerPlaceholder()
 void MainComponent::onRecordClicked()
 {
     if (captureMetadataPending || (sessionIoBusy.load() && ! engine.isRecording()))
-    { showRecordRefusal ("Wait for recording finalization / session saving to finish"); return; }
+    {
+        // An autosave or layout write is over in moments and nobody chose to
+        // start it, so it must not cost the engineer the press. Copies, exports
+        // and a stop's finalization are not held: those can take far longer.
+        if (! captureMetadataPending && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
+        {
+            recordPressHeldAtMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
+            showStatus ("RECORD held -- starting as soon as this save finishes");
+            return;
+        }
+        showRecordRefusal ("Wait for recording finalization / session saving to finish");
+        return;
+    }
     recordRefusal.clear();
     // RECORD is a sequence: a press during a take (or a refused daemon state)
     // is consumed first; otherwise every pre-flight refusal runs before
@@ -135,6 +147,19 @@ bool MainComponent::recordPlanHasSelection (const RecordStartPlan& plan)
 bool MainComponent::recordPlanPunches (const RecordStartPlan& plan)
 {
     return plan.punchAt >= 0 || recordPlanHasSelection (plan);
+}
+
+// A press may only start a take while it is still the engineer's intent. Past
+// this, a stalled write would start a take long after they stopped waiting.
+void MainComponent::releaseHeldRecordPress()
+{
+    static constexpr juce::uint32 kLongestHoldMs = 5000;
+    if (recordPressHeldAtMs == 0 || pendingMetadataSaves != 0) return;
+    const auto heldForMs = juce::Time::getMillisecondCounter() - recordPressHeldAtMs;
+    recordPressHeldAtMs = 0;
+    if (sessionLocked) return;
+    if (heldForMs > kLongestHoldMs) showStatus ("Saving took too long -- press RECORD again");
+    else                            onRecordClicked();
 }
 
 void MainComponent::runRecordPlan (RecordStartPlan& plan)
@@ -356,7 +381,10 @@ void MainComponent::planRecordPosition (RecordStartPlan& plan)
         && ! takeScanDir.findChildFiles (juce::File::findFiles, false,
                                          "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
     auto& player = engine.getPlayer();
+    // Continuing joins these strips to that session's tracks, so it needs that
+    // session's mixer. One pinned but not loaded gets a new folder instead.
     plan.continueTake = activeDir.isDirectory()
+                        && engine.mixerBelongsTo (activeDir)
                         && (player.isLoaded() || existingTakeMedia)
                         && ! daemonModeActive();
     if (! plan.continueTake) return;
@@ -411,6 +439,18 @@ void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
     plan.autoRouted = autoRouted;
 }
 
+// The daemon outlives this process. The take's folder gets this mixer before it
+// rolls, because a relaunch has nothing else to load the take's strips from.
+// plan.dir is this mixer's session or a new folder (makeNewSessionDir), never
+// another session's.
+bool MainComponent::saveMixerToTakeFolder (const juce::File& dir)
+{
+    if (! dir.isDirectory() && dir.createDirectory().failed()) return false;
+    auto snapshot = captureMetadataSnapshot (dir, false);
+    snapshot.mixerOwner = dir;
+    return zynforge::writeSessionMetadata (snapshot).ok;
+}
+
 // Phase 1d (flagged): route the take through the capture daemon. The GUI keeps
 // its own device open for monitoring/meters/playback; the daemon writes the
 // files, so a GUI death can no longer stop the take.
@@ -419,6 +459,7 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
     auto& recorder = engine.getRecorder();
     if (! configureCaptureDaemon())
     { showRecordRefusal ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
+    const bool mixerInTakeFolder = saveMixerToTakeFolder (plan.dir);
     juce::BigInteger arms;
     for (int i = 0; i < plan.numTracks; ++i)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
@@ -433,10 +474,13 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
         lastCaptureFinalizationError.clear();
         engine.setExternalRecording (true);
         engine.setActiveSessionDir (plan.dir);
+        engine.claimMixerFor (plan.dir);
+        engine.noteLastCapture (plan.dir);
         engine.snapshotCaptureInputGains();
         statusLabel.setText ("DAEMON recording " + juce::String (plan.armed) + "/"
                              + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
-                             + "  (take survives a GUI crash)",
+                             + (mixerInTakeFolder ? "  (take survives a GUI crash)"
+                                                  : "  (mixer not saved to the take folder)"),
                              juce::dontSendNotification);
         recordButton.setButtonText ("STOP");
     }
@@ -713,6 +757,8 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
                 ? "Punch could not be spliced into the take -- original audio was retained; check disk and session files"
             : recorder.hasReportWriteFailed()
                 ? "Recording stopped, but the integrity report could not be saved -- check disk permissions / free space"
+            : lastMetadataSaveError.isNotEmpty()
+                ? "Recording stopped, but session state could not be saved: " + lastMetadataSaveError
                 : "Recording stopped, but session state could not be saved -- check disk permissions / free space");
         return false;
     }
@@ -752,7 +798,10 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
                 }
                 const bool ok = mediaOk && saved;
                 self->lastCaptureFinalizationError = ok ? juce::String()
-                    : ! mediaOk ? mediaError : "Recording stopped, but session metadata could not be saved";
+                    : ! mediaOk ? mediaError
+                    : "Recording stopped, but session metadata could not be saved"
+                        + (self->lastMetadataSaveError.isNotEmpty() ? ": " + self->lastMetadataSaveError
+                                                                    : juce::String());
                 self->showStatus (ok
                     ? self->lastSavedUndoUnits < 0
                         ? "Recording stopped; captured state saved, newer changes remain unsaved"
@@ -907,7 +956,8 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         remotePunchRefused = false;
         onRecordClicked();
         if (engine.isRecording()) return true;
-        error = remotePunchRefused ? "RECORD would punch into the take; clear the cursor or selection on the host"
+        error = recordPressHeldAtMs != 0 ? "a session save is finishing; RECORD starts when it ends"
+              : remotePunchRefused ? "RECORD would punch into the take; clear the cursor or selection on the host"
                                    : "recording could not start; check the host pre-flight message";
         return false;
     }
@@ -1230,37 +1280,23 @@ void MainComponent::showStatus (const juce::String& msg)
 void MainComponent::removeLastCapture()
 {
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
-    const auto root = getSessionsRoot();
-    if (! root.isDirectory()) { showStatus ("No sessions to remove"); return; }
-
-    // Every session folder, not just the auto-stamped "Session_*" ones -- a
-    // session created via New Session with a custom name was invisible here, so
-    // "Remove last capture" silently deleted an OLDER auto-named session
-    // instead of the take the engineer had just made.
-    juce::Array<juce::File> dirs;
-    for (const auto& d : root.findChildFiles (juce::File::findDirectories, false))
-        if (d.getChildFile ("Audio Files").isDirectory()
-            || ! d.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
-                                   false, "*.zfproj").isEmpty())
-            dirs.add (d);
-    if (dirs.isEmpty()) { showStatus ("No sessions to remove"); return; }
-
-    // Most recently MODIFIED wins -- names no longer sort chronologically once
-    // user-named sessions are in the mix.
-    juce::File target = dirs.getFirst();
-    for (const auto& d : dirs)
-        if (d.getLastModificationTime() > target.getLastModificationTime())
-            target = d;
-
     if (engine.isRecording()) { showStatus ("Stop recording before removing a capture"); return; }
+    // The recorded capture, never a guess from folder dates: an older session
+    // that was only opened looks newest, and a capture can live anywhere.
+    const auto target = engine.getLastCapture();
+    if (target == juce::File())
+    {
+        showStatus ("No recorded capture to remove -- it has been removed or moved, or nothing was recorded");
+        return;
+    }
     if (! sessionJobs.reserve()) { showStatus ("Wait for the session operation to finish"); return; }
     juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::NoIcon)
             .withTitle ("Remove last capture?")
-            .withMessage ("Permanently delete\n\n" + target.getFullPathName() + "\n\nThis cannot be undone.")
-            .withButton ("Delete")
+            .withMessage (lastCapturePrompt (target))
+            .withButton ("Move to Trash")
             .withButton ("Cancel"),
         [self, target] (int result)
     {
@@ -1270,13 +1306,32 @@ void MainComponent::removeLastCapture()
     });
 }
 
+juce::File MainComponent::testTrashFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("zynforge-test-trash");
+}
+
+juce::String MainComponent::lastCapturePrompt (const juce::File& target)
+{
+    return "Move the whole session \"" + target.getFileName() + "\" to the Trash?\n\n"
+         + target.getFullPathName() + "\n\nThis is the session the last take was recorded into.";
+}
+
 bool MainComponent::deleteCaptureSession (const juce::File& target)
 {
     if (engine.isRecording() || sessionIoBusy.load())
     { showStatus ("Stop recording and finish session operations before removing a capture"); return false; }
     const bool deletingActive = target == engine.getActiveSessionDir();
-    if (! zynforge::MultitrackRecorder::deleteSessionAfterCancellingReports (target))
-    { showStatus ("Couldn't remove that folder"); return false; }
+    const auto moveToTrash = [&target]
+    {
+        if (! zynforge::isolatedSettings.load()) return target.moveToTrash();
+        const auto slot = testTrashFolder().getChildFile (juce::Uuid().toString());
+        return slot.createDirectory().wasOk() && target.moveFileTo (slot.getChildFile (target.getFileName()));
+    };
+    if (! zynforge::MultitrackRecorder::removeSessionAfterCancellingReports (target, moveToTrash))
+    { showStatus ("Couldn't move that folder to the Trash; nothing was removed"); return false; }
+    // Forget it, so a second press finds nothing rather than an older session.
+    engine.forgetLastCapture();
     if (deletingActive)
     {
         condemnAllStrips();
@@ -1287,7 +1342,7 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
         undoManager.clearUndoHistory();
         updateTransportLabels(); explicitDocumentOpened = false; showStartupWelcome();
     }
-    showStatus ("Removed: " + target.getFileName());
+    showStatus ("Moved to the Trash: " + target.getFileName());
     return true;
 }
 
@@ -1334,7 +1389,7 @@ void MainComponent::confirmAndQuit()
     }
     const bool recording = engine.isRecording() || captureSupervisor.isDaemonRecording();
     const auto activeDir = engine.getActiveSessionDir();
-    const bool hasActiveSession = activeDir.isDirectory();
+    const bool hasActiveSession = activeDir.isDirectory() && engine.mixerBelongsTo (activeDir);
 
     // Recording in progress is its own conversation -- two buttons,
     // primary "Stop & Quit" / Cancel. No Save question because the

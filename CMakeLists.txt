@@ -285,6 +285,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/SessionBackupTests.cpp
     Source/Tests/SessionJobsTests.cpp
     Source/Tests/SessionRecoverySortTests.cpp
+    Source/Tests/SessionSafetyTests.cpp
     Source/Tests/SetlistBarAccessibilityTests.cpp
     Source/Tests/SettingsBatchAuditTests.cpp
     Source/Tests/ShowHandoffTests.cpp
