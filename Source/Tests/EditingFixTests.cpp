@@ -6,7 +6,6 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultiPartReader.h"
-#include "../Audio/NoiseAnalyzer.h"
 
 #include <atomic>
 #if JUCE_MAC
@@ -221,8 +220,11 @@ public:
             Folder f; expect (write (f.track()));
             expect (write (f.audio ("Track_01_consolidated_1.wav"), 4800));
             expect (write (f.audio ("Track_01.punchbase.wav"), 4800));
-            const auto findings = NoiseAnalyzer::analyseSession (f.dir, nullptr);
-            expectEquals ((int) findings.size(), 1, "a sidecar became a phantom noise-report row");
+            expectEquals (mainTakeTrackNumber (f.track()), 1);
+            expectEquals (mainTakeTrackNumber (f.audio ("Track_01_consolidated_1.wav")), 0,
+                          "a consolidate render became a phantom report row");
+            expectEquals (mainTakeTrackNumber (f.audio ("Track_01.punchbase.wav")), 0,
+                          "a punch sidecar became a phantom report row");
 
             // Track 2 was never recorded; consolidating a clip pasted onto it
             // leaves only Track_02_consolidated_1.wav, whose clicks must not

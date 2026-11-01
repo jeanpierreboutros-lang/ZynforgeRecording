@@ -3,8 +3,7 @@
 //
 // Includes: generateOrRefreshClickTrack (renders an offline click WAV
 // matching the live ClickEngine voicing), togglePunchMode + servicePunch
-// (loop-region punch-in/out), runNoiseAnalysis (background NoiseAnalyzer
-// sweep + sortable report dialog), writeSoundcheckReport (JSON dump of
+// (loop-region punch-in/out), writeSoundcheckReport (JSON dump of
 // per-track spectral classification), showSessionProperties (edit the
 // .zfproj metadata).
 
@@ -12,11 +11,9 @@
 #include "../Audio/ClickTrackRenderer.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/CrashReportScan.h"
-#include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/QcAnalyzer.h"
 #include "../Audio/SongDetector.h"
 #include "../Audio/SpectralClassifier.h"
-#include "NoiseReportDialog.h"
 #include "QcReportDialog.h"
 #include "SessionPropertiesDialog.h"
 #include "SessionProjPath.h"
@@ -383,26 +380,6 @@ void MainComponent::servicePunchSession()
     if (! hadCapture && lastCaptureFinalizationError.isEmpty()) showStatus ("Punch complete");
 }
 
-juce::String MainComponent::noiseAnalysisSummary (const std::vector<zynforge::NoiseFinding>& findings)
-{
-    int humCount = 0, bumpCount = 0, failedCount = 0;
-    for (const auto& f : findings)
-    {
-        if (f.error.isNotEmpty()) { ++failedCount; continue; }
-        if (f.humFundamentalHz > 0) ++humCount;
-        if (f.bumpCount > 0) ++bumpCount;
-    }
-    const auto completed = findings.size() - (size_t) failedCount;
-    const auto count = failedCount == 0 ? juce::String (findings.size())
-        : juce::String (completed) + " of " + juce::String (findings.size());
-    const auto failures = failedCount == 0 ? juce::String()
-        : juce::String (failedCount) + (failedCount == 1 ? " analysis failed; " : " analyses failed; ");
-    return count + " track"
-        + (findings.size() == 1 ? juce::String() : juce::String ("s"))
-        + " analysed -- " + failures + juce::String (humCount) + " with hum, "
-        + juce::String (bumpCount) + " with mic bumps. Report saved to noise_report.json.";
-}
-
 // Analysis reads every take file in full on the capture drive. Never while a
 // take (local or daemon) is writing there, or beside another session job.
 bool MainComponent::refuseAnalysisNow()
@@ -439,73 +416,6 @@ bool MainComponent::analysisResultWanted (const juce::File& scannedSession)
         return false;
     }
     return true;
-}
-
-void MainComponent::runNoiseAnalysis()
-{
-    if (refuseAnalysisNow()) return;
-    const auto sessionDir = engine.getActiveSessionDir();
-    if (! sessionDir.isDirectory())
-    {
-        showStatus ("Open or record a session before analysing");
-        return;
-    }
-
-    // Nothing to analyse until a take is on disk -- the analyser reads the
-    // recorded Track_NN.* files. Tell the engineer plainly instead of running
-    // a background scan that finds nothing and pops an empty report.
-    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
-                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
-    if (audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac").isEmpty())
-    {
-        // Spell out what the tool does + why it can't run yet, instead of a
-        // status line that's easy to miss (the "it does nothing" report).
-        juce::AlertWindow::showMessageBoxAsync (
-            juce::MessageBoxIconType::InfoIcon,
-            "Nothing to analyse yet",
-            "Analyse for noise scans your RECORDED tracks for electrical hum "
-            "(50 / 60 Hz), mic bumps / thumps, and each track's noise floor, "
-            "then shows a sortable report (and saves noise_report.json).\n\n"
-            "This session has no recorded or imported audio yet -- record a "
-            "take or import audio first, then run it.");
-        return;
-    }
-
-    showStatus ("Analysing tracks for noise / hum / bumps...");
-
-    // Snapshot track names so the worker doesn't touch engine state
-    // from the background thread.
-    juce::StringArray names;
-    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
-        names.add (engine.getRecorder().getTrack (i).name);
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    analysisJobs.start ([self, sessionDir, names] (const std::atomic<bool>& cancel)
-                        -> zynforge::SessionJobRunner::Completion
-    {
-        const auto findings = zynforge::NoiseAnalyzer::analyseSession (
-            sessionDir,
-            [&names] (int idx) -> juce::String
-            {
-                return (idx >= 0 && idx < names.size())
-                    ? names[idx]
-                    : juce::String ("Track ") + juce::String (idx + 1);
-            }, &cancel);
-        if (cancel.load (std::memory_order_relaxed))
-            return [self] { if (self != nullptr) self->showStatus ("Noise analysis stopped: a take started"); };
-
-        const auto summary = noiseAnalysisSummary (findings);
-
-        return [self, summary, findings, sessionDir]
-        {
-            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
-            self->showStatus (summary);
-            // Sortable table replaces the text dump -- engineer clicks
-            // column headers to sort by worst hum / most bumps /
-            // highest noise floor.
-            zynforge::NoiseReportDialog::launch (findings);
-        };
-    });
 }
 
 void MainComponent::runQcAnalysis()
@@ -550,8 +460,7 @@ void MainComponent::runQcAnalysis()
             // Skip continuation parts: analyzeFile scans one file at a time, so
             // a _part would produce a phantom mislabeled row (getIntValue on the
             // last "_" segment -> 0 -> track 1) and miss the later audio. Parse
-            // the index from the Track_NN PREFIX, matching NoiseAnalyzer/song
-            // detect (the fix pass fixed those two analyzers but not this one).
+            // the index from the Track_NN PREFIX, matching song detect.
             // Also skips punch sidecars and Track_NN_consolidated_K renders.
             const int idx = zynforge::mainTakeTrackNumber (f) - 1;
             if (idx < 0) continue;

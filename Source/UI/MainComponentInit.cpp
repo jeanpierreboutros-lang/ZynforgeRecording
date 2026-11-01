@@ -9,8 +9,6 @@
 #include "PatchPage.h"
 #include "EditToolsBar.h"
 #include "../Audio/MidiClockOut.h"
-#include "../Audio/NoiseAnalyzer.h"
-#include "NoiseReportDialog.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"

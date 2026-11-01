@@ -1,6 +1,5 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/CaptureCopy.h"
-#include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/SettingsFile.h"
 #include "../Audio/SpectralClassifier.h"
 #include "../Audio/FloatAiffWriter.h"
@@ -233,45 +232,6 @@ public:
             expectEquals (track.getNameThreadSafe(), juce::String ("1"));
         }
 
-        beginTest ("Noise analysis includes a native stereo recording's right channel");
-        {
-            const auto dir = temporaryDirectory();
-            expect (dir.createDirectory().wasOk());
-            const juce::ScopeGuard cleanup { [&] { dir.deleteRecursively(); } };
-            const auto file = dir.getChildFile ("Track_01.wav");
-            juce::AudioBuffer<float> audio (2, 96000); audio.clear();
-            for (int i = 0; i < audio.getNumSamples(); ++i)
-                audio.setSample (1, i, (i % 2 == 0) ? 0.25f : -0.25f);
-            juce::WavAudioFormat format;
-            std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
-                new juce::FileOutputStream (file), 48000, 2, 24, {}, 0));
-            expect (writer != nullptr);
-            if (writer) expect (writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()));
-            writer.reset();
-            const auto finding = NoiseAnalyzer::analyseFile (file, 0, "Stereo");
-            expect (finding.noiseFloorDbFS > -30.0f, "right-channel noise was omitted");
-            expect (! NoiseAnalyzer::summaryLine (finding).contains (": clean"));
-        }
-
-        beginTest ("Unreadable noise-analysis source is reported as a failure, never clean");
-        {
-            const auto dir = temporaryDirectory();
-            expect (dir.createDirectory().wasOk());
-            const juce::ScopeGuard cleanup { [&] { dir.deleteRecursively(); } };
-            const auto file = dir.getChildFile ("Track_01.wav");
-            expect (file.replaceWithText ("not an audio file"));
-            const auto finding = NoiseAnalyzer::analyseFile (file, 0, "Broken");
-            expect (! NoiseAnalyzer::summaryLine (finding).contains (": clean"),
-                    "invalid media was represented as a successful clean analysis");
-            const auto findings = NoiseAnalyzer::analyseSession (dir, {});
-            expectEquals ((int) findings.size(), 1);
-            const auto report = juce::JSON::parse (dir.getChildFile ("noise_report.json"));
-            const auto* rows = report["tracks"].getArray();
-            expect (rows != nullptr && rows->size() == 1);
-            if (rows != nullptr && rows->size() == 1)
-                expect ((*rows)[0]["error"].toString().isNotEmpty(), "persisted report omitted analysis failure");
-        }
-
         beginTest ("Spectral classification reads only a published FFT snapshot");
         {
             TrackState track;
@@ -283,18 +243,6 @@ public:
             track.fftBlockReady.store (true, std::memory_order_release);
             expect (SpectralClassifier::classify (track, 48000).name != "other");
             expect (track.fftBlockReady.load(), "classification must leave publication available to the spectrum display");
-        }
-
-        beginTest ("Noise-analysis read failure is distinct from silence");
-        {
-            struct FailedReader final : juce::AudioFormatReader
-            {
-                FailedReader() : AudioFormatReader (nullptr, "failed-read fixture")
-                { sampleRate = 48000; numChannels = 1; bitsPerSample = 32; usesFloatingPointData = true; lengthInSamples = 96000; }
-                bool readSamples (int* const*, int, int, juce::int64, int) override { return false; }
-            } reader;
-            const auto finding = NoiseAnalyzer::analyseReader (&reader, 0, "Failed read");
-            expect (! NoiseAnalyzer::summaryLine (finding).contains (": clean"));
         }
 
         beginTest ("FFT classification and audio publication remain race-free under repeated consumption");

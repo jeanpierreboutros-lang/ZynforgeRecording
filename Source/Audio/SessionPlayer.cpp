@@ -121,7 +121,7 @@ namespace zynforge
                 // the real Track_NN.<ext> and was concatenated as part 1 of the
                 // take. Sidecars only survive a crash between the punch stash
                 // and the splice, which is exactly the recovery path. Excluded
-                // explicitly (matching NoiseAnalyzer / swapTracks / takeIsMultiPart).
+                // explicitly (matching swapTracks / takeIsMultiPart).
                 if (rest.containsIgnoreCase (".punchbase")) continue;
                 const int usc = rest.indexOfChar ('_');
                 if (usc >= 0 && ! rest.substring (usc + 1).startsWithIgnoreCase ("part"))

@@ -42,7 +42,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -141,7 +141,6 @@ private:
     void completeBounceStems (juce::File);
     void completeBounceStereoMix (juce::File);
     void completeAudioImport (const juce::Array<juce::File>&);
-    static juce::String noiseAnalysisSummary (const std::vector<zynforge::NoiseFinding>&);
     void onExportIndividualTracks();   // tick-box picker → format → destination → export
     void exportShowHandoff();
     void exportDawProject (zynforge::projectexport::Format);
@@ -321,7 +320,6 @@ private:
     bool refuseAnalysisNow();
     void cancelAnalysisForTake();
     bool analysisResultWanted (const juce::File& scannedSession);
-    void runNoiseAnalysis();
     void runQcAnalysis();
     void detectSongsToMarkers();
     // Launch-time crash telemetry: offer the newest report since last run.
@@ -765,7 +763,7 @@ private:
     // (declared above) is still alive. Declared after sessionIoBusy, which it
     // references.
     zynforge::SessionJobRunner sessionJobs { sessionIoBusy };
-    // QC, noise analysis and song detection: owned and joined like a session
+    // QC and song detection: owned and joined like a session
     // job, but they only read, so they hold no session reservation. RECORD must
     // never wait for one; the 10 Hz timer stops it when a take starts.
     std::atomic<bool> analysisBusy { false };

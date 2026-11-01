@@ -13,7 +13,6 @@
 #include "../UI/SessionSettingsDialog.h"
 #include "../Audio/ChannelAlarm.h"
 #include "../Audio/MultiPartReader.h"
-#include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/QcAnalyzer.h"
 #include "../Audio/SongDetector.h"
 
@@ -1027,9 +1026,6 @@ namespace zynforge
             {
                 Window w;
                 const std::atomic<bool> cancelled { true };
-                NoiseAnalyzer::analyseSession (w.session, {}, &cancelled);
-                expect (! w.session.getChildFile ("noise_report.json").existsAsFile(),
-                        "a cancelled scan wrote its report");
                 expectEquals (qc::analyzeFile (trackFile (w.session, 0), &cancelled).clipEventCount, 0);
                 double rate = 0.0;
                 expect (songs::envelopeFlags (trackFile (w.session, 0), -40.0f, 1.0, rate, &cancelled).empty());
@@ -1040,7 +1036,7 @@ namespace zynforge
                 Window w;
                 w.arm ({ 0 });
                 w.main.analysisBusy.store (true);
-                w.main.runNoiseAnalysis();
+                w.main.runQcAnalysis();
                 expect (w.main.statusLabel.getText().containsIgnoreCase ("already"), w.main.statusLabel.getText());
                 w.main.onRecordClicked();
                 expect (w.engine().isRecording(), w.main.statusLabel.getText());
@@ -1054,7 +1050,7 @@ namespace zynforge
             {
                 Window w;
                 w.arm ({ 0 });
-                w.main.runNoiseAnalysis();
+                w.main.runQcAnalysis();
                 expect (w.main.analysisBusy.load());
                 w.engine().armContinue (w.engine().getCaptureLengthSamples());
                 expect (w.engine().startRecording (w.session), w.recorder().getStartError());
@@ -1062,7 +1058,7 @@ namespace zynforge
                 expect (pumpUntil ([&] { return ! w.main.analysisBusy.load(); }), "the scan never ended");
                 expectEquals (juce::ModalComponentManager::getInstance()->getNumModalComponents(), 0,
                               "a report dialog opened over the take");
-                expect (w.main.statusLabel.getText().containsIgnoreCase ("analysis stopped"), w.main.statusLabel.getText());
+                expect (w.main.statusLabel.getText().containsIgnoreCase ("stopped"), w.main.statusLabel.getText());
                 feedAll (w.recorder(), 0.1f, 4);
                 w.main.stopActiveCaptureAsync (false);
                 expect (w.stopped());

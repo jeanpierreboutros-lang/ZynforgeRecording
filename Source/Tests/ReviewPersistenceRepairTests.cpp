@@ -1,5 +1,4 @@
 #include "../UI/MainComponent.h"
-#include "../Audio/NoiseAnalyzer.h"
 #include "../UI/SessionMetadataWriter.h"
 #include "../UI/SessionPropertiesDialog.h"
 #if JUCE_MAC
@@ -74,29 +73,6 @@ public:
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
-
-        beginTest ("Noise completion summary identifies failed analysis instead of reporting clean metrics");
-        {
-            NoiseFinding failed;
-            failed.error = "Audio read failed";
-            const auto summary = MainComponent::noiseAnalysisSummary ({ failed });
-            expect (summary.contains ("0 of 1"), summary);
-            expect (summary.contains ("1 analysis failed"), summary);
-        }
-        beginTest ("Noise completion counts only completed findings and reports partial failures");
-        {
-            NoiseFinding complete, failed;
-            complete.humFundamentalHz = 50; complete.bumpCount = 2;
-            failed.error = "Audio read failed";
-            failed.humFundamentalHz = 60; failed.bumpCount = 3;
-            const auto summary = MainComponent::noiseAnalysisSummary ({ complete, failed });
-            expect (summary.contains ("1 of 2"), summary);
-            expect (summary.contains ("1 analysis failed"), summary);
-            expect (summary.contains ("1 with hum"), summary);
-            expect (summary.contains ("1 with mic bumps"), summary);
-            const auto healthy = MainComponent::noiseAnalysisSummary ({ complete });
-            expect (healthy.contains ("1 track analysed") && ! healthy.contains ("failed"), healthy);
-        }
 
         beginTest ("Malformed existing project is preserved when an automatic layout patch is saved");
         {

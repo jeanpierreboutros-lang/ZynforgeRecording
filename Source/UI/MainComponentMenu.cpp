@@ -347,7 +347,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                        engine.hasSessionFolder() && ! engine.isRecording());
             // Each reads every take file in full: never during a take.
             const bool canAnalyse = engine.hasSessionFolder() && ! engine.isRecording();
-            m.addItem (282, "Analyse for noise / hum / bumps...", canAnalyse);
             m.addItem (952, "Post-show QC report...",             canAnalyse);
             m.addItem (953, "Detect songs -> markers...",         canAnalyse);
             menu.addSubMenu ("Analysis & Reports", m);
@@ -537,7 +536,6 @@ void MainComponent::registerMenuCommands()
     m.add (990, [this] { promptStreamOutputs(); });
     m.add (280, [this] { runSpectralAutoName(); });
     m.add (281, [this] { writeSoundcheckReport(); });
-    m.add (282, [this] { runNoiseAnalysis(); });
     m.add (290, [this] { promptMirrorHost(); });
     m.add (400, [this]
     {

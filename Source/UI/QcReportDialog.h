@@ -13,7 +13,7 @@
 
 namespace zynforge
 {
-    // Post-show QC table -- sortable like NoiseReportDialog so the
+    // Post-show QC table -- sortable so the
     // engineer clicks "Clips" and the problem channels float to the top.
     //
     // Columns: Track | Peak dBFS | LUFS-I | Clips | First clip | Noise dBFS

@@ -8,7 +8,6 @@
 #include "../Audio/CheckedReaderSource.h"
 #include "../Audio/FloatAiffWriter.h"
 #include "../Audio/MultiPartReader.h"
-#include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/ProjectExport.h"
 #include "../Audio/QcAnalyzer.h"
 #include "../Audio/ShowHandoff.h"
@@ -792,78 +791,11 @@ public:
             expect (report.contains ("QC INCOMPLETE"), report);
         }
 
-        beginTest ("A cancelled QC or noise scan stops");
+        beginTest ("A cancelled QC scan stops");
         {
             Folder f; expect (write (f.track(), 480000));
             std::atomic<bool> cancel { true };
             expect (zynforge::qc::analyzeFile (f.track(), &cancel).peakDb <= -119.0f);
-            const auto findings = NoiseAnalyzer::analyseSession (f.dir, {}, &cancel);
-            expect (! f.dir.getChildFile ("noise_report.json").exists(), "a stopped scan wrote its report");
-            expectEquals ((int) findings.size(), 1);
-        }
-
-        beginTest ("The noise report reads the quiet parts as the floor and hum in dBFS");
-        {
-            Folder f;
-            const auto file = f.track();
-            file.getParentDirectory().createDirectory();
-            const double rate = 48000.0;
-            {
-                juce::WavAudioFormat format;
-                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
-                    file.createOutputStream().release(), rate, 1, 32, {}, 0));
-                juce::AudioBuffer<float> b (1, 48000 * 20);
-                juce::Random random (1);
-                for (int i = 0; i < b.getNumSamples(); ++i)
-                {
-                    const double t = i / rate;
-                    const bool music = i >= 48000 * 4;   // loud after a quiet head of 4 s of 20
-                    const float noise = (random.nextFloat() - 0.5f) * 0.0002f;   // about -80 dBFS
-                    b.setSample (0, i, music ? 0.2f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * t)
-                                             : noise);
-                }
-                expect (writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()));
-            }
-            const auto nf = NoiseAnalyzer::analyseFile (file, 0, "Vox");
-            expect (nf.error.isEmpty(), nf.error);
-            expect (nf.noiseFloorDbFS < -70.0f,
-                    "the floor read " + juce::String (nf.noiseFloorDbFS, 1) + " dBFS on a track with a quiet head");
-
-            const auto humFile = f.track (2);
-            {
-                juce::WavAudioFormat format;
-                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
-                    humFile.createOutputStream().release(), rate, 1, 32, {}, 0));
-                juce::AudioBuffer<float> b (1, 48000 * 4);
-                const auto level = [] (double dB) { return (float) std::pow (10.0, dB / 20.0); };
-                for (int i = 0; i < b.getNumSamples(); ++i)
-                {
-                    const double w = juce::MathConstants<double>::twoPi * 60.0 * i / rate;
-                    b.setSample (0, i, level (-30.0) * (float) std::sin (w)
-                                     + level (-40.0) * (float) std::sin (2.0 * w)
-                                     + level (-40.0) * (float) std::sin (3.0 * w));
-                }
-                expect (writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()));
-            }
-            const auto hum = NoiseAnalyzer::analyseFile (humFile, 1, "Bass");
-            expectEquals (hum.humFundamentalHz, 60);
-            expectWithinAbsoluteError (hum.humDb, -30.0f, 3.0f, "hum levels must read in dBFS");
-
-            const auto quietHum = f.track (3);
-            {
-                juce::WavAudioFormat format;
-                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
-                    quietHum.createOutputStream().release(), rate, 1, 32, {}, 0));
-                juce::AudioBuffer<float> b (1, 48000 * 4);
-                for (int i = 0; i < b.getNumSamples(); ++i)
-                {
-                    const double w = juce::MathConstants<double>::twoPi * 60.0 * i / rate;
-                    b.setSample (0, i, 0.00003f * (float) (std::sin (w) + std::sin (2.0 * w) + std::sin (3.0 * w)));
-                }
-                expect (writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()));
-            }
-            expectEquals (NoiseAnalyzer::analyseFile (quietHum, 2, "Quiet").humFundamentalHz, 0,
-                          "hum near -90 dBFS is inaudible and must not be reported");
         }
     }
 
