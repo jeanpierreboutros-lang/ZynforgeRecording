@@ -842,9 +842,7 @@ void MainComponent::localTakeInterrupted()
     manualPunchActive = false;
     if (punchSessionActive)
     {
-        restoreArmStateAfterPunch();
         engine.setPunchModeOn (false);
-        restoreLoopAfterPunch();
         punchSessionActive = false;
     }
     recordButton.setButtonText ("RECORD");
