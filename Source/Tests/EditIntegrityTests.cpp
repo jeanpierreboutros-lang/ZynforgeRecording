@@ -149,7 +149,7 @@ namespace zynforge
             return rows;
         }
 
-        // The row geometry the EDIT audit tests use: a 1000 px inner lane.
+        // A 1000 px inner lane, so one pixel is a known number of samples.
         static constexpr int kLaneW = 1000;
         static void sizeRow (EditPage::TrackRow& row, int height = 100)
         {
