@@ -15,6 +15,7 @@ namespace zynforge
         disconnect();                       // addresses / port / transport all change
         profile = consoleProfileFor (k);
         stagePatch.clear();
+        deskOnCardReturns = false;
         gains.clear();
         patch = Patch::Unknown;
         dialectConfirmed = false;
@@ -219,7 +220,10 @@ namespace zynforge
             if (profile.dialect.setInBlock)
                 sendMessage (profile.dialect.setInBlock (block, value));
         patch = Patch::Stage;
-        if (onStatus) onStatus ("Console repatched to STAGE (restored show patch).");
+        deskOnCardReturns = false;
+        const bool saved = persistPatch();
+        if (onStatus) onStatus (saved ? "Console repatched to STAGE (restored show patch)."
+                                      : "Console repatched to STAGE, but the session could not be updated.");
     }
 
     void ConsoleLink::captureGains (int numHeadamps)
@@ -321,14 +325,7 @@ namespace zynforge
                 {
                     pendingPatchQueries = 0;
                     patchDeadlineMs = 0;
-                    // Phase 2: full show patch stashed -> flip to card.
-                    for (int blk = 0; blk < profile.numInBlocks; ++blk)
-                        if (profile.dialect.setInBlock)
-                            sendMessage (profile.dialect.setInBlock (
-                                blk, profile.cardBlockFirst + blk));
-                    patch = Patch::Soundcheck;
-                    if (onStatus)
-                        onStatus ("Console repatched to SOUNDCHECK (card returns); show patch stashed.");
+                    finishPatchStash();
                 }
                 return;
             }
@@ -356,6 +353,40 @@ namespace zynforge
                 return;
             }
         }
+    }
+
+    // Phase 2 of enterSoundcheck. The desk changes only once the way back is on
+    // disk: after a crash this file is all that knows the show patch.
+    void ConsoleLink::finishPatchStash()
+    {
+        bool alreadyOnCard = true;
+        for (const auto& [block, value] : stagePatch)
+            alreadyOnCard = alreadyOnCard && value == profile.cardBlockFirst + block;
+        if (alreadyOnCard)
+        {
+            // Saving this as the show patch is how the real one gets lost for good.
+            stagePatch.clear();
+            if (onStatus) onStatus ("The console is already on card returns, so there is no show patch to save. "
+                                    "Open the session that saved it, or set the routing on the desk.");
+            return;
+        }
+
+        deskOnCardReturns = true;
+        patch = Patch::Soundcheck;
+        if (! persistPatch())
+        {
+            deskOnCardReturns = false;
+            patch = Patch::Unknown;
+            stagePatch.clear();
+            if (onStatus) onStatus ("Could not save the show patch to the session -- console left as it was.");
+            return;
+        }
+
+        for (int blk = 0; blk < profile.numInBlocks; ++blk)
+            if (profile.dialect.setInBlock)
+                sendMessage (profile.dialect.setInBlock (blk, profile.cardBlockFirst + blk));
+        if (onStatus)
+            onStatus ("Console repatched to SOUNDCHECK (card returns); show patch saved with the session.");
     }
 
     void ConsoleLink::startHeartbeat()
@@ -440,6 +471,8 @@ namespace zynforge
             patchArr.add (it != stagePatch.end() ? it->second : -1);
         }
         obj->setProperty ("stagePatch", patchArr);
+        if (patch == Patch::Stage)                             obj->setProperty ("deskPatch", "stage");
+        else if (patch == Patch::Soundcheck || deskOnCardReturns) obj->setProperty ("deskPatch", "soundcheck");
 
         juce::Array<juce::var> gainArr;
         for (const auto& [idx, value] : gains)
@@ -457,16 +490,32 @@ namespace zynforge
     bool ConsoleLink::loadJson (const juce::var& v)
     {
         if (! v.isObject()) return false;
-        if (auto* patchArr = v.getProperty ("stagePatch", {}).getArray())
+
+        // What this run read off the desk outranks any file. The file's array
+        // is usually -1s (a capture with no repatch), so loading it over a live
+        // stash used to erase the only record of the show patch.
+        const auto* patchArr = v.getProperty ("stagePatch", {}).getArray();
+        if (! hasStagePatch() && pendingPatchQueries == 0
+            && patchArr != nullptr && patchArr->size() == profile.numInBlocks)
         {
-            stagePatch.clear();
+            std::map<int, int> saved;
             for (int b = 0; b < patchArr->size(); ++b)
                 if ((int) (*patchArr)[b] >= 0)
-                    stagePatch[b] = (int) (*patchArr)[b];
+                    saved[b] = (int) (*patchArr)[b];
+            if ((int) saved.size() == profile.numInBlocks)
+                stagePatch = std::move (saved);
         }
-        if (auto* gainArr = v.getProperty ("gains", {}).getArray())
+        if (patch == Patch::Unknown && hasStagePatch())
         {
-            gains.clear();
+            const auto deskPatch = v.getProperty ("deskPatch", "").toString();
+            patch = deskPatch == "soundcheck" ? Patch::Soundcheck
+                  : deskPatch == "stage"      ? Patch::Stage
+                                              : Patch::Unknown;
+        }
+
+        const auto* gainArr = v.getProperty ("gains", {}).getArray();
+        if (gains.empty() && expectedGainReplies == 0 && gainArr != nullptr)
+        {
             gainCaptureComplete = true;   // a saved capture is by definition finished
             for (const auto& g : *gainArr)
                 if (g.hasProperty ("headamp") && g.hasProperty ("gain"))
@@ -485,6 +534,48 @@ namespace zynforge
                 }
         }
         return true;
+    }
+
+    void ConsoleLink::setSessionDir (const juce::File& dir)
+    {
+        if (dir == sessionDir) return;
+        sessionDir = dir;
+
+        // Gains and any saved patch belong to the session just left. A desk
+        // this run put on card returns is different: it is still there whatever
+        // session is open, and this stash is what brings it back.
+        gains.clear();
+        gainCaptureComplete = false;
+        expectedGainReplies = 0;
+        gainDeadlineMs = 0;
+        if (deskOnCardReturns)
+        {
+            if (onStatus) onStatus ("The console is still on SOUNDCHECK from the last session. "
+                                    "Going back to STAGE restores that session's show patch.");
+        }
+        else
+        {
+            stagePatch.clear();
+            pendingPatchQueries = 0;
+            patchDeadlineMs = 0;
+            patch = Patch::Unknown;
+        }
+        if (dir.isDirectory()) loadFrom (dir);
+    }
+
+    // The patch half of the state file, written when the desk moves. Gains keep
+    // their own rule (only a finished capture is saved), so an unfinished one
+    // here must not replace what the file holds.
+    bool ConsoleLink::persistPatch() const
+    {
+        if (sessionDir == juce::File()) return true;
+        if (! sessionDir.isDirectory()) return false;
+        const auto state = toJson();
+        const auto f = sessionDir.getChildFile (kStateFileName);
+        if (! gainCaptureComplete)
+            if (auto* object = state.getDynamicObject())
+                object->setProperty ("gains", juce::JSON::parse (f).getProperty ("gains", juce::Array<juce::var>()));
+        return atomicfile::writeText (f, juce::JSON::toString (state));
     }
 
     bool ConsoleLink::saveTo (const juce::File& sessionDir) const

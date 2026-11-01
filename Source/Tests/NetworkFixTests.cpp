@@ -238,6 +238,7 @@ namespace zynforge
             testJsonRoutes();
             testMirrorLayout();
             testOscFlood();
+            testConsoleState();
         }
 
     private:
@@ -614,6 +615,180 @@ namespace zynforge
                 expectGreaterThan ((int) engine.getMarkers().getAll().size(), 0);
                 engine.getMarkers().clearContext();
                 dir.deleteRecursively();
+            }
+        }
+
+        // The four X32 input blocks replying with the given routing.
+        static void answerPatchRead (ConsoleLink& link, int firstValue, int step = 1)
+        {
+            const char* addresses[] { "/config/routing/IN/1-8", "/config/routing/IN/9-16",
+                                      "/config/routing/IN/17-24", "/config/routing/IN/25-32" };
+            for (int b = 0; b < 4; ++b)
+                link.injectReply (juce::OSCMessage (juce::OSCAddressPattern (addresses[b]),
+                                                    (juce::int32) (firstValue + b * step)));
+        }
+
+        static std::vector<int> routingWrites (const std::vector<ConsoleMessage>& sent)
+        {
+            std::vector<int> values;
+            for (const auto& m : sent)
+                if (m.address.startsWith ("/config/routing/IN/") && m.hasArgs())
+                    values.push_back (m.intArg());
+            return values;
+        }
+
+        void testConsoleState()
+        {
+            using Patch = ConsoleLink::Patch;
+
+            beginTest ("The show patch is on disk before the console moves, and survives a crash");
+            {
+                const auto dir = freshDir();
+                const auto state = dir.getChildFile (ConsoleLink::kStateFileName);
+                {
+                    ConsoleLink link;
+                    bool firstWriteSawSavedPatch = false;
+                    int writes = 0;
+                    link.setMessageHook ([&] (const ConsoleMessage& m)
+                    {
+                        if (m.hasArgs() && writes++ == 0)
+                        {
+                            const auto saved = juce::JSON::parse (state).getProperty ("stagePatch", {});
+                            firstWriteSawSavedPatch = saved.isArray() && (int) saved[0] == 10;
+                        }
+                    });
+                    link.setSessionDir (dir);
+                    link.enterSoundcheck();
+                    answerPatchRead (link, 10);
+                    expect (link.getPatch() == Patch::Soundcheck);
+                    expectEquals (writes, 4);
+                    expect (firstWriteSawSavedPatch, "the desk moved before the show patch was saved");
+                }
+
+                // Relaunch, with the desk still on card returns.
+                ConsoleLink after;
+                std::vector<ConsoleMessage> sent;
+                after.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                after.setSessionDir (dir);
+                expect (after.getPatch() == Patch::Soundcheck, "the relaunch forgot the desk is on card returns");
+                after.enterSoundcheck();
+                expect (sent.empty(), "a second soundcheck read the card returns as the show patch");
+                after.exitSoundcheck();
+                expect (routingWrites (sent) == std::vector<int> ({ 10, 11, 12, 13 }));
+
+                // Back on STAGE, and known to be, so the next soundcheck reads the desk afresh.
+                ConsoleLink third;
+                third.setMessageHook ([] (const ConsoleMessage&) {});
+                third.setSessionDir (dir);
+                expect (third.getPatch() == Patch::Stage);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Restoring gains from the session keeps the patch stashed since");
+            {
+                const auto dir = freshDir();
+                {
+                    ConsoleLink earlier;
+                    earlier.setMessageHook ([] (const ConsoleMessage&) {});
+                    earlier.captureGains (1);
+                    earlier.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/000/gain"), 0.5f));
+                    expect (earlier.saveTo (dir));
+                }
+                ConsoleLink link;
+                std::vector<ConsoleMessage> sent;
+                link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.setSessionDir (dir);
+                link.enterSoundcheck();
+                answerPatchRead (link, 4);
+                expect (link.loadFrom (dir));
+                link.restoreGains();
+                sent.clear();
+                link.exitSoundcheck();
+                expect (routingWrites (sent) == std::vector<int> ({ 4, 5, 6, 7 }), "the live stash was replaced from disk");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A desk already on card returns is never saved as the show patch");
+            {
+                ConsoleLink link;
+                std::vector<ConsoleMessage> sent;
+                juce::String status;
+                link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                link.enterSoundcheck();
+                sent.clear();
+                answerPatchRead (link, link.getProfile().cardBlockFirst);
+                expect (routingWrites (sent).empty());
+                expect (! link.hasStagePatch());
+                expect (status.containsIgnoreCase ("card returns"), status);
+            }
+
+            beginTest ("A show patch that can't be saved leaves the console where it is");
+            {
+                const auto dir = freshDir();
+                ConsoleLink link;
+                std::vector<ConsoleMessage> sent;
+                juce::String status;
+                link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                link.setSessionDir (dir);
+                link.enterSoundcheck();
+                sent.clear();
+                dir.deleteRecursively();
+                answerPatchRead (link, 10);
+                expect (routingWrites (sent).empty());
+                expect (link.getPatch() == Patch::Unknown);
+                expect (status.containsIgnoreCase ("left as it was"), status);
+            }
+
+            beginTest ("Console gains and patch stay with their session");
+            {
+                const auto a = freshDir(), b = freshDir();
+                ConsoleLink link;
+                std::vector<ConsoleMessage> sent;
+                link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.setSessionDir (a);
+                link.enterSoundcheck();
+                answerPatchRead (link, 10);
+                link.exitSoundcheck();
+                link.captureGains (1);
+                link.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/000/gain"), 0.5f));
+                expect (link.isGainCaptureComplete());
+                expect (link.saveTo (a));
+
+                link.setSessionDir (b);
+                expect (link.getCapturedGains().empty(), "gains followed the engineer into another session");
+                expect (! link.hasStagePatch());
+                sent.clear();
+                link.restoreGains();
+                link.exitSoundcheck();
+                expect (sent.empty(), "another show's values reached the desk");
+
+                link.setSessionDir (a);
+                expectEquals ((int) link.getCapturedGains().size(), 1);
+
+                link.setSessionDir ({});
+                expect (link.getCapturedGains().empty());
+                a.deleteRecursively();
+                b.deleteRecursively();
+            }
+
+            beginTest ("A desk left on card returns keeps its way back across a session change");
+            {
+                const auto a = freshDir(), b = freshDir();
+                ConsoleLink link;
+                std::vector<ConsoleMessage> sent;
+                link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.setSessionDir (a);
+                link.enterSoundcheck();
+                answerPatchRead (link, 10);
+                link.setSessionDir (b);
+                expect (link.getPatch() == Patch::Soundcheck);
+                sent.clear();
+                link.exitSoundcheck();
+                expect (routingWrites (sent) == std::vector<int> ({ 10, 11, 12, 13 }));
+                a.deleteRecursively();
+                b.deleteRecursively();
             }
         }
 

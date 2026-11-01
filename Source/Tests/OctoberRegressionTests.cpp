@@ -384,6 +384,11 @@ public:
             MainComponent::s_testConstruct = true;
             {
                 MainComponent main; auto& link = main.consoleLink;
+                const auto session = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                         .getChildFile ("zf-october-" + juce::Uuid().toString());
+                session.createDirectory();
+                const juce::ScopeGuard removeSession { [&] { session.deleteRecursively(); } };
+                main.engine.setActiveSessionDir (session);
                 std::vector<juce::OSCMessage> sent;
                 link.setSendHook ([&] (const auto& m) { sent.push_back (m); });
                 main.consoleToggleSoundcheck();

@@ -85,6 +85,12 @@ namespace zynforge
         bool       loadFrom (const juce::File& sessionDir);
         static constexpr const char* kStateFileName = "console_state.json";
 
+        // The session this state belongs to. Called for every session swap,
+        // however it came about, and before any action on the desk: gains and a
+        // saved patch from another show must never reach this one. An empty
+        // file means no session.
+        void       setSessionDir (const juce::File&);
+
         // Progress callback (message thread): fired when a routing reply
         // or gain reply arrives, and when enter/exit/restore complete.
         std::function<void (const juce::String& status)> onStatus;
@@ -143,6 +149,7 @@ namespace zynforge
         void confirmDialectForTests() noexcept { dialectConfirmed = true; }
 
     private:
+        friend class NetworkFixTests;
         void handleMessage (const ConsoleMessage&);
         // ONE repeating heartbeat, three jobs; it runs while the link is up.
         //
@@ -161,6 +168,8 @@ namespace zynforge
         //    is reported and disconnected instead of showing as up all show.
         void timerCallback() override;
         void startHeartbeat();
+        void finishPatchStash();
+        bool persistPatch() const;
         static constexpr int kHeartbeatMs      = 1000;
         static constexpr int kResubscribeMs    = 5000;   // < the X32's ~10 s expiry
         static constexpr int kPatchTimeoutMs   = 1200;
@@ -180,8 +189,12 @@ namespace zynforge
         juce::String         host;
         int                  connectedPort { 0 };
 
+        juce::File           sessionDir;
         Patch                patch { Patch::Unknown };
         std::map<int, int>   stagePatch;     // block idx -> routing enum (stashed)
+        // This run moved the desk to card returns and has not moved it back.
+        // Survives a dropped link, which only makes `patch` Unknown.
+        bool                 deskOnCardReturns { false };
         int                  pendingPatchQueries { 0 };
         std::map<int, float> gains;          // headamp idx -> raw 0..1
         int                  expectedGainReplies { 0 };
