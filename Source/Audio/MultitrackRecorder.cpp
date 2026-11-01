@@ -1523,6 +1523,7 @@ namespace zynforge
         };
 
         const auto passStart = passStartSamples();
+        const auto passOrigin = juce::Time::getCurrentTime();
         const auto addCopy = [&] (int copyIndex, const juce::String& label, const juce::File& root)
         {
             auto copy = std::make_shared<CaptureCopy>();
@@ -1532,6 +1533,7 @@ namespace zynforge
             copy->sampleRate  = sampleRate;
             copy->sessionName = sessionDir.getFileName();
             copy->passStart   = passStart;
+            copy->passOrigin  = passOrigin;
             copy->latches     = latches;
             copy->beforeWriteForTests = beforeCopyWriteForTests;
             copy->tracks.resize (tracks.size());

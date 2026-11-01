@@ -49,6 +49,7 @@ namespace zynforge
         double       sampleRate { 48000.0 };
         juce::String sessionName;
         juce::int64  passStart { 0 };              // estimate for the stamp at open
+        juce::Time   passOrigin;                   // one wall-clock time for every copy of the pass
         int          ringFrames { 0 };
         std::shared_ptr<CaptureLatches> latches;
         std::function<void (CaptureCopy&)> beforeWriteForTests;
@@ -111,7 +112,10 @@ namespace zynforge
             juce::int64 timeReference = 0;
             if (t.container == 0)   // WAV gets the BWF bext chunk so mix engineers can identify the take.
             {
-                const auto now = juce::Time::getCurrentTime();
+                // Files open one by one and a late copy opens later still, so
+                // the clock is read once per pass. Every copy of a take then
+                // says the same thing, and a rolled part says when it began.
+                const auto now = passOrigin + juce::RelativeTime::seconds ((double) framesBefore / sampleRate);
                 // A crash survivor keeps this estimate; finalization stamps the
                 // exact value (see bwf::stampTimeReference).
                 timeReference = bwf::wrapToDay (passStart + framesBefore, sampleRate);
