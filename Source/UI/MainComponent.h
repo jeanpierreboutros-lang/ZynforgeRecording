@@ -145,6 +145,9 @@ private:
     void startSongExport (zynforge::songexport::Choice);
     juce::String buildTimelineCsv();
     void closeSession();               // unload to the empty/Welcome state without quitting
+    // Everything the window holds about a session that clearSessionState cannot
+    // reach. Called beside it, on every way out of a session.
+    void forgetSessionUiState();
     void confirmSessionReplacement (std::function<void()> continuation);
     void onImportAudioFiles();
     void onLockToggled();

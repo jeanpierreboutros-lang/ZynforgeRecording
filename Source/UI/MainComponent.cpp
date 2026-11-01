@@ -776,7 +776,7 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
     const bool mediaOk = stopActiveCapture (rewind, false);
     if (! hadCapture)
     {
-        if (lastCaptureFinalizationError.isNotEmpty()) showStatus (lastCaptureFinalizationError);
+        // The banner already stands for a failed take; an idle STOP repeats nothing.
         if (completion) completion (mediaOk && lastCaptureFinalizationError.isEmpty());
         return;
     }
@@ -822,9 +822,11 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         {
             if (captureMetadataPending)
             { error = "recording stopped; finalization pending"; return false; }
+            // A failed take stays reported, but it never holds up stopping
+            // the playback that is rolling now.
+            if (action == A::StopAll) onStopClicked();
             if (lastCaptureFinalizationError.isNotEmpty())
             { error = lastCaptureFinalizationError; return false; }
-            if (action == A::StopAll) onStopClicked();
             return true;
         }
         // Every remote surface uses the same two-tap guard as the local STOP.
@@ -1207,8 +1209,9 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
     {
         condemnAllStrips();
         engine.clearSessionState();
+        forgetSessionUiState();
         engine.setStripCount (0);
-        cues.clear(); currentCueIndex = -1; clickTrackIndex = -1; lastTrackCount = -1;
+        clickTrackIndex = -1; lastTrackCount = -1;
         undoManager.clearUndoHistory();
         updateTransportLabels(); explicitDocumentOpened = false; showStartupWelcome();
     }

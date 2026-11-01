@@ -137,6 +137,7 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     condemnAllStrips();
     engine.stopPlayback();
     engine.clearSessionState();
+    forgetSessionUiState();
     engine.setActiveSessionDir (dir);        // pin so Save / Save As / Export stay lit
     const int n = engine.loadSession (dir);  // audio -> player + clips
     const bool loadedMix = engine.loadSessionMixFrom (dir);
@@ -322,12 +323,11 @@ void MainComponent::closeSession()
             // slate (mirrors a launch with no session).
             auto& engine = self->engine;
             engine.clearSessionState();
+            self->forgetSessionUiState();
             engine.clearAllStripOverrides();
             self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
             engine.setStripCount (0);
 
-            self->cues.clear();
-            self->currentCueIndex = -1;
             self->clickTrackIndex = -1;           // session-scoped; must not survive a close
             self->undoManager.clearUndoHistory();
             self->lastTrackCount = -1;            // force a strip rebuild (now empty)
@@ -2269,6 +2269,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // Only clear the previous session after every filesystem operation has
     // succeeded; a permissions/disk failure must leave the current work open.
     engine.clearSessionState();
+    forgetSessionUiState();
     engine.clearAllStripOverrides();
     clickTrackIndex = -1;
     // The previous session's undo steps would apply to this one's files and
