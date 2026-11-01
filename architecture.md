@@ -323,6 +323,16 @@ Bounce stems, bounce stereo mix, Strip Silence, and Consolidate all run through 
 - Auto-save writes on every configured interval, not only when the undo-stack count changes. Recordings, routing, cue recalls and imports are legitimate state mutations that do not necessarily add undo units. The clean baseline advances only after every live metadata write and the backup snapshot succeed; failure is surfaced and retried after 15 seconds, doubling up to the interval. An unloaded session is skipped with a status line and no retry.
 - Cross-session: `appProps` (`~/Library/Application Support/Zynforge Recording/`) carries app-global prefs (sessions root, MIDI clock source, LTC source strip, default template, active-session dir for relaunch) and a small set of **latent-leak** per-strip keys still pending migration to `session_mix.json` — `strip_isbus_*` and automation `safe`/`vTrim`/`pTrim` (tracked in `tasks.md`). New sessions wipe the per-index appProps overrides; the session files are authoritative.
 
+### Capture destinations: probes, late opens and finishing
+
+`VolumeProbe` (`Source/Audio/VolumeProbe.h`) reads one destination's volume on a detached thread that owns only its shared state, so a `statfs` that never returns strands that thread and nothing else. `startDiskWatch` builds one per copy just before go-live and finalization drops them. `readDiskEstimate` loads atomics only, groups copies by `f_fsid`, leaves a stale copy out of the figure without touching the primary's, and gives no figure for a stale primary. A reading is stale at 15 s.
+
+A take start settles only the primary before go-live. Every other copy gets a ring and a `CopyOpen`: plain values, run first on that copy's own thread. It applies, in order, root collisions, folders, identity claim, interrupted punch, existing format, orphaned parts, same base as the primary for a punch, the punch stash, continuation lengths, then the files, lead-ins and their markers. A failed rule returns a sentence naming the copy, `CaptureCopy::leaveTake` takes it out of the rings, and the sentence stays in `CaptureLatches::dropped`, because the thread can outlive the recorder.
+
+`finishFinalization` runs the primary's stages inline, then `finishCopyFiles` starts a `CopyFinish` on each copy's own thread. A `CopyFinish` holds plain values only, so its thread can outlive the recorder. `waitForCopies` applies the limits, and `TakeStop::punchVerdicts` is how a copy follows the primary's decision on each track.
+
+`EditPage::holdWaveformsForTake` replaces the file lookups of `setWaveformsFromSession` while a take is on disk. `MarkersManager::deferDiskWhile` sends saves to a writer thread during a take and queues them behind a running write, so an old list can never land on a newer one. `ConsoleLink::setSessionDir (dir, false)` postpones reading the state file until the next call with `true`.
+
 ### Follow-up capture and external-input contracts
 
 - FIFO samples and gaps share one absolute capture timeline. Each channel has

@@ -955,14 +955,16 @@ namespace zynforge
                 Rig rig;
                 if (! bringUp (rig)) return;
                 auto& main = *rig.main;
-                juce::WaitableEvent released { true };
-                const juce::ScopeGuard letGo { [&released] { released.signal(); } };
+                // The probe's thread is detached and outlives this test, so it
+                // must own what it waits on.
+                auto released = std::make_shared<juce::WaitableEvent> (true);
+                const juce::ScopeGuard letGo { [released] { released->signal(); } };
                 auto& recorder = rig.daemon.getRecorder();
                 recorder.volumeProbePeriodMs = 10;
                 recorder.volumeStaleAfterMs = 200.0;
-                recorder.volumeReaderForTests = [&released] (const juce::File&)
+                recorder.volumeReaderForTests = [released] (const juce::File&)
                 {
-                    released.wait (-1);
+                    released->wait (-1);
                     return VolumeProbe::Reading();
                 };
                 if (! startTake (rig, rig.session)) return;

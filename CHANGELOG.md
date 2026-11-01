@@ -73,7 +73,15 @@ Everything from here down to *Added — console and virtual soundcheck* came in 
 ### Fixed — capture copies, crash recovery and the capture daemon
 
 - One stalled drive no longer costs audio on the others: every copy now has its own writer. A copy that falls behind loses audio only on itself and is named in the banner and the report.
-- A full or read-only backup or mirror no longer refuses RECORD: the copy is left out and named.
+- A backup or mirror that fails any check no longer refuses RECORD: full, read-only, or a folder holding another session's audio. The copy is left out of the take and named in the banner and report, and nothing is written to it.
+- RECORD waits only for the primary. Each copy opens on its own thread after the take starts, its buffer holding the audio meanwhile, so a sleeping backup drive no longer costs the opening seconds. A copy that opens later than its buffer lasts pads silence, in step, and is reported. RECORD refuses within 10 s if the session's own drive does not answer.
+- A drive that stops answering no longer freezes the window or holds up STOP. Volume readings come from a separate thread for each destination, and the window and the daemon only read what those threads published. A drive that stops answering reads as stale, never as a confident number.
+- A punch commits only if its capture is complete. If the primary lost audio during a punch, every copy goes back to the original, the punch audio is kept in Session File Backups/Unspliced Punch, and the banner and report say so. A hole in one copy leaves that copy on its pre-punch take, reported failed.
+- A copy can hold STOP for at most 60 s of draining, as well as the 30 s no-progress limit. The primary finishes first and is never abandoned, so its punch, report and hashes never wait on a failing copy.
+- A hole in the primary now counts as missed samples in the status, the report and QC. "The other copies have it" appears only when a healthy copy really exists.
+- Primary and copies on one volume count as one volume in the time-left figure.
+- Markers dropped during a take are written behind it by their own thread, so a stuck drive never delays M.
+- A take's origination time is one reading per pass, so a slow drive or a late copy no longer gives one take several times.
 - The disk warning and ring reading stay live while a drive is stuck, and the status line shows missed samples.
 - AIFF 16 and 24-bit takes stay readable after a crash, and files left by older builds are repaired when a session opens.
 - FLAC sessions left by a crash open without decoding every file.

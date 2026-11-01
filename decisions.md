@@ -1,5 +1,16 @@
 # Decisions Log
 
+
+## A copy never refuses a take, and a punch commits only if complete — 2026-11-01
+
+**Status:** Accepted.
+
+**Context:** RECORD opened every destination before go-live, so a sleeping backup drive cost the opening seconds on every copy, a dead mount could hang RECORD, and a bad copy could refuse the show. Separately, a punch that lost audio was spliced in anyway and the original deleted.
+
+**Decision:** The primary is the take. Only the primary must open before go-live; each copy claims and opens on its own thread afterwards. A copy that fails any rule, including holding another session's audio, sits the take out untouched and is named in the banner and report. Identity rules are unchanged: an unverifiable copy is never adopted. A punch commits only if its capture is complete: a hole in the primary rolls every copy back and archives the punch audio; a hole in one copy leaves that copy on its pre-punch take.
+
+**Consequences:** A misconfigured backup no longer stops the engineer at RECORD, so the warning has to be seen: it is a standing red banner and a line in the report. An engineer who wants a copy of every take must read that banner. A punch can be lost to a stall, but the original never is.
+
 ## RECORD punches only what the engineer chose — 2026-11-01
 
 **Status:** Accepted. Amends the Trigger paragraph of *Punch-in is an offline splice on stop* (2026-06-14).

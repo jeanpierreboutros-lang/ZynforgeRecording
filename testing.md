@@ -2,12 +2,13 @@
 
 ## Fix pass — 2026-11-01
 
-Current source: <<COUNTS>>
+Current source: **1298 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open` with no sanitizer reports and no forced thread stops (Release and TSan at `58a7267`; ASan/UBSan after a test-only fix to `CaptureFixTests.cpp`, where a detached probe thread outlived the event it waited on). `tools/design_audit.sh`, `tools/invariants_audit.sh`, `test_notarize.py`, `test_auto_stop.py` and `test_verify_tools.py` all pass.
 
 Nothing in this section has run on real hardware, and nothing from it is installed on either Mac. The hardware steps are under *2026-11-01 fix-pass acceptance* in [FIELD-TEST.md](FIELD-TEST.md).
 
 ### New suites
 
+- *Capture copies* also pins, each seen failing on the old code: a drive that stops answering costs only its own reading; a punch with a hole keeps the original on every copy; a copy that keeps writing slowly still has a total limit at STOP; a copy stuck in post-take work costs the primary nothing; a hole in the primary reads as missed samples; RECORD waits for no copy; a copy that opens later than its ring pads silence in step; a dead mount can hang neither RECORD nor STOP. Stalls come from test seams: no real hung NAS or sleeping drive has been tried. A one-off interposer logging every main-thread `stat`, `statfs`, `open` and `rename` on a take's folders, across a daemon take and a local take with backup and mirror, logged no call on a destination while the take rolled or finalized.
 - *Main window guards* (`Source/Tests/MainWindowGuardTests.cpp`) runs RECORD's whole path, pre-flight included, on `SilentDevice`, a fake `AudioIODevice` registered with the engine's device manager. It never reaches CoreAudio, so there is no consent prompt and no real interface is touched. Use it for anything that needs `prepareRecordStart`. It shares one `MainComponent` across its groups.
 - *Capture fixes*, *Capture daemon link* and *Capture copies* (`Source/Tests/CaptureFixTests.cpp`). *Capture daemon link* is a real `MainComponent` over a real socket to an in-process `CaptureDaemon`, on a random port, so branches can run it side by side; `MainComponent::captureDaemonPort` is the seam and the default is still 17890. *Capture copies* holds one copy's thread in a write through `beforeCopyWriteForTests`. Run *Capture copies* under TSan after touching `CaptureCopy.h`.
 - *Session safety* (`Source/Tests/SessionSafetyTests.cpp`) covers mixer ownership on every save path, reattach, retention and failed reopen.

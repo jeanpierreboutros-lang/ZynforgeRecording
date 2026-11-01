@@ -40,6 +40,9 @@ None of this has been tried on real hardware, and these fixes are not in the ins
 Force-killing can wedge an audio device, so keep a recovery plan and stop if the interface becomes unstable.
 
 - [ ] **Stalled copy.** Run a NAS mirror and a USB backup, pull the NAS network cable mid-take for 30 s and restore it. Expect the banner to name the mirror, no gap on primary or backup, silence on the mirror only, sample-aligned. Repeat with the cable left out through STOP: STOP finishes within about 30 s, the report names the mirror, and the next RECORD leaves it out and names it.
+- [ ] **Hung copy.** With a take rolling, make a NAS mirror stop answering without returning an error (block its traffic at the switch rather than pulling the cable). Expect the window to stay alive, STOP to work, the time-left label to read PRIMARY TIME LEFT and the banner to name the copy. Repeat on the primary: the figure reads STALE rather than a number.
+- [ ] **Sleeping backup.** Let a USB hard drive spin down, then press RECORD. Expect the take to start at once on the primary, the backup to catch up in step, and silence with a named report line only if it took longer than its buffer lasts.
+- [ ] **Punch through a stall.** Stall the primary for over 6 s during a punch on a disposable take. Expect the original to stay on every copy, the punch audio in `Session File Backups/Unspliced Punch`, and the banner and report to say so.
 - [ ] **Dying drive at STOP.** Yank a USB backup during finalization. The primary must finish and the report must flag the backup.
 - [ ] **AIFF crash.** Record AIFF 24 for 10 minutes on the real rig, power-cut the Mac, reopen. Expect a whole take less at most the last 5 s, and on a drive with power-loss protection nothing missing. Check a take from the installed build the same way.
 - [ ] **FLAC crash.** Same with FLAC 24 on 56 tracks: session open should take seconds.
