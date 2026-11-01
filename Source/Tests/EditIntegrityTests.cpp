@@ -222,6 +222,24 @@ namespace zynforge
                               "the peer must lose the clicked clip's span, whatever its own splits");
             }
 
+            beginTest ("A ripple of several clips closes every gap as one undo step");
+            {
+                Show s (2, { 48000, 48000 });
+                s.engine.setTrackStereo (0, true);
+                s.splitBoth (0, 1, 16000);
+                s.splitBoth (0, 1, 32000);
+                const auto before = spans (s.clips (0));
+                s.main.undoManager.clearUndoHistory();
+                s.page().setSelectedClips ({ { 0, 0 }, { 0, 2 } }, { 0, 0 });
+                s.main.editRippleDelete();
+                expectEquals (spans (s.clips (0)), juce::String ("0+16000"), "both gaps must close");
+                expectEquals (spans (s.clips (1)), spans (s.clips (0)), "R did not follow L");
+                s.main.editUndo();
+                expectEquals (spans (s.clips (0)), before, "one Cmd+Z must bring every clip back");
+                expectEquals (spans (s.clips (1)), before);
+                expect (! s.main.undoManager.canUndo(), "the ripple left a second step");
+            }
+
             beginTest ("Duplicate copies both halves and follows both copies");
             {
                 Show s (2, { 48000, 48000 });
