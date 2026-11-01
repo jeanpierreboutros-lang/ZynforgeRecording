@@ -1248,6 +1248,10 @@ void MainComponent::applySessionSettings()
 
 void MainComponent::confirmAndQuit()
 {
+    // File > Quit refuses under LOCK; the close box and Cmd+Q come straight
+    // here, and Return on the dialog below would end a locked take.
+    if (sessionLocked)
+    { showStatus ("LOCKED -- click UNLOCK before quitting"); return; }
     if (pendingMetadataSaves != 0 || captureMetadataPending)
     { showStatus ("Session saving is still finishing -- quit again after completion"); return; }
     if (sessionIoBusy.load())
@@ -1307,6 +1311,14 @@ void MainComponent::confirmAndQuit()
             {
                 std::unique_ptr<juce::AlertWindow> dispose (aw);
                 if (result == kCancel) return;       // stay in app
+                // A remote RECORD may have started behind this dialog; that
+                // take gets the proper Stop & Quit, not a bare teardown.
+                if (self != nullptr
+                    && (self->engine.isRecording() || self->captureSupervisor.isDaemonRecording()))
+                {
+                    self->confirmAndQuit();
+                    return;
+                }
                 if (auto* app = juce::JUCEApplication::getInstance())
                     app->quit();
             }),

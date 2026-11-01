@@ -118,6 +118,7 @@ namespace zynforge
             // Modal launchAsync (selfOwned) vs tracked launchFloating: governs
             // how closeWindow() dismisses the window (exitModalState vs hide).
             void setSelfOwned (bool b) noexcept { selfOwned = b; }
+            bool isSelfOwned() const noexcept { return selfOwned; }
 
             explicit DialogContent (AudioEngine& eng)
                 : engine (eng),
@@ -654,6 +655,13 @@ namespace zynforge
     // fight over initialise(256,64,...)), so we allow only ONE. Auto-nulls when
     // the dialog is destroyed (SafePointer), covering both close paths.
     static juce::Component::SafePointer<DialogContent> s_liveDeviceDialog;
+
+    void AudioDeviceDialog::closeSelfOwned()
+    {
+        if (auto* live = s_liveDeviceDialog.getComponent())
+            if (live->isSelfOwned())
+                delete live->findParentComponentOfClass<juce::DialogWindow>();
+    }
 
     juce::DialogWindow* AudioDeviceDialog::launch (AudioEngine& engine, bool selfOwned)
     {

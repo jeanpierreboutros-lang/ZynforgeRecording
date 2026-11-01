@@ -869,6 +869,7 @@ MainComponent::~MainComponent()
     engine.setRemoteTransportHandler ({});
     engine.getRemotes().setHost ({});
     engine.onMarkerDropped = nullptr;
+    zynforge::AudioDeviceDialog::closeSelfOwned();
     delete twinDialog.getComponent();
     twinLink.stop();
     sessionMirror.stop();
