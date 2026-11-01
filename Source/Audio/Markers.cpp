@@ -80,6 +80,13 @@ namespace zynforge
         return markers[(std::size_t) i];
     }
 
+    int MarkersManager::indexOfId (const juce::String& runtimeId) const
+    {
+        for (int i = 0; i < (int) markers.size(); ++i)
+            if (markers[(std::size_t) i].runtimeId == runtimeId) return i;
+        return -1;
+    }
+
     void MarkersManager::removeMarker (int i)
     {
         if (i < 0 || i >= (int) markers.size()) return;

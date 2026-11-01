@@ -1050,6 +1050,19 @@ namespace zynforge
                 s.engine.clearAutomation (AP::Volume);
             }
 
+            beginTest ("A marker is found by identity after the list shifts");
+            {
+                Show s (1, { 48000 });
+                auto& markers = s.engine.getMarkers();
+                markers.setContext (s.dir, 48000.0);
+                markers.drop (20000, "later");
+                const auto id = markers.lastDroppedId;
+                expectEquals (markers.indexOfId (id), 0);
+                markers.drop (1000, "earlier");
+                expectEquals (markers.indexOfId (id), 1, "a marker dropped ahead of it shifted its index");
+                expectEquals (markers.indexOfId ("gone"), -1);
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

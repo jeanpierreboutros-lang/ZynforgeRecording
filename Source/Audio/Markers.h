@@ -45,6 +45,10 @@ namespace zynforge
 
         const std::vector<Marker>& getAll() const noexcept { return markers; }
         Marker getMarker (int i) const;
+        // Where the marker with this runtimeId sits now, or -1. A list index
+        // goes stale across any await: markers stay sorted by position, so one
+        // dropped ahead of it shifts every later index.
+        int    indexOfId (const juce::String& runtimeId) const;
         void   removeMarker (int i);
         void   renameMarker (int i, const juce::String& newName);
         void   setMarkerSample (int i, juce::int64 sample);

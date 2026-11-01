@@ -155,7 +155,8 @@ namespace zynforge
         void openRenameDialog (int markerIndex)
         {
             auto& markers = engine.getMarkers();
-            const auto current = markers.getMarker (markerIndex).name;
+            const auto marker = markers.getMarker (markerIndex);
+            const auto current = marker.name;
             auto* aw = new juce::AlertWindow ("Rename marker",
                                               "Name:",
                                               juce::MessageBoxIconType::NoIcon);
@@ -173,13 +174,15 @@ namespace zynforge
 
             juce::Component::SafePointer<EditTimeRuler> self (this);
             aw->enterModalState (true,
-                juce::ModalCallbackFunction::create ([aw, self, markerIndex] (int r)
+                juce::ModalCallbackFunction::create ([aw, self, markerId = marker.runtimeId] (int r)
                 {
                     std::unique_ptr<juce::AlertWindow> dispose (aw);
                     if (r != 1 || self == nullptr) return;
                     const auto typed = dispose->getTextEditorContents ("n").trim();
                     if (typed.isEmpty()) return;
-                    self->engine.getMarkers().renameMarker (markerIndex, typed);
+                    const int index = self->engine.getMarkers().indexOfId (markerId);
+                    if (index < 0) return;   // removed, or another session opened
+                    self->engine.getMarkers().renameMarker (index, typed);
                     self->engine.getMarkers().save();
                     self->repaint();
                 }),
