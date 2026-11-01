@@ -78,7 +78,6 @@ private:
     // Menu handlers too long to sit inline in the table.
     void copyConfidenceUrl();
     void toggleCompanionServer();
-    void toggleNdiBroadcast();
 
     void rebuildStrips();
     void updateMixerPlaceholder();   // show/hide the MIXER empty-state overlay

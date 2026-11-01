@@ -7,7 +7,6 @@
 #include "ClickEngine.h"
 #include "MidiClockOut.h"
 #include "VcaBus.h"
-#include "../Network/NDIBridge.h"
 #include "../Network/RemoteControl.h"
 
 #include <array>
@@ -193,8 +192,8 @@ namespace zynforge
         void  setMasterGainDbFast (float dB) noexcept { masterState.gainDb.store (dB, std::memory_order_relaxed); }
         void  setMasterMuted  (bool m);
         // setMasterOutputs (-1, -1) gives the master bus no output: it still
-        // meters and feeds the companion stream and NDI, and nothing lands on
-        // an interface channel.
+        // meters and feeds the companion stream, and nothing lands on an
+        // interface channel.
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }
         void  setMasterOutputs (int l, int r);
@@ -314,7 +313,6 @@ namespace zynforge
         // MIDI clock master (24 PPQN) -- drives outboard synths /
         // drum machines / DAW slaves from the session tempo.
         MidiClockOut& getMidiClockOut() noexcept { return midiClockOut; }
-        NDIBridge&    getNDIBridge()    noexcept { return ndi; }
 
         // ── VCA buses ─────────────────────────────────────────────
         // 8 group "ghost faders". Strips opt-in via setTrackVcaGroup
@@ -1306,7 +1304,7 @@ namespace zynforge
         // hot channels can't overshoot float headroom on the way to the
         // stereo master bus.
         juce::AudioBuffer<double>                               monitorAccum;
-        // The monitor mix as float, for the companion and NDI feeds while the
+        // The monitor mix as float, for the companion feed while the
         // master bus has no device output to read them from.
         juce::AudioBuffer<float>                                monitorFeed;
 
@@ -1339,7 +1337,6 @@ namespace zynforge
 
         ClickEngine        click;
         MidiClockOut       midiClockOut;
-        NDIBridge          ndi;
         std::atomic<bool> controlsLocked { false };
         std::array<VcaBus, kNumVcas> vcas;
     public:

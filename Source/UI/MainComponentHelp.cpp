@@ -339,12 +339,7 @@ void MainComponent::showUserGuide()
         "from audinate.com. DVS exposes up to 64\xC3\x97""64 Dante channels "
         "as a Core Audio device--just pick it in DEVICE and route "
         "strips to its channels via PATCH. ZynForge auto-detects DVS "
-        "and shows a 'DANTE' badge in the status bar.\n\n"
-        "NETWORK AUDIO (NDI)\n"
-        "  Session > NDI broadcast pushes the master mix onto your "
-        "LAN as an NDI Audio source. Any NDI receiver (NDI Tools, OBS, "
-        "TouchDesigner) on the same network can monitor your live "
-        "stream. Requires NDI runtime from ndi.tv--free.");
+        "and shows a 'DANTE' badge in the status bar.");
 
     auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
                                       juce::MessageBoxIconType::NoIcon);

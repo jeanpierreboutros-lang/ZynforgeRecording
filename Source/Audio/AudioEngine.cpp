@@ -2381,10 +2381,6 @@ namespace zynforge
     void AudioEngine::applyDeviceConfiguration (double sr, int blockSize, juce::AudioWorkgroup workgroup)
     {
         deviceSampleRate.store (sr, std::memory_order_relaxed);
-        // Keep the NDI transmit's declared rate on the LIVE device rate --
-        // a rate change under a running transmit otherwise plays the rest of
-        // the show at the wrong pitch on every receiver.
-        ndi.setSampleRate (sr);
         deviceBlockSize .store (blockSize, std::memory_order_relaxed);
         audioLoadPct    .store (0.0f, std::memory_order_relaxed);
 
@@ -3773,13 +3769,13 @@ namespace zynforge
             click.processBlock (L, R, numSamples);
         }
 
-        // What the companion stream and NDI hear. With no device pair to read,
-        // they take the monitor mix itself.
+        // What the companion stream hears. With no device pair to read, it
+        // takes the monitor mix itself.
         const float* feedL = nullptr;
         const float* feedR = nullptr;
         int feedSamples = numSamples;
         const bool companionFeed = remotes.isCompanionServerRunning();
-        if (companionFeed || ndi.isEnabled())
+        if (companionFeed)
         {
             if (masterAudible)
             {
@@ -3803,14 +3799,6 @@ namespace zynforge
 
         if (companionFeed)
             remotes.feedCompanionStream (feedL, feedR, feedSamples);
-
-        // NDI Audio transmit -- push the master mix onto the LAN as an
-        // NDI source. Reads from the monitor-bus output channels so the
-        // network feed matches what the engineer hears at the console.
-        // Cheap: pushStereo is a memcpy + one libndi call; a no-op when
-        // the runtime isn't installed.
-        if (ndi.isEnabled() && feedL != nullptr && feedR != nullptr)
-            ndi.pushStereo (feedL, feedR, feedSamples);
 
         // CPU-load: (callback wall time) / (block period). EMA-smoothed
         // with a fast attack and slower release so the engineer sees

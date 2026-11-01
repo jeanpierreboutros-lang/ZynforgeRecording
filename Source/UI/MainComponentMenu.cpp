@@ -260,9 +260,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // ── Network & Surfaces ───────────────────────────────────────────
         {
             juce::PopupMenu m;
-            m.addItem (55, engine.getNDIBridge().isEnabled()
-                               ? juce::String ("Stop NDI broadcast")
-                               : juce::String ("Start NDI broadcast..."));
             // Control Surfaces hub -- OSC + every console/surface protocol.
             m.addItem (720, "Control Surfaces...");
 
@@ -484,7 +481,6 @@ void MainComponent::registerMenuCommands()
     m.add (52,  [this] { onVscClicked(); });
     m.add (53,  [this] { zynforge::MarkerListDialog::launch (engine); });
     m.add (54,  [this] { showPreflightChecklist(); });
-    m.add (55,  [this] { toggleNdiBroadcast(); });
     m.add (56,  [this] { dropMarkerAndPromptName(); });
     m.add (62,  [this]
     {
@@ -715,40 +711,6 @@ void MainComponent::toggleCompanionServer()
         showStatus ("Companion failed to bind port 9000 -- try a different port");
     }
 }
-
-void MainComponent::toggleNdiBroadcast()
-{
-    auto& bridge = engine.getNDIBridge();
-    if (bridge.isEnabled())
-    {
-        bridge.stop();
-        showStatus ("NDI broadcast stopped");
-    }
-    else
-    {
-        const auto runtime = zynforge::NDIBridge::findRuntimePath();
-        if (runtime.isEmpty())
-        {
-            juce::AlertWindow::showMessageBoxAsync (
-                juce::MessageBoxIconType::NoIcon,
-                "NDI runtime not found",
-                "Install the free NDI runtime from ndi.tv (the 'NDI Tools' bundle "
-                "ships with libndi.dylib in /usr/local/lib). Re-launch the app "
-                "after installing to broadcast over NDI.", "OK");
-            return;
-        }
-        auto sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-            ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
-            : 48000.0;
-        const auto host = juce::SystemStats::getComputerName();
-        if (bridge.start ("Zynforge -- " + host, sr))
-            showStatus ("NDI broadcasting as 'Zynforge -- " + host + "'");
-        else
-            showStatus ("NDI start failed -- check ndi.tv runtime install");
-    }
-}
-
-
 
 int MainComponent::oscListenPort() const
 {

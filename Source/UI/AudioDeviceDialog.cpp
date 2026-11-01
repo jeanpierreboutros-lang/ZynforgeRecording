@@ -365,7 +365,7 @@ namespace zynforge
                 bufferBox.setBounds (bufBody.removeFromTop (brand::space::ctrlH));
 
                 // Monitor card -- a single full-width stereo-pair picker that
-                // drives engine.setMasterOutputs (master sum, click, NDI,
+                // drives engine.setMasterOutputs (master sum, click and
                 // companion stream all follow it).
                 auto monBody = monitorCard.bodyArea().translated (monitorCard.getX(),
                                                                   monitorCard.getY());
