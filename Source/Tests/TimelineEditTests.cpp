@@ -167,7 +167,8 @@ public:
             Folder f; expect (write (f.track()));
             AudioEngine e; setup (e); e.loadSession (f.dir);
             e.newTakeFromCurrent (0, "Take 2");
-            auto* obj = e.playlistsToJson()[0].getDynamicObject();
+            const auto saved = e.playlistsToJson();
+            auto* obj = saved[0].getDynamicObject();
             expect (obj != nullptr);
             juce::DynamicObject::Ptr entry (new juce::DynamicObject (*obj));
             entry->setProperty ("activeTake", bad);
