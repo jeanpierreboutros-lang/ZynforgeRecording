@@ -127,10 +127,143 @@ namespace zynforge
         std::vector<juce::uint8> encoded;
     };
 
+    // JUCE's integer AIFF writer writes its header at open and again only in
+    // its destructor, so a crash left a file that says 0 frames however long
+    // the take ran. This one writes the same bytes as JUCE's and can rewrite
+    // the header while the file is open, which is what the WAV path has always
+    // been able to do. The periodic flush stays cheap like WAV's: header only,
+    // no fsync, because every open file on every copy pays for it.
+    class PcmAiffWriter final : public juce::AudioFormatWriter
+    {
+    public:
+        // Ownership of the stream transfers only on success, as for JUCE's.
+        static juce::AudioFormatWriter* create (juce::OutputStream* stream, double rate,
+                                                unsigned int channels, int bits)
+        {
+            if (stream == nullptr || ! std::isfinite (rate) || rate < 1.0 || rate > 768000.0
+                || channels == 0 || channels > 256 || (bits != 16 && bits != 24))
+                return nullptr;
+            auto writer = std::unique_ptr<PcmAiffWriter> (new PcmAiffWriter (stream, rate, channels, bits));
+            if (! writer->healthy)
+            {
+                writer->output = nullptr;
+                return nullptr;
+            }
+            return writer.release();
+        }
+
+        ~PcmAiffWriter() override
+        {
+            if (output != nullptr) closeOut();
+        }
+
+        bool write (const int** samples, int count) override
+        {
+            if (! healthy || count < 0 || samples == nullptr) return false;
+            const auto bytesPerSample = bitsPerSample / 8;
+            const auto bytes = (juce::uint64) count * numChannels * bytesPerSample;
+            // AIFF sizes are signed 32-bit fields. The recorder rolls well below this.
+            if (dataBytes + bytes > 0x7ff00000u) return false;
+            encoded.resize ((size_t) bytes);
+            auto* dest = encoded.data();
+            for (int frame = 0; frame < count; ++frame)
+                for (unsigned int channel = 0; channel < numChannels; ++channel)
+                {
+                    // JUCE hands integer writers left-justified 32-bit samples.
+                    const auto value = samples[channel] != nullptr
+                        ? (juce::uint32) samples[channel][frame] : 0u;
+                    *dest++ = (juce::uint8) (value >> 24);
+                    *dest++ = (juce::uint8) (value >> 16);
+                    if (bytesPerSample == 3) *dest++ = (juce::uint8) (value >> 8);
+                }
+            if (! output->write (encoded.data(), encoded.size()))
+            {
+                // A full disk can still take a header: leave what we have readable.
+                healthy = false;
+                writeHeader();
+                return false;
+            }
+            dataBytes += bytes;
+            headerDirty = true;
+            return true;
+        }
+
+        bool flush() override
+        {
+            const bool headerOk = ! headerDirty || writeHeader();
+            if (auto* file = dynamic_cast<juce::FileOutputStream*> (output))
+                healthy = healthy && file->getStatus().wasOk();
+            healthy = healthy && headerOk;
+            if (healthy) headerDirty = false;
+            return healthy;
+        }
+
+        // The last chance to hear about a failed write: pad, header, fsync.
+        // Safe to follow with the destructor.
+        bool finishBeforeClose()
+        {
+            closeOut();
+            output->flush();
+            if (auto* file = dynamic_cast<juce::FileOutputStream*> (output))
+                healthy = healthy && file->getStatus().wasOk();
+            return healthy;
+        }
+
+    private:
+        PcmAiffWriter (juce::OutputStream* stream, double rate, unsigned int channels, int bits)
+            : AudioFormatWriter (stream, "AIFF file", rate, channels, (unsigned int) bits),
+              headerPosition (stream->getPosition())
+        {
+            healthy = writeHeader();
+        }
+
+        void closeOut()
+        {
+            const bool needsPad = (dataBytes & 1) != 0 && ! padded;
+            if (! headerDirty && ! needsPad) return;
+            if (needsPad) padded = output->writeByte (0);
+            healthy = writeHeader() && healthy;
+            headerDirty = false;
+        }
+
+        static constexpr juce::int64 kHeaderBytes = 54;
+
+        bool writeHeader()
+        {
+            const auto audioBytes = dataBytes + (dataBytes & 1);
+            const auto end = headerPosition + kHeaderBytes + (juce::int64) dataBytes + (padded ? 1 : 0);
+            const auto frames = (int) (dataBytes / (numChannels * (bitsPerSample / 8)));
+            if (! output->setPosition (headerPosition)) return false;
+            int exponent = 0;
+            const double fraction = std::frexp (sampleRate, &exponent);
+            const auto mantissa = (juce::uint64) std::ldexp (fraction, 64);
+            const bool ok = output->write ("FORM", 4)
+                && output->writeIntBigEndian ((int) (kHeaderBytes + (juce::int64) audioBytes - 8))
+                && output->write ("AIFF", 4)
+                && output->write ("COMM", 4) && output->writeIntBigEndian (18)
+                && output->writeShortBigEndian ((short) numChannels)
+                && output->writeIntBigEndian (frames)
+                && output->writeShortBigEndian ((short) bitsPerSample)
+                && output->writeShortBigEndian ((short) (16382 + exponent))
+                && output->writeInt64BigEndian (std::bit_cast<juce::int64> (mantissa))
+                && output->write ("SSND", 4) && output->writeIntBigEndian ((int) (audioBytes + 8))
+                && output->writeIntBigEndian (0) && output->writeIntBigEndian (0);
+            return output->setPosition (end) && ok;
+        }
+
+        juce::int64 headerPosition;
+        juce::uint64 dataBytes = 0;
+        bool healthy = false;
+        bool headerDirty = true;
+        bool padded = false;
+        std::vector<juce::uint8> encoded;
+    };
+
     // JUCE's default flush() means "unsupported" for some other codecs, so
-    // check the format whose explicit finalization contract we implement.
+    // check the formats whose explicit finalization contract we implement.
     inline bool flushFloatAiffBeforeClose (juce::AudioFormatWriter* writer)
     {
+        if (auto* pcm = dynamic_cast<PcmAiffWriter*> (writer)) return pcm->finishBeforeClose();
         auto* floating = dynamic_cast<FloatAiffWriter*> (writer);
         return floating == nullptr || floating->flush();
     }

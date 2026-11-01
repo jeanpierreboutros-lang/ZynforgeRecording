@@ -45,6 +45,14 @@ namespace zynforge
             return predicate();
         }
 
+        bool stopAndWait (MainComponent& main)
+        {
+            bool done = false, ok = false;
+            main.stopActiveCaptureAsync (false, [&] (bool saved) { done = true; ok = saved; });
+            expect (pumpUntil ([&] { return done; }, 15000), "STOP never finished");
+            return ok;
+        }
+
        #if JUCE_MAC
         struct MetadataProbe
         {
@@ -272,7 +280,10 @@ namespace zynforge
                             AudioEngine::RemoteTransportAction::StopRecord, error),
                         "confirmed STOP acknowledged success before metadata completion");
                 expect (error.containsIgnoreCase ("pending"), error);
-                expect (stopEntered->wait (3000), "STOP did not enqueue its metadata snapshot");
+                // Daemon STOP finishes on the message thread once the reply lands.
+                bool snapshotEntered = false;
+                expect (pumpUntil ([&] { return snapshotEntered = snapshotEntered || stopEntered->wait (0); }, 5000),
+                        "STOP did not enqueue its metadata snapshot");
                 error.clear();
                 expect (! main.engine.performRemoteTransport (
                             AudioEngine::RemoteTransportAction::StopRecord, error));
@@ -311,7 +322,7 @@ namespace zynforge
                         "main dashboard bypassed status age and showed cached healthy metrics");
                 expect (main.captureSupervisor.connectOrLaunch (port), "could not reattach to rolling daemon");
                 expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
-                expect (main.stopActiveCapture (false));
+                expect (stopAndWait (main));
                 expect (waitUntil ([&] { return main.captureSupervisor.hasStatus()
                                              && ! main.captureSupervisor.isDaemonRecording(); }, 3000));
                 expect (! main.engine.isRecording(), "Stop & Quit path left external recording set");
@@ -335,8 +346,7 @@ namespace zynforge
                 expect (vanishedMetadataTarget.deleteRecursively());
                 expect (main.engine.getActiveSessionDir() == vanishedMetadataTarget,
                         "a vanished recording volume silently fell back to the preceding take");
-                expect (! main.stopActiveCapture (false),
-                        "metadata write failure was reported as a clean stop");
+                expect (! stopAndWait (main), "metadata write failure was reported as a clean stop");
                 expect (waitUntil ([&] { return ! main.captureSupervisor.isDaemonRecording(); }, 3000));
                 expect (! main.engine.isRecording(), "capture itself did not stop on metadata failure");
 
@@ -361,8 +371,8 @@ namespace zynforge
                             AudioEngine::RemoteTransportAction::StopRecord, error),
                         "remote STOP acknowledged success despite mandatory session-save failure");
                 expect (error.isNotEmpty(), "remote finalization failure had no explanation");
-                expect (waitUntil ([&] { return ! main.captureSupervisor.isDaemonRecording(); }, 3000));
-                expect (! main.engine.isRecording(), "capture itself should stop even when metadata cannot save");
+                expect (pumpUntil ([&] { return ! main.engine.isRecording(); }, 5000),
+                        "capture itself should stop even when metadata cannot save");
                 expect (pumpUntil ([&] { return ! main.captureMetadataPending && main.pendingMetadataSaves == 0; }, 5000));
                 expect (main.lastCaptureFinalizationError.isNotEmpty(), "failed finalization was not latched");
                 for (int retry = 0; retry < 2; ++retry)

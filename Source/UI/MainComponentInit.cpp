@@ -32,6 +32,7 @@ MainComponent::MainComponent()
                                    [this] (juce::int64 sample)
                                    { if (editPage != nullptr) editPage->scrollToSample (sample); } });
     wireConsoleLink();
+    engine.onTakeInterrupted = [this] (bool) { localTakeInterrupted(); };
     engine.onMarkerDropped = [this] (const juce::String& name) { twinLink.noteLocalMarker (name); };
     engine.getMarkers().onDamagedFileKept = [this] (const juce::File& kept)
     { toast.show ("markers.json was damaged and is kept as " + kept.getFileName(), Toast::Kind::Warning); };
@@ -878,6 +879,7 @@ MainComponent::~MainComponent()
     engine.setRemoteTransportHandler ({});
     engine.getRemotes().setHost ({});
     engine.onMarkerDropped = nullptr;
+    engine.onTakeInterrupted = nullptr;
     engine.getMarkers().onDamagedFileKept = nullptr;
     zynforge::AudioDeviceDialog::closeSelfOwned();
     delete twinDialog.getComponent();

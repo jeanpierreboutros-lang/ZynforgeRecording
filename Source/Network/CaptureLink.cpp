@@ -127,6 +127,13 @@ namespace zynforge::capture
         clientConnected.store (false);
     }
 
+    void CaptureServer::dropClient()
+    {
+        const std::lock_guard<std::timed_mutex> guard (writeLock);
+        if (auto live = std::atomic_load_explicit (&client, std::memory_order_acquire))
+            live->close();
+    }
+
     void CaptureServer::acceptLoop()
     {
         while (running.load() && listener != nullptr)

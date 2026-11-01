@@ -63,12 +63,14 @@ void MainComponent::updateMixerPlaceholder()
 
 void MainComponent::onRecordClicked()
 {
-    if (captureMetadataPending || (sessionIoBusy.load() && ! engine.isRecording()))
+    if (captureMetadataPending || engine.isCaptureFinalizing()
+        || (sessionIoBusy.load() && ! engine.isRecording()))
     {
         // An autosave or layout write is over in moments and nobody chose to
         // start it, so it must not cost the engineer the press. Copies, exports
         // and a stop's finalization are not held: those can take far longer.
-        if (! captureMetadataPending && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
+        if (! captureMetadataPending && ! engine.isCaptureFinalizing()
+            && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
         {
             recordPressHeldAtMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
             showStatus ("RECORD held -- starting as soon as this save finishes");
@@ -212,8 +214,11 @@ bool MainComponent::handleRecordPressDuringTake()
     // on the next RECORD press -- that would look protected while it is not.
     if (useCaptureDaemon && ! captureSupervisor.isAttached())
     {
-        showRecordRefusal ("Capture daemon is unavailable -- reconnect or disable daemon mode before recording");
-        return true;
+        // The press asks for the daemon back. If that leaves a take to look
+        // after, or no daemon, it has done all it can do.
+        reconnectCaptureDaemon();
+        if (engine.isRecording() || captureMetadataPending || ! captureSupervisor.isAttached())
+            return true;
     }
 
     // StereoMix is produced by the in-process audio callback. The capture
@@ -352,8 +357,9 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     {
         const juce::int64 wantBytes = recordHeadroomBytes (device->getCurrentSampleRate(), plan.armed,
                                                            engine.getRecorder().getCaptureFormat());
-        const juce::int64 freeBytes = plan.dir.getParentDirectory().getBytesFreeOnVolume();
-        if (freeBytes > 0 && freeBytes < wantBytes)
+        const auto        volume    = plan.dir.getParentDirectory();
+        const juce::int64 freeBytes = volume.getBytesFreeOnVolume();
+        if (zynforge::preflight::freeSpaceKnown (freeBytes, volume.getVolumeTotalSize()) && freeBytes < wantBytes)
         {
             const double freeGB = freeBytes / 1.0e9;
             showRecordRefusal ("Drive has only " + juce::String (freeGB, 1)
@@ -464,28 +470,53 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
     for (int i = 0; i < plan.numTracks; ++i)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
             arms.setBit (i);
+    requestDaemonTake (plan.dir, plan.numTracks, arms, plan.armed, mixerInTakeFolder);
+}
+
+void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, const juce::BigInteger& arms,
+                                       int armed, bool mixerInTakeFolder)
+{
+    const double rate = captureSupervisor.lastStatus().sampleRate > 0.0
+                            ? captureSupervisor.lastStatus().sampleRate : pendingSampleRate;
     zynforge::bwf::TimeAnchor timecode;
-    if (captureSupervisor.startRecording (plan.dir, plan.numTracks,
-                                          (int) recorder.getCaptureFormat(), arms,
-                                          engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var()))
+    juce::String refusal;
+    bool unanswered = false;
+    if (captureSupervisor.startRecording (dir, numTracks, (int) engine.getRecorder().getCaptureFormat(), arms,
+                                          engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var(),
+                                          &refusal, &unanswered))
     {
         engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
                                          captureSupervisor.lastStatusAtMs());
         lastCaptureFinalizationError.clear();
-        engine.setExternalRecording (true);
-        engine.setActiveSessionDir (plan.dir);
-        engine.claimMixerFor (plan.dir);
-        engine.noteLastCapture (plan.dir);
+        engine.beginExternalTake (dir, rate);
+        engine.claimMixerFor (dir);
+        engine.noteLastCapture (dir);
         engine.snapshotCaptureInputGains();
-        statusLabel.setText ("DAEMON recording " + juce::String (plan.armed) + "/"
-                             + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
+        daemonTakeAdopted = true;
+        statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"
+                             + juce::String (numTracks) + " tracks -> " + dir.getFileName()
                              + (mixerInTakeFolder ? "  (take survives a GUI crash)"
                                                   : "  (mixer not saved to the take folder)"),
                              juce::dontSendNotification);
         recordButton.setButtonText ("STOP");
     }
+    else if (unanswered)
+    {
+        // Not a refusal. The window must not call this failed and move on while
+        // the daemon rolls into a session it does not know about.
+        dir.createDirectory();
+        lastCaptureFinalizationError.clear();
+        engine.beginExternalTake (dir, rate);
+        engine.claimMixerFor (dir);
+        engine.noteLastCapture (dir);
+        engine.snapshotCaptureInputGains();
+        daemonStartUnansweredMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
+        recordButton.setButtonText ("REC ?");
+        showStatus ("Daemon has not answered RECORD yet -- the take may be rolling");
+    }
     else
-        showRecordRefusal ("Daemon record failed -- check Session > Capture daemon.");
+        showRecordRefusal (refusal.isNotEmpty() ? "Daemon refused RECORD: " + refusal
+                                                : juce::String ("Daemon record failed -- check Session > Capture daemon."));
 }
 
 bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
@@ -687,48 +718,13 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
 {
     auto& recorder = engine.getRecorder();
     const bool localRecording = recorder.isRecording();
-    const bool externalCapture = engine.isRecording() && ! localRecording;
     const bool resumeManualPlayback = localRecording && manualPunchActive
         && ! stopPlaybackAndRewind && engine.getPlayer().isPlaying();
     const auto resumeAt = engine.getPlayer().getPositionSamples();
 
     bool sessionStateSaved = true;
     juce::String finalizationError;
-    if (captureSupervisor.isDaemonRecording() || externalCapture)
-    {
-        bool daemonStopped = false;
-        juce::String daemonStopError;
-        const bool cleanStop = captureSupervisor.isAttached()
-                            && captureSupervisor.stopRecording (&daemonStopped, &daemonStopError);
-        if (! cleanStop && ! daemonStopped)
-        {
-            showStatus ("Daemon did not confirm STOP; take may still be recording");
-            return false;
-        }
-        engine.setExternalRecording (false);
-        const auto session = engine.getActiveSessionDir();
-        if (session.isDirectory())
-        {
-            engine.loadSession (session, true, true);
-            sessionStateSaved = ! persistMetadata || saveSessionStateTo (session);
-        }
-        else
-        {
-            // A removable/session volume can disappear while the daemon still
-            // has an open media descriptor. The audio stop may succeed, but
-            // there is nowhere to persist the project state; that is not a
-            // clean finalisation and must block quit/report failure.
-            sessionStateSaved = false;
-        }
-        if (! cleanStop)
-        {
-            finalizationError = daemonStopError.isNotEmpty()
-                                  ? daemonStopError
-                                  : juce::String ("Recording stopped, but daemon finalisation failed");
-            sessionStateSaved = false;
-        }
-    }
-    else if (localRecording)
+    if (localRecording)
     {
         engine.stopRecording();
         manualPunchActive = false;
@@ -771,6 +767,141 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
     return true;
 }
 
+void MainComponent::saveFinalizedCaptureMetadata (bool mediaOk, juce::String mediaError,
+                                                  std::function<void (bool)> completion)
+{
+    juce::Component::SafePointer<MainComponent> self (this);
+    captureMetadataPending = true;
+    lastCaptureFinalizationError.clear();
+    enqueueMetadataSave (engine.getActiveSessionDir(), {},
+        [self, mediaOk, mediaError, completion] (bool saved)
+        {
+            if (self == nullptr) return;
+            self->captureMetadataPending = false;
+            if (self->pendingMetadataSaves == 0)
+            {
+                self->sessionIoBusy.store (false);
+                self->engine.setSessionTransitionActive (false);
+            }
+            const bool ok = mediaOk && saved;
+            self->lastCaptureFinalizationError = ok ? juce::String()
+                : ! mediaOk ? mediaError
+                : "Recording stopped, but session metadata could not be saved"
+                    + (self->lastMetadataSaveError.isNotEmpty() ? ": " + self->lastMetadataSaveError
+                                                                : juce::String());
+            self->showStatus (ok
+                ? self->lastSavedUndoUnits < 0
+                    ? "Recording stopped; captured state saved, newer changes remain unsaved"
+                    : "Recording stopped and session saved"
+                : self->lastCaptureFinalizationError);
+            if (completion) completion (ok);
+        });
+    if (captureMetadataPending) showStatus ("Recording stopped; finalization pending");
+}
+
+// STOP for a take the daemon owns. "Took it down" needs the daemon's word, or
+// proof that no daemon exists: anything less leaves the take called rolling.
+void MainComponent::stopDaemonCapture (bool rewind, std::function<void (bool)> completion)
+{
+    const auto link = captureSupervisor.isAttached() ? LostDaemon::back : resolveLostDaemon();
+    if (link == LostDaemon::gone)
+    {
+        endDaemonTake (kDaemonGoneMidTake, rewind, std::move (completion));
+        return;
+    }
+    if (link == LostDaemon::unknown)
+    {
+        lastCaptureFinalizationError = "Daemon did not confirm STOP; take may still be recording";
+        showStatus (lastCaptureFinalizationError);
+        if (completion) completion (false);
+        return;
+    }
+    // Pending until the daemon answers, however long its disks take. A status
+    // that says the take ended meanwhile must not start a second follow-up.
+    captureMetadataPending = true;
+    showStatus ("Stopping -- the capture daemon is closing its files");
+    juce::Component::SafePointer<MainComponent> self (this);
+    captureSupervisor.stopRecordingAsync ([self, rewind, completion]
+        (zynforge::capture::CaptureSupervisor::StopResult result)
+    {
+        if (self == nullptr) return;
+        self->captureMetadataPending = false;
+        if (! result.clean && ! result.stopped)
+        {
+            self->lastCaptureFinalizationError = "Daemon did not confirm STOP; take may still be recording";
+            self->showStatus (self->lastCaptureFinalizationError);
+            if (completion) completion (false);
+            return;
+        }
+        self->endDaemonTake (result.clean ? juce::String()
+                                          : result.error.isNotEmpty() ? result.error
+                                          : juce::String ("Recording stopped, but daemon finalisation failed"),
+                             rewind, completion);
+    });
+}
+
+void MainComponent::endDaemonTake (juce::String error, bool rewind, std::function<void (bool)> completion)
+{
+    const auto recordEnd = engine.getRecordTimelineSamples();
+    engine.setExternalRecording (false);
+    daemonTakeAdopted = false;
+    daemonStartUnansweredMs = 0;
+    recordButton.setButtonText ("RECORD");
+    const auto session = engine.getActiveSessionDir();
+    if (! session.isDirectory())
+    {
+        // A removable volume can vanish while the daemon holds its files open.
+        // The audio stop may have worked, but nowhere is left to save to.
+        if (error.isEmpty())
+            error = "Recording stopped, but session state could not be saved -- check disk permissions / free space";
+        saveFinalizedCaptureMetadata (false, error, std::move (completion));
+        return;
+    }
+
+    // Reading a long take back belongs on a worker, exactly as for a local STOP.
+    juce::Component::SafePointer<MainComponent> self (this);
+    const bool previousBusy = sessionIoBusy.load();
+    captureMetadataPending = true;
+    sessionIoBusy.store (true);
+    const bool accepted = engine.finishExternalTakeAsync (session, recordEnd,
+        [self, error, rewind, completion] (bool loaded)
+        {
+            if (self == nullptr) return;
+            if (rewind)
+            {
+                self->engine.stopPlayback();
+                self->engine.getPlayer().rewind();
+                self->playButton.setButtonText ("PLAY");
+            }
+            const auto why = error.isNotEmpty() || loaded ? error
+                : juce::String ("Recording stopped, but media could not be reopened");
+            self->saveFinalizedCaptureMetadata (why.isEmpty(), why, completion);
+        });
+    if (! accepted)
+    {
+        captureMetadataPending = false;
+        sessionIoBusy.store (previousBusy);
+        lastCaptureFinalizationError = "Capture finalization was not accepted; check the recording state";
+        showStatus (lastCaptureFinalizationError);
+        if (completion) completion (false);
+    }
+}
+
+// No STOP press ran, so nothing else resets the transport, and the session
+// has never been saved if this was its first take.
+void MainComponent::localTakeInterrupted()
+{
+    stopArmedAtMs = 0;
+    manualPunchActive = false;
+    if (punchSessionActive)
+    {
+        engine.setPunchModeOn (false);
+        punchSessionActive = false;
+    }
+    recordButton.setButtonText ("RECORD");
+    saveFinalizedCaptureMetadata (false, "Capture device stopped during the take; check the audio and the device", {});
+}
+
 void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (bool)> completion)
 {
     if (captureMetadataPending)
@@ -780,37 +911,6 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
         return;
     }
     juce::Component::SafePointer<MainComponent> self (this);
-    auto saveFinalizedCapture = [self, completion]
-        (bool mediaOk, juce::String mediaError)
-    {
-        if (self == nullptr) return;
-        self->captureMetadataPending = true;
-        self->lastCaptureFinalizationError.clear();
-        self->enqueueMetadataSave (self->engine.getActiveSessionDir(), {},
-            [self, mediaOk, mediaError, completion] (bool saved)
-            {
-                if (self == nullptr) return;
-                self->captureMetadataPending = false;
-                if (self->pendingMetadataSaves == 0)
-                {
-                    self->sessionIoBusy.store (false);
-                    self->engine.setSessionTransitionActive (false);
-                }
-                const bool ok = mediaOk && saved;
-                self->lastCaptureFinalizationError = ok ? juce::String()
-                    : ! mediaOk ? mediaError
-                    : "Recording stopped, but session metadata could not be saved"
-                        + (self->lastMetadataSaveError.isNotEmpty() ? ": " + self->lastMetadataSaveError
-                                                                    : juce::String());
-                self->showStatus (ok
-                    ? self->lastSavedUndoUnits < 0
-                        ? "Recording stopped; captured state saved, newer changes remain unsaved"
-                        : "Recording stopped and session saved"
-                    : self->lastCaptureFinalizationError);
-                if (completion) completion (ok);
-            });
-        if (self->captureMetadataPending) self->showStatus ("Recording stopped; finalization pending");
-    };
 
     if (engine.getRecorder().isRecording())
     {
@@ -823,7 +923,7 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
         captureMetadataPending = true;
         sessionIoBusy.store (true);
         const bool accepted = engine.stopRecordingAsync (
-            [self, rewind, resumeManualPlayback, resumeAt, saveFinalizedCapture] (bool mediaOk)
+            [self, rewind, resumeManualPlayback, resumeAt, completion] (bool mediaOk)
             {
                 if (self == nullptr) return;
                 auto mediaError = localCaptureFinalizationError (self->engine);
@@ -843,7 +943,7 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
                     self->playButton.setButtonText ("PAUSE");
                 }
                 self->recordButton.setButtonText ("RECORD");
-                saveFinalizedCapture (mediaOk, std::move (mediaError));
+                self->saveFinalizedCaptureMetadata (mediaOk, std::move (mediaError), completion);
             });
         if (! accepted)
         {
@@ -862,22 +962,14 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
         return;
     }
 
-    const bool hadCapture = engine.isRecording() || captureSupervisor.isDaemonRecording();
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    {
+        stopDaemonCapture (rewind, std::move (completion));
+        return;
+    }
     const bool mediaOk = stopActiveCapture (rewind, false);
-    if (! hadCapture)
-    {
-        // The banner already stands for a failed take; an idle STOP repeats nothing.
-        if (completion) completion (mediaOk && lastCaptureFinalizationError.isEmpty());
-        return;
-    }
-    const auto mediaError = mediaOk ? juce::String() : statusLabel.getText();
-    if (engine.isRecording())
-    {
-        lastCaptureFinalizationError = mediaError.isNotEmpty() ? mediaError : "Capture did not confirm STOP";
-        if (completion) completion (false);
-        return;
-    }
-    saveFinalizedCapture (mediaOk, mediaError);
+    // The banner already stands for a failed take; an idle STOP repeats nothing.
+    if (completion) completion (mediaOk && lastCaptureFinalizationError.isEmpty());
 }
 
 std::optional<bool> MainComponent::handleRemoteTransport (
@@ -924,9 +1016,9 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         onStopClicked();
         if (engine.isRecording())
         {
-            error = stopArmedAtMs != 0
-                      ? "STOP armed; send STOP again within 2 seconds"
-                      : "capture stop or session finalization failed; check the host";
+            error = captureMetadataPending ? "recording stopping; finalization pending"
+                  : stopArmedAtMs != 0     ? "STOP armed; send STOP again within 2 seconds"
+                  : "capture stop or session finalization failed; check the host";
             return false;
         }
         if (captureMetadataPending)
@@ -1387,6 +1479,12 @@ void MainComponent::confirmAndQuit()
         showStatus ("Cancelling session file operation -- quit again when it finishes");
         return;
     }
+    // The dialog has to tell the truth about a lost daemon, so look first.
+    if (lostDaemonTakeUnknown() && resolveLostDaemon() == LostDaemon::gone)
+    {
+        endDaemonTake (kDaemonGoneMidTake, false, {});
+        return;
+    }
     const bool recording = engine.isRecording() || captureSupervisor.isDaemonRecording();
     const auto activeDir = engine.getActiveSessionDir();
     const bool hasActiveSession = activeDir.isDirectory() && engine.mixerBelongsTo (activeDir);
@@ -1397,6 +1495,26 @@ void MainComponent::confirmAndQuit()
     // Explicit addButton return values -- MessageBoxOptions' index-based
     // result mapping is unreliable across platforms (see the three-button
     // dialog below), which made the bare "Quit" button do nothing.
+    if (lostDaemonTakeUnknown())
+    {
+        constexpr int kQuit = 1, kCancel = 2;
+        auto* aw = new juce::AlertWindow ("Capture daemon is not answering",
+                                          "A take may still be rolling in the capture daemon, and it cannot be "
+                                          "stopped from here. Quitting does not stop it.",
+                                          juce::MessageBoxIconType::WarningIcon, this);
+        aw->setLookAndFeel (&laf);
+        aw->addButton ("Quit, Leave It Rolling", kQuit);
+        aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<MainComponent> self (this);
+        aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result != kQuit || self == nullptr) return;
+            self->leaveLostDaemon();
+            if (auto* app = juce::JUCEApplication::getInstance()) app->quit();
+        }), false);
+        return;
+    }
     if (recording)
     {
         constexpr int kStopQuit = 1, kCancel = 2;

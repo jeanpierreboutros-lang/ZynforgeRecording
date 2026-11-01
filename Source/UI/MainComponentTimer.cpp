@@ -105,6 +105,7 @@ void MainComponent::serviceCaptureDaemonLink()
     if (useCaptureDaemon)
     {
         captureSupervisor.tick();
+        serviceLostDaemon();
         const auto receivedAt = captureSupervisor.lastStatusAtMs();
         if (captureSupervisor.isAttached() && receivedAt != 0)
         {
@@ -113,7 +114,29 @@ void MainComponent::serviceCaptureDaemonLink()
             // A delayed status must not turn a disconnected/unknown take into
             // a healthy recording or clear a take whose state is unknown.
             if (juce::Time::currentTimeMillis() - receivedAt <= 2000)
-                engine.setExternalRecording (daemonStatus.recording);
+            {
+                if (daemonStatus.recording)
+                {
+                    if (! daemonTakeAdopted) adoptDaemonTake (daemonStatus, true);
+                }
+                else if (daemonStartUnansweredMs != 0)
+                {
+                    // A status from before the daemon reached the START proves
+                    // nothing, so only time settles this one.
+                    if (juce::Time::getMillisecondCounter() - daemonStartUnansweredMs >= 10000)
+                    {
+                        daemonStartUnansweredMs = 0;
+                        engine.setExternalRecording (false);
+                        recordButton.setButtonText ("RECORD");
+                        showStatus ("Daemon did not start the take");
+                    }
+                }
+                else if (engine.isExternalRecording() && ! captureMetadataPending)
+                    // It ended without a STOP from here. Nothing else would load it.
+                    endDaemonTake (daemonStatus.captureDeviceLost
+                                       ? "Capture device stopped during the take; the daemon closed it"
+                                       : "", false, {});
+            }
         }
         // Keep idle capture pre-roll following the GUI's device/arm layout.
         // Identical configurations are cached and cause no IPC or reinitialisation.
@@ -431,7 +454,9 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const bool recoveryFail = status.recoveryMarkerFailed;
         const bool mixFail = ! useCaptureDaemon && engine.hasStereoMixWriteFailed();
         const bool diskTrouble = status.diskStruggling;
-        const bool daemonUnavailable = status.source == "daemon-unavailable";
+        const bool samplesMissed = status.missedSamples > 0;
+        // A daemon closing its files answers no status until it is done.
+        const bool daemonUnavailable = status.source == "daemon-unavailable" && ! captureSupervisor.isStopInFlight();
         const bool smartBad = (smartPrimaryStatus == (int) MultitrackRecorder::SmartStatus::Failing)
                            || (smartBackupStatus  == (int) MultitrackRecorder::SmartStatus::Failing);
         // A mirror that never OPENED (drive absent, or a root that would have
@@ -441,7 +466,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int mirrorsSkipped = status.mirrorsSkipped;
         const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
         if (daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
-            || diskTrouble || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty())
+            || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
+            || ! status.copyProblems.isEmpty())
         {
             juce::String warn;
             if (status.captureDeviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
@@ -457,6 +483,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                 warn << "! " << mirrorsSkipped << " MIRROR"
                      << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
                                                             "or folder unusable  ";
+            if (samplesMissed) warn << "! " << status.missedSamples << " SAMPLES MISSED -- the take has gaps  ";
+            for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
             activeCaptureWarning = warn.trim();
             statusLabel.setText (activeCaptureWarning, juce::dontSendNotification);

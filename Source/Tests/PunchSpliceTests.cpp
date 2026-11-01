@@ -79,19 +79,33 @@ namespace zynforge
                 expectWithinAbsoluteError (regionMean (fm, insert, 0, insLen),  -0.30f, 0.001f);
             }
 
-            beginTest ("punch past the end extends the take (append)");
+            beginTest ("punch at the end extends the take (append)");
             {
                 const int baseLen = 24000, insLen = 12000;
                 auto base = dir.getChildFile ("b2.wav"), insert = dir.getChildFile ("i2.wav"),
                      out  = dir.getChildFile ("o2.wav");
                 writeDc (base, 0.20f, baseLen, sr);
                 writeDc (insert, -0.40f, insLen, sr);
-                // punchIn well past the end -> clamps to baseLen -> append.
-                expect (splicePunchFile (fm, base, insert, 999999, out));
+                expect (splicePunchFile (fm, base, insert, baseLen, out));
                 std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (out));
                 expectEquals ((int) r->lengthInSamples, baseLen + insLen);
                 expectWithinAbsoluteError (regionMean (fm, out, 0, baseLen),        0.20f, 0.001f);
                 expectWithinAbsoluteError (regionMean (fm, out, baseLen, insLen),  -0.40f, 0.001f);
+            }
+
+            beginTest ("punch past the end keeps its position, with silence before it");
+            {
+                const int baseLen = 24000, insLen = 12000, punchIn = 30000;
+                auto base = dir.getChildFile ("b2g.wav"), insert = dir.getChildFile ("i2g.wav"),
+                     out  = dir.getChildFile ("o2g.wav");
+                writeDc (base, 0.20f, baseLen, sr);
+                writeDc (insert, -0.40f, insLen, sr);
+                expect (splicePunchFile (fm, base, insert, punchIn, out));
+                std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (out));
+                expectEquals ((int) r->lengthInSamples, punchIn + insLen);
+                expectWithinAbsoluteError (regionMean (fm, out, 0, baseLen),                  0.20f, 0.001f);
+                expectWithinAbsoluteError (regionMean (fm, out, baseLen, punchIn - baseLen),  0.00f, 0.0001f);
+                expectWithinAbsoluteError (regionMean (fm, out, punchIn, insLen),            -0.40f, 0.001f);
             }
 
             beginTest ("insert longer than the remaining tail overruns cleanly");

@@ -239,7 +239,6 @@ namespace zynforge
         // Every refusal here also drops a punch/continue arm the caller set
         // for this start; discardTakeArms is a no-op while a take is live.
         if (isCaptureFinalizing()) { recorder.discardTakeArms(); return false; }
-        if (captureFinalizationPending.load()) stopRecording();
         stereoMixWriteFailed.store (false, std::memory_order_relaxed);
         if (isRecording() || sessionTransitionActive.load (std::memory_order_acquire))
         {
@@ -358,8 +357,7 @@ namespace zynforge
         // session, reseed clips, yank the playhead -- destroying clip/comp
         // edits on a session that is merely idle or playing back. The UI STOP
         // button is already gated, but the engine entry point was not.
-        const bool interrupted = captureFinalizationPending.exchange (false);
-        if (! recorder.isRecording() && ! interrupted) return;
+        if (! recorder.isRecording()) return;
 
         const auto sessionDir = recorder.getActiveSessionDir();
         // Where the take actually ends, captured BEFORE stopRecording()
@@ -368,7 +366,7 @@ namespace zynforge
         // pass began) leave the transport parked at the END of what was just
         // captured, so the next RECORD continues the take from here instead
         // of looking like it starts over from the beginning.
-        const auto recordEnd = interrupted ? interruptedCaptureEnd.load() : recorder.getRecordTimelineSamples();
+        const auto recordEnd = recorder.getRecordTimelineSamples();
         recorder.stopRecording();
         clearCaptureWindow();
         player.setSeekLocked (false);
@@ -409,11 +407,20 @@ namespace zynforge
     {
         const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
         if (isCaptureFinalizing() || ! recorder.beginFinalization()) return false;
+        launchCaptureStopJob (std::move (completion));
+        return true;
+    }
+
+    // The caller holds deviceLifecycleLock and the recorder's finalization lease.
+    void AudioEngine::launchCaptureStopJob (std::function<void (bool)> completion,
+                                            const juce::File& externalSession, juce::int64 externalEnd)
+    {
         asyncCaptureFinalizing.store (true, std::memory_order_release);
-        captureFinalizationPending.store (false);
         auto job = std::make_unique<CaptureStopJob>();
-        job->directory = recorder.getActiveSessionDir();
-        job->recordEnd = recorder.getRecordTimelineSamples();
+        job->external = externalSession != juce::File();
+        job->directory = job->external ? externalSession : recorder.getActiveSessionDir();
+        job->recordEnd = job->external ? externalEnd : recorder.getRecordTimelineSamples();
+        job->sameSession = ! job->external || player.getSessionDir() == externalSession;
         job->playbackRate = deviceSampleRate.load();
         job->playbackBlock = deviceBlockSize.load();
         job->explicitReaders = player.snapshotExplicitReaderRequests();
@@ -431,21 +438,39 @@ namespace zynforge
         const auto handle = asyncHandle;
         work->worker = std::thread ([this, work, handle]
         {
-            recorder.finishFinalization();
+            if (work->external)
+            {
+                // A daemon that died left this unfinished, and nothing else
+                // here will read the session before the player does.
+                const auto audioDir = work->directory.getChildFile ("Audio Files");
+                MultitrackRecorder::recoverInterruptedPunches (audioDir.isDirectory() ? audioDir : work->directory);
+            }
+            else
+                recorder.finishFinalization();
             work->mixWriter.reset();
             work->prepared = player.prepareSessionLoad (work->directory, work->playbackRate,
                                                         work->playbackBlock, work->explicitReaders);
-            work->ok = ! recorder.hasPrimaryFailed() && ! recorder.hasCaptureDeviceLost()
-                && ! recorder.hasBackupFailed() && ! recorder.anyMirrorFailed()
-                && recorder.getMirrorsSkippedAtStart() == 0 && ! recorder.hasRecoveryMarkerFailed()
-                && ! recorder.hasReportWriteFailed() && ! recorder.hasPunchSpliceFailed()
-                && ! hasStereoMixWriteFailed() && SessionPlayer::preparedLoadComplete (work->prepared);
+            work->ok = SessionPlayer::preparedLoadComplete (work->prepared)
+                && (work->external
+                    || (! recorder.hasPrimaryFailed() && ! recorder.hasCaptureDeviceLost()
+                        && ! recorder.hasBackupFailed() && ! recorder.anyMirrorFailed()
+                        && recorder.getMirrorsSkippedAtStart() == 0 && ! recorder.hasRecoveryMarkerFailed()
+                        && ! recorder.hasReportWriteFailed() && ! recorder.hasPunchSpliceFailed()
+                        && ! hasStereoMixWriteFailed()));
             const auto id = work->id;
             juce::MessageManager::callAsync ([handle, id]
             {
                 if (auto* engine = handle->load (std::memory_order_acquire)) engine->installFinalizedCapture (id);
             });
         });
+    }
+
+    bool AudioEngine::finishExternalTakeAsync (const juce::File& sessionDir, juce::int64 recordEnd,
+                                               std::function<void (bool)> completion)
+    {
+        const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        if (isCaptureFinalizing()) return false;
+        launchCaptureStopJob (std::move (completion), sessionDir, recordEnd);
         return true;
     }
 
@@ -461,7 +486,14 @@ namespace zynforge
         activeSession = job.directory;
         updateSettings (appProps.get(), [this] (juce::PropertiesFile& props)
                         { props.setValue ("activeSessionDir", activeSession.getFullPathName()); });
-        seedDefaultClips (true, true);
+        // A daemon RECORD opens a new folder: clips still in memory belong to
+        // the session before it.
+        seedDefaultClips (job.sameSession, job.sameSession);
+        if (job.external)
+        {
+            markers.setContext (job.directory, player.getSampleRate());
+            rememberRecentSession (job.directory);
+        }
         player.finishPreparedClipPublication();
         player.setPositionSamples (juce::jlimit ((juce::int64) 0, player.getTotalLengthSamples(), job.recordEnd));
         auto* work = &job;
@@ -886,7 +918,6 @@ namespace zynforge
     int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits, bool appendRecordedAudio)
     {
         if (isCaptureFinalizing()) return 0;
-        if (captureFinalizationPending.load()) stopRecording();
         if (! TrackFileTransaction::recover (sessionDir)) return -1;
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
         if (! MultitrackRecorder::recoverInterruptedPunches (
@@ -1002,6 +1033,17 @@ namespace zynforge
         externalRecording.store (active, std::memory_order_release);
     }
 
+    void AudioEngine::beginExternalTake (const juce::File& sessionDir, double sampleRate)
+    {
+        setExternalRecording (true);
+        setActiveSessionDir (sessionDir);
+        if (sessionDir.isDirectory())
+        {
+            markers.setContext (sessionDir, sampleRate);
+            clearEditCursor();
+        }
+    }
+
     void AudioEngine::setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs)
     {
         std::lock_guard<std::mutex> lock (externalStatusLock);
@@ -1093,6 +1135,7 @@ namespace zynforge
         s.diskStruggling   = recorder.isDiskStruggling();
         s.captureFormat    = (int) recorder.getCaptureFormat();
         s.channelAlarms    = recorder.evaluateChannelAlarms();
+        s.copyProblems     = recorder.getCopyProblems();
 
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
@@ -2460,7 +2503,6 @@ namespace zynforge
     void AudioEngine::clearSessionState()
     {
         if (isCaptureFinalizing()) return;
-        if (captureFinalizationPending.load()) stopRecording();
         // Never under a live take: resetAllStripState re-patches its inputs.
         if (isRecording()) return;
         stopPlayback();
@@ -2985,27 +3027,27 @@ namespace zynforge
             player.stop();
             return;
         }
-        const bool interrupted = recorder.isRecording();
-        if (interrupted)
+        if (recorder.isRecording())
         {
-            interruptedCaptureEnd.store (recorder.getRecordTimelineSamples());
             recorder.markCaptureDeviceLost();
+            // Closing a take can take minutes (a punch rewrites whole files, a
+            // lead-in writes silence), and JUCE calls this on the message
+            // thread holding its audio lock. It goes to the STOP worker, and
+            // what the device does next waits for it like any other STOP.
+            if (recorder.beginFinalization())
+            {
+                launchCaptureStopJob ([this] (bool ok) { if (onTakeInterrupted) onTakeInterrupted (ok); });
+                deferredDeviceAudio.store (true, std::memory_order_release);
+                deferredDeviceRelease = true;
+                deferredDeviceConfiguration.reset();
+                return;
+            }
         }
         recorder.release();
         player.release();
         {
             const juce::ScopedLock sl (stereoMixLock);
             stereoMixWriter.reset();
-        }
-        if (interrupted)
-        {
-            captureFinalizationPending.store (true);
-            const auto handle = asyncHandle;
-            juce::MessageManager::callAsync ([handle]
-            {
-                if (auto* engine = handle->load())
-                    if (engine->captureFinalizationPending.load()) engine->stopRecording();
-            });
         }
     }
 

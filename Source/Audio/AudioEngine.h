@@ -73,6 +73,10 @@ namespace zynforge
 
         // Told the final name of every marker dropped at the transport, from
         // whichever surface dropped it. Fires on the caller's thread.
+        // The audio device ended a take: it has finished finalizing and the
+        // session is loaded. Message thread. A take that ends this way has no
+        // STOP press behind it, so nothing else would reset the transport.
+        std::function<void (bool ok)> onTakeInterrupted;
         std::function<void (const juce::String&)> onMarkerDropped;
 
         // Queued callbacks must not capture a raw AudioEngine*.  The handle is
@@ -225,6 +229,16 @@ namespace zynforge
         juce::int64 getCaptureLengthSamples();
         bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept;
+        bool isExternalRecording() const noexcept { return externalRecording.load (std::memory_order_acquire); }
+        // A daemon take is rolling into sessionDir: from here on it is this
+        // engine's session, for markers above all, exactly as if it had
+        // started here. Only the daemon's own folder may take a marker.
+        void beginExternalTake (const juce::File& sessionDir, double sampleRate);
+        // A daemon take ended: its files are final, and only reading them back
+        // is left. Off the message thread like a local STOP, for the same
+        // reason. False if a finalization is already running.
+        bool finishExternalTakeAsync (const juce::File& sessionDir, juce::int64 recordEnd,
+                                      std::function<void (bool)> completion);
         void setControlsLocked (bool locked) noexcept { controlsLocked.store (locked); }
         bool areControlsLocked() const noexcept { return controlsLocked.load(); }
         void setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs = 0);
@@ -965,6 +979,15 @@ namespace zynforge
         // this, Takes are RAM-only and lost on app quit.
         juce::var playlistsToJson() const;
         void      loadPlaylistsFromJson (const juce::var& v);
+        // The media length of every track when these playlists were saved,
+        // kept beside them in the .zfproj.
+        juce::var mediaLengthsToJson() const;
+        // Run after a session's playlists load. Audio past what they were
+        // saved against came from a take that ended without a save (a crash
+        // in a continued take); it gets a clip, as a normal STOP would give
+        // it. Older projects hold no lengths, so for them `afterCrash` says
+        // to measure from the end of the clips instead.
+        void reconcileClipsWithMedia (const juce::var& savedLengths, bool afterCrash);
         // Undo / redo of a clip edit. Replaces the playlists with the
         // snapshot, keeping any media recorded since it was taken.
         void      restorePlaylistSnapshot (const juce::var& snapshot);
@@ -1241,7 +1264,11 @@ namespace zynforge
             bool ok = true;
             juce::uint64 id = 0;
             std::function<void (bool)> completion;
+            bool external = false;       // the daemon owned this take
+            bool sameSession = true;     // the clips in memory belong to this folder
         };
+        void launchCaptureStopJob (std::function<void (bool)> completion,
+                                   const juce::File& externalSession = {}, juce::int64 externalEnd = 0);
         void installFinalizedCapture (juce::uint64 id);
         void completeFinalizedCapture (juce::uint64 id);
         void applyDeviceConfiguration (double, int, juce::AudioWorkgroup);
@@ -1254,8 +1281,6 @@ namespace zynforge
         std::unique_ptr<CaptureStopJob> captureStopJob;
         juce::uint64 captureStopSequence = 0;
         AsyncHandle asyncHandle;
-        std::atomic<bool> captureFinalizationPending { false };
-        std::atomic<juce::int64> interruptedCaptureEnd { 0 };
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
         SessionPlayer            player;

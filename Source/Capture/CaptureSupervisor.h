@@ -6,7 +6,9 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <thread>
 
 namespace zynforge::capture
 {
@@ -49,6 +51,18 @@ namespace zynforge::capture
         // extraArgs are appended to the launch command (tests pass
         // "--no-device"). False if neither attach nor launch worked.
         bool connectOrLaunch (int port, const juce::StringArray& extraArgs = {});
+        // A lost link, tried again. Attach only: this never launches, so it
+        // cannot start a second daemon beside one that stopped answering.
+        enum class Reattach
+        {
+            attached,       // the daemon answered and proved itself
+            nothingThere,   // nothing is listening: no daemon is running
+            noAnswer        // something holds the port but did not prove itself
+        };
+        Reattach reattach();
+        // The last status called a take rolling and that is no longer known
+        // to be so. For a caller that has proved it, or is walking away from it.
+        void forgetRollingTake();
         void disconnect();           // drop the link, leave the daemon running
         void shutdown();             // drop link; stop the daemon ONLY if idle + we launched it
 
@@ -65,10 +79,22 @@ namespace zynforge::capture
         // Recording control over the wire. startRecording syncs the config
         // first (track count, format, per-track arms), then starts. timeHint:
         // a live timecode for the BWF stamp (bwf::TimeAnchor::toJson), or void.
+        // False with `refusal` set: the daemon said no. False with `unanswered`
+        // set: no reply came in time, so the take may be rolling all the same.
         bool startRecording (const juce::File& sessionDir, int trackCount,
                              int captureFormat, const juce::BigInteger& armedTracks,
-                             const juce::var& timeHint = {});
+                             const juce::var& timeHint = {},
+                             juce::String* refusal = nullptr, bool* unanswered = nullptr);
         bool stopRecording (bool* didStop = nullptr, juce::String* error = nullptr);
+        // STOP without holding the caller: closing every file on every copy can
+        // take far longer than a window can wait. `done` runs on the message
+        // thread. clean: finished with no failure. stopped: the take ended,
+        // clean or not. Neither: no word from the daemon.
+        struct StopResult { bool clean { false }, stopped { false }; juce::String error; };
+        void stopRecordingAsync (std::function<void (StopResult)> done);
+        bool isStopInFlight() const noexcept { return stopInFlight.load(); }
+        int  startReplyTimeoutMs { 5000 };
+        juce::String lastConnectError;   // why connectOrLaunch last failed
         bool configureCapture (const juce::var&);
         juce::String configuredCapture;
         juce::String failedCapture;
@@ -94,6 +120,12 @@ namespace zynforge::capture
         EngineStatus       status;
         juce::int64        statusAtMs { 0 };
         std::atomic<bool>  statusSeen { false };
+
+        void joinStop();
+        std::thread        stopThread;
+        std::atomic<bool>  stopInFlight { false };
+        // A queued completion may outlive this object.
+        std::shared_ptr<std::atomic<bool>> alive { std::make_shared<std::atomic<bool>> (true) };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureSupervisor)
     };

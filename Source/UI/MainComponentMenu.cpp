@@ -247,10 +247,14 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                : juce::String ("Transport Sync (MTC / LTC)..."));
             m.addSeparator();
             m.addItem (958, useCaptureDaemon
-                               ? (captureSupervisor.isDaemonRecording()
+                               ? (lostDaemonTakeUnknown()
+                                      ? "Capture daemon: NOT ANSWERING (turn off...)"
+                                      : captureSupervisor.isDaemonRecording()
                                       ? "Capture daemon: TAKE ROLLING (stop to disable)"
                                       : "Capture daemon: ON (experimental)")
                                : juce::String ("Capture daemon: off (experimental)..."));
+            m.addItem (975, "Reconnect Capture Daemon",
+                       useCaptureDaemon && ! captureSupervisor.isAttached());
             menu.addSubMenu ("Recording & Sync", m);
         }
 
@@ -575,6 +579,7 @@ void MainComponent::registerMenuCommands()
     m.add (956, [this] { consoleCaptureGains(); });
     m.add (957, [this] { consoleRestoreGains(); });
     m.add (958, [this] { toggleCaptureDaemon(); });
+    m.add (975, [this] { reconnectCaptureDaemon(); });
     m.add (959, [this] { runCloudUpload(); });
     m.add (960, [this] { editCloudUploadCommand(); });
     m.add (961, [this] { copyConfidenceUrl(); });

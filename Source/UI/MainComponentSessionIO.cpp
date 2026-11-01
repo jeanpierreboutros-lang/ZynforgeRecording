@@ -17,6 +17,7 @@
 #include "MainComponent.h"
 #include "RecordPosition.h"
 #include "../Audio/AudioImport.h"
+#include "../Audio/AiffRepair.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/PathSafety.h"
@@ -141,8 +142,10 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     }
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
-    int interruptedPunches = 0;
+    int interruptedPunches = 0, repairedHeaders = 0, unrepairedHeaders = 0;
     const auto audioDirForRecovery = dir.getChildFile ("Audio Files");
+    zynforge::aiffrepair::repairTakeFolder (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
+                                            &repairedHeaders, &unrepairedHeaders);
     if (! zynforge::MultitrackRecorder::recoverInterruptedPunches (
             audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
             &interruptedPunches))
@@ -184,6 +187,12 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
         warnIfSampleRateMismatch();
     }
+    if (unrepairedHeaders > 0)
+        toast.show (juce::String (unrepairedHeaders) + " AIFF take file(s) from a crash could not be repaired;"
+                    " they read short until the drive is writable", Toast::Kind::Warning);
+    else if (repairedHeaders > 0)
+        toast.show ("Repaired " + juce::String (repairedHeaders) + " AIFF take file(s) a crash left unfinished",
+                    Toast::Kind::Warning);
     if (interruptedPunches > 0)
         toast.show ("Recovered " + juce::String (interruptedPunches)
                     + " interrupted punch file(s); partial audio is in Session File Backups",
@@ -699,6 +708,13 @@ juce::uint32 MainComponent::nextAutosaveRetryMs (juce::uint32 intervalMs)
 void MainComponent::serviceAutosave()
 {
     if (sessionIoBusy.load()) return;
+    // Nothing goes to the take's volume during a take, and a save would refuse
+    // M meanwhile. STOP saves, and the interval starts again from there.
+    if (engine.isRecording())
+    {
+        lastAutosaveMs = juce::Time::getMillisecondCounter();
+        return;
+    }
     auto* props = engine.getAppProps();
     if (props == nullptr) return;
 
@@ -1518,10 +1534,13 @@ void MainComponent::completeSaveAs (const juce::File& source, const juce::File& 
         if (self == nullptr) return;
         self->engine.setSessionTransitionActive (true);
         self->showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
-        self->sessionJobs.launch ([self, source, dest, createdDestination, carryEdits] (const std::atomic<bool>& cancel)
+        const bool watchReport = self->daemonModeActive();
+        self->sessionJobs.launch ([self, source, dest, createdDestination, carryEdits, watchReport]
+                                  (const std::atomic<bool>& cancel)
                                   -> zynforge::SessionJobRunner::Completion
         {
-            const bool ok = copyDirectoryCancellable (source, dest, cancel);
+            const bool ok = zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
+                         && copyDirectoryCancellable (source, dest, cancel);
             return [self, ok, dest, createdDestination, carryEdits]
             {
                 if (self == nullptr) return;
@@ -2084,11 +2103,14 @@ void MainComponent::startHandoffCopy (const juce::File& source, const juce::File
     engine.setSessionTransitionActive (true);
     showStatus ("Creating handoff in background: " + dest.getFileName());
     juce::Component::SafePointer<MainComponent> self (this);
-    sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version]
+    const bool watchReport = daemonModeActive();
+    sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version, watchReport]
                         (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
     {
         showhandoff::Result result;
-        if (copyDirectoryCancellable (source, dest, cancel))
+        // The report changing during verification reads as a damaged copy.
+        if (zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
+            && copyDirectoryCancellable (source, dest, cancel))
             result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel,
                 [&] (const juce::File& copy, juce::String& warning)
                 { return projectexport::writeForHandoff (interchange, copy, version, cancel, warning); });
@@ -2184,12 +2206,15 @@ void MainComponent::completeRelocate (const juce::File& oldDir, const juce::File
         self->engine.setSessionTransitionActive (true);
         self->showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
 
-        self->sessionJobs.launch ([self, oldDir, newDir, carryEdits] (const std::atomic<bool>& cancel)
+        const bool watchReport = self->daemonModeActive();
+        self->sessionJobs.launch ([self, oldDir, newDir, carryEdits, watchReport] (const std::atomic<bool>& cancel)
                                   -> zynforge::SessionJobRunner::Completion
         {
-                bool relocated = oldDir.moveFileTo (newDir);   // instant within a volume
+                // The hash thread holds absolute paths into the old folder.
+                const bool hashed = zynforge::MultitrackRecorder::waitForReportHashes (oldDir, cancel, watchReport);
+                bool relocated = hashed && oldDir.moveFileTo (newDir);   // instant within a volume
                 bool oldCopyRemains = false;
-                if (! relocated)                               // cross-volume: copy + delete
+                if (hashed && ! relocated)                     // cross-volume: copy + delete
                 {
                     const bool copied = copyDirectoryCancellable (oldDir, newDir, cancel);
                     if (copied && ! cancel.load (std::memory_order_relaxed))

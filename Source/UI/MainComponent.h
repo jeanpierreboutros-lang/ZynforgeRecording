@@ -43,7 +43,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -338,6 +338,25 @@ private:
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
     void toggleCaptureDaemon();
     void connectCaptureDaemon (bool announceReattach);
+    // A daemon this window lost. resolveLostDaemon looks again and says which:
+    // back (attached again), gone (nothing listens, so no take is rolling),
+    // unknown (something holds the port and will not prove itself). A take is
+    // called over only on `gone` or by a daemon that answers.
+    enum class LostDaemon { back, gone, unknown };
+    LostDaemon resolveLostDaemon();
+    void serviceLostDaemon();
+    bool lostDaemonTakeUnknown() const;
+    void reconnectCaptureDaemon();
+    void adoptDaemonTake (const zynforge::EngineStatus&, bool announce);
+    void leaveLostDaemon();
+    void disableCaptureDaemon();
+    void requestDaemonTake (const juce::File& dir, int numTracks, const juce::BigInteger& arms,
+                            int armed, bool mixerInTakeFolder);
+    void stopDaemonCapture (bool rewind, std::function<void (bool)> completion);
+    void endDaemonTake (juce::String error, bool rewind, std::function<void (bool)> completion);
+    void localTakeInterrupted();
+    void saveFinalizedCaptureMetadata (bool mediaOk, juce::String mediaError,
+                                       std::function<void (bool)> completion);
     void promptConsoleConnect();
     void wireConsoleLink();
     void saveConsoleLog();
@@ -594,6 +613,16 @@ private:
     zynforge::capture::CaptureSupervisor captureSupervisor;
     bool useCaptureDaemon { false };
     static constexpr int kCaptureDaemonPort = 17890;
+    static constexpr const char* kDaemonGoneMidTake =
+        "CAPTURE DAEMON GONE MID-TAKE -- the take ended with it; audio up to its last header write is on disk";
+    int  captureDaemonPort { kCaptureDaemonPort };
+    bool punchInWaiting { false };       // a save is holding up a PUNCH-mode punch-in
+    bool daemonLinkLost { false };       // reported lost, not yet resolved
+    bool daemonTakeAdopted { false };    // this window knows the rolling take
+    // RECORD got no reply. The take may be rolling, so the guard is up until a
+    // fresh status settles it.
+    juce::uint32 daemonStartUnansweredMs { 0 };
+    juce::uint32 nextDaemonProbeMs { 0 }, daemonProbeDelayMs { 1000 };
     // Off by default; Session > Network & Surfaces > Twin Recorder. Destroyed
     // before everything above, so its threads never outlive what the host uses.
     zynforge::twin::TwinLink twinLink { *this };
@@ -601,6 +630,7 @@ private:
     bool remoteStartInFlight { false }; // this RECORD arrived from any remote surface
     bool remotePunchRefused { false };  // and it was refused because it would punch
 
+    friend class zynforge::CaptureDaemonLinkTests;
     friend class zynforge::MainTransportRegressionTests;
     friend class zynforge::TwinLinkHostTests;
     friend class zynforge::PunchSessionGuardTests;

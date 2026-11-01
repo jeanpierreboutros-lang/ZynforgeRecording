@@ -1,6 +1,8 @@
 #pragma once
 
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <functional>
+#include <limits>
 #include <vector>
 
 #include "MultiPartReader.h"   // ConcatReader -- multi-part base for the splice
@@ -22,29 +24,47 @@ namespace zynforge
         return kept;
     }
 
+    inline bool writeSilentFrames (juce::AudioFormatWriter& writer, int channels, juce::int64 frames)
+    {
+        constexpr int kBlock = 16384;
+        const std::vector<float> zeros ((std::size_t) kBlock, 0.0f);
+        const std::vector<const float*> planes ((std::size_t) channels, zeros.data());
+        for (auto remaining = frames; remaining > 0;)
+        {
+            const int count = (int) juce::jmin ((juce::int64) kBlock, remaining);
+            if (! writer.writeFromFloatArrays (planes.data(), channels, count)) return false;
+            remaining -= count;
+        }
+        return true;
+    }
+
     // Splice core, working from an already-open base READER (single file or a
     // ConcatReader spanning a multi-part take). Writes a brand-new outFile in
     // `baseExt`'s container; never mutates inputs. See splicePunchFile for the
     // semantics. Returns false (deleting any partial outFile) on any failure.
-    inline bool splicePunchFromReader (juce::AudioFormatManager& fm,
-                                       juce::AudioFormatReader&   baseR,
-                                       const juce::String&        baseExt,
-                                       const juce::File&          insert,
-                                       juce::int64                punchInSample,
-                                       const juce::File&          outFile)
+    //
+    // A result too big for one file in its container (AIFF, FLAC) continues in
+    // numbered siblings, the same way a long take rolls. `written` then lists
+    // every file in order; a failure deletes them all.
+    inline bool splicePunchFromReader (juce::AudioFormatManager&, juce::AudioFormatReader& baseR,
+                                       juce::AudioFormatReader& insR, const juce::String& baseExt,
+                                       juce::int64 punchInSample, const juce::File& outFile,
+                                       juce::int64 maxBytesPerFile, std::vector<juce::File>& written)
     {
-        std::unique_ptr<juce::AudioFormatReader> insR (fm.createReaderFor (insert));
-        if (insR == nullptr) return false;  // never report an unchanged base as a successful punch
 
         const int         chans   = (int) baseR.numChannels;
         const juce::int64 baseLen = baseR.lengthInSamples;
-        const juce::int64 insLen  = insR->lengthInSamples;
+        const juce::int64 insLen  = insR.lengthInSamples;
         if (insLen <= 0) return false;
 
-        if ((int) insR->numChannels != chans)                      return false;
-        if (std::abs (insR->sampleRate - baseR.sampleRate) > 1.0)  return false;
+        if ((int) insR.numChannels != chans)                      return false;
+        if (std::abs (insR.sampleRate - baseR.sampleRate) > 1.0)  return false;
 
-        const juce::int64 punchIn    = juce::jlimit ((juce::int64) 0, baseLen, punchInSample);
+        // The punch stays where it was played. A track that ended before it
+        // gets silence up to that point, never an early landing.
+        const juce::int64 punchIn    = juce::jmax ((juce::int64) 0, punchInSample);
+        const juce::int64 baseHead   = juce::jmin (punchIn, baseLen);
+        const juce::int64 gap        = punchIn - baseHead;
         const juce::int64 afterStart = juce::jmin (baseLen, punchIn + insLen);
         const juce::int64 afterLen   = baseLen - afterStart;
 
@@ -57,27 +77,80 @@ namespace zynforge
         else if (ext == ".aif" || ext == ".aiff")   fmt.reset (new juce::AiffAudioFormat());
         else                                      { fmt.reset (new juce::WavAudioFormat());   metadata = bextFieldsOf (baseR); }
 
-        outFile.deleteFile();
-        std::unique_ptr<juce::FileOutputStream> os (outFile.createOutputStream());
-        if (os == nullptr) return false;
+        const juce::int64 frameBytes = (juce::int64) chans * ((isFloat ? 32 : bits) / 8);
+        const juce::int64 framesPerFile = juce::jmax ((juce::int64) 1, (maxBytesPerFile - 1) / frameBytes);
 
-        std::unique_ptr<juce::AudioFormatWriter> w (
-            isFloat && (ext == ".aif" || ext == ".aiff")
-                ? FloatAiffWriter::create (os.get(), baseR.sampleRate, (unsigned int) chans)
-                : fmt->createWriterFor (os.get(), baseR.sampleRate, (unsigned int) chans,
-                                       isFloat ? 32 : bits, metadata, 0));
-        if (w == nullptr) return false;
-        os.release();
+        std::unique_ptr<juce::AudioFormatWriter> w;
+        juce::int64 room = 0;
+        const auto closeFile = [&w]
+        {
+            const bool closed = w == nullptr || flushFloatAiffBeforeClose (w.get());
+            w.reset();
+            return closed;
+        };
+        const auto nextFile = [&]
+        {
+            if (! closeFile()) return false;
+            const auto file = written.empty() ? outFile
+                : outFile.getSiblingFile (outFile.getFileNameWithoutExtension()
+                                          + juce::String::formatted ("%02d", (int) written.size() + 1)
+                                          + outFile.getFileExtension());
+            file.deleteFile();
+            std::unique_ptr<juce::FileOutputStream> os (file.createOutputStream());
+            if (os == nullptr) return false;
+            w.reset (isFloat && (ext == ".aif" || ext == ".aiff")
+                         ? FloatAiffWriter::create (os.get(), baseR.sampleRate, (unsigned int) chans)
+                         : fmt->createWriterFor (os.get(), baseR.sampleRate, (unsigned int) chans,
+                                                 isFloat ? 32 : bits, metadata, 0));
+            if (w == nullptr) return false;
+            os.release();
+            written.push_back (file);
+            room = framesPerFile;
+            return true;
+        };
+        // Runs `write` over `frames`, in as many goes as the file ceiling needs.
+        const auto span = [&] (juce::int64 frames, const std::function<bool (juce::int64, int)>& write)
+        {
+            for (juce::int64 done = 0; done < frames;)
+            {
+                if (room == 0 && ! nextFile()) return false;
+                const int count = (int) juce::jmin (frames - done, room, (juce::int64) (1 << 20));
+                if (! write (done, count)) return false;
+                done += count;
+                room -= count;
+            }
+            return true;
+        };
 
-        bool ok = true;
-        if (punchIn > 0)                      ok = w->writeFromAudioReader (baseR, 0,          punchIn);
-        if (ok && insLen)                     ok = w->writeFromAudioReader (*insR, 0,          insLen);
-        if (ok && afterLen > 0)               ok = w->writeFromAudioReader (baseR, afterStart, afterLen);
-
-        if (ok) ok = flushFloatAiffBeforeClose (w.get());
+        const bool ok = (room > 0 || nextFile())
+            && span (baseHead, [&] (juce::int64 at, int count) { return w->writeFromAudioReader (baseR, at, count); })
+            && span (gap,      [&] (juce::int64, int count)    { return writeSilentFrames (*w, chans, count); })
+            && span (insLen,   [&] (juce::int64 at, int count) { return w->writeFromAudioReader (insR, at, count); })
+            && span (afterLen, [&] (juce::int64 at, int count) { return w->writeFromAudioReader (baseR, afterStart + at, count); })
+            && closeFile();
         w.reset();
-        if (! ok) outFile.deleteFile();
+        if (! ok)
+            for (const auto& file : written) file.deleteFile();
         return ok;
+    }
+
+    // The whole punch: base parts plus every file the punch wrote, read as
+    // seamless takes. Never mutates its inputs.
+    inline bool splicePunchTake (juce::AudioFormatManager& fm,
+                                 const std::vector<juce::File>& baseParts,
+                                 const std::vector<juce::File>& insertParts,
+                                 juce::int64                    punchInSample,
+                                 const juce::File&              outFile,
+                                 juce::int64                    maxBytesPerFile,
+                                 std::vector<juce::File>&       written)
+    {
+        if (baseParts.empty() || insertParts.empty()) return false;
+        auto baseR = ConcatReader::create (fm, baseParts);
+        auto insR  = ConcatReader::create (fm, insertParts);
+        // Never report an unchanged base as a successful punch.
+        if (baseR == nullptr || insR == nullptr) return false;
+        return splicePunchFromReader (fm, *baseR, *insR, baseParts.front().getFileExtension(),
+                                      punchInSample, outFile, maxBytesPerFile, written);
     }
 
     // ── Offline punch-in splice ────────────────────────────────────────────
@@ -93,25 +166,22 @@ namespace zynforge
     // i.e. `insert` REPLACES base's region [punchIn, punchIn+insertLen); base's
     // audio BEFORE the punch-in and AFTER the punch-out is preserved. This is
     // the destructive punch-in an engineer expects: drop in on a section, keep
-    // the rest of the take.
+    // the rest of the take. A punch past base's end extends it: silence fills
+    // [baseLen, punchIn), so `insert` still starts at punchIn.
     //
     // Output format (sample rate / channels / bit depth / container) matches
     // `base`. Returns false (deleting any partial outFile) if either reader
     // fails to open or the two files disagree on channel count / sample rate
     // -- splicing mismatched audio would corrupt the take, so we refuse.
-    //
-    // punchInSample is clamped to [0, baseLen]; punching at/after the end simply
-    // appends `insert` (the "extend the take" case falls out for free).
     inline bool splicePunchFile (juce::AudioFormatManager& fm,
                                  const juce::File& base,
                                  const juce::File& insert,
                                  juce::int64        punchInSample,
                                  const juce::File&  outFile)
     {
-        std::unique_ptr<juce::AudioFormatReader> baseR (fm.createReaderFor (base));
-        if (baseR == nullptr) return false;
-        return splicePunchFromReader (fm, *baseR, base.getFileExtension(),
-                                      insert, punchInSample, outFile);
+        std::vector<juce::File> written;
+        return splicePunchTake (fm, { base }, { insert }, punchInSample, outFile,
+                                std::numeric_limits<juce::int64>::max(), written);
     }
 
     // ── Multi-part punch splice (flatten) ──────────────────────────────────
@@ -128,13 +198,8 @@ namespace zynforge
                                   juce::int64                    punchInSample,
                                   const juce::File&              outFile)
     {
-        if (baseParts.empty()) return false;
-        if (baseParts.size() == 1)
-            return splicePunchFile (fm, baseParts.front(), insert, punchInSample, outFile);
-
-        auto baseR = ConcatReader::create (fm, baseParts);
-        if (baseR == nullptr) return false;
-        return splicePunchFromReader (fm, *baseR, baseParts.front().getFileExtension(),
-                                      insert, punchInSample, outFile);
+        std::vector<juce::File> written;
+        return splicePunchTake (fm, baseParts, { insert }, punchInSample, outFile,
+                                std::numeric_limits<juce::int64>::max(), written);
     }
 }

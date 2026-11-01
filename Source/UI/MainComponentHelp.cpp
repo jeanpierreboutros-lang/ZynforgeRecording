@@ -472,6 +472,9 @@ void MainComponent::openSessionFromWelcome (const juce::File& sessionDir)
 void MainComponent::showStartupWelcome()
 {
     if (explicitDocumentOpened) return;
+    // An adopted daemon take: a dialog here would sit over STOP, and neither of
+    // its choices can run until the take ends.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording()) return;
     // Auto-reopen the last session instead of greeting an empty app. The
     // active-session folder is restored from appProps on launch (for Save),
     // but the *content* wasn't loaded -- so the engineer came back to a blank
@@ -659,6 +662,14 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
             // failed open (interrupted punch, incomplete move) keeps it listed
             // so the engineer can try again, and keeps its own error status.
             if (self->openSessionFolder (dir, true) < 0) return;
+            // The marker is what told an older project to rebuild its clips,
+            // so they are saved before it goes.
+            if (! self->saveSessionStateTo (dir))
+            {
+                self->showStatus ("Recovered " + dir.getFileName()
+                                  + ", but it could not be saved; it stays on the recovery list");
+                return;
+            }
             dir.getChildFile ("recording.session").deleteFile();
             self->showStatus ("Recovered: " + dir.getFileName());
             self->updateTransportLabels();

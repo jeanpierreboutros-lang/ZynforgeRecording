@@ -1,12 +1,17 @@
 #include "MultitrackRecorder.h"
+#include "AiffRepair.h"
+#include "CaptureCopy.h"
 #include "FloatAiffWriter.h"
 #include "AtomicFile.h"
 #include "FastHash.h"
+#include "FlacRepair.h"
 #include "PunchSplice.h"
 #include "MultiPartReader.h"
+#include "PreflightProbes.h"
 #include "../Network/CaptureIdentity.h"
 
 #include <juce_cryptography/juce_cryptography.h>
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <optional>
@@ -27,6 +32,7 @@ namespace zynforge
         {
             std::mutex publication;
             std::atomic<juce::int64> generation { 0 };
+            std::atomic<int> runningScans { 0 };   // hash threads alive for this session
         };
 
         // `publication` only spans one process, and with a capture daemon the
@@ -94,28 +100,14 @@ namespace zynforge
         return (int) wanted;
     }
 
-    // Writer-thread pool sizing: one worker per ~32 channels, capped at 8.
-    // M-series performance-cores beyond 8 give diminishing returns for
-    // small-block I/O and we don't want to starve other UI work.
     static int chooseShardCount()
     {
-        // Single writer thread, deliberately.
-        //
-        // The multi-shard design (one TimeSliceThread per channel-range)
-        // was meant to parallelise disk writes, but it corrupted captures:
-        // under real parallelism whole channels came back as white-noise
-        // garbage, non-deterministically, worse with more channels. The
-        // headless RecordingIntegrityTests reproduce it at 2+ writer
-        // threads and show ZERO failures at 1 -- see decisions.md
-        // "Single writer thread for capture".
-        //
-        // The parallelism bought us nothing real anyway: 48 tracks of
-        // 24-bit/48 kHz is ~6.6 MB/s, which one thread drains with the
-        // multi-second FIFO never coming close to full. Correctness of the
-        // recording is non-negotiable for a recorder, so we serialise all
-        // writing onto one thread until/unless the sharding race is found
-        // and fixed. The shard machinery is kept (one shard covering every
-        // channel) so re-enabling is a one-line change once it's proven.
+        // One distributor. It only moves samples from the audio FIFOs to each
+        // copy's ring, so one thread keeps up with any channel count, and the
+        // disk work is parallel per destination (CaptureCopy). A writer must
+        // only ever be touched by one thread: the corruption that once forced
+        // this to 1 was a flush of every writer from whichever shard crossed
+        // the five-second mark, which seeked other threads' files mid-write.
         return 1;
     }
 
@@ -347,116 +339,13 @@ namespace zynforge
             return;
         }
         samplesSinceStart.fetch_add (preRollHistorySamples, std::memory_order_relaxed);
-        preRollShardsPending.store ((int) shards.size(), std::memory_order_relaxed);
-        for (auto& sh : shards) sh->preRollPending = true;
-    }
-
-    // Runs on the shard's writer thread (or the final drain at STOP) under its
-    // drainLock, before the shard's first live samples. Writing the history
-    // here, per shard and in parallel, keeps every other shard draining; the
-    // old synchronous dump held all writers off while the live FIFO (about
-    // 5.5 s) filled, so a long pre-roll, especially to FLAC on three copies,
-    // could drop samples right after it.
-    void MultitrackRecorder::dumpPreRollForShard (ShardClient& shard)
-    {
-        shard.preRollPending = false;
-        const int historySamples = preRollHistorySamples;
-        std::vector<float> tmp ((std::size_t) historySamples, 0.0f);
-        std::vector<float> tmpR ((std::size_t) historySamples, 0.0f);
-        const auto history = [&] (std::size_t channel, std::vector<float>& destination)
+        auto history = std::make_shared<std::vector<std::unique_ptr<PreRollBuffer>>> (std::move (preRollSnapshot));
+        preRollSnapshot.clear();
+        for (auto& copy : copies)
         {
-            const int got = preRollSnapshot[channel]->readHistory (destination.data(), historySamples);
-            // A newly added track may have less history than existing tracks.
-            // Pad its leading edge, keeping the live seam at the same sample.
-            if (got < historySamples)
-            {
-                std::memmove (destination.data() + historySamples - got, destination.data(),
-                              (std::size_t) got * sizeof (float));
-                std::fill_n (destination.data(), historySamples - got, 0.0f);
-            }
-        };
-        const auto first = (std::size_t) juce::jmax (0, shard.firstChannel);
-        const auto last  = (std::size_t) juce::jmax (0, shard.lastChannel);
-        for (std::size_t i = first; i < last && i < writers.size() && i < preRollSnapshot.size(); ++i)
-        {
-            auto& w = writers[i];
-            // Participation gate, not `writer != nullptr` -- a channel whose
-            // primary failed to open but whose backup/mirror opened still gets
-            // its pre-roll history (see WriterChannel::active + the live drain).
-            if (! w.active) continue;
-
-            // Fan the SAME pre-roll history out to every destination (primary
-            // + backup + all mirrors) exactly like the live drain does, so all
-            // copies stay sample-identical and time-aligned -- and advance the
-            // per-track sample/byte counters so the report length matches the
-            // file length (pre-roll used to be written to the primary only and
-            // counted nowhere, leaving the destinations divergent + the report
-            // short).
-            auto fanOut = [this, &w] (const float* const* arr, int chans, int got) noexcept
-            {
-                if (w.writer != nullptr)
-                {
-                    if (w.writer->writeFromFloatArrays (arr, chans, got))
-                    {
-                        w.bytesWrittenPrimary += (juce::int64) got * chans * w.bytesPerSamplePrimary;
-                        w.totalSamplesPrimary += got;
-                    }
-                    else
-                    {
-                        w.writer.reset();
-                        primaryFailed.store (true, std::memory_order_relaxed);
-                    }
-                }
-                if (w.backupWriter != nullptr)
-                {
-                    if (w.backupWriter->writeFromFloatArrays (arr, chans, got))
-                    {
-                        w.bytesWrittenBackup += (juce::int64) got * chans * w.bytesPerSampleBackup;
-                        w.totalSamplesBackup += got;
-                    }
-                    else
-                    {
-                        w.backupWriter.reset();
-                        backupFailed.store (true, std::memory_order_relaxed);
-                    }
-                }
-                for (auto& m : w.mirrors)
-                {
-                    if (m.writer == nullptr || m.failed) continue;
-                    if (m.writer->writeFromFloatArrays (arr, chans, got))
-                    {
-                        m.bytesWritten += (juce::int64) got * chans * m.bytesPerSample;
-                        m.totalSamples += got;
-                    }
-                    else
-                    {
-                        m.writer.reset();
-                        m.failed = true;
-                        mirrorFailed.store (true, std::memory_order_relaxed);
-                    }
-                }
-            };
-
-            // Stereo pair: dump BOTH channels' history into the 2-ch copies so
-            // pre-roll keeps the L/R image, matching the live path.
-            if (w.numChannels == 2 && i + 1 < preRollSnapshot.size())
-            {
-                if (historySamples <= 0) continue;
-                history (i, tmp); history (i + 1, tmpR);
-                const float* const arr[] = { tmp.data(), tmpR.data() };
-                fanOut (arr, 2, historySamples);
-                continue;
-            }
-
-            if (historySamples <= 0) continue;
-            history (i, tmp);
-            const float* const arr[] = { tmp.data() };
-            fanOut (arr, 1, historySamples);
+            copy->history = history;
+            copy->historySamples = preRollHistorySamples;
         }
-
-        // The last shard to finish frees the detached history.
-        if (preRollShardsPending.fetch_sub (1, std::memory_order_acq_rel) == 1)
-            preRollSnapshot.clear();
     }
 
     void MultitrackRecorder::release()
@@ -706,6 +595,11 @@ namespace zynforge
     {
         if (recovered != nullptr) *recovered = 0;
         if (! audioDir.isDirectory()) return true;
+        // First, so anything below that opens or archives a take reads its
+        // real length. A failed repair loses nothing: the audio stays in the
+        // file and the next open tries again.
+        aiffrepair::repairTakeFolder (audioDir);
+        flacrepair::repairTakeFolder (audioDir);
         // A take interrupted before STOP may still owe a copy its silent
         // lead-in (see PendingLeadIn); without it the new audio sits early.
         if (! recoverPendingLeadIns (audioDir)) return false;
@@ -751,12 +645,25 @@ namespace zynforge
                 .dropLastCharacters (10);
             const auto target = audioDir.getChildFile (stem + sidecar.getFileExtension());
             const auto archived = archiveRoot.getChildFile (target.getFileName());
+            // The punch file exists only once every part of the base was moved
+            // aside, so then a part with no sidecar is one the punch rolled
+            // into. Before that it may be base audio not yet moved: it stays.
+            if (target.exists() && ! stem.contains ("_part"))
+                for (const auto& part : audioDir.findChildFiles (juce::File::findFiles, false,
+                                                                 stem + "_part*" + sidecar.getFileExtension()))
+                {
+                    if (part.getFileName().contains (".punchbase") || punchSidecar (part).exists()) continue;
+                    if (! part.moveFileTo (archiveRoot.getChildFile (part.getFileName()))) return false;
+                }
             if (target.exists() && ! target.moveFileTo (archived)) return false;
             if (! sidecar.moveFileTo (target))
             {
                 if (archived.existsAsFile()) archived.moveFileTo (target);
                 return false;
             }
+            for (const auto& temporary : audioDir.findChildFiles (juce::File::findFiles, false,
+                                                                  stem + ".punchtmp*"))
+                temporary.deleteFile();
             if (recovered != nullptr) ++*recovered;
         }
         return true;
@@ -816,6 +723,7 @@ namespace zynforge
         TakeFormat   primary, backup;            // selected, then adopted from an existing take
         std::vector<TakeFormat> mirrorFormats;   // aligned with activeMirrors
         bool         backupRequested { false }, backupReady { false };
+        bool         backupUnwritable { false };
         juce::File   backupAudioDir;
         // Claimed on the first media mutation; see invalidateReportsBeforeMediaMutation.
         std::shared_ptr<std::atomic<juce::int64>> reportToken;
@@ -881,7 +789,22 @@ namespace zynforge
         // A punch/continue arm belongs to this one start. Consume it on every
         // refusal below as well as on success (see discardTakeArms).
         bool wentLive = false;
-        const juce::ScopeGuard consumeArms { [&] { if (! wentLive) discardTakeArms(); } };
+        // A refused start is not a take: the last take's failure banner stays.
+        const bool hadFailed[] { recoveryMarkerFailed.load(), reportWriteFailed.load(), punchSpliceFailed.load(),
+                                 primaryFailed.load(), backupFailed.load(), mirrorFailed.load() };
+        const auto skippedBefore = mirrorsSkippedAtStart.load();
+        const juce::ScopeGuard consumeArms { [&]
+        {
+            if (wentLive) return;
+            discardTakeArms();
+            recoveryMarkerFailed.store (hadFailed[0]);
+            reportWriteFailed.store (hadFailed[1]);
+            punchSpliceFailed.store (hadFailed[2]);
+            primaryFailed.store (hadFailed[3]);
+            backupFailed.store (hadFailed[4]);
+            mirrorFailed.store (hadFailed[5]);
+            mirrorsSkippedAtStart.store (skippedBefore);
+        } };
         if (tracks.empty())   return false;
 
         // Every refusal names its reason: an empty startError made the UI
@@ -956,7 +879,7 @@ namespace zynforge
         backupActive.store (false, std::memory_order_relaxed);
         // Reject collisions before opening ANY primary writer. The legacy
         // backup uses <root>/<session name>, exactly like an N-way mirror.
-        if (backupDir != juce::File()
+        if (backupDir != juce::File() && ! isStillLeftBehind (backupDir)
             && mirrorRootRejection (backupDir, sessionDir, {}, {}).isNotEmpty())
             return false;
         captureArms.clear();
@@ -976,9 +899,6 @@ namespace zynforge
         if (! sessionDir.createDirectory().wasOk() && ! sessionDir.isDirectory())
             return false;
         activeSessionDir = sessionDir;
-        // Space the first periodic header flush ~5 s into the take.
-        lastWriterFlushMs.store (juce::Time::getMillisecondCounterHiRes(),
-                                 std::memory_order_relaxed);
 
         // Folder layout: tracks live under "Audio Files/", mixdowns /
         // stem exports under "Export Files/", backups under
@@ -994,6 +914,9 @@ namespace zynforge
 
         writers.clear();
         writers.reserve (tracks.size());
+        copies.clear();
+        droppedCopies.clear();
+        std::erase_if (leftBehind, [] (const auto& copy) { return copy->finished.load (std::memory_order_acquire); });
 
         return true;
     }
@@ -1017,6 +940,12 @@ namespace zynforge
             int skipped = 0;
             for (const auto& mc : mirrorConfigs)
             {
+                if (isStillLeftBehind (mc.root))
+                {
+                    ++skipped;
+                    droppedCopies.add ("Mirror " + mc.root.getFullPathName() + " is still not responding; it is not in this take");
+                    continue;
+                }
                 if (mirrorRootRejection (mc.root, sessionDir, backupDir, accepted).isNotEmpty())
                 {
                     ++skipped;
@@ -1042,7 +971,10 @@ namespace zynforge
         }
     }
 
-    bool MultitrackRecorder::claimCopy (const TakeStart& take, const juce::File& root)
+    // conflict: this folder holds something that is not this session's copy,
+    // and nothing may be written there. unwritable: it is ours, but the drive
+    // will not take the claim (full, read-only), so it cannot carry this take.
+    MultitrackRecorder::CopyClaim MultitrackRecorder::claimCopy (const TakeStart& take, const juce::File& root)
     {
         const auto& sessionDir = take.sessionDir;
         const auto& sessionId  = take.sessionId;
@@ -1055,14 +987,15 @@ namespace zynforge
             const auto saved = juce::JSON::parse (owner);
             const auto oldPath = saved.getProperty ("path", {}).toString();
             if (oldPath.isEmpty() || saved.getProperty ("id", {}).toString() != sessionId
-                || (oldPath != identity && juce::File (oldPath).exists())) return false;
+                || (oldPath != identity && juce::File (oldPath).exists())) return CopyClaim::conflict;
         }
         else if (! copy.getChildFile ("Audio Files").findChildFiles (
-                     juce::File::findFiles, false, "Track_*").isEmpty()) return false;
+                     juce::File::findFiles, false, "Track_*").isEmpty()) return CopyClaim::conflict;
         auto* metadata = new juce::DynamicObject();
         metadata->setProperty ("id", sessionId); metadata->setProperty ("path", identity);
         return copy.createDirectory().wasOk()
-            && atomicfile::writeText (owner, juce::JSON::toString (juce::var (metadata)));
+                   && atomicfile::writeText (owner, juce::JSON::toString (juce::var (metadata)))
+                 ? CopyClaim::claimed : CopyClaim::unwritable;
     }
 
     void MultitrackRecorder::reportCopyConflict (const TakeStart& take, const juce::File& root)
@@ -1088,11 +1021,27 @@ namespace zynforge
             sessionId = juce::Uuid().toString();
             if (! atomicfile::writeText (idFile, sessionId)) return false;
         }
-        if (backupDir != juce::File() && backupDir.isDirectory() && ! claimCopy (take, backupDir))
-        { backupFailed.store (true); reportCopyConflict (take, backupDir); return false; }
-        for (const auto& mirror : activeMirrors)
-            if (! claimCopy (take, mirror.root))
-            { mirrorFailed.store (true); reportCopyConflict (take, mirror.root); return false; }
+        if (backupDir != juce::File() && ! isStillLeftBehind (backupDir) && backupDir.isDirectory())
+        {
+            const auto claim = claimCopy (take, backupDir);
+            if (claim == CopyClaim::conflict)
+            { backupFailed.store (true); reportCopyConflict (take, backupDir); return false; }
+            take.backupUnwritable = claim == CopyClaim::unwritable;
+        }
+        // A copy that cannot be written does not stop the show: the primary
+        // starts, and the banner names what was left out. Only a folder that
+        // holds someone else's audio refuses the take.
+        for (auto mirror = activeMirrors.begin(); mirror != activeMirrors.end();)
+        {
+            const auto claim = claimCopy (take, mirror->root);
+            if (claim == CopyClaim::conflict)
+            { mirrorFailed.store (true); reportCopyConflict (take, mirror->root); return false; }
+            if (claim == CopyClaim::claimed) { ++mirror; continue; }
+            droppedCopies.add ("Mirror " + mirror->root.getFullPathName()
+                               + " could not be written (full or read-only); it is not in this take");
+            mirrorsSkippedAtStart.fetch_add (1, std::memory_order_relaxed);
+            mirror = activeMirrors.erase (mirror);
+        }
         return true;
     }
 
@@ -1107,7 +1056,7 @@ namespace zynforge
         int recovered = 0, copyRecovered = 0;
         if (! recoverInterruptedPunches (audioFilesDir, &copyRecovered)) return false;
         recovered += copyRecovered;
-        if (backupDir.getFullPathName().isNotEmpty())
+        if (backupDir.getFullPathName().isNotEmpty() && ! isStillLeftBehind (backupDir))
         {
             const auto copyDir = backupDir.getChildFile (sessionDir.getFileName())
                                           .getChildFile ("Audio Files");
@@ -1215,6 +1164,19 @@ namespace zynforge
 
         take.backupRequested = backupDir.getFullPathName().isNotEmpty();
         const bool backupRequested = take.backupRequested;
+        if (backupRequested && isStillLeftBehind (backupDir))
+        {
+            backupFailed.store (true, std::memory_order_relaxed);
+            droppedCopies.add ("Backup " + backupDir.getFullPathName() + " is still not responding; it is not in this take");
+            return true;
+        }
+        if (take.backupUnwritable)
+        {
+            backupFailed.store (true, std::memory_order_relaxed);
+            droppedCopies.add ("Backup " + backupDir.getFullPathName()
+                               + " could not be written (full or read-only); it is not in this take");
+            return true;
+        }
         if (backupRequested)
         {
             if (! backupDir.isDirectory() && ! backupDir.createDirectory().wasOk())
@@ -1228,8 +1190,19 @@ namespace zynforge
                 backupFailed.store (true, std::memory_order_relaxed);
         }
 
-        if (backupReady && ! claimCopy (take, backupDir))
-        { backupFailed.store (true); reportCopyConflict (take, backupDir); return false; }
+        if (backupReady)
+        {
+            const auto claim = claimCopy (take, backupDir);
+            if (claim == CopyClaim::conflict)
+            { backupFailed.store (true); reportCopyConflict (take, backupDir); return false; }
+            if (claim == CopyClaim::unwritable)
+            {
+                backupReady = false;
+                backupFailed.store (true, std::memory_order_relaxed);
+                droppedCopies.add ("Backup " + backupDir.getFullPathName()
+                                   + " could not be written (full or read-only); it is not in this take");
+            }
+        }
 
         if ((continueAsPart || punchInActive) && backupReady
             && ! adoptExistingTakeFormat (backupAudioDir, backup))
@@ -1549,6 +1522,64 @@ namespace zynforge
             return nextPart + lead.parts;
         };
 
+        const auto passStart = passStartSamples();
+        const auto addCopy = [&] (int copyIndex, const juce::String& label, const juce::File& root)
+        {
+            auto copy = std::make_shared<CaptureCopy>();
+            copy->copyIndex   = copyIndex;
+            copy->label       = label;
+            copy->root        = root;
+            copy->sampleRate  = sampleRate;
+            copy->sessionName = sessionDir.getFileName();
+            copy->passStart   = passStart;
+            copy->latches     = latches;
+            copy->beforeWriteForTests = beforeCopyWriteForTests;
+            copy->tracks.resize (tracks.size());
+            copies.push_back (copy);
+            return copy;
+        };
+        const auto primaryCopy = addCopy (0, "Primary", sessionDir);
+        const auto backupCopy  = backupReady ? addCopy (1, "Backup", backupDir) : std::shared_ptr<CaptureCopy>();
+        std::vector<std::shared_ptr<CaptureCopy>> mirrorCopies;
+        for (std::size_t mi = 0; mi < activeMirrors.size(); ++mi)
+            mirrorCopies.push_back (addCopy (2 + (int) mi, "Mirror " + activeMirrors[mi].root.getFullPathName(),
+                                             activeMirrors[mi].root));
+
+        // Track i's file on one copy, at the part this pass opens at. False
+        // when it would not open (e.g. disk full, permissions).
+        const auto openOnCopy = [&] (CaptureCopy& copy, std::size_t i, const juce::File& dir,
+                                     const TakeFormat& fmt, const juce::String& trackName, int chans,
+                                     const WriterChannel& channel, juce::int64 prior)
+        {
+            auto& t = copy.tracks[i];
+            t.baseFile = dir.getChildFile (trackName);
+            t.ext = fmt.ext;
+            t.container = fmt.container;
+            t.bitDepth = fmt.bitDepth;
+            t.bytesPerSample = fmt.bitDepth / 8;
+            t.channels = chans;
+            t.nameLeft = channel.bextNameLeft;
+            t.nameRight = channel.bextNameRight;
+
+            auto file = dir.getChildFile (trackName + fmt.ext);
+            if (continueAsPart)
+            {
+                const auto next = nextContinuationPart (dir, trackName, fmt.ext);
+                file = next.first;
+                t.partNumber = next.second;
+            }
+            if (const int part = reserveLeadIn (i, copy.copyIndex, dir, trackName, fmt, chans, t.partNumber, prior);
+                part != t.partNumber)
+            {
+                file = partFileFor (dir, trackName, fmt.ext, part);
+                t.partNumber = part;
+            }
+            t.writer.reset (copy.openFile (t, file, 0));
+            if (t.writer == nullptr) { t.failed = true; return false; }
+            t.partFiles.add (file.getFileName());
+            return true;
+        };
+
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
             WriterChannel w;
@@ -1598,112 +1629,35 @@ namespace zynforge
             w.bextNameLeft = tracks[i]->getNameThreadSafe();
             if (chans == 2) w.bextNameRight = tracks[i + 1]->getNameThreadSafe();
 
-            // Primary writer -- under <session>/Audio Files/Track_NN.<ext>.
-            // Continue mode appends a NEW part (Track_NN_partXX) so the existing
-            // take is never touched; otherwise it's the normal Track_NN.<ext>.
-            auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
-            if (continueAsPart)
-            {
-                auto [pf, pn] = nextContinuationPart (audioFilesDir, trackName, primary.ext);
-                primaryFile = pf;
-                w.partNumberPrimary = pn;
-            }
-            if (const int part = reserveLeadIn (i, 0, audioFilesDir, trackName, primary, chans,
-                                                w.partNumberPrimary, take.previousLengths[i]);
-                part != w.partNumberPrimary)
-            {
-                primaryFile = partFileFor (audioFilesDir, trackName, primary.ext, part);
-                w.partNumberPrimary = part;
-            }
+            // Primary -- under <session>/Audio Files/Track_NN.<ext>. Continue
+            // mode appends a NEW part (Track_NN_partXX) so the existing take is
+            // never touched; otherwise it's the normal Track_NN.<ext>.
             invalidateReportsBeforeMediaMutation (take);
-            w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, w, 0));
             ++primaryAttempts;
-            if (w.writer != nullptr) ++primaryOpened;
-            w.primaryBaseFile       = audioFilesDir.getChildFile (trackName);
-            w.primaryExt            = primary.ext;
-            w.primaryBitDepth       = primary.bitDepth;
-            w.primaryContainer      = primary.container;
-            w.bytesPerSamplePrimary = primary.bitDepth / 8;
-            if (w.writer != nullptr)
-                w.partFilesPrimary.add (primaryFile.getFileName());
+            if (openOnCopy (*primaryCopy, i, audioFilesDir, primary, trackName, chans, w, take.previousLengths[i]))
+                ++primaryOpened;
 
-            // Optional second copy -- may be in a different format from
-            // the primary, so the engineer can run e.g. WAV/24 to the
-            // main drive AND FLAC/24 to the backup drive simultaneously.
-            // Backups mirror the same Audio Files/ layout under the chosen
-            // backup root.
-            if (backupReady)
-            {
-                auto backupFile = backupAudioDir.getChildFile (trackName + backup.ext);
-                if (continueAsPart)
-                {
-                    auto [bf, bn] = nextContinuationPart (backupAudioDir, trackName, backup.ext);
-                    backupFile = bf;
-                    w.partNumberBackup = bn;
-                }
-                if (const int part = reserveLeadIn (i, 1, backupAudioDir, trackName, backup, chans,
-                                                    w.partNumberBackup, take.backupLengths[i]);
-                    part != w.partNumberBackup)
-                {
-                    backupFile = partFileFor (backupAudioDir, trackName, backup.ext, part);
-                    w.partNumberBackup = part;
-                }
-                w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, w, 0));
-                w.backupBaseFile       = backupAudioDir.getChildFile (trackName);
-                w.backupExt            = backup.ext;
-                w.backupBitDepth       = backup.bitDepth;
-                w.backupContainer      = backup.container;
-                w.bytesPerSampleBackup = backup.bitDepth / 8;
-                if (w.backupWriter != nullptr)
-                    w.partFilesBackup.add (backupFile.getFileName());
-                else
-                    backupFailed.store (true, std::memory_order_relaxed);
-            }
+            // Optional second copy -- may be in a different format from the
+            // primary, so the engineer can run e.g. WAV/24 to the main drive
+            // AND FLAC/24 to the backup drive simultaneously. Backups mirror
+            // the same Audio Files/ layout under the chosen backup root.
+            if (backupCopy != nullptr
+                && ! openOnCopy (*backupCopy, i, backupAudioDir, backup, trackName, chans, w, take.backupLengths[i]))
+                backupFailed.store (true, std::memory_order_relaxed);
 
-            // Extra N-way mirror destinations beyond primary + backup.
-            // usableMirrors was filtered once at the top of startRecording:
-            // collisions with the primary / backup / another mirror are gone,
-            // and every remaining root exists. Do NOT iterate mirrorConfigs
-            // here -- that is what let a colliding root open a writer on the
-            // take's own file.
+            // Extra N-way mirror destinations beyond primary + backup. They
+            // come from activeMirrors, filtered once at the top of
+            // startRecording: collisions are gone and every remaining root
+            // exists. Do NOT iterate mirrorConfigs here -- that is what let a
+            // colliding root open a writer on the take's own file.
             for (std::size_t mirrorIndex = 0; mirrorIndex < activeMirrors.size(); ++mirrorIndex)
             {
-                const auto& mc = activeMirrors[mirrorIndex];
-                const auto mirrorSession = mc.root.getChildFile (sessionDir.getFileName())
-                                                    .getChildFile ("Audio Files");
+                const auto mirrorSession = activeMirrors[mirrorIndex].root.getChildFile (sessionDir.getFileName())
+                                                                          .getChildFile ("Audio Files");
                 mirrorSession.createDirectory();
-                const auto mFmt = mirrorFormats[mirrorIndex];
-                auto mFile = mirrorSession.getChildFile (trackName + mFmt.ext);
-                int  mPart = 1;
-                if (continueAsPart)
-                {
-                    auto [mf, mn] = nextContinuationPart (mirrorSession, trackName, mFmt.ext);
-                    mFile = mf;
-                    mPart = mn;
-                }
-                if (const int part = reserveLeadIn (i, 2 + (int) mirrorIndex, mirrorSession, trackName, mFmt,
-                                                    chans, mPart, take.mirrorLengths[mirrorIndex][i]);
-                    part != mPart)
-                {
-                    mFile = partFileFor (mirrorSession, trackName, mFmt.ext, part);
-                    mPart = part;
-                }
-                WriterChannel::Mirror m;
-                m.partNumber = mPart;
-                m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth, w, 0));
-                m.baseFile       = mirrorSession.getChildFile (trackName);
-                m.ext            = mFmt.ext;
-                m.container      = mFmt.container;
-                m.bitDepth       = mFmt.bitDepth;
-                m.bytesPerSample = mFmt.bitDepth / 8;
-                if (m.writer != nullptr)
-                    m.partFiles.add (mFile.getFileName());
-                else
-                {
-                    m.failed = true;
+                if (! openOnCopy (*mirrorCopies[mirrorIndex], i, mirrorSession, mirrorFormats[mirrorIndex],
+                                  trackName, chans, w, take.mirrorLengths[mirrorIndex][i]))
                     mirrorFailed.store (true, std::memory_order_relaxed);
-                }
-                w.mirrors.push_back (std::move (m));
             }
 
             // This channel opened (or attempted) real destinations, so it
@@ -1716,6 +1670,51 @@ namespace zynforge
 
             fifos[i]->fifo.reset();
         }
+
+        int capturedChannels = 0;
+        for (const auto& w : writers)
+            if (w.active) capturedChannels += w.numChannels;
+        const int ringFrames = copyRingFrames ((int) copies.size(), capturedChannels);
+        for (auto& copy : copies)
+        {
+            copy->ringFrames = ringFrames;
+            for (auto& t : copy->tracks)
+                if (t.writer != nullptr) copy->openRing (t);
+        }
+    }
+
+    // Four seconds or so per copy, like the audio FIFO, until that is more than
+    // a gigabyte of ring: then less, never under a second.
+    int MultitrackRecorder::copyRingFrames (int numCopies, int channels) const noexcept
+    {
+        if (copyRingFramesForTests > 0) return juce::jmax (copyRingFramesForTests, CaptureCopy::kChunkFrames);
+        constexpr juce::int64 kMaxRingBytes = (juce::int64) 1 << 30;
+        const int floorFrames = juce::jmax (1, (int) sampleRate);
+        auto frames = juce::nextPowerOfTwo ((int) (sampleRate * kFifoSeconds));
+        while (frames / 2 >= floorFrames
+               && (juce::int64) frames * (juce::int64) sizeof (float) * channels * numCopies > kMaxRingBytes)
+            frames /= 2;
+        return frames;
+    }
+
+    const MultitrackRecorder::CaptureCopy* MultitrackRecorder::copyAt (int copyIndex) const noexcept
+    {
+        for (const auto& copy : copies)
+            if (copy->copyIndex == copyIndex) return copy.get();
+        return nullptr;
+    }
+
+    bool MultitrackRecorder::isStillLeftBehind (const juce::File& root) const
+    {
+        for (const auto& copy : leftBehind)
+            if (copy->root == root && ! copy->finished.load (std::memory_order_acquire)) return true;
+        return false;
+    }
+
+    bool MultitrackRecorder::isCopyAbandoned (int copyIndex) const noexcept
+    {
+        const auto* copy = copyAt (copyIndex);
+        return copy != nullptr && copy->abandoned.load (std::memory_order_acquire);
     }
 
     // Persist each reservation openTakeWriters made, so a crash before STOP
@@ -1861,30 +1860,14 @@ namespace zynforge
     // the files this pass created, and put any punch base back.
     void MultitrackRecorder::abandonTakeStart (TakeStart& take)
     {
-        const auto& sessionDir = take.sessionDir;
-        const auto& audioFilesDir = take.audioFilesDir;
-        auto& backupReady = take.backupReady;
-        auto& backupAudioDir = take.backupAudioDir;
-        auto& hadPrimaryBase = take.hadPrimaryBase;
-
         std::vector<juce::File> unusedNewFiles;
+        // Every file in partFiles is one this start created: opening refuses
+        // an existing target, so a continuation's new part is safe to remove.
         for (std::size_t i = 0; i < writers.size(); ++i)
-            if (! hadPrimaryBase[i] && writers[i].active)
-            {
-                const auto& w = writers[i];
-                for (const auto& name : w.partFilesPrimary)
-                    unusedNewFiles.push_back (audioFilesDir.getChildFile (name));
-                if (backupReady)
-                    for (const auto& name : w.partFilesBackup)
-                        unusedNewFiles.push_back (backupAudioDir.getChildFile (name));
-                for (std::size_t mi = 0; mi < w.mirrors.size(); ++mi)
-                {
-                    const auto copyDir = activeMirrors[mi].root
-                        .getChildFile (sessionDir.getFileName()).getChildFile ("Audio Files");
-                    for (const auto& name : w.mirrors[mi].partFiles)
-                        unusedNewFiles.push_back (copyDir.getChildFile (name));
-                }
-            }
+            if (writers[i].active)
+                for (const auto& copy : copies)
+                    for (const auto& name : copy->tracks[i].partFiles)
+                        unusedNewFiles.push_back (copy->tracks[i].baseFile.getSiblingFile (name));
         closeWriters();
         for (const auto& f : unusedNewFiles) f.deleteFile();
         for (const auto& lead : pendingLeadIns)
@@ -1929,7 +1912,6 @@ namespace zynforge
         samplesSinceStart.store (0, std::memory_order_relaxed);
         missedSamples    .store (0, std::memory_order_relaxed);
         captureDeviceLost.store (false, std::memory_order_relaxed);
-        samplesSinceFlush.store (0, std::memory_order_relaxed);
         for (auto& f : fifos) f->resetCaptureTimeline();
         alarmFrames.store (0, std::memory_order_relaxed);
         // Clear each track's live waveform overview so a new take draws fresh
@@ -1959,6 +1941,7 @@ namespace zynforge
         }
         preparePreRollDump();
         beginChannelAlarms();
+        for (auto& copy : copies) copy->start (copy);
         writersReady.store (true,  std::memory_order_release);
         clockProbe.request (clockDevice);
     }
@@ -2167,56 +2150,6 @@ namespace zynforge
         return (containerCode == 1) ? kAiffMax : kFlacMax;
     }
 
-    juce::AudioFormatWriter* MultitrackRecorder::openWriterAtPath (const juce::File& target,
-                                                                   int containerCode,
-                                                                   int bits,
-                                                                   WriterChannel& channel,
-                                                                   juce::int64 framesBefore) noexcept
-    {
-        // 1 = mono (every standalone track), 2 = interleaved stereo (a stereo
-        // pair captured to one file).
-        const unsigned int chans = (unsigned int) juce::jmax (1, channel.numChannels);
-
-        // All callers choose a new part or stash a punch target first.
-        // Never truncate an unexpected file, including a foreign backup.
-        if (target.exists()) return nullptr;
-        auto* out = target.createOutputStream().release();
-        if (out == nullptr) return nullptr;
-
-        juce::WavAudioFormat  wav;
-        juce::AiffAudioFormat aiff;
-        juce::FlacAudioFormat flac;
-
-        juce::StringPairArray meta;
-        juce::int64 timeReference = 0;
-        if (containerCode == 0)   // WAV gets the BWF bext chunk so mix
-        {                         // engineers can identify the take.
-            const auto now = juce::Time::getCurrentTime();
-            // A crash survivor keeps this estimate; finalization stamps the
-            // exact value (see bwf::stampTimeReference).
-            timeReference = bwf::wrapToDay (passStartSamples() + framesBefore, sampleRate);
-            meta.set (juce::WavAudioFormat::bwavDescription,
-                      bwf::channelDescription ("Zynforge Recording -- " + activeSessionDir.getFileName()
-                                                 + " -- " + target.getFileNameWithoutExtension(),
-                                               channel.bextNameLeft, channel.bextNameRight));
-            meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
-            meta.set (juce::WavAudioFormat::bwavOriginatorRef,   activeSessionDir.getFileName());
-            meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
-            meta.set (juce::WavAudioFormat::bwavOriginationTime, now.formatted ("%H:%M:%S"));
-            meta.set (juce::WavAudioFormat::bwavTimeReference,   juce::String (timeReference));
-        }
-
-        juce::AudioFormatWriter* w = nullptr;
-        if      (containerCode == 2) w = flac.createWriterFor (out, sampleRate, chans, bits, meta, 5);
-        else if (containerCode == 1) w = bits == 32 ? FloatAiffWriter::create (out, sampleRate, chans)
-                                                   : aiff.createWriterFor (out, sampleRate, chans, bits, meta, 0);
-        else                         w = wav .createWriterFor (out, sampleRate, chans, bits, meta, 0);
-        if (w == nullptr) delete out;
-        else if (containerCode == 0)
-            channel.stampedParts.push_back ({ target, framesBefore, (juce::uint64) timeReference });
-        return w;
-    }
-
     juce::int64 MultitrackRecorder::passStartSamples() const noexcept
     {
         const auto firstLive = firstLiveTicks.load (std::memory_order_acquire);
@@ -2255,6 +2188,7 @@ namespace zynforge
             juce::int64  totalSamples;
             juce::StringArray partFiles;
             bool failed;
+            bool abandoned { false };   // left behind at STOP: its folder is not touched again
         };
         struct WriterReport
         {
@@ -2267,7 +2201,13 @@ namespace zynforge
         // Punch-in: the final on-disk paths of every copy (primary/backup/each
         // mirror), aligned with `writers`, so each can be spliced after the
         // writers close.
-        struct PunchWriterFiles { juce::File primary, backup; std::vector<juce::File> mirrors; };
+        struct PunchFiles
+        {
+            juce::File main;                // Track_NN.<ext>
+            std::vector<juce::File> fresh;  // every part the punch wrote, in order
+            juce::int64 maxBytesPerFile { 0 };
+        };
+        struct PunchWriterFiles { PunchFiles primary, backup; std::vector<PunchFiles> mirrors; };
 
         juce::Time  stoppedAt;
         juce::int64 totalSamples {}, totalMissed {};
@@ -2281,6 +2221,7 @@ namespace zynforge
         std::vector<WriterChannel::StampedPart> stampedParts;
         juce::int64       timeReference {};
         juce::StringArray stampFailures;
+        juce::StringArray copyProblems;
         std::vector<channelalarm::Alarm> channelAlarms;
     };
 
@@ -2313,6 +2254,7 @@ namespace zynforge
         juce::int64  timeReference {};
         juce::String timeReferenceSource;
         juce::StringArray stampFailures;
+        juce::StringArray copyProblems;
         clocksource::Reading clock;
         juce::Array<juce::var> channelAlarms;
         std::vector<TrackMeta>               trackMetas;
@@ -2382,6 +2324,8 @@ namespace zynforge
     {
         for (const auto& lead : pendingLeadIns)
         {
+            // Its marker stays: the next open or record start finishes it.
+            if (isCopyAbandoned (lead.copyIndex)) continue;
             if (writeLeadIn (lead, stop.timelineStart))
             {
                 const auto marker = leadInMarkerFor (lead);
@@ -2401,20 +2345,11 @@ namespace zynforge
 
     void MultitrackRecorder::quiesceWritersForStop()
     {
-        // Quiesce the writer threads BEFORE the final flush + close.
-        // Each shard runs on its own TimeSliceThread draining the
-        // single-consumer FIFOs and writing to the AudioFormatWriters.
-        // If we flushed (drainOnce) and closed (writers.clear()) here
-        // while those threads were still ticking, we got two consumers
-        // on one FIFO and writers.clear() freeing an AudioFormatWriter
-        // mid-writeFromFloatArrays -- which truncated files at random
-        // per-channel lengths while their WAV headers kept the full
-        // intended sample count (header says 24 s, data is 8 s).
-        // removeTimeSliceClient blocks until any in-flight drain on the
-        // shard returns and guarantees no further calls, so after this
-        // loop the finalization caller is the sole FIFO/writer owner. It is
-        // either the owned STOP worker or the legacy synchronous caller,
-        // never one of the writer threads being detached.
+        // Quiesce the distributor BEFORE the final flush + close.
+        // removeTimeSliceClient blocks until any in-flight drain on the shard
+        // returns and guarantees no further calls, so after this loop the
+        // finalization caller is the sole FIFO owner. It is either the owned
+        // STOP worker or the legacy synchronous caller, never a writer thread.
         for (auto& sh : shards)
             for (auto& th : writerThreads)
                 th->removeTimeSliceClient (sh.get());
@@ -2423,9 +2358,37 @@ namespace zynforge
         for (auto& sh : shards)
             drainShard (*sh);
 
-        // Complete fallible headers before snapshotting failure flags and
-        // per-writer metadata for the capture report.
-        finalizeWriterHandles();
+        finishCopies();
+    }
+
+    // Every copy drains its ring and closes its files. The primary decides the
+    // take, so STOP waits for it as long as it takes. A copy that stops making
+    // progress is left behind instead: its drive must not hold up the show, and
+    // nothing here touches that copy's folder again.
+    void MultitrackRecorder::finishCopies()
+    {
+        for (auto& copy : copies) copy->requestFinish();
+        for (;;)
+        {
+            bool waiting = false;
+            const auto now = juce::Time::getMillisecondCounterHiRes();
+            for (auto& copy : copies)
+            {
+                if (copy->finished.load (std::memory_order_acquire)
+                    || copy->abandoned.load (std::memory_order_acquire)) continue;
+                if (copy->copyIndex != 0
+                    && now - copy->lastProgressMs.load (std::memory_order_relaxed) >= copyStallLimitMs)
+                {
+                    copy->abandon();
+                    leftBehind.push_back (copy);
+                    continue;
+                }
+                waiting = true;
+            }
+            if (! waiting) break;
+            juce::Thread::sleep (2);
+        }
+        for (auto& copy : copies) copy->join();
     }
 
     MultitrackRecorder::TakeStop MultitrackRecorder::snapshotTakeAtStop()
@@ -2459,36 +2422,60 @@ namespace zynforge
         stop.writers.reserve (writers.size());
         stop.doPunch = punchInActive;
         stop.timelineStart = recordBaseSamples;
-        for (auto& wc : writers)
+        stop.copyProblems = describeCopyProblems();
+        const auto* primaryCopy = copyAt (0);
+        const auto* backupCopy  = isCopyAbandoned (1) ? nullptr : copyAt (1);
+        if (isCopyAbandoned (1)) stop.backupWasRunning = false;
+        const auto punchPath = [] (const CaptureCopy::Track& t)
         {
-            TakeStop::WriterReport wr { wc.totalSamplesPrimary, wc.totalSamplesBackup,
-                                        wc.partFilesPrimary, wc.partFilesBackup, {} };
-            for (size_t mi = 0; mi < wc.mirrors.size(); ++mi)
+            TakeStop::PunchFiles files;
+            if (t.baseFile == juce::File()) return files;
+            files.main = t.baseFile.withFileExtension (t.ext);
+            for (const auto& name : t.partFiles) files.fresh.push_back (t.baseFile.getSiblingFile (name));
+            files.maxBytesPerFile = maxBytesForContainer (t.container);
+            return files;
+        };
+        for (size_t i = 0; i < writers.size(); ++i)
+        {
+            TakeStop::WriterReport wr {};
+            TakeStop::PunchWriterFiles pf;
+            if (primaryCopy != nullptr)
             {
-                const auto& m = wc.mirrors[mi];
-                // activeMirrors, NOT mirrorConfigs: wc.mirrors is built from
-                // the filtered list, so a skipped mirror would shift every
-                // later root by one and mis-attribute them in the report.
-                const juce::File root = (mi < activeMirrors.size())
-                                            ? activeMirrors[mi].root
-                                            : juce::File();
-                wr.mirrors.push_back ({ root, m.totalSamples, m.partFiles, m.failed });
+                const auto& t = primaryCopy->tracks[i];
+                wr.totalSamplesPrimary = t.totalSamples;
+                wr.partFilesPrimary    = t.partFiles;
+                if (stop.doPunch) pf.primary = punchPath (t);
+            }
+            if (backupCopy != nullptr)
+            {
+                const auto& t = backupCopy->tracks[i];
+                wr.totalSamplesBackup = t.totalSamples;
+                wr.partFilesBackup    = t.partFiles;
+                if (stop.doPunch) pf.backup = punchPath (t);
+            }
+            for (size_t mi = 0; writers[i].active && mi < activeMirrors.size(); ++mi)
+            {
+                const auto* copy = copyAt (2 + (int) mi);
+                if (copy == nullptr) continue;
+                // A copy left behind is still its thread's: only the atomics are ours.
+                if (copy->abandoned.load (std::memory_order_acquire))
+                {
+                    wr.mirrors.push_back ({ activeMirrors[mi].root, 0, {}, true, true });
+                    if (stop.doPunch) pf.mirrors.push_back ({});
+                    continue;
+                }
+                const auto& t = copy->tracks[i];
+                wr.mirrors.push_back ({ activeMirrors[mi].root, t.totalSamples, t.partFiles,
+                                        t.failed || copy->overran.load (std::memory_order_relaxed) });
+                if (stop.doPunch) pf.mirrors.push_back (punchPath (t));
             }
             stop.writers.push_back (std::move (wr));
-            stop.stampedParts.insert (stop.stampedParts.end(),
-                                      wc.stampedParts.begin(), wc.stampedParts.end());
-
-            TakeStop::PunchWriterFiles pf;
-            if (stop.doPunch)
-            {
-                pf.primary = wc.primaryBaseFile.withFileExtension (wc.primaryExt);
-                if (wc.backupBaseFile.getFullPathName().isNotEmpty())
-                    pf.backup = wc.backupBaseFile.withFileExtension (wc.backupExt);
-                for (auto& m : wc.mirrors)
-                    pf.mirrors.push_back (m.baseFile.withFileExtension (m.ext));
-            }
             stop.punchFiles.push_back (std::move (pf));
         }
+        for (const auto& copy : copies)
+            if (! copy->abandoned.load (std::memory_order_acquire))
+                stop.stampedParts.insert (stop.stampedParts.end(),
+                                          copy->stampedParts.begin(), copy->stampedParts.end());
         return stop;
     }
 
@@ -2502,7 +2489,7 @@ namespace zynforge
         for (size_t i = 0; i < shards.size(); ++i)
         {
             auto& shard = *shards[i];
-            shard.throughputAccumBytes = 0;
+            shard.throughputBaseBytes = 0;
             shard.throughputWindowMs = 0;
             shard.shardBytesPerSec.store (0, std::memory_order_relaxed);
             shard.shardRingFillPct.store (0, std::memory_order_relaxed);
@@ -2544,16 +2531,20 @@ namespace zynforge
         // commit-or-rollback decision for the whole track.
         struct CopySplice
         {
-            juce::File              fresh;      // the freshly-recorded punch file
-            juce::File              tmp;        // spliced result awaiting commit
+            juce::File              fresh;      // Track_NN.<ext>
+            std::vector<juce::File> freshParts; // every file the punch recorded
+            juce::File              tmp;        // first file of the spliced result
+            std::vector<juce::File> tmpParts;   // the whole spliced result, awaiting commit
             std::vector<juce::File> baseParts;  // stashed .punchbase sidecars
             bool                    attempted { false };  // this copy was stashed
             bool                    spliced   { false };  // splice to tmp succeeded
         };
-        auto prepareCopy = [&] (const juce::File& fresh) -> CopySplice
+        auto prepareCopy = [&] (const TakeStop::PunchFiles& files) -> CopySplice
         {
             CopySplice cs;
+            const auto& fresh = files.main;
             cs.fresh = fresh;
+            cs.freshParts = files.fresh;
             if (fresh.getFullPathName().isEmpty()) return cs;
             // Gather every stashed base part for this copy, in order:
             // Track_NN.punchbase + Track_NN_partXX.punchbase (continue takes
@@ -2576,7 +2567,8 @@ namespace zynforge
             }
             cs.tmp = fresh.getSiblingFile (
                 fresh.getFileNameWithoutExtension() + ".punchtmp" + fresh.getFileExtension());
-            cs.spliced = splicePunchParts (fm, cs.baseParts, fresh, punchPos, cs.tmp);
+            cs.spliced = splicePunchTake (fm, cs.baseParts, cs.freshParts, punchPos, cs.tmp,
+                                          files.maxBytesPerFile, cs.tmpParts);
             return cs;
         };
         auto readLen = [&fm] (const juce::File& f) -> juce::int64
@@ -2603,19 +2595,38 @@ namespace zynforge
         };
         // Put one copy back to its pre-punch take. The fresh file (or, if the
         // install got as far as removing it, the spliced temp) is archived.
+        // The punch's files must all be out of the way before a base part comes
+        // back: a part the punch rolled into has the same name as a base part.
         const auto rollBack = [&] (CopySplice& c, bool archive)
         {
-            const auto name = c.fresh.getFileName();
-            if (archive && c.fresh.existsAsFile())    { if (! archiveUnspliced (c.fresh, name)) c.fresh.deleteFile(); }
-            else if (archive && c.tmp.existsAsFile()) { if (! archiveUnspliced (c.tmp, name))   c.tmp.deleteFile(); }
-            c.tmp.deleteFile();
-            c.fresh.deleteFile();
+            bool freshKept = false;
+            for (const auto& part : c.freshParts)
+            {
+                if (! part.existsAsFile()) continue;
+                if (archive && archiveUnspliced (part, part.getFileName())) freshKept = true;
+                else part.deleteFile();
+            }
+            for (const auto& part : c.tmpParts)
+            {
+                if (archive && ! freshKept && part.existsAsFile())
+                    if (! archiveUnspliced (part, c.fresh.getFileName())) part.deleteFile();
+                part.deleteFile();
+            }
             for (auto& part : c.baseParts)
                 part.moveFileTo (sidecarToTake (part));
         };
         const auto install = [] (CopySplice& c)
         {
-            return (! c.fresh.existsAsFile() || c.fresh.deleteFile()) && c.tmp.moveFileTo (c.fresh);
+            for (const auto& part : c.freshParts)
+                if (part.existsAsFile() && ! part.deleteFile()) return false;
+            for (size_t p = 0; p < c.tmpParts.size(); ++p)
+            {
+                const auto target = p == 0 ? c.fresh
+                    : partFileFor (c.fresh.getParentDirectory(), c.fresh.getFileNameWithoutExtension(),
+                                   c.fresh.getFileExtension(), (int) p + 1);
+                if (! c.tmpParts[p].moveFileTo (target)) return false;
+            }
+            return true;
         };
 
         for (size_t i = 0; i < punchFiles.size() && i < writerSnapshots.size(); ++i)
@@ -2634,7 +2645,8 @@ namespace zynforge
             // that rolled back IS its base, so neither takes this pass's time.
             for (const auto& c : copies)
                 if (c.attempted)
-                    std::erase_if (stop.stampedParts, [&c] (const auto& part) { return part.file == c.fresh; });
+                    std::erase_if (stop.stampedParts, [&c] (const auto& part)
+                                   { return std::find (c.freshParts.begin(), c.freshParts.end(), part.file) != c.freshParts.end(); });
 
             // Nothing was captured (a selection punch stopped during its
             // pre-roll): there is no punch, so every copy simply keeps its take.
@@ -2657,7 +2669,7 @@ namespace zynforge
                 for (size_t ci = 1; ci < copies.size(); ++ci)
                 {
                     auto& c = copies[ci];
-                    if (! c.attempted) { c.tmp.deleteFile(); continue; }
+                    if (! c.attempted) { for (const auto& part : c.tmpParts) part.deleteFile(); continue; }
                     if (c.spliced && install (c))
                     {
                         for (auto& part : c.baseParts) part.deleteFile();
@@ -2682,7 +2694,7 @@ namespace zynforge
                 punchSpliceFailed.store (true, std::memory_order_relaxed);
                 for (auto& c : copies)
                 {
-                    if (! c.attempted) { c.tmp.deleteFile(); continue; }
+                    if (! c.attempted) { for (const auto& part : c.tmpParts) part.deleteFile(); continue; }
                     rollBack (c, true);
                 }
             }
@@ -2752,9 +2764,10 @@ namespace zynforge
                 collectCopy (backupFolder, (int) i, snapshot.partFilesBackup,
                              snapshot.totalSamplesBackup);
             for (auto& mirror : snapshot.mirrors)
-                collectCopy (mirror.root.getChildFile (activeSessionDir.getFileName())
-                                        .getChildFile ("Audio Files"),
-                             (int) i, mirror.partFiles, mirror.totalSamples);
+                if (! mirror.abandoned)
+                    collectCopy (mirror.root.getChildFile (activeSessionDir.getFileName())
+                                            .getChildFile ("Audio Files"),
+                                 (int) i, mirror.partFiles, mirror.totalSamples);
         }
     }
 
@@ -2844,6 +2857,9 @@ namespace zynforge
         if (auto* oldFailures = oldReport.getProperty ("timeReferenceStampFailures", {}).getArray())
             for (const auto& failure : *oldFailures) report.stampFailures.add (failure.toString());
         report.stampFailures.addArray (stop.stampFailures);
+        if (auto* oldProblems = oldReport.getProperty ("copyProblems", {}).getArray())
+            for (const auto& problem : *oldProblems) report.copyProblems.add (problem.toString());
+        report.copyProblems.addArray (stop.copyProblems);
         report.clock = clockProbe.latest();
         if (auto* oldAlarms = oldReport.getProperty ("channelAlarms", {}).getArray())
             report.channelAlarms.addArray (*oldAlarms);
@@ -2884,6 +2900,7 @@ namespace zynforge
         report->setProperty ("timeReference", timeReference);
         report->setProperty ("timeReferenceSource", timeReferenceSource);
         report->setProperty ("timeReferenceStampFailures", juce::var (stampFailures));
+        report->setProperty ("copyProblems", juce::var (copyProblems));
         report->setProperty ("clockSource", clock.name);
         report->setProperty ("clockSourceKind", clocksource::kindName (clock.kind));
         report->setProperty ("channelAlarms", juce::var (channelAlarms));
@@ -3008,9 +3025,14 @@ namespace zynforge
         const auto asyncState = reportAsyncState;
         const auto asyncGen = asyncState->generation.load (std::memory_order_acquire);
         const auto testHooks = reportTestHooks;
+        reportState->runningScans.fetch_add (1, std::memory_order_acq_rel);
         juce::Thread::launch (
             [report = std::move (report), myGen, reportState, asyncState, asyncGen, testHooks]
             {
+                const juce::ScopeGuard scanDone { [reportState]
+                {
+                    reportState->runningScans.fetch_sub (1, std::memory_order_acq_rel);
+                } };
                 const auto& sessionDir  = report.sessionDir;
                 const auto& bDir        = report.bDir;
                 const auto& writerSnaps = report.writerSnaps;
@@ -3111,6 +3133,25 @@ namespace zynforge
         return atomicfile::writeText (file, juce::JSON::toString (report, true));
     }
 
+    bool MultitrackRecorder::waitForReportHashes (const juce::File& sessionDir, const std::atomic<bool>& cancel,
+                                                  bool watchReportFile)
+    {
+        const auto state = sessionReportState (sessionDir);
+        const auto giveUp = juce::Time::getMillisecondCounterHiRes() + 30.0 * 60.0 * 1000.0;
+        const auto reportPending = [&]
+        {
+            return watchReportFile && juce::Time::getMillisecondCounterHiRes() < giveUp
+                && (bool) juce::JSON::parse (sessionDir.getChildFile ("session.report.json"))
+                              .getProperty ("sha256Pending", false);
+        };
+        while (state->runningScans.load (std::memory_order_acquire) > 0 || reportPending())
+        {
+            if (cancel.load (std::memory_order_relaxed)) return false;
+            juce::Thread::sleep (100);
+        }
+        return true;
+    }
+
     bool MultitrackRecorder::deleteSessionAfterCancellingReports (const juce::File& directory)
     {
         return removeSessionAfterCancellingReports (directory, [&directory] { return directory.deleteRecursively(); });
@@ -3128,30 +3169,43 @@ namespace zynforge
     void MultitrackRecorder::closeWriters()
     {
         writersReady.store (false, std::memory_order_release);
-        finalizeWriterHandles();
+        // After a take the copies' threads have closed their own files, and a
+        // copy left behind still owns its. This is for a start that never ran.
+        for (auto& copy : copies)
+            if (! copy->abandoned.load (std::memory_order_acquire)) copy->closeFilesNow();
         writers.clear();
     }
 
-    void MultitrackRecorder::finalizeWriterHandles()
+    void MultitrackRecorder::drainPendingForTests()
     {
-        for (auto& writer : writers)
+        drainOnce();
+        for (auto& copy : copies) copy->waitUntilWritten (2000);
+    }
+
+    void MultitrackRecorder::flushOpenWritersForTests()
+    {
+        for (auto& copy : copies) copy->flushAndWait (5000);
+    }
+
+    juce::StringArray MultitrackRecorder::getCopyProblems() const
+    {
+        const juce::ScopedLock sl (structureLock);
+        return describeCopyProblems();
+    }
+
+    juce::StringArray MultitrackRecorder::describeCopyProblems() const
+    {
+        auto problems = droppedCopies;
+        for (const auto& copy : copies)
         {
-            if (! flushFloatAiffBeforeClose (writer.writer.get()))
-                primaryFailed.store (true, std::memory_order_relaxed);
-            writer.writer.reset();
-            if (! flushFloatAiffBeforeClose (writer.backupWriter.get()))
-                backupFailed.store (true, std::memory_order_relaxed);
-            writer.backupWriter.reset();
-            for (auto& mirror : writer.mirrors)
-            {
-                if (! flushFloatAiffBeforeClose (mirror.writer.get()))
-                {
-                    mirror.failed = true;
-                    mirrorFailed.store (true, std::memory_order_relaxed);
-                }
-                mirror.writer.reset();
-            }
+            if (copy->abandoned.load (std::memory_order_acquire))
+                problems.add (copy->label + " stopped responding and was left behind at STOP");
+            else if (copy->overran.load (std::memory_order_relaxed) && sampleRate > 0.0)
+                problems.add (copy->label + " lost "
+                              + juce::String ((double) copy->droppedFrames.load (std::memory_order_relaxed) / sampleRate, 1)
+                              + " s of audio; the other copies have it");
         }
+        return problems;
     }
 
     int MultitrackRecorder::useTimeSlice()
@@ -3258,11 +3312,10 @@ namespace zynforge
         int mirrorChannelBytes = 0;
         if (isRecording())
         {
-            for (const auto& writer : writers)
-                for (size_t mi = 0; mi < writer.mirrors.size() && mi < activeMirrors.size(); ++mi)
-                    if (writer.mirrors[mi].writer != nullptr && ! writer.mirrors[mi].failed)
-                        mirrorChannelBytes += writer.numChannels
-                                           * (bitsFor (activeMirrors[mi].format) / 8);
+            for (size_t mi = 0; mi < activeMirrors.size(); ++mi)
+                if (const auto* copy = copyAt (2 + (int) mi))
+                    mirrorChannelBytes += copy->liveChannels.load (std::memory_order_relaxed)
+                                        * (bitsFor (activeMirrors[mi].format) / 8);
         }
         else
         {
@@ -3317,7 +3370,8 @@ namespace zynforge
         {
             if (! vol.exists() || rate <= 0) return kEffectivelyUnbounded;
             const auto free = vol.getBytesFreeOnVolume();
-            if (free <= 0) return kEffectivelyUnbounded;       // unknown -> don't pessimize
+            if (! preflight::freeSpaceKnown (free, vol.getVolumeTotalSize()))
+                return kEffectivelyUnbounded;                  // don't pessimize
             return (int) (free / (rate * (juce::int64) 60));
         };
         // Combine rates that land on the SAME filesystem. Primary + backup on
@@ -3348,12 +3402,8 @@ namespace zynforge
             int channels = captureChannels;
             if (rolling)
             {
-                channels = 0;
-                for (const auto& writer : writers)
-                    if (mi < writer.mirrors.size()
-                        && writer.mirrors[mi].writer != nullptr
-                        && ! writer.mirrors[mi].failed)
-                        channels += writer.numChannels;
+                const auto* copy = copyAt (2 + (int) mi);
+                channels = copy != nullptr ? copy->liveChannels.load (std::memory_order_relaxed) : 0;
             }
             addVolumeRate (mirrors[mi].root, rateFor (mirrors[mi].format, channels));
         }
@@ -3374,32 +3424,9 @@ namespace zynforge
         for (auto& sh : shards) drainShard (*sh);
     }
 
-    void MultitrackRecorder::flushOpenWriters (std::size_t first, std::size_t last)
-    {
-        // Rewrite each open writer's header in place. JUCE's flush() seeks
-        // back to the header, writes it (RIFF, or RF64 once bytesWritten
-        // crosses 4 GiB -- the ds64 slot was reserved at creation), then
-        // seeks back to the data end to keep appending. Runs on the writer
-        // thread, never the audio thread.
-        for (std::size_t i = first; i < last && i < writers.size(); ++i)
-        {
-            auto& w = writers[i];
-            const auto flush = [] (juce::AudioFormatWriter* writer)
-            {
-                if (writer == nullptr) return true;
-                if (dynamic_cast<FloatAiffWriter*> (writer) != nullptr)
-                    return flushFloatAiffBeforeClose (writer);
-                writer->flush(); // Other JUCE codecs may report unsupported.
-                return true;
-            };
-            if (! flush (w.writer.get())) primaryFailed.store (true, std::memory_order_relaxed);
-            if (! flush (w.backupWriter.get())) backupFailed.store (true, std::memory_order_relaxed);
-            for (auto& m : w.mirrors)
-                if (! m.failed && ! flush (m.writer.get()))
-                { m.failed = true; mirrorFailed.store (true, std::memory_order_relaxed); }
-        }
-    }
-
+    // The distributor: audio FIFOs to every copy's ring, no disk. Telemetry is
+    // published here for the same reason. A copy stuck in a write cannot report
+    // that it is stuck, but this thread sees its counters stop.
     void MultitrackRecorder::drainShard (ShardClient& shard)
     {
         if (! writersReady.load (std::memory_order_acquire)) return;
@@ -3409,11 +3436,8 @@ namespace zynforge
         // must not read the single-reader FIFO concurrently. Consumer-side
         // only -- never contends the audio thread.
         const juce::ScopedLock sl (shard.drainLock);
-        if (shard.preRollPending) dumpPreRollForShard (shard);
 
-        const auto t0 = juce::Time::getMillisecondCounterHiRes();
-        juce::int64 totalWritten = 0;
-        int         worstFillPct = 0;
+        int worstFillPct = 0;
 
         const std::size_t first = (std::size_t) juce::jmax (0, shard.firstChannel);
         const std::size_t last  = (std::size_t) juce::jmax (0, shard.lastChannel);
@@ -3423,113 +3447,19 @@ namespace zynforge
              ++i)
         {
             auto& cf = *fifos[i];
-            auto& w  = writers[i];
+            const auto& w  = writers[i];
             // Skip only channels that don't participate in the take (empty
-            // stereo-R slots, unarmed/bus). A participating channel with a
-            // failed (nulled) primary MUST still drain so its backup + mirrors
-            // keep capturing and its FIFO doesn't overflow -- the failover
-            // guarantee. Each write below is already individually null-guarded.
+            // stereo-R slots, unarmed/bus).
             if (! w.active) continue;
 
             // Track FIFO occupancy so the dashboard can warn the engineer
-            // BEFORE samples are dropped -- at 80%+ the disk is falling
-            // behind the audio thread.
+            // BEFORE samples are dropped.
             const int cap = (int) cf.data.size();
             if (cap > 0)
             {
                 const int pct = (cf.fifo.getNumReady() * 100) / cap;
                 if (pct > worstFillPct) worstFillPct = pct;
             }
-
-            // Roll a writer over to the next part file when it's about
-            // to cross its format's chunk-size ceiling. Closing the
-            // current writer (.reset()) finalises the header so the
-            // file we're leaving behind is valid; opening the next
-            // part keeps recording continuous from the engineer's POV.
-            auto rollIfNeeded = [this] (WriterChannel& wc, int samplesPending) noexcept
-            {
-                // Byte projection counts ALL channels in the file: a stereo
-                // pair's interleaved 2-ch file grows twice as fast per frame,
-                // so it must roll (or promote to RF64) at the same wall-clock
-                // size as two mono files would.
-                const juce::int64 chans = (juce::int64) juce::jmax (1, wc.numChannels);
-                if (wc.writer != nullptr)
-                {
-                    const juce::int64 projected = wc.bytesWrittenPrimary
-                        + (juce::int64) samplesPending * chans * wc.bytesPerSamplePrimary;
-                    if (projected >= maxBytesForContainer (wc.primaryContainer))
-                    {
-                        if (! flushFloatAiffBeforeClose (wc.writer.get()))
-                            primaryFailed.store (true, std::memory_order_relaxed);
-                        wc.writer.reset();   // closes + finalises header
-                        ++wc.partNumberPrimary;
-                        const auto nextFile = wc.primaryBaseFile.getParentDirectory()
-                            .getChildFile (wc.primaryBaseFile.getFileName()
-                                           + "_part"
-                                           + juce::String::formatted ("%02d", wc.partNumberPrimary)
-                                           + wc.primaryExt);
-                        wc.writer.reset (openWriterAtPath (nextFile, wc.primaryContainer,
-                                                           wc.primaryBitDepth, wc, wc.totalSamplesPrimary));
-                        wc.bytesWrittenPrimary = 0;
-                        if (wc.writer != nullptr)
-                            wc.partFilesPrimary.add (nextFile.getFileName());
-                        else
-                            primaryFailed.store (true, std::memory_order_relaxed);   // next part wouldn't open (disk full at ceiling)
-                    }
-                }
-                if (wc.backupWriter != nullptr)
-                {
-                    const juce::int64 projected = wc.bytesWrittenBackup
-                        + (juce::int64) samplesPending * chans * wc.bytesPerSampleBackup;
-                    if (projected >= maxBytesForContainer (wc.backupContainer))
-                    {
-                        if (! flushFloatAiffBeforeClose (wc.backupWriter.get()))
-                            backupFailed.store (true, std::memory_order_relaxed);
-                        wc.backupWriter.reset();
-                        ++wc.partNumberBackup;
-                        const auto nextFile = wc.backupBaseFile.getParentDirectory()
-                            .getChildFile (wc.backupBaseFile.getFileName()
-                                           + "_part"
-                                           + juce::String::formatted ("%02d", wc.partNumberBackup)
-                                           + wc.backupExt);
-                        wc.backupWriter.reset (openWriterAtPath (nextFile, wc.backupContainer,
-                                                                  wc.backupBitDepth, wc, wc.totalSamplesBackup));
-                        wc.bytesWrittenBackup = 0;
-                        if (wc.backupWriter != nullptr)
-                            wc.partFilesBackup.add (nextFile.getFileName());
-                        else
-                            backupFailed.store (true, std::memory_order_relaxed);
-                    }
-                }
-                // Mirror writers -- same per-destination roll logic.
-                for (auto& m : wc.mirrors)
-                {
-                    if (m.writer == nullptr || m.failed) continue;
-                    const juce::int64 projected = m.bytesWritten
-                        + (juce::int64) samplesPending * chans * m.bytesPerSample;
-                    if (projected >= maxBytesForContainer (m.container))
-                    {
-                        if (! flushFloatAiffBeforeClose (m.writer.get()))
-                        { m.failed = true; mirrorFailed.store (true, std::memory_order_relaxed); }
-                        m.writer.reset();
-                        ++m.partNumber;
-                        const auto nextFile = m.baseFile.getParentDirectory()
-                            .getChildFile (m.baseFile.getFileName()
-                                           + "_part"
-                                           + juce::String::formatted ("%02d", m.partNumber)
-                                           + m.ext);
-                        m.writer.reset (openWriterAtPath (nextFile, m.container, m.bitDepth, wc, m.totalSamples));
-                        m.bytesWritten = 0;
-                        if (m.writer != nullptr)
-                            m.partFiles.add (nextFile.getFileName());
-                        else
-                        {
-                            m.failed = true;   // next mirror part wouldn't open
-                            mirrorFailed.store (true, std::memory_order_relaxed);
-                        }
-                    }
-                }
-            };
 
             // Snapshot a finite timeline budget so live callbacks cannot keep
             // this drain running forever. Each stereo side supplies its own
@@ -3543,7 +3473,7 @@ namespace zynforge
                 if (right != nullptr)
                     remaining = juce::jmin (remaining, right->producedFrames - right->consumedFrames);
             }
-            constexpr int chunkLimit = 8192;
+            constexpr int chunkLimit = CaptureCopy::kChunkFrames;
             if (remaining > 0)
             {
                 shard.stageL.resize ((size_t) juce::jmin (remaining, (juce::int64) chunkLimit));
@@ -3555,8 +3485,8 @@ namespace zynforge
                 ChannelFifo::DrainPlan leftPlan, rightPlan;
                 {
                     // Only bounded cursor/descriptor operations. The reserved
-                    // sample ranges stay occupied until AFTER the disk write,
-                    // so the producer cannot overwrite a copied/read span.
+                    // sample ranges stay occupied until they reach the copies,
+                    // so the producer cannot overwrite a span being read.
                     const juce::SpinLock::ScopedLockType guard (captureBoundary);
                     cf.reserveTimeline (leftPlan, frames);
                     if (right != nullptr) right->reserveTimeline (rightPlan, frames);
@@ -3594,68 +3524,21 @@ namespace zynforge
                 };
                 materialize (cf, leftPlan, shard.stageL);
                 if (right != nullptr) materialize (*right, rightPlan, shard.stageR);
-                const float* const audio[] { shard.stageL.data(), right != nullptr ? shard.stageR.data() : nullptr };
-                rollIfNeeded (w, frames);
-                if (w.writer != nullptr)
-                {
-                    if (! w.writer->writeFromFloatArrays (audio, channels, frames))
-                    {
-                        w.writer.reset();
-                        primaryFailed.store (true, std::memory_order_relaxed);
-                    }
-                    else
-                    {
-                        w.bytesWrittenPrimary += (juce::int64) frames * channels * w.bytesPerSamplePrimary;
-                        w.totalSamplesPrimary += frames;
-                    }
-                }
-                if (w.backupWriter != nullptr)
-                {
-                    if (! w.backupWriter->writeFromFloatArrays (audio, channels, frames))
-                    {
-                        w.backupWriter.reset();
-                        backupFailed.store (true, std::memory_order_relaxed);
-                    }
-                    else
-                    {
-                        w.bytesWrittenBackup += (juce::int64) frames * channels * w.bytesPerSampleBackup;
-                        w.totalSamplesBackup += frames;
-                    }
-                }
-                for (auto& mirror : w.mirrors)
-                {
-                    if (mirror.writer == nullptr || mirror.failed) continue;
-                    if (! mirror.writer->writeFromFloatArrays (audio, channels, frames))
-                    {
-                        mirror.writer.reset(); mirror.failed = true;
-                        mirrorFailed.store (true, std::memory_order_relaxed);
-                    }
-                    else
-                    {
-                        mirror.bytesWritten += (juce::int64) frames * channels * mirror.bytesPerSample;
-                        mirror.totalSamples += frames;
-                    }
-                }
-                totalWritten += (juce::int64) frames * channels;
+                for (auto& copy : copies)
+                    copy->push (i, shard.stageL.data(), right != nullptr ? shard.stageR.data() : nullptr, frames);
                 remaining -= frames;
             }
         }
 
-        // Periodic header flush (~every 5 s). Keeps each open file self-
-        // describing so a crash mid-take leaves a readable recording (header
-        // valid up to the last flush) instead of one with a stale/zero-length
-        // header -- and promotes a WAV past 4 GiB to RF64 on the way. Cheap: a
-        // seek + small header write per writer, on the writer thread.
+        juce::int64 bytesOut = 0;
+        int worstWriteMs = 0;
+        for (auto& copy : copies)
         {
-            const double nowMs = juce::Time::getMillisecondCounterHiRes();
-            const double lastF = lastWriterFlushMs.load (std::memory_order_relaxed);
-            if (nowMs - lastF >= 5000.0)
-            {
-                lastWriterFlushMs.store (nowMs, std::memory_order_relaxed);
-                flushOpenWriters ((std::size_t) juce::jmax (0, shard.firstChannel),
-                                  (std::size_t) juce::jmax (0, shard.lastChannel));
-            }
+            bytesOut += copy->bytesOut.load (std::memory_order_relaxed);
+            worstWriteMs = juce::jmax (worstWriteMs, copy->lastWriteMs.load (std::memory_order_relaxed));
+            worstFillPct = juce::jmax (worstFillPct, copy->fillPercent());
         }
+        lastWriteMs.store (worstWriteMs, std::memory_order_relaxed);
 
         // Publish this shard's worst FIFO fill so the global aggregator
         // can report the max across shards. EMA release so it doesn't
@@ -3668,52 +3551,20 @@ namespace zynforge
             shard.shardRingFillPct.store (next, std::memory_order_relaxed);
         }
 
-        // Disk throughput: count bytes written in a rolling 1 s window.
-        // bitsPerSample is derived from the active capture format below.
-        auto bitsForFormat = [] (CaptureFormat f) -> int
-        {
-            switch (f)
-            {
-                case CaptureFormat::Wav16:  case CaptureFormat::Aiff16: case CaptureFormat::Flac16: return 16;
-                case CaptureFormat::Wav32Float: case CaptureFormat::Aiff32Float:                   return 32;
-                default: return 24;
-            }
-        };
-        const int  bytesPerSampPrimary = bitsForFormat (captureFormat)       / 8;
-        const int  bytesPerSampBackup  = bitsForFormat (backupCaptureFormat) / 8;
-        const bool backupActiveNow     = backupActive.load (std::memory_order_relaxed) && ! backupFailed.load (std::memory_order_relaxed);
-        int bytesPerSampMirrors = 0;
-        for (const auto& mc : activeMirrors)
-            bytesPerSampMirrors += bitsForFormat (mc.format) / 8;
-        const juce::int64 bytesThisDrain = totalWritten
-                                           * (bytesPerSampPrimary
-                                              + (backupActiveNow ? bytesPerSampBackup : 0)
-                                              + bytesPerSampMirrors);
-        shard.throughputAccumBytes += bytesThisDrain;
-
+        // Disk throughput over a rolling window.
         const auto now = juce::Time::getMillisecondCounterHiRes();
-        if (shard.throughputWindowMs <= 0.0) shard.throughputWindowMs = now;
+        if (shard.throughputWindowMs <= 0.0)
+        {
+            shard.throughputWindowMs  = now;
+            shard.throughputBaseBytes = bytesOut;
+        }
         const double dtMs = now - shard.throughputWindowMs;
         if (dtMs >= 250.0)
         {
-            const double bps = (dtMs > 0.0)
-                                  ? ((double) shard.throughputAccumBytes * 1000.0 / dtMs)
-                                  : 0.0;
+            const double bps = (double) (bytesOut - shard.throughputBaseBytes) * 1000.0 / dtMs;
             shard.shardBytesPerSec.store ((float) bps, std::memory_order_relaxed);
-            shard.throughputAccumBytes = 0;
-            shard.throughputWindowMs   = now;
+            shard.throughputBaseBytes = bytesOut;
+            shard.throughputWindowMs  = now;
         }
-
-        if (totalWritten > 0)
-        {
-            const auto elapsed = juce::Time::getMillisecondCounterHiRes() - t0;
-            lastWriteMs.store ((int) elapsed, std::memory_order_relaxed);
-        }
-        // NOTE: the periodic header flush is the wall-clock block ABOVE
-        // (lastWriterFlushMs). A second, audio-time flush used to live here
-        // doing the same job on the same ~5 s cadence -- and it iterated EVERY
-        // writer rather than this shard's range, so with more than one shard
-        // each thread flushed other shards' writers behind their backs. One
-        // timer, scoped to the shard, is the whole job.
     }
 }

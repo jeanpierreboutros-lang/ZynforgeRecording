@@ -176,6 +176,7 @@ namespace zynforge::capture
                     { r.error = "capture audio device is stopped"; }
                 else
                 {
+                    if (beforeStartForTests) beforeStartForTests();
                     dir.createDirectory();
                     // Continue into a new part even after reattaching/restarting
                     // the GUI. Existing takes must never be truncated.
@@ -396,6 +397,7 @@ namespace zynforge::capture
         s.reportWriteFailed = recorder.hasReportWriteFailed();
         s.diskStruggling = recorder.isDiskStruggling();
         s.channelAlarms  = recorder.evaluateChannelAlarms();
+        s.copyProblems   = recorder.getCopyProblems();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {

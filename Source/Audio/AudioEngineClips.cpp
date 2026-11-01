@@ -489,6 +489,44 @@ namespace zynforge
         return juce::var (tracks);
     }
 
+    juce::var AudioEngine::mediaLengthsToJson() const
+    {
+        juce::Array<juce::var> lengths;
+        for (int i = 0; i < player.getNumTracks(); ++i)
+            lengths.add (juce::var (player.getTrackLengthSamples (i)));
+        return juce::var (lengths);
+    }
+
+    void AudioEngine::reconcileClipsWithMedia (const juce::var& savedLengths, bool afterCrash)
+    {
+        const auto* saved = savedLengths.getArray();
+        if (saved == nullptr && ! afterCrash) return;
+
+        const int n = player.getNumTracks();
+        if ((int) sourceTrackLengths.size() < n) sourceTrackLengths.resize ((size_t) n);
+        if ((int) trackClips.size() < n) return;
+
+        bool grew = false;
+        std::vector<juce::int64> known ((size_t) n);
+        for (int i = 0; i < n; ++i)
+        {
+            const auto media = player.getTrackLengthSamples (i);
+            juce::int64 covered = 0;
+            for (const auto& clip : trackClips[(size_t) i])
+                if (clip.audioFile == juce::File())
+                    covered = juce::jmax (covered, clip.fileStartSamples + clip.fileLengthSamples);
+            const auto before = saved != nullptr ? (i < saved->size() ? (juce::int64) (*saved)[i] : 0) : covered;
+            known[(size_t) i] = covered >= media ? media : juce::jmin (before, media);
+            grew = grew || known[(size_t) i] < media;
+        }
+        if (! grew) return;
+
+        // STOP's own path, from the length these clips knew: a plain clip
+        // grows, an edited arrangement keeps every edit and gains a new clip.
+        for (int i = 0; i < n; ++i) sourceTrackLengths[(size_t) i] = known[(size_t) i];
+        seedDefaultClips (/*preserveEdits*/ true, /*appendRecordedAudio*/ true);
+    }
+
     namespace
     {
         bool readSampleCoordinate (const juce::var& value, juce::int64& result)
