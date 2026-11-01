@@ -5,7 +5,10 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../UI/MainComponent.h"
+#include "../UI/AudioDeviceDialog.h"
+#include "../UI/ControlSurfacesDialog.h"
 #include "../UI/RecordPosition.h"
+#include "../UI/SessionSettingsDialog.h"
 #include "../Audio/ChannelAlarm.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/NoiseAnalyzer.h"
@@ -291,6 +294,7 @@ namespace zynforge
             sessionLeaving();
             analysisStaysOutOfTheTake();
             consoleWaitsForTheTake();
+            mainWindowRepairs();
         }
 
     private:
@@ -1081,6 +1085,377 @@ namespace zynforge
                 w.main.consoleToggleSoundcheck();
                 expect (! sent.empty(), "the repatch stayed refused after the take");
                 w.main.consoleLink.setSendHook (nullptr);
+            }
+        }
+
+        static int modalCount()
+        {
+            return juce::ModalComponentManager::getInstance()->getNumModalComponents();
+        }
+
+        // Ends every open modal by its Cancel-style result and lets it clean up.
+        static void dismissModals()
+        {
+            auto* modals = juce::ModalComponentManager::getInstance();
+            for (int i = modals->getNumModalComponents(); --i >= 0;)
+                if (auto* c = modals->getModalComponent (i)) c->exitModalState (0);
+            pumpUntil ([] { return modalCount() == 0; }, 2000);
+        }
+
+        void mainWindowRepairs()
+        {
+            beginTest ("LOCK keeps a locked take from Cmd+Q then Return");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.engine().armContinue (w.engine().getCaptureLengthSamples());
+                expect (w.engine().startRecording (w.session), w.recorder().getStartError());
+                w.main.onLockToggled();
+                w.main.confirmAndQuit();
+                expectEquals (modalCount(), 0, "the Stop & Quit dialog opened under LOCK");
+                expect (w.main.statusLabel.getText().containsIgnoreCase ("unlock"), w.main.statusLabel.getText());
+                w.main.onLockToggled();
+                dismissModals();
+            }
+
+            beginTest ("The no-session Quit dialog rechecks for a take");
+            {
+                Window w;
+                w.engine().clearSessionState();
+                w.main.confirmAndQuit();
+                expectEquals (modalCount(), 1, "no quit dialog");
+                w.recorder().getTrack (0).armed.store (true);
+                const auto fresh = tempDir ("quit-take");
+                w.dirs.add (fresh);
+                expect (w.recorder().startRecording (fresh), w.recorder().getStartError());
+                if (auto* quit = juce::ModalComponentManager::getInstance()->getModalComponent (0))
+                    quit->exitModalState (1);
+                expect (pumpUntil ([&]
+                {
+                    auto* top = juce::ModalComponentManager::getInstance()->getModalComponent (0);
+                    return top != nullptr && dynamic_cast<juce::AlertWindow*> (top) != nullptr
+                        && top->getName() == "Recording is still rolling";
+                }, 2000), "the dialog quit past a live take");
+                dismissModals();
+            }
+
+            beginTest ("Session > Patch and Meterbridge reuse one tracked window, and LOCK reaches it");
+            {
+                Window w;
+                const auto& commands = w.main.getMenuCommands();
+                const int before = juce::TopLevelWindow::getNumTopLevelWindows();
+                commands.dispatch (50);
+                commands.dispatch (50);
+                commands.dispatch (51);
+                commands.dispatch (51);
+                expectEquals (juce::TopLevelWindow::getNumTopLevelWindows(), before + 2, "a second window opened");
+                expect (w.main.patchDialog != nullptr, "the menu's Patch window is untracked");
+                expect (w.main.metersDialog != nullptr, "the menu's Meterbridge is untracked");
+                w.main.onLockToggled();
+                expect (w.main.patchDialog != nullptr && ! w.main.patchDialog->isEnabled(), "LOCK did not reach it");
+                w.main.onLockToggled();
+                delete w.main.patchDialog.getComponent();
+                delete w.main.metersDialog.getComponent();
+            }
+
+            beginTest ("Pre-flight never calls a disk fine that RECORD would refuse");
+            {
+                const auto want = recordHeadroomBytes (48000.0, 56, CaptureFormat::Wav24);
+                expectEquals (want, (juce::int64) 48000 * 56 * 3 * 60 * 30);
+                expectEquals (recordHeadroomBytes (48000.0, 1, CaptureFormat::Wav32Float),
+                              (juce::int64) 48000 * 4 * 60 * 30);
+                expectEquals (recordHeadroomBytes (48000.0, 1, CaptureFormat::Flac16),
+                              (juce::int64) 48000 * 2 * 60 * 30);
+                expect (! preflightDiskOk (10.0, want, 56), "10 GB for 56 tracks is 20 minutes, and RECORD refuses it");
+                expect (preflightDiskOk (20.0, want, 56));
+                expect (preflightDiskOk (10.0, 0, 0));
+            }
+
+            beginTest ("Welcome's Create takes the session's rate even when the device is already there");
+            {
+                Window w;
+                w.main.pendingSampleRate = 44100.0;
+                WelcomeDialog::NewResult r;
+                r.name = "Rate";
+                r.location = tempDir ("welcome-root");
+                r.sampleRate = kRate;
+                r.captureFormat = CaptureFormat::Wav24;
+                w.dirs.add (r.location);
+                w.main.createSessionFromWelcome (r);
+                expectWithinAbsoluteError (w.main.pendingSampleRate, kRate, 0.5, "Create left the old rate behind");
+                w.engine().setStripCount (2);
+                w.main.engine.prepareForTests (kRate, kBlock);
+            }
+
+            beginTest ("A session with no audio opened is a session that opened");
+            {
+                Window w;
+                const auto empty = tempDir ("empty");
+                w.dirs.add (empty);
+                empty.getChildFile ("Audio Files").createDirectory();
+                w.main.openSessionFromWelcome (empty);
+                expect (w.main.statusLabel.getText().contains ("Opened empty"), w.main.statusLabel.getText());
+                w.main.showStartupWelcome();
+                expectEquals (modalCount(), 0, "Welcome opened over a session that reopened empty");
+                dismissModals();
+                w.main.openSessionFromWelcome (tempDir ("missing"));
+                expect (w.main.statusLabel.getText().contains ("Failed"), w.main.statusLabel.getText());
+            }
+
+            beginTest ("The tour runs first, and Welcome waits for it");
+            {
+                Window w;
+                bool finished = false;
+                w.main.showFirstRunTutorial ([&finished] { finished = true; });
+                expectEquals (modalCount(), 1);
+                expect (! finished, "Welcome came up under the tour");
+                dismissModals();
+                expect (pumpUntil ([&finished] { return finished; }, 2000), "Welcome never followed the tour");
+            }
+
+            beginTest ("Session Info shows the format in use, not the one at creation");
+            {
+                Window w;
+                w.recorder().setCaptureFormat (CaptureFormat::Flac16);
+                w.main.showSessionProperties();
+                juce::StringArray texts;
+                if (auto* dialog = juce::ModalComponentManager::getInstance()->getModalComponent (0))
+                {
+                    const std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+                    {
+                        if (auto* label = dynamic_cast<juce::Label*> (&c)) texts.add (label->getText());
+                        for (auto* child : c.getChildren()) walk (*child);
+                    };
+                    walk (*dialog);
+                }
+                expect (texts.joinIntoString (" ").contains ("FLAC"), texts.joinIntoString (" | "));
+                expect (texts.contains ("16-bit"));
+                dismissModals();
+                w.recorder().setCaptureFormat (CaptureFormat::Wav24);
+            }
+
+            beginTest ("The meterbridge follows renames and a same-count session swap");
+            {
+                Window w;
+                w.main.openMetersWindow();
+                w.engine().setTrackName (0, "Renamed");
+                const auto labelled = [&] (const juce::String& text)
+                {
+                    const std::function<bool (juce::Component&)> walk = [&] (juce::Component& c)
+                    {
+                        if (auto* label = dynamic_cast<juce::Label*> (&c))
+                            if (label->getText() == text) return true;
+                        for (auto* child : c.getChildren()) if (walk (*child)) return true;
+                        return false;
+                    };
+                    return w.main.metersDialog != nullptr && walk (*w.main.metersDialog);
+                };
+                expect (pumpUntil ([&] { return labelled ("Renamed"); }, 2000), "the bridge kept the old name");
+                delete w.main.metersDialog.getComponent();
+            }
+
+            beginTest ("A refused backup folder is neither claimed nor saved");
+            {
+                Window w;
+                const auto before = w.recorder().getBackupDirectory();
+                const auto saved = w.engine().getAppProps()->getValue ("backupDirectory");
+                const auto other = tempDir ("backup");
+                w.dirs.add (other);
+                w.arm ({ 0 });
+                w.engine().armContinue (w.engine().getCaptureLengthSamples());
+                expect (w.engine().startRecording (w.session), w.recorder().getStartError());
+                w.main.backupButton.setButtonText ("BACKUP");
+                w.main.applyBackupFolder (other);
+                expect (w.main.backupButton.getButtonText() == "BACKUP", "the header claimed success");
+                expect (w.recorder().getBackupDirectory() == before);
+                expectEquals (w.engine().getAppProps()->getValue ("backupDirectory"), saved,
+                              "a refused folder was saved for the next launch");
+                feedAll (w.recorder(), 0.1f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+            }
+
+            beginTest ("With no session there is no rate to disagree with");
+            {
+                Window w;
+                w.engine().clearSessionState();
+                w.main.pendingSampleRate = 48000.0;
+                w.main.checkDeviceSampleRate (44100.0);
+                expect (w.main.srWarnLabel.getText().isEmpty(), "a false alarm with no session");
+                expectEquals (modalCount(), 0, "a false modal with no session");
+                expectWithinAbsoluteError (w.main.pendingSampleRate, 44100.0, 0.5);
+                dismissModals();
+                w.main.pendingSampleRate = 48000.0;
+                w.main.srMismatchWarned = 0.0;
+            }
+
+            beginTest ("A real rate mismatch in a session still warns");
+            {
+                Window w;
+                w.main.pendingSampleRate = 48000.0;
+                w.main.checkDeviceSampleRate (44100.0);
+                expect (w.main.srWarnLabel.getText().contains ("MISMATCH"));
+                dismissModals();
+                w.main.checkDeviceSampleRate (48000.0);
+                expect (w.main.srWarnLabel.getText().isEmpty());
+            }
+
+            beginTest ("A strip named Click keeps its R and I; the generated click does not");
+            {
+                Window w;
+                w.engine().setTrackName (0, "Click");
+                w.main.rebuildStrips();
+                w.main.strips.front()->setSize (120, 500);
+                auto armVisible = [&]
+                {
+                    for (auto* child : w.main.strips.front()->getChildren())
+                        if (child->getTitle().containsIgnoreCase ("arm") || child->getTitle().containsIgnoreCase ("record"))
+                            return child->isVisible();
+                    return false;
+                };
+                expect (armVisible(), "a recorded click return lost its R button");
+                w.recorder().getTrack (0).referenceMedia.store (true);
+                w.main.strips.front()->resized();
+                expect (! armVisible(), "the generated click grew an R button");
+                w.recorder().getTrack (0).referenceMedia.store (false);
+            }
+
+            beginTest ("A session saved before the flag still knows its click strip");
+            {
+                Window w;
+                w.engine().setTrackName (1, "Click");
+                w.engine().setTrackInputRouting (1, -1);
+                expect (w.engine().saveSessionMixTo (w.session));
+                const auto mix = w.session.getChildFile ("session_mix.json");
+                auto text = mix.loadFileAsString();
+                expect (text.contains ("referenceMedia"));
+                auto stripped = text.replace ("\"referenceMedia\": false,", "").replace ("\"referenceMedia\": true,", "");
+                mix.replaceWithText (stripped);
+                w.open (w.session);
+                expect (w.recorder().getTrack (1).referenceMedia.load(), "an old session lost its click strip");
+                expect (! w.recorder().getTrack (0).referenceMedia.load());
+            }
+
+            beginTest ("Pre-roll and the Generic OSC token have a real home");
+            {
+                Window w;
+                w.recorder().setPreRollSeconds (0);
+                SessionSettingsDialog::launch (w.engine(), {}, {});
+                juce::ComboBox* preRoll = nullptr;
+                juce::Button* apply = nullptr;
+                if (auto* dialog = juce::ModalComponentManager::getInstance()->getModalComponent (0))
+                {
+                    const std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+                    {
+                        if (auto* box = dynamic_cast<juce::ComboBox*> (&c))
+                            if (box->getTitle() == "Pre-roll") preRoll = box;
+                        if (auto* b = dynamic_cast<juce::Button*> (&c))
+                            if (b->getButtonText() == "Apply" || b->getButtonText() == "OK") apply = b;
+                        for (auto* child : c.getChildren()) walk (*child);
+                    };
+                    walk (*dialog);
+                }
+                expect (preRoll != nullptr && preRoll->getWidth() > 0, "no pre-roll control");
+                expect (apply != nullptr);
+                if (preRoll != nullptr && apply != nullptr)
+                {
+                    preRoll->setSelectedId (11, juce::dontSendNotification);
+                    apply->onClick();
+                    expectEquals (w.recorder().getPreRollSeconds(), 10);
+                }
+                dismissModals();
+                w.recorder().setPreRollSeconds (0);
+
+                cs_detail::ProtoInfo generic { "Open Sound Control (OSC)", true, 0, "osc", "/zynforge/" };
+                cs_detail::OscSettings panel (w.engine(), generic, {});
+                juce::Label* token = nullptr;
+                for (auto* child : panel.getChildren())
+                    if (auto* label = dynamic_cast<juce::Label*> (child))
+                        if (label->getTitle() == "OSC access token") token = label;
+                expect (token != nullptr && token->getWidth() > 0, "the Generic OSC token is shown nowhere");
+                if (token != nullptr)
+                {
+                    expect (w.engine().getRemotes().startOsc (49391, 0));
+                    panel.refreshToken();
+                    expectEquals (token->getText(), w.engine().getRemotes().getOscAccessToken());
+                    expect (token->getText().isNotEmpty());
+                    w.engine().getRemotes().stopOsc();
+                }
+            }
+
+            beginTest ("A cue fade stops when strips move, and a click refresh waits for the take");
+            {
+                Window w (3);
+                w.main.cueRamp.active = true;
+                expect (w.engine().reorderTracks ({ 2, 1, 0 }));
+                expect (! w.main.cueRamp.active, "a fade kept writing to indices that moved");
+            }
+
+            beginTest ("A tempo cue recalled during a take refreshes the click afterwards");
+            {
+                Window w;
+                w.main.clickTrackIndex = 0;
+                w.recorder().getTrack (0).referenceMedia.store (true);
+                w.engine().setSessionTempoBpm (120.0f);
+                SetlistBar::Cue cue;
+                cue.name = "Fast";
+                cue.tempoBpm = 150.0f;
+                w.main.cues.push_back (cue);
+                w.arm ({ 1 });
+                w.engine().armContinue (w.engine().getCaptureLengthSamples());
+                expect (w.engine().startRecording (w.session), w.recorder().getStartError());
+                w.main.jumpToCue (0);
+                expect (w.main.clickRefreshPending, "the promised click refresh was never queued");
+                w.main.clickRefreshPending = false;
+                w.main.clickTrackIndex = -1;
+                feedAll (w.recorder(), 0.1f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+            }
+
+            beginTest ("Tap STOP again shows at once, ahead of anything queued");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording(), w.main.statusLabel.getText());
+                w.main.toast.show ("Earlier");
+                w.main.toast.show ("Waiting");
+                w.main.onStopClicked();
+                expect (w.main.toast.getCurrentMessage().contains ("Tap STOP"), w.main.toast.getCurrentMessage());
+                feedAll (w.recorder(), 0.1f, 4);
+                w.main.onStopClicked();
+                expect (w.stopped());
+            }
+
+            beginTest ("VSC and the report writers wait for the take");
+            {
+                Window w;
+                w.engine().setTrackOutputRouting (0, 5);
+                w.arm ({ 0 });
+                w.engine().armContinue (w.engine().getCaptureLengthSamples());
+                expect (w.engine().startRecording (w.session), w.recorder().getStartError());
+                w.main.onVscClicked();
+                expectEquals (w.recorder().getTrack (0).outputRouting.load(), 5, "VSC repatched under a live take");
+                const auto listed = w.session.findChildFiles (juce::File::findFiles, true, "*eport*").size();
+                w.main.writeSoundcheckReport();
+                expectEquals (w.session.findChildFiles (juce::File::findFiles, true, "*eport*").size(), listed,
+                              "a report was written to the take volume");
+                w.main.cues.push_back ({});
+                w.main.printSetlist();
+                expect (! w.session.getChildFile ("setlist.html").existsAsFile(), "the setlist was written to the take volume");
+                feedAll (w.recorder(), 0.1f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+            }
+
+            beginTest ("A self-owned device dialog is gone before the engine is");
+            {
+                Window w;
+                AudioDeviceDialog::launch (w.engine(), true);
+                expectEquals (modalCount(), 1);
+                AudioDeviceDialog::closeSelfOwned();
+                expect (pumpUntil ([] { return modalCount() == 0; }, 2000), "the dialog outlived its close");
             }
         }
 
