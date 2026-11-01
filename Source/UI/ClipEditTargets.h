@@ -57,6 +57,13 @@ namespace zynforge::clipedit
         return peers;
     }
 
+    // 0 a mono strip, 1 a stereo L, 2 a stereo R.
+    inline int stereoHalf (AudioEngine& engine, int track)
+    {
+        if (areStereoPartners (engine, track, track + 1)) return 1;
+        return areStereoPartners (engine, track - 1, track) ? 2 : 0;
+    }
+
     // Peer's own clip for clip clipIdx of `track`; -1 when it has nothing there.
     inline int peerClipIndex (AudioEngine& engine, int track, int clipIdx, int peer)
     {

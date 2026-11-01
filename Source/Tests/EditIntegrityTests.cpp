@@ -1004,6 +1004,33 @@ namespace zynforge
                 s.engine.getPlayer().clearLoopRegion();
             }
 
+            beginTest ("A clip pastes only onto a strip of its own stereo layout");
+            {
+                Show s (3, { 48000, 48000, 48000 });
+                s.engine.setTrackStereo (0, true);
+                s.page().refresh();
+                s.page().setSelectedClip (0, 0);
+                s.main.editClipboardCut (false);
+                s.page().clearSelectedClip();
+
+                s.page().setActiveRowTrackIndex (2);          // a mono strip
+                s.engine.getPlayer().setPositionSamples (0);
+                s.main.editClipboardPaste();
+                expectEquals ((int) s.clips (2).size(), 1, "the stereo clip landed on a mono strip");
+
+                s.page().setActiveRowTrackIndex (0);          // its own stereo strip
+                s.main.editClipboardPaste();
+                expectEquals ((int) s.clips (0).size(), 2);
+                expectEquals ((int) s.clips (1).size(), 2, "both halves belong on the stereo strip");
+
+                s.page().setSelectedClip (2, 0);
+                s.main.editClipboardCut (false);
+                s.page().clearSelectedClip();
+                s.page().setActiveRowTrackIndex (0);
+                s.main.editClipboardPaste();
+                expectEquals ((int) s.clips (0).size(), 2, "a mono clip landed on one half of a pair");
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

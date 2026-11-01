@@ -1181,6 +1181,7 @@ void MainComponent::editClipboardCut (bool cut)
             { showStatus ("Copy failed: selected clip media is missing"); return; }
             auto* o = new juce::DynamicObject();
             o->setProperty ("track", track);
+            o->setProperty ("stereoHalf", zynforge::clipedit::stereoHalf (engine, track));
             o->setProperty ("position", c.timelineStartSamples);
             o->setProperty ("audioFile", source.getFullPathName());
             o->setProperty ("sourceChannel", channel);
@@ -1241,6 +1242,10 @@ void MainComponent::editClipboardPaste()
             if (dest < 0 || dest >= tracks || (juce::int64) entry["fileLength"] <= 0
                 || ! juce::File (entry["audioFile"].toString()).existsAsFile())
             { showStatus ("Paste failed: missing media or selection extends beyond available tracks"); return; }
+            // A stereo clip needs a stereo strip and a mono clip a mono one: an
+            // R half landing on the next strip plays in an unrelated channel.
+            if ((int) entry["stereoHalf"] != zynforge::clipedit::stereoHalf (engine, dest))
+            { showStatus ("Paste refused: the clips and this strip differ in stereo layout"); return; }
         }
         const auto pos = currentPlayheadSamples (engine);
         const auto before = engine.playlistsToJson();
