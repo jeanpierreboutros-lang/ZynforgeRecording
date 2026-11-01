@@ -816,6 +816,55 @@ namespace zynforge
                 link.disconnect();
             }
 
+            beginTest ("A console link hears only the console");
+            {
+                juce::DatagramSocket shared (false);
+                expect (shared.bindToPort (0, "127.0.0.1"));
+
+                struct Heard final : juce::OSCReceiver::Listener<juce::OSCReceiver::MessageLoopCallback>
+                {
+                    int count { 0 };
+                    void oscMessageReceived (const juce::OSCMessage&) override { ++count; }
+                    void oscBundleReceived (const juce::OSCBundle&) override {}
+                } heard;
+
+                OscPacketReceiver receiver;
+                receiver.addListener (&heard);
+                juce::StringArray refused;
+                receiver.onRefusedPacket = [&] (const OscPacketReceiver::Source&, const juce::String& what) { refused.add (what); };
+                expect (receiver.connectToSocket (shared, "127.0.0.2"));
+
+                juce::DatagramSocket other (false);
+                const char packet[] = "/x\0\0,\0\0\0";
+                expectEquals (other.write ("127.0.0.1", shared.getBoundPort(), packet, 8), 8);
+                expect (waitFor ([&] { pumpMessages();
+                                       return receiver.getDroppedSourceCount() == 1 && refused.size() == 1; }));
+                expectEquals (heard.count, 0);
+                expectEquals (receiver.getLastDroppedSource(), juce::String ("127.0.0.1"));
+
+                expect (receiver.connectToSocket (shared, "127.0.0.1"));
+                expectEquals (other.write ("127.0.0.1", shared.getBoundPort(), packet, 8), 8);
+                expect (waitFor ([&] { pumpMessages(); return heard.count == 1; }));
+                receiver.disconnect();
+                receiver.removeListener (&heard);
+
+                // And ConsoleLink pins its own socket to the desk it dialled.
+                ConsoleLink link;
+                juce::StringArray traffic;
+                link.onTraffic = [&] (const juce::String& line) { traffic.add (line); };
+                expect (link.connect ("127.0.0.2", 47998));
+                auto* udp = dynamic_cast<OscUdpTransport*> (link.transport.get());
+                expect (udp != nullptr);
+                if (udp != nullptr)
+                {
+                    expectEquals (other.write ("127.0.0.1", udp->localPortForTests(), packet, 8), 8);
+                    expect (waitFor ([&] { pumpMessages();
+                                           return traffic.joinIntoString ("\n").contains ("pinned"); }),
+                            traffic.joinIntoString ("\n"));
+                }
+                link.disconnect();
+            }
+
             beginTest ("No Yamaha read sends a verb that can change the desk");
             {
                 expect (yamahaScpDialect().subscribe == nullptr, "a scene-recall verb was sent as a subscription");
