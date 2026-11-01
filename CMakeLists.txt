@@ -241,6 +241,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ConsoleVscTests.cpp
     Source/Tests/CrashScanTests.cpp
     Source/Tests/DialogAuditTests.cpp
+    Source/Tests/EditIntegrityTests.cpp
     Source/Tests/EditPageAccessibilityTests.cpp
     Source/Tests/EditRulerScrollTests.cpp
     Source/Tests/EditToolsBarAccessibilityTests.cpp

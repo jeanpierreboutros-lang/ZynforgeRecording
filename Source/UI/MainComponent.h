@@ -39,7 +39,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class EditIntegrityTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -335,6 +335,8 @@ private:
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
+    // Test seam: receives what either delete prompt would run on "Delete".
+    std::function<void (std::function<void()>)> confirmForTests;
 
     // Confirmation gate for deleting the selected channel(s) from the EDIT
     // view (right-click ▸ Delete Channel, or Delete on a selected channel).
@@ -381,6 +383,8 @@ private:
     void editNudgeSelectedClip (int dir);   // Alt+Left/Right / numpad -- slide
     void editRippleDelete();          // Shift+Delete -- delete + close the gap
     void editCycleNudgeValue();       // N -- cycle the nudge step, persisted
+    // The selected clips grown to their stereo halves and edit-group peers.
+    std::vector<zynforge::EditPage::ClipRef> selectedClipTargets();
     void editClipboardCut (bool cut); // Cmd+X / Cmd+C -- clip or strip settings
     void editClipboardPaste();        // Cmd+V -- clip at playhead or strip settings
     std::vector<int> tracksToEditPhysical();   // selected strips, else all
@@ -512,6 +516,7 @@ private:
     friend class zynforge::ConsoleVscTests;
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
+    friend class zynforge::EditIntegrityTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.

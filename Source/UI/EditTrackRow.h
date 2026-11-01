@@ -7,6 +7,7 @@
 
 #include "EditPage.h"
 #include "AutomationToolbar.h"
+#include "ClipEditTargets.h"
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
 #include "LivePeakHistory.h"
@@ -184,6 +185,10 @@ namespace zynforge
         };
         int      draggingClipIdx  { -1 };
         ClipDrag draggingClipMode { ClipDrag::TrimLeft };
+        // The clips a drag edits, resolved once at the first step and held for
+        // the whole gesture: resolving again as the clip travels could land on
+        // the neighbour it was dragged over.
+        std::vector<std::pair<int, int>> dragPeers;
         // Crossfade-midpoint drag. When >= 0, the engineer grabbed
         // the 6 px dot that paints at the midpoint of an overlap
         // between timeline-adjacent clips. draggingXfadeAIdx is the
@@ -3093,6 +3098,7 @@ namespace zynforge
             // accumulating per-frame).
             if (draggingClipIdx >= 0)
             {
+                if (dragPeers.empty()) dragPeers = peerClipTargets (draggingClipIdx);
                 const auto& player = engine.getPlayer();
                 // Map pixels at the scale the clip was GRABBED at. Dragging the
                 // last clip right grows the session on every step, and re-reading
@@ -3111,9 +3117,8 @@ namespace zynforge
                     {
                         const float dB = juce::jlimit (-60.0f, 12.0f,
                             dragStartGainDb + (float) (dragStartGainY - e.y) * 0.15f);
-                        for (int peer : editGroupPeers())
-                            if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                engine.setClipGainDb (peer, pi, dB);
+                        for (auto [peer, pi] : dragPeers)
+                            engine.setClipGainDb (peer, pi, dB);
                         repaint();
                     }
                     return;
@@ -3139,9 +3144,8 @@ namespace zynforge
                             const juce::int64 newIn = juce::jlimit<juce::int64> (
                                 0, c.fileLengthSamples - dragStartFadeOut,
                                 dragStartFadeIn + wantSamples);
-                            for (int peer : editGroupPeers())
-                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                    engine.setClipFades (peer, pi, newIn, dragStartFadeOut);
+                            for (auto [peer, pi] : dragPeers)
+                                engine.setClipFades (peer, pi, newIn, dragStartFadeOut);
                         }
                         else
                         {
@@ -3149,9 +3153,8 @@ namespace zynforge
                             const juce::int64 newOut = juce::jlimit<juce::int64> (
                                 0, c.fileLengthSamples - dragStartFadeIn,
                                 dragStartFadeOut - wantSamples);
-                            for (int peer : editGroupPeers())
-                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                    engine.setClipFades (peer, pi, dragStartFadeIn, newOut);
+                            for (auto [peer, pi] : dragPeers)
+                                engine.setClipFades (peer, pi, dragStartFadeIn, newOut);
                         }
                         repaint();
                         return;
@@ -3182,17 +3185,11 @@ namespace zynforge
                             }
                         if (stepSamples != 0)
                         {
-                            // Resolve peers before moving the source clip: peer
-                            // matching uses the original timeline intersection.
-                            std::vector<std::pair<int, int>> peers;
-                            for (int peer : editGroupPeers())
-                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                    peers.emplace_back (peer, pi);
                             // One bounded delta preserves alignment when any peer
                             // reaches zero, a source edge, or a locked clip.
-                            for (auto [peer, pi] : peers)
+                            for (auto [peer, pi] : dragPeers)
                                 stepSamples = engine.constrainClipEditDelta (peer, pi, mode, stepSamples);
-                            for (auto [peer, pi] : peers) engine.editClip (peer, pi, mode, stepSamples);
+                            for (auto [peer, pi] : dragPeers) engine.editClip (peer, pi, mode, stepSamples);
                             lastDragSamples += stepSamples;
                         }
                         repaint();
@@ -3324,6 +3321,7 @@ namespace zynforge
             draggingPointIdx = -1;
             draggingTensionSegIdx = -1;
             draggingClipIdx  = -1;
+            dragPeers.clear();
             draggingClipMode = ClipDrag::TrimLeft;
             draggingXfadeAIdx = -1;
             draggingXfadeBIdx = -1;
@@ -3373,18 +3371,13 @@ namespace zynforge
                 {
                     if (clickedClipIdx >= 0)
                     {
+                        // Either way it is this clip + the matching clip on the
+                        // R half and every EDIT-group peer.
+                        const auto refs = peerClipTargets (clickedClipIdx);
                         if (e.mods.isShiftDown())
-                            page->toggleSelectedClip (index, clickedClipIdx);
+                            page->toggleSelectedClips (refs, { index, clickedClipIdx });
                         else
-                        {
-                            // Plain click selects this clip + the matching
-                            // clip on every EDIT-group peer.
-                            std::vector<EditPage::ClipRef> refs;
-                            for (int peer : editGroupPeers())
-                                if (const int pi = peerClipIndex (peer, clickedClipIdx); pi >= 0)
-                                    refs.push_back ({ peer, pi });
                             page->setSelectedClips (refs, { index, clickedClipIdx });
-                        }
                     }
                     else if (! e.mods.isShiftDown())
                         page->clearSelectedClip();
@@ -3437,72 +3430,25 @@ namespace zynforge
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
 
-        // Physical tracks this row's clip edits propagate to: itself plus
-        // every member of its EDIT group (so split / trim / move / fade /
-        // selection stay phase-coherent across grouped tracks). Ungrouped
-        // tracks return just themselves.
-        std::vector<int> editGroupPeers() const
-        {
-            const int g = engine.getTrackEditGroup (index);
-            std::vector<int> v = g < 0 ? std::vector<int> { index }
-                                       : engine.getStripsInEditGroup (g);
-            if (v.empty()) v.push_back (index);
+        // Physical tracks this row's clip edits propagate to: both halves of a
+        // stereo strip plus every member of its EDIT group, so split / trim /
+        // move / fade / selection stay phase-coherent. An ungrouped mono track
+        // returns just itself.
+        std::vector<int> editGroupPeers() const { return clipedit::peerTracks (engine, index); }
 
-            // A collapsed stereo row edits BOTH halves: every peer that is a
-            // stereo L gets its R partner appended (dedup-safe -- a grouped
-            // pair may already carry both). Without this, clip ops on an
-            // ungrouped stereo track hit only the LEFT channel -- the gain
-            // ride the engineer hears splits the stereo image.
-            std::vector<int> out;
-            auto add = [&out] (int t)
-            {
-                if (std::find (out.begin(), out.end(), t) == out.end())
-                    out.push_back (t);
-            };
-            const int n = engine.getRecorder().getNumTracks();
-            for (int t : v)
-            {
-                add (t);
-                if (t + 1 < n
-                    && engine.getRecorder().getTrack (t).isStereo.load (std::memory_order_relaxed))
-                    add (t + 1);
-            }
-            return out;
-        }
-
-        // Resolve the clip on `peer` that corresponds to THIS row's clip
-        // `srcIdx`. A clip index is only meaningful inside one track's list:
-        // two tracks in an edit group can hold different arrangements (one
-        // split, one not), and broadcasting a raw index edited whichever clip
-        // happened to sit at that position on the peer -- bounds-checked in the
-        // engine, so no crash, just a silently wrong edit on the wrong region.
-        // Match by TIMELINE OVERLAP instead: the peer clip containing the
-        // source clip's midpoint. Returns -1 when the peer has nothing there,
-        // in which case the caller skips that peer rather than guessing.
+        // The clip on `peer` that corresponds to THIS row's clip `srcIdx`. A
+        // clip index is only meaningful inside one track's list; see
+        // matchingClipIndex. Returns -1 when the peer has nothing there, in
+        // which case the caller skips that peer rather than guessing.
         int peerClipIndex (int peer, int srcIdx) const
-        {
-            if (peer == index) return srcIdx;
-            const auto* src = engine.tryClipsFor (index);
-            if (src == nullptr || srcIdx < 0 || srcIdx >= (int) src->size()) return -1;
-            const auto& sc = (*src)[(size_t) srcIdx];
-
-            const auto* dst = engine.tryClipsFor (peer);
-            if (dst == nullptr) return -1;
-            return clipIndexAtMidpoint (*dst, sc.timelineStartSamples, sc.fileLengthSamples);
-        }
+        { return clipedit::peerClipIndex (engine, index, srcIdx, peer); }
 
         // Every edit peer's OWN clip for this row's clip `srcIdx` -- the stereo
         // R half and each EDIT-group member -- as (track, clipIndex). Resolve
         // BEFORE mutating anything: a delete / duplicate on one track shifts
         // the source clip a later peerClipIndex() lookup would read.
         std::vector<std::pair<int, int>> peerClipTargets (int srcIdx) const
-        {
-            std::vector<std::pair<int, int>> targets;
-            for (int peer : editGroupPeers())
-                if (const int pi = peerClipIndex (peer, srcIdx); pi >= 0)
-                    targets.emplace_back (peer, pi);
-            return targets;
-        }
+        { return clipedit::peerClips (engine, index, srcIdx); }
 
         // The physical tracks this row's take / comp operations apply to. A
         // stereo row is ONE logical strip, so L and R must keep one
@@ -3576,8 +3522,21 @@ namespace zynforge
                 // edited only the LEFT half (the parallel clip lists drift).
                 case 400: withUndo (muted  ? "Unmute clip" : "Mute clip",   [&]{ for (auto [p, pi] : targets) self->engine.setClipMuted  (p, pi, ! muted); });  return;
                 case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ for (auto [p, pi] : targets) self->engine.setClipLocked (p, pi, ! locked); }); return;
-                case 410: withUndo ("Duplicate clip", [&]{ for (auto [p, pi] : targets) self->engine.duplicateClip (p, pi); });           return;
-                case 411: withUndo ("Delete clip",    [&]{ for (auto [p, pi] : targets) self->engine.deleteClip    (p, pi); });           return;
+                case 410:
+                case 411:
+                {
+                    if (clipedit::anyLocked (self->engine, targets))
+                    {
+                        if (auto* page = self->findParentComponentOfClass<EditPage>(); page != nullptr && page->onStatus)
+                            page->onStatus ("A peer of this clip is locked -- unlock it first");
+                        return;
+                    }
+                    // Each peer's own index: a duplicate or delete on one track
+                    // leaves the others' lists alone.
+                    if (chosen == 410) withUndo ("Duplicate clip", [&]{ for (auto [p, pi] : targets) self->engine.duplicateClip (p, pi); });
+                    else               withUndo ("Delete clip",    [&]{ for (auto [p, pi] : targets) self->engine.deleteClip    (p, pi); });
+                    return;
+                }
                 case 414:
                 {
                     auto* page = self->findParentComponentOfClass<EditPage>();

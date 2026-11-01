@@ -13,6 +13,7 @@
 #include <functional>
 #include <vector>
 #include <set>
+#include <tuple>
 #include <utility>
 
 namespace zynforge
@@ -159,10 +160,12 @@ namespace zynforge
         int  getFocusedPointIdx() const noexcept { return focusedPointIdx; }
         void setFocusedPointIdx (int idx) noexcept { focusedPointIdx = idx; repaint(); }
 
-        // Selected clip(s) (clicked with the Smart / Move tool). Delete /
-        // Nudge act on the whole set; Duplicate / Copy / Paste act on the
-        // primary (most-recently-clicked). Indices are into each track's
-        // active clip list, so structural edits clear the selection.
+        // Selected clip(s) (clicked with the Smart / Move tool). Every clip
+        // command acts on the whole set, grown to each clip's stereo half and
+        // edit-group peers (clipedit::closure); the primary (most recently
+        // clicked) anchors Copy and picks the track a ripple measures from.
+        // Indices are into each track's active clip list, so structural edits
+        // clear the selection.
         using ClipRef = std::pair<int, int>;   // (track, clipIndex)
         const std::set<ClipRef>& getSelectedClips() const noexcept { return selClips; }
         bool isClipSelected (int track, int clipIdx) const noexcept
@@ -180,7 +183,7 @@ namespace zynforge
         }
         // Select several clips at once (used by edit-group expansion: one
         // click on a grouped clip selects the matching clip on every group
-        // peer). `primary` is the Copy/Nudge anchor.
+        // peer). `primary` is the Copy anchor.
         void setSelectedClips (const std::vector<ClipRef>& refs, ClipRef primary) noexcept
         {
             selClips.clear();
@@ -189,19 +192,24 @@ namespace zynforge
             selectedClipIndex = primary.second;
             repaint();
         }
-        // Toggle a clip in/out of the selection (Shift+click).
-        void toggleSelectedClip (int track, int clipIdx) noexcept
+        // Toggle one clip, with its stereo half and edit-group peers, in or
+        // out of the selection (Shift+click). `refs` includes `clicked`.
+        void toggleSelectedClips (const std::vector<ClipRef>& refs, ClipRef clicked) noexcept
         {
-            const ClipRef r { track, clipIdx };
-            if (selClips.erase (r) == 0)
+            if (selClips.count (clicked) > 0)
             {
-                selClips.insert (r);
-                selectedClipTrack = track;     // becomes the new primary
-                selectedClipIndex = clipIdx;
+                for (auto& r : refs) selClips.erase (r);
+                const ClipRef primary { selectedClipTrack, selectedClipIndex };
+                if (selClips.empty())
+                    selectedClipTrack = selectedClipIndex = -1;
+                else if (selClips.count (primary) == 0)
+                    std::tie (selectedClipTrack, selectedClipIndex) = *selClips.begin();
             }
-            else if (selClips.empty())
+            else
             {
-                selectedClipTrack = selectedClipIndex = -1;
+                for (auto& r : refs) selClips.insert (r);
+                selectedClipTrack = clicked.first;     // becomes the new primary
+                selectedClipIndex = clicked.second;
             }
             repaint();
         }
@@ -350,7 +358,7 @@ namespace zynforge
         float      vZoom           { 1.0f };
         juce::var  clipUndoBefore;   // playlist snapshot taken at clip-drag start
         int        activeRowTrackIndex { -1 };
-        int        selectedClipTrack   { -1 };   // primary clip (Copy / Nudge anchor)
+        int        selectedClipTrack   { -1 };   // primary clip (Copy anchor)
         int        selectedClipIndex   { -1 };
         std::set<std::pair<int, int>> selClips;  // multi-selection (track, clipIdx)
         int        selectionTrackGen   { -1 };   // track generation the selection was made under
