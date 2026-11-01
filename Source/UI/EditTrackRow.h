@@ -3574,20 +3574,16 @@ namespace zynforge
                 }
                 case 414:
                 {
-                    auto* page = self->findParentComponentOfClass<EditPage>();
-                    if (page != nullptr) page->beginClipEdit();
+                    if (auto* page = self->findParentComponentOfClass<EditPage>(); page != nullptr && page->normalizeClips)
+                    {
+                        page->normalizeClips (targets);
+                        return;
+                    }
                     self->setEnabled (false);
-                    self->engine.normalizeClipGroupAsync (
-                        targets, -0.3f,
-                        [self] (bool applied)
+                    self->engine.normalizeClipGroupAsync (targets, -0.3f, [self] (bool)
                     {
                         if (self == nullptr) return;
                         self->setEnabled (true);
-                        if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
-                        {
-                            if (applied) pageNow->commitClipEdit ("Normalize clip");
-                            else         pageNow->abandonClipEdit();
-                        }
                         self->repaint();
                     });
                     return;

@@ -861,6 +861,37 @@ namespace zynforge
                 }
             }
 
+            beginTest ("Normalize says when it fails and pushes the step it took");
+            {
+                Show s (1, { 48000 }, 0.0f);
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 1, "setup: one row");
+                if (rows.size() == 1)
+                {
+                    s.main.undoManager.clearUndoHistory();
+                    rows[0]->applyClipMenuChoice (0, 414);
+                    expect (s.main.sessionIoBusy.load(), "the scan must own the session");
+                    expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000), "the job never released");
+                    expect (s.main.statusLabel.getText().containsIgnoreCase ("Normalize failed"),
+                            "a silent clip failed with no word: " + s.main.statusLabel.getText());
+                    expect (! s.main.undoManager.canUndo());
+                }
+            }
+            {
+                Show s (1, { 48000 });
+                auto rows = rowsOf (s.page());
+                if (rows.size() == 1)
+                {
+                    s.main.undoManager.clearUndoHistory();
+                    rows[0]->applyClipMenuChoice (0, 414);
+                    expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000));
+                    expect (s.clips (0)[0].gainDb > 1.0f, "setup: normalized");
+                    expect (s.main.undoManager.canUndo(), "Normalize pushed no step");
+                    s.main.editUndo();
+                    expectWithinAbsoluteError (s.clips (0)[0].gainDb, 0.0f, 0.001f);
+                }
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

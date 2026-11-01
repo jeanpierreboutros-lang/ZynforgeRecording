@@ -858,6 +858,34 @@ void MainComponent::editZoomToSelection()
     editPage->zoomToSamples (player.getLoopStart(), player.getLoopEnd());
 }
 
+// A session job, so nothing else can edit the arrangement while it scans and
+// the undo step it pushes is the one it took: rows share a single clip-edit
+// slot, which any edit made during the scan would have overwritten.
+void MainComponent::normalizeClips (std::vector<EditPage::ClipRef> targets)
+{
+    if (! canMutateTimeline ("normalizing audio")) return;
+    if (! sessionJobs.reserve())
+    { showStatus ("Wait for the session operation to finish"); return; }
+    const auto before = engine.playlistsToJson();
+    if (editPage != nullptr) editPage->setEnabled (false);
+    showStatus ("Normalizing in the background...");
+    juce::Component::SafePointer<MainComponent> self (this);
+    engine.normalizeClipGroupAsync (std::move (targets), -0.3f, [self, before] (bool applied)
+    {
+        if (self == nullptr) return;
+        self->sessionJobs.release();
+        if (self->editPage != nullptr)
+        {
+            self->editPage->setReadOnlyWhileRecording (self->engine.isRecording());
+            self->editPage->setEnabled (! self->sessionLocked);
+            self->editPage->repaint();
+        }
+        if (applied) self->pushClipUndo ("Normalize clip", before);
+        self->showStatus (applied ? juce::String ("Normalized clip")
+                                  : "Normalize failed: the clip is silent, unreadable or changed during the scan");
+    });
+}
+
 // Strip Silence: open a Pro Tools-style settings box with draggable SLIDERS
 // (threshold / min strip / min clip / pad), then separate each target track's
 // take around the silence.

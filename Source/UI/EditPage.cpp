@@ -969,7 +969,8 @@ namespace zynforge
         auto report = [this] (const juce::String& message) { if (onStatus) onStatus (message); };
         // reorderTracks refuses during capture and its finalization; say so
         // rather than report its failure as a disk-permission problem.
-        if (readOnlyWhileRecording || engine.isRecording() || engine.isSessionTransitionActive())
+        if (readOnlyWhileRecording || engine.isRecording() || engine.isSessionTransitionActive()
+            || (canMutateTimeline && ! canMutateTimeline()))
         {
             report ("Strip move refused: wait for the take to finish recording and saving");
             return false;

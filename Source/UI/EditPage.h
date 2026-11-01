@@ -120,7 +120,6 @@ namespace zynforge
                 commitClipUndo (clipUndoBefore, label);
             clipUndoBefore = juce::var();
         }
-        void abandonClipEdit() { clipUndoBefore = juce::var(); }
 
         // The host's timeline guard (capture, session jobs, LOCK), which says
         // why on the status line. Anything that acts after a menu or dialog
@@ -128,6 +127,10 @@ namespace zynforge
         std::function<bool()> canMutateTimeline;
         bool canEditTimeline() const
         { return (! canMutateTimeline || canMutateTimeline()) && ! readOnlyWhileRecording; }
+
+        // Normalize runs as a session job on the host, so it survives its row
+        // being rebuilt, owns its undo snapshot and reports a failure.
+        std::function<void (std::vector<ClipRef>)> normalizeClips;
 
         // Tempo-lane edits go through this so they join Cmd+Z and refresh a
         // generated click track, as a change on the TempoBar does.
