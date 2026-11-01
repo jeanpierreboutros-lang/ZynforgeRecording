@@ -30,7 +30,6 @@
 #include "SessionJobRunner.h"
 #include "SessionMetadataWriter.h"
 #include "../Audio/SettingsFile.h"
-#include "../Network/CloudUpload.h"
 #include "TempoBar.h"
 #include "Toast.h"
 #include "PlaceholderView.h"
@@ -79,9 +78,7 @@ private:
     void registerMenuCommands();
     // Menu handlers too long to sit inline in the table.
     void copyConfidenceUrl();
-    void runCloudUpload();
     void toggleCompanionServer();
-    void editCloudUploadCommand();
     void toggleNdiBroadcast();
 
     void rebuildStrips();
@@ -216,7 +213,6 @@ private:
                                   std::function<void (bool)> completion = {}, bool automatic = false);
     void requestUILayoutSave();
     void saveCueChanges (const juce::String& success);
-    zynforge::cloud::UploadRun cloudUpload;
     zynforge::SessionMetadataWriter metadataWriter;
     int pendingMetadataSaves = 0;
     juce::uint64 metadataRevision = 0;

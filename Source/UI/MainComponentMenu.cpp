@@ -9,7 +9,6 @@
 // on the same `this`.
 
 #include "MainComponent.h"
-#include "../Network/CloudUpload.h"
 #include "../Theme/DialogChrome.h"
 #include "PatchPage.h"
 #include "Meterbridge.h"
@@ -323,19 +322,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             menu.addSubMenu ("Console", m);
         }
 
-        // ── Cloud & Mirror ───────────────────────────────────────────────
+        // ── Mirror ───────────────────────────────────────────────────────
         {
             juce::PopupMenu m;
-            // ids 959/960 -- outside every menuItemSelected dispatch range.
-            // (260/261 collided with the File template-default submenu, which
-            //  meant Upload silently ran setDefaultTemplate({}) instead.)
-            m.addItem (959, "Upload session to cloud...", ! engine.isRecording());
-            m.addItem (960, "Configure cloud upload command...");
-            m.addSeparator();
             m.addItem (290, sessionMirror.isMirroring()
                                ? "Stop mirroring " + sessionMirror.getPrimary()
                                : juce::String ("Mirror primary host..."));
-            menu.addSubMenu ("Cloud & Mirror", m);
+            menu.addSubMenu ("Mirror", m);
         }
 
         // ── Analysis & Reports (ids 952/953 outside dispatch ranges) ──────
@@ -575,8 +568,6 @@ void MainComponent::registerMenuCommands()
     m.add (957, [this] { consoleRestoreGains(); });
     m.add (958, [this] { toggleCaptureDaemon(); });
     m.add (975, [this] { reconnectCaptureDaemon(); });
-    m.add (959, [this] { runCloudUpload(); });
-    m.add (960, [this] { editCloudUploadCommand(); });
     m.add (961, [this] { copyConfidenceUrl(); });
     m.add (963, [this]
     {
@@ -706,35 +697,6 @@ void MainComponent::copyConfidenceUrl()
         showStatus ("Start the companion server before copying its confidence URL");
 }
 
-void MainComponent::runCloudUpload()
-{
-    // Run the configured cloud-upload command with {SESSION} expanded.
-    if (engine.isTakeOnDisk()) { showStatus ("Upload after STOP -- the take's files are still being written"); return; }
-    const auto sessionDir = engine.getActiveSessionDir();
-    if (! sessionDir.isDirectory()) { showStatus ("No session active -- load or record first"); return; }
-    auto* props = engine.getAppProps();
-    const auto tmpl = props != nullptr ? props->getValue ("cloudUploadCommand") : juce::String();
-    if (tmpl.isEmpty())
-    {
-        showStatus ("No upload command configured -- pick \"Configure cloud upload command...\" first");
-        return;
-    }
-    if (cloudUpload.isActive()) { showStatus ("A cloud upload is already running"); return; }
-    juce::Component::SafePointer<MainComponent> self (this);
-    const auto name = sessionDir.getFileName();
-    const bool started = cloudUpload.start (tmpl, sessionDir, [self, name] (zynforge::cloud::UploadOutcome outcome)
-    {
-        juce::MessageManager::callAsync ([self, name, outcome]
-        {
-            if (self != nullptr)
-                self->showStatus (outcome.ok ? "Cloud upload finished: " + name
-                                             : "! Cloud upload FAILED for " + name + ": " + outcome.problem);
-        });
-    });
-    showStatus (started ? "Cloud upload started: " + sessionDir.getFileName()
-                        : juce::String ("Cloud upload failed to launch -- check the configured command"));
-}
-
 void MainComponent::toggleCompanionServer()
 {
     if (engine.getRemotes().isCompanionServerRunning())
@@ -762,43 +724,6 @@ void MainComponent::toggleCompanionServer()
     {
         showStatus ("Companion failed to bind port 9000 -- try a different port");
     }
-}
-
-void MainComponent::editCloudUploadCommand()
-{
-    // Edit the upload command template.
-    auto* aw = new juce::AlertWindow ("Cloud upload command",
-                                      "Shell command to upload a session. Use {SESSION} as a "
-                                      "placeholder for the session directory's absolute path. "
-                                      "Examples:\n"
-                                      "  rclone copy {SESSION} myremote:zynforge-sessions/\n"
-                                      "  aws s3 sync {SESSION} s3://my-bucket/sessions/\n"
-                                      "  rsync -a {SESSION} engineer@studio:/sessions/",
-                                      juce::MessageBoxIconType::NoIcon);
-    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
-    const auto current = engine.getAppProps() != nullptr
-                          ? engine.getAppProps()->getValue ("cloudUploadCommand")
-                          : juce::String();
-    aw->addTextEditor ("cmd", current, {});
-    dialog::primeNameEditor (*aw, "cmd");
-    aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    juce::Component::SafePointer<MainComponent> self (this);
-    aw->enterModalState (true,
-        juce::ModalCallbackFunction::create (
-            [self, aw] (int result)
-            {
-                if (result == 1 && self != nullptr && self->engine.getAppProps() != nullptr)
-                {
-                    const auto v = aw->getTextEditorContents ("cmd").trim();
-                    zynforge::updateSettings (self->engine.getAppProps(), [&v] (juce::PropertiesFile& p)
-                                              { p.setValue ("cloudUploadCommand", v); });
-                    self->showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
-                                            : juce::String ("Cloud upload command saved"));
-                }
-                delete aw;
-            }),
-        false);
 }
 
 void MainComponent::toggleNdiBroadcast()
