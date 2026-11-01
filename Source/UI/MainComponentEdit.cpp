@@ -1105,6 +1105,7 @@ void MainComponent::editDuplicateSelectedClip()
     if (zynforge::clipedit::anyLocked (engine, sel))
     { showStatus ("Clip is locked -- unlock it before duplicating"); return; }
 
+    const EditPage::ClipRef source { editPage->getSelectedClipTrack(), editPage->getSelectedClipIndex() };
     const auto before = engine.playlistsToJson();
     // Highest index first per track, so the lower ones stay valid. A copy lands
     // right after its source, behind one slot for each copy made earlier in
@@ -1121,7 +1122,6 @@ void MainComponent::editDuplicateSelectedClip()
     }
 
     // Follow the new copies, the primary included.
-    const EditPage::ClipRef source { editPage->getSelectedClipTrack(), editPage->getSelectedClipIndex() };
     std::map<int, int> copiesBelow;
     std::vector<EditPage::ClipRef> copies;
     auto primary = source;

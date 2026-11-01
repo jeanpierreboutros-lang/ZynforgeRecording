@@ -784,15 +784,14 @@ namespace zynforge
             }
         selection = std::move (kept);
 
-        const int primary = selectedClipIndexOn (primarySelection);
-        selectedClipTrack = primary >= 0 ? primarySelection.track : -1;
-        selectedClipIndex = primary;
-        if (primary < 0 && ! selection.empty())
-        {
-            primarySelection = selection.front();
-            selectedClipTrack = primarySelection.track;
-            selectedClipIndex = selectedClipIndexOn (primarySelection);
-        }
+        // The primary hands on when it leaves the selection.
+        const bool primaryKept = std::any_of (selection.begin(), selection.end(), [this] (const SelectedClip& s)
+                                              { return s.id == primarySelection.id; });
+        if (! primaryKept)
+            primarySelection = selection.empty() ? SelectedClip {} : selection.front();
+        selectedClipIndex = selectedClipIndexOn (primarySelection);
+        selectedClipTrack = selectedClipIndex >= 0 ? primarySelection.track : -1;
+
         if (found != selClips)
         {
             selClips = std::move (found);
