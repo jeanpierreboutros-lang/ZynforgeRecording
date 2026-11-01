@@ -378,7 +378,7 @@ namespace zynforge
         static juce::var waitForReport (const juce::File& dir)
         {
             const auto file = dir.getChildFile ("session.report.json");
-            for (int i = 0; i < 500; ++i)
+            for (int i = 0; i < 3000; ++i)
             {
                 const auto report = juce::JSON::parse (file);
                 if (report.isObject() && ! (bool) report.getProperty ("sha256Pending", true))
@@ -1009,7 +1009,9 @@ namespace zynforge
                     const auto report = waitForReport (dir);
                     expectEquals (report.getProperty ("timeReferenceSource", "").toString(), juce::String ("ltc"));
                     const auto seconds = (double) (juce::int64) report.getProperty ("timeReference", 0) / kRate;
-                    expect (seconds > 40000.0 && seconds < 40010.0, juce::String (seconds));
+                    // The first sample precedes the first block's arrival by that block.
+                    expect (seconds > 40000.0 - (double) kBlock / kRate && seconds < 40010.0,
+                            juce::String (seconds, 6));
                     client.disconnect();
                     daemon.stop();
                     MultitrackRecorder::deleteSessionAfterCancellingReports (dir);

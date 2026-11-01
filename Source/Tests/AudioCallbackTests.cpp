@@ -1805,11 +1805,12 @@ namespace zynforge
                 const auto report = sessionDir.getChildFile ("session.report.json");
                 // The metadata report is written synchronously on stop
                 // ("sha256Pending":true); a background thread then hashes the
-                // audio and rewrites it with the SHA-256 sums. Wait for that
-                // pass (up to ~5 s) before asserting on the hashes.
+                // audio and rewrites it with the SHA-256 sums. That thread runs at
+                // background priority and starves on a busy machine, so wait up
+                // to 30 s; this returns as soon as the pass has run.
                 juce::var json;
                 juce::DynamicObject* root = nullptr;
-                for (int waited = 0; waited < 5000; waited += 50)
+                for (int waited = 0; waited < 30000; waited += 50)
                 {
                     json = juce::JSON::parse (report);
                     root = json.getDynamicObject();

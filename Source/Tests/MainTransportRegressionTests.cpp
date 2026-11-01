@@ -642,6 +642,9 @@ namespace zynforge
                     {
                         host.timerCallback();
                         const auto previousView = host.currentView;
+                        // In a frontmost run a host's Welcome window can hold focus in
+                        // its name field, and a focused text field rightly keeps Cmd keys.
+                        juce::Component::unfocusAllComponents();
                         host.keyPressed (juce::KeyPress ('=', juce::ModifierKeys::commandModifier, 0), nullptr);
                         navigationWorked->store (host.currentView != previousView
                             && host.editPage != nullptr && host.editPage->isEnabled());

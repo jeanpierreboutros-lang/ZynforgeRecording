@@ -151,6 +151,14 @@ public:
 
     void shutdown() override
     {
+        // A test host can leave a window open (its Welcome, say). Until a window
+        // leaves the desktop its display link keeps firing, into a MessageManager
+        // that is about to be destroyed.
+        auto& desktop = juce::Desktop::getInstance();
+        for (int i = desktop.getNumComponents(); --i >= 0;)
+            if (auto* window = desktop.getComponent (i))
+                window->removeFromDesktop();
+
         // Release cached fonts while CoreText is alive; at __cxa_finalize it
         // is gone and the destructors terminate() the process (see Main.cpp).
         zynforge::brand::type::clearFontCache();

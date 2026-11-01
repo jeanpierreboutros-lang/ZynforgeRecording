@@ -197,7 +197,7 @@ namespace zynforge
                 // the report is final (sha256Pending == false).
                 const auto reportFile = dir.getChildFile ("session.report.json");
                 juce::var report;
-                for (int t = 0; t < 60; ++t)
+                for (int t = 0; t < 300; ++t)
                 {
                     report = juce::JSON::parse (reportFile.loadFileAsString());
                     if (report.isObject()

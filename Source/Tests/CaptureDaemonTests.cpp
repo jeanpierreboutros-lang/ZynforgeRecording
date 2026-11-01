@@ -81,7 +81,7 @@ namespace zynforge
                             const auto report = juce::JSON::parse (reportFile);
                             return report.isObject()
                                    && ! (bool) report.getProperty ("sha256Pending", true);
-                        }, 3000));
+                        }, 30000));
                         auto report = juce::JSON::parse (reportFile);
                         if (auto* object = report.getDynamicObject())
                         {
