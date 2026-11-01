@@ -278,7 +278,10 @@ namespace zynforge
                             AudioEngine::RemoteTransportAction::StopRecord, error),
                         "confirmed STOP acknowledged success before metadata completion");
                 expect (error.containsIgnoreCase ("pending"), error);
-                expect (stopEntered->wait (3000), "STOP did not enqueue its metadata snapshot");
+                // Daemon STOP finishes on the message thread once the reply lands.
+                bool snapshotEntered = false;
+                expect (pumpUntil ([&] { return snapshotEntered = snapshotEntered || stopEntered->wait (0); }, 5000),
+                        "STOP did not enqueue its metadata snapshot");
                 error.clear();
                 expect (! main.engine.performRemoteTransport (
                             AudioEngine::RemoteTransportAction::StopRecord, error));
@@ -363,8 +366,8 @@ namespace zynforge
                             AudioEngine::RemoteTransportAction::StopRecord, error),
                         "remote STOP acknowledged success despite mandatory session-save failure");
                 expect (error.isNotEmpty(), "remote finalization failure had no explanation");
-                expect (waitUntil ([&] { return ! main.captureSupervisor.isDaemonRecording(); }, 3000));
-                expect (! main.engine.isRecording(), "capture itself should stop even when metadata cannot save");
+                expect (pumpUntil ([&] { return ! main.engine.isRecording(); }, 5000),
+                        "capture itself should stop even when metadata cannot save");
                 expect (pumpUntil ([&] { return ! main.captureMetadataPending && main.pendingMetadataSaves == 0; }, 5000));
                 expect (main.lastCaptureFinalizationError.isNotEmpty(), "failed finalization was not latched");
                 for (int retry = 0; retry < 2; ++retry)

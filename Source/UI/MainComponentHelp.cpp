@@ -370,6 +370,9 @@ void MainComponent::showAboutDialog()
 void MainComponent::showStartupWelcome()
 {
     if (explicitDocumentOpened) return;
+    // An adopted daemon take: a dialog here would sit over STOP, and neither of
+    // its choices can run until the take ends.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording()) return;
     // Auto-reopen the last session instead of greeting an empty app. The
     // active-session folder is restored from appProps on launch (for Save),
     // but the *content* wasn't loaded -- so the engineer came back to a blank

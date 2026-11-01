@@ -398,26 +398,45 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
     for (int i = 0; i < plan.numTracks; ++i)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
             arms.setBit (i);
+    requestDaemonTake (plan.dir, plan.numTracks, arms, plan.armed);
+}
+
+void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, const juce::BigInteger& arms, int armed)
+{
+    const double rate = captureSupervisor.lastStatus().sampleRate > 0.0
+                            ? captureSupervisor.lastStatus().sampleRate : pendingSampleRate;
     zynforge::bwf::TimeAnchor timecode;
-    if (captureSupervisor.startRecording (plan.dir, plan.numTracks,
-                                          (int) recorder.getCaptureFormat(), arms,
-                                          engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var()))
+    juce::String refusal;
+    bool unanswered = false;
+    if (captureSupervisor.startRecording (dir, numTracks, (int) engine.getRecorder().getCaptureFormat(), arms,
+                                          engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var(),
+                                          &refusal, &unanswered))
     {
         engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
                                          captureSupervisor.lastStatusAtMs());
         lastCaptureFinalizationError.clear();
-        engine.beginExternalTake (plan.dir, captureSupervisor.lastStatus().sampleRate > 0.0
-                                                ? captureSupervisor.lastStatus().sampleRate : pendingSampleRate);
+        engine.beginExternalTake (dir, rate);
         daemonTakeAdopted = true;
-        statusLabel.setText ("DAEMON recording " + juce::String (plan.armed) + "/"
-                             + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
+        statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"
+                             + juce::String (numTracks) + " tracks -> " + dir.getFileName()
                              + "  (take survives a GUI crash)",
                              juce::dontSendNotification);
         recordButton.setButtonText ("STOP");
     }
+    else if (unanswered)
+    {
+        // Not a refusal. The window must not call this failed and move on while
+        // the daemon rolls into a session it does not know about.
+        dir.createDirectory();
+        lastCaptureFinalizationError.clear();
+        engine.beginExternalTake (dir, rate);
+        daemonStartUnansweredMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
+        recordButton.setButtonText ("REC ?");
+        showStatus ("Daemon has not answered RECORD yet -- the take may be rolling");
+    }
     else
-        statusLabel.setText ("Daemon record failed -- check Session > Capture daemon.",
-                             juce::dontSendNotification);
+        showStatus (refusal.isNotEmpty() ? "Daemon refused RECORD: " + refusal
+                                         : juce::String ("Daemon record failed -- check Session > Capture daemon."));
 }
 
 bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
@@ -708,42 +727,82 @@ void MainComponent::stopDaemonCapture (bool rewind, std::function<void (bool)> c
         endDaemonTake (kDaemonGoneMidTake, rewind, std::move (completion));
         return;
     }
-    bool daemonStopped = false;
-    juce::String daemonStopError;
-    const bool cleanStop = captureSupervisor.isAttached()
-                        && captureSupervisor.stopRecording (&daemonStopped, &daemonStopError);
-    if (! cleanStop && ! daemonStopped)
+    if (link == LostDaemon::unknown)
     {
         lastCaptureFinalizationError = "Daemon did not confirm STOP; take may still be recording";
         showStatus (lastCaptureFinalizationError);
         if (completion) completion (false);
         return;
     }
-    endDaemonTake (cleanStop ? juce::String()
-                             : daemonStopError.isNotEmpty() ? daemonStopError
-                             : juce::String ("Recording stopped, but daemon finalisation failed"),
-                   rewind, std::move (completion));
+    // Pending until the daemon answers, however long its disks take. A status
+    // that says the take ended meanwhile must not start a second follow-up.
+    captureMetadataPending = true;
+    showStatus ("Stopping -- the capture daemon is closing its files");
+    juce::Component::SafePointer<MainComponent> self (this);
+    captureSupervisor.stopRecordingAsync ([self, rewind, completion]
+        (zynforge::capture::CaptureSupervisor::StopResult result)
+    {
+        if (self == nullptr) return;
+        self->captureMetadataPending = false;
+        if (! result.clean && ! result.stopped)
+        {
+            self->lastCaptureFinalizationError = "Daemon did not confirm STOP; take may still be recording";
+            self->showStatus (self->lastCaptureFinalizationError);
+            if (completion) completion (false);
+            return;
+        }
+        self->endDaemonTake (result.clean ? juce::String()
+                                          : result.error.isNotEmpty() ? result.error
+                                          : juce::String ("Recording stopped, but daemon finalisation failed"),
+                             rewind, completion);
+    });
 }
 
 void MainComponent::endDaemonTake (juce::String error, bool rewind, std::function<void (bool)> completion)
 {
+    const auto recordEnd = engine.getRecordTimelineSamples();
     engine.setExternalRecording (false);
     daemonTakeAdopted = false;
+    daemonStartUnansweredMs = 0;
+    recordButton.setButtonText ("RECORD");
     const auto session = engine.getActiveSessionDir();
-    if (session.isDirectory())
-        engine.loadSession (session, true, true);
-    else if (error.isEmpty())
+    if (! session.isDirectory())
+    {
         // A removable volume can vanish while the daemon holds its files open.
         // The audio stop may have worked, but nowhere is left to save to.
-        error = "Recording stopped, but session state could not be saved -- check disk permissions / free space";
-    if (rewind)
-    {
-        engine.stopPlayback();
-        engine.getPlayer().rewind();
-        playButton.setButtonText ("PLAY");
+        if (error.isEmpty())
+            error = "Recording stopped, but session state could not be saved -- check disk permissions / free space";
+        saveFinalizedCaptureMetadata (false, error, std::move (completion));
+        return;
     }
-    recordButton.setButtonText ("RECORD");
-    saveFinalizedCaptureMetadata (error.isEmpty(), error, std::move (completion));
+
+    // Reading a long take back belongs on a worker, exactly as for a local STOP.
+    juce::Component::SafePointer<MainComponent> self (this);
+    const bool previousBusy = sessionIoBusy.load();
+    captureMetadataPending = true;
+    sessionIoBusy.store (true);
+    const bool accepted = engine.finishExternalTakeAsync (session, recordEnd,
+        [self, error, rewind, completion] (bool loaded)
+        {
+            if (self == nullptr) return;
+            if (rewind)
+            {
+                self->engine.stopPlayback();
+                self->engine.getPlayer().rewind();
+                self->playButton.setButtonText ("PLAY");
+            }
+            const auto why = error.isNotEmpty() || loaded ? error
+                : juce::String ("Recording stopped, but media could not be reopened");
+            self->saveFinalizedCaptureMetadata (why.isEmpty(), why, completion);
+        });
+    if (! accepted)
+    {
+        captureMetadataPending = false;
+        sessionIoBusy.store (previousBusy);
+        lastCaptureFinalizationError = "Capture finalization was not accepted; check the recording state";
+        showStatus (lastCaptureFinalizationError);
+        if (completion) completion (false);
+    }
 }
 
 // No STOP press ran, so nothing else resets the transport, and the session
@@ -867,9 +926,9 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         onStopClicked();
         if (engine.isRecording())
         {
-            error = stopArmedAtMs != 0
-                      ? "STOP armed; send STOP again within 2 seconds"
-                      : "capture stop or session finalization failed; check the host";
+            error = captureMetadataPending ? "recording stopping; finalization pending"
+                  : stopArmedAtMs != 0     ? "STOP armed; send STOP again within 2 seconds"
+                  : "capture stop or session finalization failed; check the host";
             return false;
         }
         if (captureMetadataPending)

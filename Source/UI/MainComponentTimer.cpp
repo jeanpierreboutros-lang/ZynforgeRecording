@@ -111,6 +111,18 @@ void MainComponent::serviceCaptureDaemonLink()
                 {
                     if (! daemonTakeAdopted) adoptDaemonTake (daemonStatus, true);
                 }
+                else if (daemonStartUnansweredMs != 0)
+                {
+                    // A status from before the daemon reached the START proves
+                    // nothing, so only time settles this one.
+                    if (juce::Time::getMillisecondCounter() - daemonStartUnansweredMs >= 10000)
+                    {
+                        daemonStartUnansweredMs = 0;
+                        engine.setExternalRecording (false);
+                        recordButton.setButtonText ("RECORD");
+                        showStatus ("Daemon did not start the take");
+                    }
+                }
                 else if (engine.isExternalRecording() && ! captureMetadataPending)
                     // It ended without a STOP from here. Nothing else would load it.
                     endDaemonTake (daemonStatus.captureDeviceLost
@@ -403,7 +415,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const bool mixFail = ! useCaptureDaemon && engine.hasStereoMixWriteFailed();
         const bool diskTrouble = status.diskStruggling;
         const bool samplesMissed = status.missedSamples > 0;
-        const bool daemonUnavailable = status.source == "daemon-unavailable";
+        // A daemon closing its files answers no status until it is done.
+        const bool daemonUnavailable = status.source == "daemon-unavailable" && ! captureSupervisor.isStopInFlight();
         const bool smartBad = (smartPrimaryStatus == (int) MultitrackRecorder::SmartStatus::Failing)
                            || (smartBackupStatus  == (int) MultitrackRecorder::SmartStatus::Failing);
         // A mirror that never OPENED (drive absent, or a root that would have

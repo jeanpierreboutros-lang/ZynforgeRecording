@@ -176,6 +176,7 @@ namespace zynforge::capture
                     { r.error = "capture audio device is stopped"; }
                 else
                 {
+                    if (beforeStartForTests) beforeStartForTests();
                     dir.createDirectory();
                     // Continue into a new part even after reattaching/restarting
                     // the GUI. Existing takes must never be truncated.

@@ -293,6 +293,7 @@ private:
     void adoptDaemonTake (const zynforge::EngineStatus&, bool announce);
     void leaveLostDaemon();
     void disableCaptureDaemon();
+    void requestDaemonTake (const juce::File& dir, int numTracks, const juce::BigInteger& arms, int armed);
     void stopDaemonCapture (bool rewind, std::function<void (bool)> completion);
     void endDaemonTake (juce::String error, bool rewind, std::function<void (bool)> completion);
     void localTakeInterrupted();
@@ -520,6 +521,9 @@ private:
     int  captureDaemonPort { kCaptureDaemonPort };
     bool daemonLinkLost { false };       // reported lost, not yet resolved
     bool daemonTakeAdopted { false };    // this window knows the rolling take
+    // RECORD got no reply. The take may be rolling, so the guard is up until a
+    // fresh status settles it.
+    juce::uint32 daemonStartUnansweredMs { 0 };
     juce::uint32 nextDaemonProbeMs { 0 }, daemonProbeDelayMs { 1000 };
     // Off by default; Session > Network & Surfaces > Twin Recorder. Destroyed
     // before everything above, so its threads never outlive what the host uses.

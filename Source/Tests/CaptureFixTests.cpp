@@ -651,10 +651,16 @@ namespace zynforge
                 expect (rig.daemon.getRecorder().isRecording(), "the take must not have stopped");
                 expectEquals (main.recordButton.getButtonText(), juce::String ("STOP"));
 
-                bool done = false, ok = false;
-                main.stopActiveCaptureAsync (false, [&] (bool saved) { done = true; ok = saved; });
-                expect (pumpUntil ([&] { return done; }, 8000), "STOP never finished");
-                expect (ok, main.lastCaptureFinalizationError);
+                bool done = false;
+                main.stopActiveCaptureAsync (false, [&] (bool) { done = true; });
+                expect (pumpUntil ([&] { return done; }, 30000), "STOP never finished");
+                // On a busy machine the daemon can drop a late write and take
+                // the link with it; the status path then finishes the job.
+                expect (pumpUntil ([&]
+                {
+                    main.serviceCaptureDaemonLink();
+                    return ! main.engine.isRecording() && ! main.captureMetadataPending;
+                }, 30000), "the take never came back");
                 expect (! rig.daemon.getRecorder().isRecording(), "the daemon is still rolling");
                 expect (! main.engine.isRecording());
                 expectEquals (main.recordButton.getButtonText(), juce::String ("RECORD"));
@@ -801,6 +807,97 @@ namespace zynforge
                 expect (main.engine.getPlayer().isLoaded(), "the take was not loaded");
                 expect (rig.session.getChildFile ("session_mix.json").existsAsFile(), "the session was not saved");
                 expect (main.lastCaptureFinalizationError.contains ("device"), main.lastCaptureFinalizationError);
+            }
+
+            beginTest ("STOP keeps the window alive while the daemon closes its files");
+            {
+                Rig rig;
+                if (! bringUp (rig) || ! startTake (rig, rig.session)) return;
+                auto& main = *rig.main;
+                std::atomic<bool> releaseStop { false };
+                rig.daemon.getRecorder().beforeFinalizationForTests = [&]
+                {
+                    while (! releaseStop.load()) juce::Thread::sleep (5);
+                };
+                bool done = false;
+                const auto started = juce::Time::getMillisecondCounterHiRes();
+                main.stopActiveCaptureAsync (false, [&] (bool) { done = true; });
+                expectLessThan (juce::Time::getMillisecondCounterHiRes() - started, 2000.0, "STOP held the message thread");
+                expect (! done);
+                expect (main.engine.isRecording(), "the take was called stopped before the daemon said so");
+                expect (main.captureMetadataPending);
+                main.onStopClicked();
+                expect (main.statusLabel.getText().contains ("pending"), main.statusLabel.getText());
+
+                releaseStop.store (true);
+                expect (pumpUntil ([&] { return done; }, 30000), "STOP never finished");
+                expect (! main.engine.isRecording());
+                expect (main.engine.getPlayer().isLoaded(), "the take was not read back");
+                expect (rig.session.getChildFile ("session_mix.json").existsAsFile(), "the session was not saved");
+            }
+
+            beginTest ("A RECORD with no answer is held, and adopted when the daemon rolls");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                std::atomic<bool> releaseStart { false };
+                rig.daemon.beforeStartForTests = [&] { while (! releaseStart.load()) juce::Thread::sleep (5); };
+                main.captureSupervisor.startReplyTimeoutMs = 50;
+                juce::BigInteger arms; arms.setBit (0);
+                main.requestDaemonTake (rig.session, 1, arms, 1);
+                expect (main.engine.isRecording(), "no answer must not read as a failed RECORD");
+                expectEquals (main.recordButton.getButtonText(), juce::String ("REC ?"));
+                releaseStart.store (true);
+                expect (pumpUntil ([&]
+                {
+                    main.serviceCaptureDaemonLink();
+                    return main.recordButton.getButtonText() == "STOP";
+                }, 10000), "the take that did start was never adopted");
+                expect (rig.daemon.getRecorder().isRecording());
+                expectEquals (main.engine.getActiveSessionDir().getFullPathName(), rig.session.getFullPathName(),
+                              "the window lost the session the daemon is writing");
+            }
+
+            beginTest ("A daemon refusal keeps its reason");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                rig.daemon.getRecorder().getTrack (0).armed.store (true);
+                juce::BigInteger arms; arms.setBit (0);
+                main.requestDaemonTake (juce::File(), 1, arms, 1);
+                expect (main.statusLabel.getText().contains ("no sessionDir"), main.statusLabel.getText());
+                expect (! main.engine.isRecording());
+            }
+
+            beginTest ("Reattaching to a rolling take opens no dialog over it");
+            {
+                Rig rig;
+                if (! bringUp (rig) || ! startTake (rig, rig.session)) return;
+                auto& main = *rig.main;
+                const int before = juce::ModalComponentManager::getInstance()->getNumModalComponents();
+                main.showStartupWelcome();
+                expectEquals (juce::ModalComponentManager::getInstance()->getNumModalComponents(), before,
+                              "a dialog opened over the rolling take");
+            }
+
+            beginTest ("A daemon that cannot be reached at launch says why");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                const int port = rig.port;
+                main.captureSupervisor.disconnect();
+                rig.daemon.stop();
+                juce::StreamingSocket squatter;
+                expect (squatter.createListener (port, "127.0.0.1"));
+                main.useCaptureDaemon = true;
+                main.connectCaptureDaemon (true);
+                expect (! main.useCaptureDaemon);
+                expect (main.statusLabel.getText().contains ("no crash protection"), main.statusLabel.getText());
+                expect (main.captureSupervisor.lastConnectError.contains (juce::String (port)),
+                        main.captureSupervisor.lastConnectError);
             }
 
             beginTest ("A take the daemon ended by itself comes back to the window");

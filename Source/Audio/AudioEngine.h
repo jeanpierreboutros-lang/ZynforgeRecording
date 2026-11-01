@@ -206,6 +206,11 @@ namespace zynforge
         // engine's session, for markers above all, exactly as if it had
         // started here. Only the daemon's own folder may take a marker.
         void beginExternalTake (const juce::File& sessionDir, double sampleRate);
+        // A daemon take ended: its files are final, and only reading them back
+        // is left. Off the message thread like a local STOP, for the same
+        // reason. False if a finalization is already running.
+        bool finishExternalTakeAsync (const juce::File& sessionDir, juce::int64 recordEnd,
+                                      std::function<void (bool)> completion);
         void setControlsLocked (bool locked) noexcept { controlsLocked.store (locked); }
         bool areControlsLocked() const noexcept { return controlsLocked.load(); }
         void setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs = 0);
@@ -1168,8 +1173,11 @@ namespace zynforge
             bool ok = true;
             juce::uint64 id = 0;
             std::function<void (bool)> completion;
+            bool external = false;       // the daemon owned this take
+            bool sameSession = true;     // the clips in memory belong to this folder
         };
-        void launchCaptureStopJob (std::function<void (bool)> completion);
+        void launchCaptureStopJob (std::function<void (bool)> completion,
+                                   const juce::File& externalSession = {}, juce::int64 externalEnd = 0);
         void installFinalizedCapture (juce::uint64 id);
         void completeFinalizedCapture (juce::uint64 id);
         void applyDeviceConfiguration (double, int, juce::AudioWorkgroup);

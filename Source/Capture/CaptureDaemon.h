@@ -58,6 +58,7 @@ namespace zynforge::capture
         // synthetic input blocks as if the callback fired.
         void prepareForTests (double sampleRate, int blockSize, int numInputs);
         void dropLinkForTests() { server.dropClient(); }
+        std::function<void()> beforeStartForTests;
         void processTestBlock (const float* const* inputs, int numChannels, int numSamples);
 
         // juce::AudioIODeviceCallback

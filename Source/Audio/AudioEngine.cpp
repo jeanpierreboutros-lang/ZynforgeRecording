@@ -341,12 +341,15 @@ namespace zynforge
     }
 
     // The caller holds deviceLifecycleLock and the recorder's finalization lease.
-    void AudioEngine::launchCaptureStopJob (std::function<void (bool)> completion)
+    void AudioEngine::launchCaptureStopJob (std::function<void (bool)> completion,
+                                            const juce::File& externalSession, juce::int64 externalEnd)
     {
         asyncCaptureFinalizing.store (true, std::memory_order_release);
         auto job = std::make_unique<CaptureStopJob>();
-        job->directory = recorder.getActiveSessionDir();
-        job->recordEnd = recorder.getRecordTimelineSamples();
+        job->external = externalSession != juce::File();
+        job->directory = job->external ? externalSession : recorder.getActiveSessionDir();
+        job->recordEnd = job->external ? externalEnd : recorder.getRecordTimelineSamples();
+        job->sameSession = ! job->external || player.getSessionDir() == externalSession;
         job->playbackRate = deviceSampleRate.load();
         job->playbackBlock = deviceBlockSize.load();
         job->explicitReaders = player.snapshotExplicitReaderRequests();
@@ -364,21 +367,40 @@ namespace zynforge
         const auto handle = asyncHandle;
         work->worker = std::thread ([this, work, handle]
         {
-            recorder.finishFinalization();
+            if (work->external)
+            {
+                // A daemon that died left this unfinished, and nothing else
+                // here will read the session before the player does.
+                const auto audioDir = work->directory.getChildFile ("Audio Files");
+                MultitrackRecorder::recoverInterruptedPunches (audioDir.isDirectory() ? audioDir : work->directory);
+            }
+            else
+                recorder.finishFinalization();
             work->mixWriter.reset();
             work->prepared = player.prepareSessionLoad (work->directory, work->playbackRate,
                                                         work->playbackBlock, work->explicitReaders);
-            work->ok = ! recorder.hasPrimaryFailed() && ! recorder.hasCaptureDeviceLost()
-                && ! recorder.hasBackupFailed() && ! recorder.anyMirrorFailed()
-                && recorder.getMirrorsSkippedAtStart() == 0 && ! recorder.hasRecoveryMarkerFailed()
-                && ! recorder.hasReportWriteFailed() && ! recorder.hasPunchSpliceFailed()
-                && ! hasStereoMixWriteFailed() && SessionPlayer::preparedLoadComplete (work->prepared);
+            work->ok = SessionPlayer::preparedLoadComplete (work->prepared)
+                && (work->external
+                    || (! recorder.hasPrimaryFailed() && ! recorder.hasCaptureDeviceLost()
+                        && ! recorder.hasBackupFailed() && ! recorder.anyMirrorFailed()
+                        && recorder.getMirrorsSkippedAtStart() == 0 && ! recorder.hasRecoveryMarkerFailed()
+                        && ! recorder.hasReportWriteFailed() && ! recorder.hasPunchSpliceFailed()
+                        && ! hasStereoMixWriteFailed()));
             const auto id = work->id;
             juce::MessageManager::callAsync ([handle, id]
             {
                 if (auto* engine = handle->load (std::memory_order_acquire)) engine->installFinalizedCapture (id);
             });
         });
+    }
+
+    bool AudioEngine::finishExternalTakeAsync (const juce::File& sessionDir, juce::int64 recordEnd,
+                                               std::function<void (bool)> completion)
+    {
+        const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        if (isCaptureFinalizing()) return false;
+        launchCaptureStopJob (std::move (completion), sessionDir, recordEnd);
+        return true;
     }
 
     void AudioEngine::installFinalizedCapture (juce::uint64 id)
@@ -392,7 +414,14 @@ namespace zynforge
         invalidateTransientCache();
         activeSession = job.directory;
         if (appProps != nullptr) appProps->setValue ("activeSessionDir", activeSession.getFullPathName());
-        seedDefaultClips (true, true);
+        // A daemon RECORD opens a new folder: clips still in memory belong to
+        // the session before it.
+        seedDefaultClips (job.sameSession, job.sameSession);
+        if (job.external)
+        {
+            markers.setContext (job.directory, player.getSampleRate());
+            rememberRecentSession (job.directory);
+        }
         player.finishPreparedClipPublication();
         player.setPositionSamples (juce::jlimit ((juce::int64) 0, player.getTotalLengthSamples(), job.recordEnd));
         auto* work = &job;

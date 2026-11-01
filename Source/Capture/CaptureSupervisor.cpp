@@ -1,9 +1,12 @@
 #include "CaptureSupervisor.h"
 
+#include <juce_events/juce_events.h>
+
 namespace zynforge::capture
 {
     CaptureSupervisor::~CaptureSupervisor()
     {
+        alive->store (false);
         shutdown();
     }
 
@@ -34,6 +37,7 @@ namespace zynforge::capture
         disconnect();
         configuredCapture.clear();
         failedCapture.clear(); retryCaptureAtMs = 0;
+        lastConnectError.clear();
         port = wantPort;
 
         client.onStatus = [this] (const EngineStatus& s)
@@ -55,17 +59,28 @@ namespace zynforge::capture
                 return true;
             }
             client.disconnect();         // wrong version / not our protocol
+            lastConnectError = "Something else answers on port " + juce::String (port)
+                             + " and it is not a capture daemon this build can talk to. "
+                               "If a daemon take is running there, it is not being watched.";
             return false;                // fail LOUD rather than spawn a twin
         }
 
         // Nothing there -- launch the binary.
         if (! binaryPath.existsAsFile()) binaryPath = discoverBinary();
-        if (! binaryPath.existsAsFile()) return false;
+        if (! binaryPath.existsAsFile())
+        {
+            lastConnectError = "The capture daemon program was not found.";
+            return false;
+        }
 
         juce::StringArray cmd { binaryPath.getFullPathName(),
                                 "--port", juce::String (port) };
         cmd.addArray (extraArgs);
-        if (! process.start (cmd)) return false;
+        if (! process.start (cmd))
+        {
+            lastConnectError = "The capture daemon program could not be started.";
+            return false;
+        }
         launched = true;
 
         // The daemon needs a beat to bind; retry the connect briefly.
@@ -92,6 +107,8 @@ namespace zynforge::capture
         }
         process.kill();
         launched = false;
+        lastConnectError = "The capture daemon started but never answered; port "
+                         + juce::String (port) + " may be busy.";
         return false;
     }
 
@@ -141,6 +158,10 @@ namespace zynforge::capture
 
     void CaptureSupervisor::shutdown()
     {
+        // The link going down is what wakes a STOP that is waiting for its reply.
+        if (stopInFlight.load()) client.disconnect();
+        joinStop();
+
         // A ROLLING take must survive the GUI: NEVER kill a daemon unless we
         // POSITIVELY know it is idle. Before the first status push arrives we
         // do NOT know its state (lastStatus().recording defaults to false), so
@@ -188,7 +209,8 @@ namespace zynforge::capture
 
     bool CaptureSupervisor::startRecording (const juce::File& sessionDir, int trackCount,
                                             int captureFormat, const juce::BigInteger& armedTracks,
-                                            const juce::var& timeHint)
+                                            const juce::var& timeHint,
+                                            juce::String* refusal, bool* unanswered)
     {
         if (! isAttached()) return false;
 
@@ -207,7 +229,12 @@ namespace zynforge::capture
         // Await the daemon's reply (bounded): true ONLY when the daemon
         // confirms the recorder actually started. A socket-write success is
         // NOT proof the take is rolling, so we no longer light Record on it.
-        const auto reply = client.request (rec, 5000);
+        const auto reply = client.request (rec, startReplyTimeoutMs);
+        if (! reply.ok)
+        {
+            if (refusal != nullptr) *refusal = reply.error;
+            if (unanswered != nullptr) *unanswered = reply.error.isEmpty();
+        }
         return reply.ok;
     }
 
@@ -240,12 +267,36 @@ namespace zynforge::capture
             return false;
         }
         Command stop; stop.action = Action::StopRecording;
-        // Await the daemon's ack (bounded). Closing files + manifest can take a
-        // moment, so allow a generous timeout.
-        const auto reply = client.request (stop, 10000);
+        // Await the daemon's ack. It closes every file on every copy first, and
+        // on a slow drive that is not a matter of seconds. A dropped link wakes
+        // this at once; the bound is only for a daemon that went silent.
+        const auto reply = client.request (stop, 10 * 60 * 1000);
         if (didStop != nullptr) *didStop = reply.completed;
         if (error != nullptr) *error = reply.error;
         return reply.ok;
+    }
+
+    void CaptureSupervisor::joinStop()
+    {
+        if (stopThread.joinable()) stopThread.join();
+    }
+
+    void CaptureSupervisor::stopRecordingAsync (std::function<void (StopResult)> done)
+    {
+        joinStop();
+        stopInFlight.store (true);
+        stopThread = std::thread ([this, done = std::move (done), token = alive]
+        {
+            StopResult result;
+            result.clean = stopRecording (&result.stopped, &result.error);
+            juce::MessageManager::callAsync ([this, done, token, result]
+            {
+                if (! token->load()) return;
+                joinStop();
+                stopInFlight.store (false);
+                done (result);
+            });
+        });
     }
 
     void CaptureSupervisor::tick()

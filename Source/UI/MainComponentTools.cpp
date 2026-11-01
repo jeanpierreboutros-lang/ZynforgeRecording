@@ -776,7 +776,13 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
     if (! captureSupervisor.connectOrLaunch (captureDaemonPort))
     {
         useCaptureDaemon = false;
-        showStatus ("Capture daemon unavailable (binary not found / port busy) -- in-process recording stays active.");
+        showStatus ("Capture daemon unavailable -- RECORD now runs inside this app, with no crash protection.");
+        if (! s_testConstruct)
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon, "Recording without the capture daemon",
+                captureSupervisor.lastConnectError
+                    + "\n\nRECORD now runs inside this app, so a crash here ends the take. "
+                      "Turn the capture daemon back on from the Session menu to try again.");
         return;
     }
 
@@ -793,6 +799,7 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
 
 void MainComponent::adoptDaemonTake (const zynforge::EngineStatus& status, bool announce)
 {
+    daemonStartUnansweredMs = 0;
     engine.setExternalCaptureStatus (status, captureSupervisor.lastStatusAtMs());
     daemonTakeAdopted = true;
     if (status.sessionPath.isNotEmpty())
@@ -831,7 +838,7 @@ MainComponent::LostDaemon MainComponent::resolveLostDaemon()
 // died is known to have died, without the engineer having to ask.
 void MainComponent::serviceLostDaemon()
 {
-    if (! daemonLinkLost || captureSupervisor.isAttached()) return;
+    if (! daemonLinkLost || captureSupervisor.isAttached() || captureSupervisor.isStopInFlight()) return;
     if ((juce::int32) (juce::Time::getMillisecondCounter() - nextDaemonProbeMs) < 0) return;
     if (resolveLostDaemon() == LostDaemon::gone && engine.isExternalRecording())
         endDaemonTake (kDaemonGoneMidTake, false, {});
@@ -845,6 +852,11 @@ bool MainComponent::lostDaemonTakeUnknown() const
 
 void MainComponent::reconnectCaptureDaemon()
 {
+    if (captureSupervisor.isStopInFlight())
+    {
+        showStatus ("Wait for STOP to finish");
+        return;
+    }
     const auto link = captureSupervisor.isAttached() ? LostDaemon::back : resolveLostDaemon();
     if (link == LostDaemon::back)
     {
@@ -893,6 +905,11 @@ void MainComponent::disableCaptureDaemon()
 
 void MainComponent::toggleCaptureDaemon()
 {
+    if (captureSupervisor.isStopInFlight())
+    {
+        showStatus ("Wait for STOP to finish");
+        return;
+    }
     if (useCaptureDaemon)
     {
         if (lostDaemonTakeUnknown() && resolveLostDaemon() == LostDaemon::gone && engine.isExternalRecording())
