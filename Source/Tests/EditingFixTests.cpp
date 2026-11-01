@@ -201,32 +201,10 @@ public:
             const auto findings = NoiseAnalyzer::analyseSession (f.dir, nullptr);
             expectEquals ((int) findings.size(), 1, "a sidecar became a phantom noise-report row");
 
-            // Track 2 was never recorded; consolidating a clip pasted onto it
-            // leaves only Track_02_consolidated_1.wav, whose clicks must not
-            // become track 2's transients.
-            expect (writeClicks (f.audio ("Track_02_consolidated_1.wav")));
-            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
-            expect (e.getTransientsForTrack (2).empty(),
-                    "a consolidate render's onsets were filed under track 2");
-        }
-
-        beginTest ("Tab lands on transients where the edited arrangement plays them");
-        {
-            Folder f; expect (writeClicks (f.track()));     // bursts at file 24000 / 48000 / 72000
-            AudioEngine e; setup (e); e.loadSession (f.dir);
-            expect (e.rippleDeleteRange (0, 0, 12000));     // the take slides 12000 earlier
-            for (const int restrict : { 1, -1 })
-            {
-                const auto next = e.nextTransientSample (0, restrict);
-                expect (std::abs (next - 12000) < 600,
-                        "Tab used the file position, not the timeline: " + juce::String (next));
-            }
-            expect (e.clearTrackRange (0, 30000, 40000));   // deletes the burst now at 36000
-            const auto afterGap = e.nextTransientSample (13000, 1);
-            expect (std::abs (afterGap - 60000) < 600,
-                    "Tab stopped on audio that was deleted: " + juce::String (afterGap));
-            const auto back = e.prevTransientSample (59000, 1);
-            expect (std::abs (back - 12000) < 600, "Shift+Tab: " + juce::String (back));
+            // Track 2 was never recorded: a render left under its number is not its take.
+            expectEquals (mainTakeTrackNumber (f.track()), 1);
+            expectEquals (mainTakeTrackNumber (f.audio ("Track_02_consolidated_1.wav")), 0,
+                          "a consolidate render was taken for track 2's take");
         }
 
         // ── Split inside a fade keeps the original ramp on both halves ─────
@@ -461,22 +439,6 @@ public:
             juce::Thread::sleep (5);
         }
         return 0.0f;
-    }
-
-    // Silence with three loud bursts, 48 kHz mono.
-    static bool writeClicks (const juce::File& file)
-    {
-        file.getParentDirectory().createDirectory();
-        juce::WavAudioFormat format;
-        std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
-            file.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
-        if (! writer) return false;
-        juce::AudioBuffer<float> audio (1, 96000);
-        audio.clear();
-        for (const int at : { 24000, 48000, 72000 })
-            for (int i = 0; i < 2400; ++i)
-                audio.setSample (0, at + i, (i % 2 == 0) ? 0.6f : -0.6f);
-        return writer->writeFromAudioSampleBuffer (audio, 0, 96000);
     }
 };
 

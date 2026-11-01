@@ -1060,11 +1060,6 @@ namespace zynforge
                 }
             }
 
-            // (The amber Tab-to-Transient onset ticks that used to draw on
-            // the active row's lane top were removed -- they read as visual
-            // clutter. Tab / Shift+Tab still jump between transients; the
-            // hint markers just aren't painted.)
-
             // Automation lane modes -- flat horizontal line representing
             // the current value (overlaid on top of the dimmed waveform
             // base above). Time-varying automation is reserved for a
@@ -2325,10 +2320,7 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
-            // Mark this row as the active row for Tab-to-Transient.
-            // Any subsequent Tab press will restrict the onset
-            // search to this track's onsets only (instead of the
-            // pooled cross-track list). Reset by clicking on a
+            // Mark this row as the active row. Reset by clicking on a
             // different row.
             if (auto* page = findParentComponentOfClass<EditPage>())
             {

@@ -957,6 +957,13 @@ namespace zynforge
                 s.engine.getPlayer().clearLoopRegion();
             }
 
+            beginTest ("Tab walks keyboard focus onto no control");
+            {
+                Show s (1, { 48000 });
+                expect (s.main.keyPressed (juce::KeyPress (juce::KeyPress::tabKey), nullptr),
+                        "left to JUCE, Tab puts focus on a routing combo or transport button");
+            }
+
             beginTest ("A clip pastes only onto a strip of its own stereo layout");
             {
                 Show s (3, { 48000, 48000, 48000 });

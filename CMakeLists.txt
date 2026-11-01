@@ -302,7 +302,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TwinLinkTests.cpp
     Source/Tests/TwinLinkHostTests.cpp
     Source/Tests/MixKernelTests.cpp
-    Source/Tests/TransientTests.cpp
     Source/Tests/TransportBarAccessibilityTests.cpp
     Source/Tests/VcaPanelAccessibilityTests.cpp
 )

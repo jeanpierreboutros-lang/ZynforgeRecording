@@ -4,7 +4,6 @@
 #include "AtomicFile.h"
 #include "SessionMixFile.h"
 #include "FastAccumulate.h"
-#include "TransientDetector.h"
 #include "MultiPartReader.h"
 
 namespace zynforge
@@ -379,9 +378,6 @@ namespace zynforge
         recorder.stopRecording();
         clearCaptureWindow();
         player.setSeekLocked (false);
-        // Fresh audio on disk -- the transient cache from the last
-        // session is now stale.
-        invalidateTransientCache();
         // Drop the threaded writer -- its destructor flushes the queue and
         // closes the underlying AudioFormatWriter cleanly. Hold stereoMixLock
         // so the audio thread can't be mid check-and-write against the writer
@@ -491,7 +487,6 @@ namespace zynforge
         // Joining only its return tail establishes ownership of the result.
         if (job.worker.joinable()) job.worker.join();
         job.retired = player.installPreparedSession (std::move (job.prepared), true);
-        invalidateTransientCache();
         activeSession = job.directory;
         updateSettings (appProps.get(), [this] (juce::PropertiesFile& props)
                         { props.setValue ("activeSessionDir", activeSession.getFullPathName()); });
@@ -942,12 +937,6 @@ namespace zynforge
             markers.setContext (sessionDir, player.getSampleRate());
             rememberRecentSession (sessionDir);
             seedDefaultClips (preserveEdits, appendRecordedAudio);
-            invalidateTransientCache();   // different session = different audio
-            // (Background transient-cache warmup was attempted here
-            // earlier but launched a detached lambda capturing
-            // `this`, which races the engine destructor in unit-test
-            // scenarios. The cache builds lazily on first Tab press
-            // -- acceptable cost, no use-after-free risk.)
         }
         return n;
     }
@@ -1441,200 +1430,6 @@ namespace zynforge
     juce::int64 AudioEngine::getEditCursorSample() const noexcept
     {
         return editCursorSample.load (std::memory_order_acquire);
-    }
-
-    void AudioEngine::invalidateTransientCache()
-    {
-        transientCacheGeneration.fetch_add (1, std::memory_order_acq_rel);
-        transientCacheValid.store (false, std::memory_order_release);
-        transientCache.clear();
-        transientPerTrack.clear();
-    }
-
-    // Cache builder. Scans every Track_NN file (in either Audio Files/
-    // or the session root) and stores onsets BOTH per-track AND pooled +
-    // deduped. The UI invokes it through buildTransientCacheAsync; the
-    // synchronous query fallback remains useful to non-UI callers/tests.
-    constexpr juce::int64 kTransientDedupeWindow = 48000 / 40;   // ~25 ms @ 48k
-
-    static void
-    buildTransientCacheInto (const juce::File& sessionDir,
-                             std::vector<juce::int64>& pooledOut,
-                             std::vector<std::vector<juce::int64>>& perTrackOut)
-    {
-        pooledOut.clear();
-        perTrackOut.clear();
-        if (! sessionDir.isDirectory()) return;
-
-        // Match EVERY supported container, not just .wav -- takes can be
-        // captured as FLAC or AIFF, and a .wav-only glob left Tab transient
-        // navigation completely dead in those sessions. Continuation parts are
-        // skipped here (detectInFile scans one file and each part restarts at
-        // t=0, so a part's onsets would land at the wrong timeline position).
-        const auto audioDir = sessionDir.getChildFile ("Audio Files");
-        const auto scanDir  = audioDir.isDirectory() ? audioDir : sessionDir;
-        auto files = scanDir.findChildFiles (juce::File::findFiles, false,
-                         "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff");
-        for (auto& f : files)
-        {
-            // Main take files only: detectInFile already reads a main file's
-            // parts, and a punch sidecar or Track_NN_consolidated_K render
-            // (onsets relative to its own start) must not replace track NN's.
-            const int idx = mainTakeTrackNumber (f);
-            if (idx <= 0) continue;
-            if ((int) perTrackOut.size() < idx) perTrackOut.resize ((size_t) idx);
-            auto onsets = zynforge::TransientDetector::detectInFile (f);
-            perTrackOut[(size_t) idx - 1] = onsets;
-            pooledOut.insert (pooledOut.end(), onsets.begin(), onsets.end());
-        }
-        std::sort (pooledOut.begin(), pooledOut.end());
-        if (! pooledOut.empty())
-        {
-            std::vector<juce::int64> dedup;
-            dedup.reserve (pooledOut.size());
-            dedup.push_back (pooledOut.front());
-            for (size_t i = 1; i < pooledOut.size(); ++i)
-                if (pooledOut[i] - dedup.back() >= kTransientDedupeWindow)
-                    dedup.push_back (pooledOut[i]);
-            pooledOut.swap (dedup);
-        }
-    }
-
-    static const std::vector<juce::int64> emptyTransients;
-
-    // Onsets are found per take FILE, but Tab moves along the TIMELINE. Map
-    // them through the current clip arrangement at query time, so an edit
-    // needs no re-scan: an onset inside a clip's source region lands where
-    // that clip sits, and one the arrangement no longer plays (trimmed,
-    // deleted, muted) is no Tab stop. A strip with no clip list plays its
-    // whole take, so its onsets stand. restrictToTrack is 1-based, as before;
-    // otherwise every strip is pooled and thinned like the cached list.
-    static std::vector<juce::int64> timelineTransients (const std::vector<std::vector<juce::int64>>& perFile,
-                                                        const std::vector<std::vector<Clip>>& clips,
-                                                        int restrictToTrack)
-    {
-        const auto onsetsOf = [&perFile] (int trackNumber) -> const std::vector<juce::int64>*
-        {
-            return trackNumber >= 1 && trackNumber <= (int) perFile.size()
-                     ? &perFile[(size_t) trackNumber - 1] : nullptr;
-        };
-        std::vector<juce::int64> out;
-        const auto addStrip = [&] (int strip)
-        {
-            if (strip >= (int) clips.size())
-            {
-                if (const auto* own = onsetsOf (strip + 1))
-                    out.insert (out.end(), own->begin(), own->end());
-                return;
-            }
-            for (const auto& c : clips[(size_t) strip])
-            {
-                // Onsets are detected on a file's first channel only.
-                if (c.muted || c.sourceChannel == 1) continue;
-                const auto* onsets = onsetsOf (c.audioFile == juce::File() ? strip + 1
-                                                                           : mainTakeTrackNumber (c.audioFile));
-                if (onsets == nullptr) continue;
-                const auto end = c.fileStartSamples + c.fileLengthSamples;
-                for (auto it = std::lower_bound (onsets->begin(), onsets->end(), c.fileStartSamples);
-                     it != onsets->end() && *it < end; ++it)
-                    out.push_back (c.timelineStartSamples + (*it - c.fileStartSamples));
-            }
-        };
-        const bool pooled = restrictToTrack < 1 || restrictToTrack > (int) perFile.size();
-        if (! pooled) addStrip (restrictToTrack - 1);
-        else for (int strip = 0; strip < (int) juce::jmax (perFile.size(), clips.size()); ++strip) addStrip (strip);
-        std::sort (out.begin(), out.end());
-        const juce::int64 window = pooled ? kTransientDedupeWindow : 1;
-        std::vector<juce::int64> thinned;
-        thinned.reserve (out.size());
-        for (const auto o : out)
-            if (thinned.empty() || o - thinned.back() >= window) thinned.push_back (o);
-        return thinned;
-    }
-
-    void AudioEngine::buildTransientCacheAsync (std::function<void (bool)> completion)
-    {
-        if (transientCacheValid.load (std::memory_order_acquire))
-        {
-            if (completion) completion (true);
-            return;
-        }
-
-        bool expected = false;
-        if (! transientBuildInProgress.compare_exchange_strong (
-                expected, true, std::memory_order_acq_rel))
-            return; // The first request owns completion; repeated Tab is harmless.
-
-        const auto sessionDir = getActiveSessionDir();
-        const auto generation = transientCacheGeneration.load (std::memory_order_acquire);
-        const auto handle = asyncHandle;
-        juce::Thread::launch ([handle, sessionDir, generation,
-                               completion = std::move (completion)] () mutable
-        {
-            std::vector<juce::int64> pooled;
-            std::vector<std::vector<juce::int64>> perTrack;
-            buildTransientCacheInto (sessionDir, pooled, perTrack);
-
-            juce::MessageManager::callAsync (
-                [handle, sessionDir, generation, pooled = std::move (pooled),
-                 perTrack = std::move (perTrack), completion = std::move (completion)] () mutable
-            {
-                auto* engine = handle->load (std::memory_order_acquire);
-                if (engine == nullptr) return;
-
-                const bool current = engine->getActiveSessionDir() == sessionDir
-                                  && engine->transientCacheGeneration.load (std::memory_order_acquire) == generation;
-                if (current)
-                {
-                    engine->transientCache = std::move (pooled);
-                    engine->transientPerTrack = std::move (perTrack);
-                    engine->transientCacheValid.store (true, std::memory_order_release);
-                }
-                engine->transientBuildInProgress.store (false, std::memory_order_release);
-                if (completion) completion (current);
-            });
-        });
-    }
-
-    const std::vector<juce::int64>& AudioEngine::getTransientsForTrack (int trackIdx)
-    {
-        if (! transientCacheValid.load (std::memory_order_acquire))
-        {
-            buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
-            transientCacheValid.store (true, std::memory_order_release);
-        }
-        if (trackIdx < 1 || trackIdx > (int) transientPerTrack.size()) return emptyTransients;
-        return transientPerTrack[(size_t) trackIdx - 1];
-    }
-
-    juce::int64 AudioEngine::nextTransientSample (juce::int64 fromSample, int restrictToTrack)
-    {
-        if (! transientCacheValid.load (std::memory_order_acquire))
-        {
-            buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
-            transientCacheValid.store (true, std::memory_order_release);
-        }
-        const auto timeline = timelineTransients (transientPerTrack, trackClips, restrictToTrack);
-        const auto* list = &timeline;
-        if (list->empty()) return -1;
-        auto it = std::upper_bound (list->begin(), list->end(), fromSample);
-        return it == list->end() ? -1 : *it;
-    }
-
-    juce::int64 AudioEngine::prevTransientSample (juce::int64 fromSample, int restrictToTrack)
-    {
-        if (! transientCacheValid.load (std::memory_order_acquire))
-        {
-            buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
-            transientCacheValid.store (true, std::memory_order_release);
-        }
-        const auto timeline = timelineTransients (transientPerTrack, trackClips, restrictToTrack);
-        const auto* list = &timeline;
-        if (list->empty()) return -1;
-        auto it = std::lower_bound (list->begin(), list->end(), fromSample);
-        if (it == list->begin()) return -1;
-        --it;
-        return *it;
     }
 
     int AudioEngine::dropMarkerAtCurrentPosition (const juce::String& name, const juce::String& type)
@@ -2209,7 +2004,6 @@ namespace zynforge
             sourceTrackLengths.push_back (player.getTrackLengthSamples (i));
         player.clearAllClips();
         for (int i = 0; i < (int) trackClips.size(); ++i) player.setTrackClips (i, trackClips[(size_t) i]);
-        invalidateTransientCache();
         deviceManager.addAudioCallback (this);
         if (saved && onTracksReordered) onTracksReordered (destination);
         return saved;
@@ -2549,7 +2343,6 @@ namespace zynforge
             v.rampTargetGainDb.store (0); v.rampSamplesRemaining.store (0);
         }
         markers.clearContext();
-        invalidateTransientCache();
         editCursorSample.store (-1, std::memory_order_release);
         {
             const juce::ScopedLock sl (tempoLock);

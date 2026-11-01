@@ -110,7 +110,7 @@ report "TrackState::name written only via setNameThreadSafe" \
 
 # ── 4. Take globs cover every container and exclude punch sidecars ──────────
 # "Takes are not always WAV" (CLAUDE.md). A .wav-only glob silently skipped
-# FLAC/AIFF sessions in the transient cache, the timeline CSV and the Crop
+# FLAC/AIFF sessions in the timeline CSV and the Crop
 # multi-part guard. And Track_NN.punchbase.<ext> matches a bare Track_* glob --
 # SessionPlayer stitched a crash-orphaned sidecar into the take as part 1.
 HITS=$(grep -rn '"Track_\*\.wav"' $SCOPE 2>/dev/null)

@@ -153,11 +153,9 @@ namespace zynforge
         // Tools "Zoom to Selection"). No-op until a session is loaded.
         void  zoomToSamples (juce::int64 a, juce::int64 b);
 
-        // Active row tracking for Tab-to-Transient. TrackRow's mouse-
-        // down handler sets the row index that was last clicked; the
-        // host (MainComponent) reads it to restrict Tab navigation
-        // to that one row's onsets. -1 = no active row, fall back to
-        // pooled (cross-track) search.
+        // Active row tracking. TrackRow's mouse-down handler sets the
+        // row index that was last clicked; paste targets it and the
+        // automation keys edit its lane. -1 = no active row.
         int  getActiveRowTrackIndex() const noexcept { return activeRowTrackIndex; }
         void setActiveRowTrackIndex (int trackIdx) noexcept
         {

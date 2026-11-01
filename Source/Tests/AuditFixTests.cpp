@@ -511,42 +511,6 @@ namespace zynforge
                 expect (props->getValue ("strip_uid_3", {}).isEmpty(),
                         "the orphan tail slot must be cleared");
             }
-
-            // ── Transient cache must see non-WAV takes ───────────────────────
-            beginTest ("Transient scan covers FLAC/AIFF sessions");
-            {
-                auto dir = scratchDir ("transient_flac");
-                const auto audio = dir.getChildFile ("Audio Files");
-                audio.createDirectory();
-
-                // A FLAC take with a hard transient partway through.
-                const auto flacFile = audio.getChildFile ("Track_01.flac");
-                {
-                    juce::FlacAudioFormat flac;
-                    std::unique_ptr<juce::FileOutputStream> os (flacFile.createOutputStream());
-                    expect (os != nullptr, "flac stream");
-                    std::unique_ptr<juce::AudioFormatWriter> w (
-                        flac.createWriterFor (os.get(), 48000.0, 1, 24, {}, 5));
-                    expect (w != nullptr, "flac writer");
-                    os.release();
-                    juce::AudioBuffer<float> buf (1, 48000);
-                    buf.clear();
-                    // Silence, then a loud sustained burst = one clear onset.
-                    for (int i = 24000; i < 48000; ++i)
-                        buf.setSample (0, i, 0.8f * std::sin (2.0f * 3.14159f * 220.0f
-                                                              * (float) i / 48000.0f));
-                    expect (w->writeFromAudioSampleBuffer (buf, 0, 48000), "flac write");
-                }
-
-                AudioEngine eng;
-                eng.prepareForTests (48000.0, 512);
-                eng.setActiveSessionDir (dir);
-                eng.invalidateTransientCache();
-                // Pre-fix the .wav-only glob found nothing here, so Tab was dead.
-                const auto next = eng.nextTransientSample (0, 1);
-                expect (next > 0, "a FLAC take must produce transients (was WAV-only)");
-                dir.deleteRecursively();
-            }
         }
     };
 

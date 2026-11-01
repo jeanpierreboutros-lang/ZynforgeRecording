@@ -574,34 +574,6 @@ namespace zynforge
         juce::int64   getEditCursorSample() const noexcept;
         void          clearEditCursor() noexcept { setEditCursorSample (-1); }
 
-        // Tab-to-transient (Pro Tools-style). Returns the nearest
-        // detected onset sample position after / before `fromSample`,
-        // or -1 if none. First call lazily scans every Track_NN.wav
-        // in the active session and caches the result; subsequent
-        // calls reuse the cache. invalidateTransientCache() forces
-        // a rescan on the next query (call after a fresh record).
-        //
-        // restrictToTrack >= 0 limits the search to onsets detected
-        // on that single Track_NN.wav (1-based file index, matching
-        // the recorder's numbering). Pass -1 to search the pooled
-        // list across every track (legacy behaviour).
-        juce::int64 nextTransientSample (juce::int64 fromSample, int restrictToTrack = -1);
-        juce::int64 prevTransientSample (juce::int64 fromSample, int restrictToTrack = -1);
-        void invalidateTransientCache();
-        bool isTransientCacheReady() const noexcept
-        { return transientCacheValid.load (std::memory_order_acquire); }
-        bool isTransientCacheBuilding() const noexcept
-        { return transientBuildInProgress.load (std::memory_order_acquire); }
-        // Build the cache without blocking the message thread. completion is
-        // delivered on the message thread and is false if the session changed
-        // (or the engine was invalidated) while analysis was running.
-        void buildTransientCacheAsync (std::function<void (bool)> completion);
-
-        // Returns the transient list for a single track index
-        // (1-based, matching Track_NN.wav). Empty if not detected
-        // yet OR if the track has no audio file.
-        const std::vector<juce::int64>& getTransientsForTrack (int trackIdx);
-
         // Session tempo. setSessionTempoBpm() is the canonical setter --
         // it updates currentTempoBpm + persists to appProps. The tempo
         // map is a sorted list of (samplePos, bpm) change points; the
@@ -1396,18 +1368,6 @@ namespace zynforge
         // Active snap grid. Read by snapSampleToGrid + by the
         // splitTrackAtPlayhead path. Default Off.
         std::atomic<int> snapMode { 0 };
-
-        // Pooled list of detected onsets across every Track_NN.wav in
-        // the active session (sorted). Built lazily on first Tab-to-
-        // transient query. Invalidated on session load + new record.
-        std::vector<juce::int64> transientCache;
-        // Per-track onsets keyed by 1-based track index (matching
-        // Track_NN.wav). Populated alongside `transientCache` so
-        // track-restricted Tab can search the relevant lane only.
-        std::vector<std::vector<juce::int64>> transientPerTrack;
-        std::atomic<bool>        transientCacheValid { false };
-        std::atomic<bool>        transientBuildInProgress { false };
-        std::atomic<juce::uint64> transientCacheGeneration { 0 };
 
         // Per-track, per-parameter automation. UI-thread only for now
         // (audio thread doesn't yet consume these -- the engineer reads
