@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <Accelerate/Accelerate.h>
 #include <cmath>
 #include <vector>
 
@@ -11,8 +12,9 @@ namespace zynforge
     // starts on the source's first sample, so converted stems stay aligned. A
     // Kaiser-windowed kernel 96 zero crossings long rejects aliases by about
     // 100 dB; going down, the cutoff drops to the new Nyquist and the kernel
-    // stretches to match. Nothing here is real-time: it costs about a hundred
-    // multiplies per output sample per channel.
+    // stretches to match. Nothing here is real-time, but a long multichannel
+    // export runs every file through it, so the kernel is worked out once for
+    // 1024 positions between samples and each output blends the nearest two.
     //
     // Same calls as juce::ResamplingAudioSource: the ratio is source rate over
     // destination rate.
@@ -34,40 +36,39 @@ namespace zynforge
             history.clear();
             pulled.setSize (channels, pullSize);
             coefficients.resize ((size_t) (2 * halfWidth));
+            buildPhaseTable();
             // The kernel reads silence before the first source sample.
             fill = halfWidth + 1;
             firstInBuffer = -(juce::int64) fill;
             historyPosition = 0.0;
-            buildKernel();
         }
 
         void releaseResources() override { source->releaseResources(); }
 
         void getNextAudioBlock (const juce::AudioSourceChannelInfo& info) override
         {
+            const int taps = 2 * halfWidth;
             for (int out = 0; out < info.numSamples; ++out)
             {
                 const auto centre = (juce::int64) std::floor (historyPosition);
                 const auto lastNeeded = centre + halfWidth;
                 while (firstInBuffer + fill <= lastNeeded) pull();
 
-                const double fraction = historyPosition - (double) centre;
-                double sum = 0.0;
-                for (int k = 0; k < 2 * halfWidth; ++k)
-                {
-                    const double distance = (double) (k - halfWidth + 1) - fraction;
-                    const double c = kernelAt (std::abs (distance));
-                    coefficients[(size_t) k] = c;
-                    sum += c;
-                }
+                const double phasePosition = (historyPosition - (double) centre) * kPhases;
+                const auto phase = (size_t) phasePosition;
+                const auto blend = (float) (phasePosition - (double) phase);
+                const float* lower = phaseTable.data() + phase * (size_t) taps;
+                const float* upper = lower + taps;
+                for (int k = 0; k < taps; ++k)
+                    coefficients[(size_t) k] = lower[k] + blend * (upper[k] - lower[k]);
+
                 const auto offset = (int) (centre - halfWidth + 1 - firstInBuffer);
                 for (int ch = 0; ch < channels && ch < info.buffer->getNumChannels(); ++ch)
                 {
-                    const auto* in = history.getReadPointer (ch, offset);
-                    double value = 0.0;
-                    for (int k = 0; k < 2 * halfWidth; ++k)
-                        value += coefficients[(size_t) k] * (double) in[k];
-                    info.buffer->setSample (ch, info.startSample + out, (float) (value / sum));
+                    float value = 0.0f;
+                    vDSP_dotpr (coefficients.data(), 1, history.getReadPointer (ch, offset), 1,
+                                &value, (vDSP_Length) taps);
+                    info.buffer->setSample (ch, info.startSample + out, value);
                 }
                 historyPosition += ratio;
             }
@@ -77,7 +78,7 @@ namespace zynforge
         static constexpr int    kZeroCrossings = 48;     // each side of the centre
         static constexpr double kPassband      = 0.94;   // of Nyquist, where the filter's -6 dB falls
         static constexpr double kKaiserBeta    = 11.0;
-        static constexpr int    kKernelSteps   = 2048;   // table steps per zero crossing
+        static constexpr int    kPhases        = 1024;   // kernel positions between two samples
 
         static double besselI0 (double x)
         {
@@ -90,29 +91,36 @@ namespace zynforge
             return sum;
         }
 
-        void buildKernel()
-        {
-            const int steps = kKernelSteps * (int) std::ceil (kZeroCrossings / cutoff) + 2;
-            kernel.resize ((size_t) steps);
-            const double width = (double) halfWidth;
-            const double norm = besselI0 (kKaiserBeta);
-            for (int i = 0; i < steps; ++i)
-            {
-                const double x = (double) i / kKernelSteps;
-                const double r = juce::jmin (1.0, x / width);
-                const double window = besselI0 (kKaiserBeta * std::sqrt (1.0 - r * r)) / norm;
-                const double px = juce::MathConstants<double>::pi * x * cutoff;
-                kernel[(size_t) i] = cutoff * (i == 0 ? 1.0 : std::sin (px) / px) * window;
-            }
-        }
-
         double kernelAt (double distance) const
         {
-            if (distance >= (double) halfWidth) return 0.0;
-            const double position = distance * kKernelSteps;
-            const auto index = (size_t) position;
-            const double t = position - (double) index;
-            return kernel[index] + t * (kernel[index + 1] - kernel[index]);
+            const double width = (double) halfWidth;
+            if (distance >= width) return 0.0;
+            const double r = distance / width;
+            const double window = besselI0 (kKaiserBeta * std::sqrt (1.0 - r * r)) / besselI0 (kKaiserBeta);
+            const double px = juce::MathConstants<double>::pi * distance * cutoff;
+            return cutoff * (distance == 0.0 ? 1.0 : std::sin (px) / px) * window;
+        }
+
+        // Row p holds the kernel for a read position p / kPhases past a sample,
+        // normalised so a constant signal keeps its level. The extra last row is
+        // the one the blend reaches from just below the next sample.
+        void buildPhaseTable()
+        {
+            const int taps = 2 * halfWidth;
+            phaseTable.resize ((size_t) ((kPhases + 1) * taps));
+            std::vector<double> row ((size_t) taps);
+            for (int p = 0; p <= kPhases; ++p)
+            {
+                const double fraction = (double) p / kPhases;
+                double sum = 0.0;
+                for (int k = 0; k < taps; ++k)
+                {
+                    row[(size_t) k] = kernelAt (std::abs ((double) (k - halfWidth + 1) - fraction));
+                    sum += row[(size_t) k];
+                }
+                for (int k = 0; k < taps; ++k)
+                    phaseTable[(size_t) (p * taps + k)] = (float) (row[(size_t) k] / sum);
+            }
         }
 
         // Appends one block from the source. A source past its end reads as
@@ -141,7 +149,7 @@ namespace zynforge
         double ratio { 1.0 }, cutoff { 1.0 };
         int halfWidth { kZeroCrossings }, pullSize { 4096 };
         juce::AudioBuffer<float> history, pulled;
-        std::vector<double> kernel, coefficients;
+        std::vector<float> phaseTable, coefficients;
         int fill { 0 };                  // valid samples in history
         juce::int64 firstInBuffer { 0 }; // source position of history[0]
         double historyPosition { 0.0 };  // source position of the next output sample
