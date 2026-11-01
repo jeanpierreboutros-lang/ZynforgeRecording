@@ -1178,6 +1178,8 @@ namespace zynforge
         // tempo map) -- per session, not global appProps.
         root->setProperty ("tempoBpm",   (double) currentTempoBpm.load (std::memory_order_relaxed));
         root->setProperty ("chaseStartTimecode", getChaseStartTimecode());
+        root->setProperty ("streamOutL", streamOutL.load (std::memory_order_relaxed));
+        root->setProperty ("streamOutR", streamOutR.load (std::memory_order_relaxed));
         root->setProperty ("timeSigNum",   timeSigNumerator  .load (std::memory_order_relaxed));
         root->setProperty ("timeSigDenom", timeSigDenominator.load (std::memory_order_relaxed));
         juce::Array<juce::var> tmap;
@@ -1238,6 +1240,12 @@ namespace zynforge
 
         if (! setChaseStartTimecode (root->getProperty ("chaseStartTimecode").toString()))
             chaseStartLabel.store (0, std::memory_order_relaxed);
+
+        // An older session has no stream outputs: the bus stays off them
+        // rather than landing on whatever pair the last session used.
+        setStreamOutputs (root->hasProperty ("streamOutL") ? (int) root->getProperty ("streamOutL") : -1,
+                          root->hasProperty ("streamOutR") ? (int) root->getProperty ("streamOutR") : -1);
+
         // Session tempo state. Guarded so an older session (no keys) keeps
         // whatever's current rather than snapping to 0 BPM / 4-4.
         if (root->hasProperty ("tempoBpm"))
@@ -2444,6 +2452,7 @@ namespace zynforge
         }
         clearAllAutomationTrims();
         resetAllStripState();
+        setStreamOutputs (-1, -1);
         chaseStartLabel.store (0, std::memory_order_relaxed);
         for (auto& v : vcas)
         {

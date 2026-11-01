@@ -539,6 +539,46 @@ namespace zynforge
                                            "a damaged level reached the bus");
             }
 
+            beginTest ("The stream bus output round-trips with the session and leaves with it");
+            {
+                TempFolder f;
+                Rig r (2, 2, 4);
+                auto& e = r.engine;
+                e.setStreamOutputs (2, 3);
+                expect (e.saveSessionMixTo (f.dir));
+                e.clearSessionState();
+                expectEquals (e.getStreamOutputL(), -1, "a stream route leaked out of its session");
+                expect (e.loadSessionMixFrom (f.dir));
+                expectEquals (e.getStreamOutputL(), 2);
+                expectEquals (e.getStreamOutputR(), 3);
+
+                const auto file = f.dir.getChildFile ("session_mix.json");
+                auto root = juce::JSON::parse (file);
+                root.getDynamicObject()->removeProperty ("streamOutL");
+                root.getDynamicObject()->removeProperty ("streamOutR");
+                file.replaceWithText (juce::JSON::toString (root));
+                expect (e.loadSessionMixFrom (f.dir));
+                expectEquals (e.getStreamOutputL(), -1, "an older session got a stream route");
+            }
+
+            beginTest ("The stream bus reaches the output chosen for it, and no other");
+            {
+                Rig r (1, 1, 4);
+                auto& e = r.engine; auto& t = e.getRecorder().getTrack (0);
+                e.setTrackStream (0, true);
+                t.monitor.store (true);
+                TempFolder f;
+                e.setTrackArmed (0, true);
+                expect (e.startRecording (f.dir));
+                r.input (0, 0.5f);
+                r.process();
+                expect (r.peak (2) < 0.001f, "the bus reached an output nobody chose");
+                e.setStreamOutputs (2, 3);
+                r.process();
+                expect (r.peak (2) > 0.2f && r.peak (3) > 0.2f, "the bus never reached its output");
+                e.stopRecording();
+            }
+
             beginTest ("Trim-Follow stays off live input on the stream bus and StereoMix");
             {
                 TempFolder f;

@@ -1117,3 +1117,35 @@ void MainComponent::showSessionProperties()
                 });
         });
 }
+
+void MainComponent::promptStreamOutputs()
+{
+    auto* aw = new juce::AlertWindow ("Stream Bus Output",
+                                      "The stream bus sums every strip with a STREAM send. Pick the "
+                                      "output pair it feeds. Off leaves it for StereoMix.wav alone.",
+                                      juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);
+
+    juce::StringArray pairs ("Off");
+    const int outputs = engine.getCurrentDeviceOutputCount();
+    for (int left = 0; left + 1 < outputs; left += 2)
+        pairs.add ("Out " + juce::String (left + 1) + "-" + juce::String (left + 2));
+    aw->addComboBox ("pair", pairs, "Output:");
+    if (auto* box = aw->getComboBoxComponent ("pair"))
+        box->setSelectedItemIndex (juce::jlimit (0, pairs.size() - 1, (engine.getStreamOutputL() + 2) / 2),
+                                   juce::dontSendNotification);
+    aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int result)
+    {
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (self == nullptr || result != 1) return;
+        const int index = aw->getComboBoxComponent ("pair")->getSelectedItemIndex();
+        const int left  = index > 0 ? (index - 1) * 2 : -1;
+        self->engine.setStreamOutputs (left, left >= 0 ? left + 1 : -1);
+        self->showStatus (left >= 0 ? "Stream bus -> Out " + juce::String (left + 1) + "-" + juce::String (left + 2)
+                                    : juce::String ("Stream bus has no output"));
+    }));
+}

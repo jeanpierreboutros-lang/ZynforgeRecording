@@ -237,6 +237,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                        true, engine.isTrimFollowEnabled());
             m.addItem (991, "Let the Mix Share Outputs With Patched Strips", true,
                        engine.getMixMayShareStripOutputs());
+            m.addItem (990, engine.getStreamOutputL() >= 0
+                               ? "Stream Bus Output (Out " + juce::String (engine.getStreamOutputL() + 1) + "-"
+                                     + juce::String (engine.getStreamOutputR() + 1) + ")..."
+                               : juce::String ("Stream Bus Output (off)..."));
             // Transport Sync -- chase MTC / LTC with live status.
             m.addItem (600, engine.getChaseMode() != zynforge::AudioEngine::ChaseMode::Off
                                ? juce::String ("Transport Sync (chasing)...")
@@ -382,6 +386,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) cues.empty()
         << '|' << (int) stripClipboard.isObject()
         << '|' << (int) engine.isTrimFollowEnabled()
+        << '|' << engine.getStreamOutputL()
         << '|' << (int) engine.getMixMayShareStripOutputs()
         << '|' << (engine.isTrimFollowEnabled() ? engine.getTrimFollowUnreferencedCount() : 0)
         << '|' << (int) engine.getChaseMode()
@@ -523,6 +528,7 @@ void MainComponent::registerMenuCommands()
         showStatus (allowed ? "The mix now sums onto outputs that strips are patched to. Do not use this with console returns"
                             : "The mix stays off outputs that strips are patched to");
     });
+    m.add (990, [this] { promptStreamOutputs(); });
     m.add (280, [this] { runSpectralAutoName(); });
     m.add (281, [this] { writeSoundcheckReport(); });
     m.add (282, [this] { runNoiseAnalysis(); });
