@@ -6,18 +6,31 @@
 #include <juce_core/juce_core.h>
 
 #include "../Audio/AudioEngine.h"
+#include "../Audio/MidiControlSurface.h"
+#include "../Audio/MultitrackRecorder.h"
+#include "../Audio/OscRemote.h"
+#include "../Audio/SceneFollow.h"
+#include "../Network/CaptureIdentity.h"
 #include "../Network/CaptureLink.h"
+#include "../Network/CompanionServer.h"
+#include "../Network/ConsoleLink.h"
 #include "../Network/LineSocket.h"
+#include "../Network/OscPacketReceiver.h"
 #include "../Network/SessionMirror.h"
 #include "../Network/TwinLink.h"
+#include "../UI/TwinRecorderDialog.h"
 
+#include <CoreFoundation/CoreFoundation.h>
 #include <pthread.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <functional>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace zynforge
@@ -152,6 +165,16 @@ namespace zynforge
             return juce::var (o);
         }
 
+        void pumpMessages() { CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true); }
+
+        juce::File freshDir()
+        {
+            auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                           .getChildFile ("zf-network-" + juce::Uuid().toString());
+            dir.createDirectory();
+            return dir;
+        }
+
         bool waitFor (const std::function<bool()>& done, int timeoutMs = 4000)
         {
             const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
@@ -213,6 +236,7 @@ namespace zynforge
             AudioEngine::setTestModeSkipAudioInit (true);
             testJsonGuard();
             testJsonRoutes();
+            testMirrorLayout();
         }
 
     private:
@@ -221,6 +245,7 @@ namespace zynforge
             beginTest ("The depth guard never counts less nesting than the parser builds");
             {
                 int accepted = 0, deep = 0;
+                bool underCounted = false;
                 for (int seed = 0; seed < 60000; ++seed)
                 {
                     juce::Random random (seed + 1);
@@ -239,11 +264,12 @@ namespace zynforge
                     if (linesocket::jsonDepthWithin (line, real - 1))
                     {
                         expect (false, "guard under-counts: real depth " + juce::String (real) + " in " + line);
-                        return;
+                        underCounted = true;
+                        break;
                     }
                 }
-                expectGreaterThan (accepted, 20000, "the generator stopped producing parsable text");
-                expectGreaterThan (deep, 1000, "the generator stopped producing deep text");
+                expect (underCounted || accepted > 20000, "the generator stopped producing parsable text");
+                expect (underCounted || deep > 1000, "the generator stopped producing deep text");
             }
 
             beginTest ("Everything JUCE writes passes the guard at exactly its own depth");
@@ -256,7 +282,7 @@ namespace zynforge
                         switch (random.nextInt (6))
                         {
                             case 0:  return "name [with] 'quotes' \"and\" \\ {braces}";
-                            case 1:  return juce::String::fromUTF8 ("caf\xC3\xA9 \xE2\x82\xAC -1 -");
+                            case 1:  return juce::String::fromUTF8 ("caf\xC3\xA9 \xE2\x82\xAC -1 - \xF7\xBF\xBF\xBF");
                             case 2:  return -96.5;
                             case 3:  return -3;
                             case 4:  return 1.0e-7;
@@ -454,6 +480,59 @@ namespace zynforge
                 }
             }
         }
+
+        void testMirrorLayout()
+        {
+            beginTest ("A primary with nothing to report never empties the safety Mac");
+            {
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                const juce::ScopeGuard cleanup { [&] { engine.clearAllStripOverrides(); } };
+                engine.setStripCount (4);
+                engine.setTrackName (0, "KICK");
+                engine.setTrackInputRouting (2, 7);
+
+                SessionMirror mirror (engine);
+                mirror.host = "fixture-no-network";
+                mirror.fetchActive.store (true);
+                const auto offer = [&] (const EngineStatus& status)
+                {
+                    mirror.resultPayload = juce::JSON::toString (status.toJson());
+                    mirror.resultReady.store (true);
+                    mirror.timerCallback();
+                };
+
+                EngineStatus unavailable;
+                unavailable.source = "daemon-unavailable";
+                unavailable.statusAgeMs = -1;
+                unavailable.recording = true;
+                offer (unavailable);
+                expectEquals (engine.getRecorder().getNumTracks(), 4);
+                expect (mirror.getLastError().containsIgnoreCase ("unavailable"), mirror.getLastError());
+                expectEquals (mirror.getLastSyncMs(), (juce::int64) 0);
+
+                offer (EngineStatus {});
+                expectEquals (engine.getRecorder().getNumTracks(), 4);
+                expect (mirror.getLastError().containsIgnoreCase ("no channels"), mirror.getLastError());
+                if (engine.getRecorder().getNumTracks() == 4)
+                    expectEquals (engine.getRecorder().getTrack (2).inputRouting.load(), 7,
+                                  "the strips were freed and regrown");
+
+                EngineStatus real;
+                real.numTracks = 2;
+                for (const auto* name : { "VOX", "GTR" })
+                {
+                    TrackStatus track;
+                    track.name = name;
+                    track.colourARGB = 0xff225577;
+                    real.tracks.push_back (track);
+                }
+                offer (real);
+                expectEquals (engine.getRecorder().getNumTracks(), 2);
+                expect (mirror.getLastError().isEmpty(), mirror.getLastError());
+            }
+        }
+
     };
 
     static NetworkFixTests networkFixTests;

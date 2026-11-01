@@ -58,7 +58,7 @@ namespace zynforge
         friend class ReviewNetworkRepairTests;
         friend class NetworkFixTests;
         void timerCallback() override;
-        bool applyState (const juce::var& state);
+        bool applyState (const juce::var& state, juce::String& refusal);
         // Runs on a short-lived background thread: bounded, time-budgeted GET
         // so a slow/rogue host can't freeze the UI or exhaust memory. Publishes
         // the result for the next timerCallback to apply on the message thread.
