@@ -24,7 +24,9 @@
 #include "StripGains.h"
 #include "StripNames.h"
 #include "StripRouting.h"
+#include "SongDetector.h"
 #include "TimecodeChase.h"
+#include "TimelineCut.h"
 
 #include <memory>
 #include <mutex>

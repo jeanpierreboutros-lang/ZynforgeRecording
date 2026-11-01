@@ -385,6 +385,7 @@ private:
     // Option+R bulk record-arm toggle over the current strip selection.
     void armSelection();
     void editCropToLoopRange();
+    void consolidateTracks (const std::vector<int>& targets, juce::int64 start, juce::int64 end);
     void editSetRangeToLoopRange();
     void editToggleSnap();
     void editSplitAtPlayhead();
@@ -686,6 +687,11 @@ private:
     // (declared above) is still alive. Declared after sessionIoBusy, which it
     // references.
     zynforge::SessionJobRunner sessionJobs { sessionIoBusy };
+    // QC, noise analysis and song detection: owned and joined like a session
+    // job, but they only read, so they hold no session reservation. RECORD must
+    // never wait for one; the 10 Hz timer stops it when a take starts.
+    std::atomic<bool> analysisBusy { false };
+    zynforge::SessionJobRunner analysisJobs { analysisBusy };
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);

@@ -1034,16 +1034,24 @@ void MainComponent::editConsolidateSelection()
     if (! canMutateTimeline ("consolidating audio")) return;
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion()) { showStatus ("Select a range first, then Consolidate"); return; }
-    const auto a = player.getLoopStart(), b = player.getLoopEnd();
     const auto targets = tracksToEditPhysical();
     if (targets.empty()) { showStatus ("Select at least one track"); return; }
+    consolidateTracks (targets, player.getLoopStart(), player.getLoopEnd());
+}
+
+// A session job whichever menu started it: it writes a WAV into the session, so
+// RECORD and other jobs must wait, and its undo step must not depend on the row
+// that asked still existing.
+void MainComponent::consolidateTracks (const std::vector<int>& targets, juce::int64 start, juce::int64 end)
+{
+    if (! canMutateTimeline ("consolidating audio")) return;
     if (! sessionJobs.reserve())
     { showStatus ("Wait for the session operation to finish"); return; }
     const auto before = engine.playlistsToJson();
     if (editPage != nullptr) editPage->setEnabled (false);
     showStatus ("Consolidating audio in the background...");
     juce::Component::SafePointer<MainComponent> self (this);
-    engine.consolidateRangeAsync (targets, a, b, [self, before] (int n, bool complete)
+    engine.consolidateRangeAsync (targets, start, end, [self, before] (int n, bool complete)
     {
         if (self == nullptr) return;
         self->sessionJobs.release();

@@ -3602,18 +3602,8 @@ namespace zynforge
                     const auto start = (*clips)[(size_t) clipIdx].timelineStartSamples;
                     const auto end = start + (*clips)[(size_t) clipIdx].fileLengthSamples;
                     if (auto* page = self->findParentComponentOfClass<EditPage>())
-                        page->beginClipEdit();
-                    self->setEnabled (false);
-                    self->engine.consolidateRangeAsync (
-                        self->editGroupPeers(), start, end,
-                        [self] (int, bool)
-                    {
-                        if (self == nullptr) return;
-                        self->setEnabled (true);
-                        if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
-                            pageNow->commitClipEdit ("Consolidate clip");
-                        self->repaint();
-                    });
+                        if (page->consolidateRange)
+                            page->consolidateRange (self->editGroupPeers(), start, end);
                     return;
                 }
                 case 412:
