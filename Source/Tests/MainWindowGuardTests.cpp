@@ -517,6 +517,14 @@ namespace zynforge
             }
         }
 
+        void dismissQuestion (Window& w)
+        {
+            expect (w.main.cursorPunchQuestion != nullptr, "no question to dismiss");
+            if (w.main.cursorPunchQuestion == nullptr) return;
+            w.main.cursorPunchQuestion->exitModalState (0);
+            expect (pumpUntil ([&w] { return w.main.cursorPunchQuestion == nullptr; }), "the question stayed open");
+        }
+
         void parkedPlayheadAppends()
         {
             beginTest ("Only a chosen position punches");
@@ -1533,16 +1541,85 @@ namespace zynforge
                                            levelOf (0), 1.0e-3f, "a parked remote RECORD overwrote the take");
             }
 
+            beginTest ("A stopped RECORD at a placed cursor asks and starts nothing");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.engine().setEditCursorSample (20000);
+                w.main.onRecordClicked();
+                expect (w.main.cursorPunchQuestion != nullptr, "RECORD did not ask");
+                expect (! w.engine().isRecording(), "a stray cursor started a take");
+                expect (! w.main.manualPunchActive, "a stray cursor punched");
+
+                w.main.onRecordClicked();   // a second press does not stack a second question
+                expectEquals (juce::ModalComponentManager::getInstance()->getNumModalComponents(), 1);
+                dismissQuestion (w);
+                w.main.answerCursorPunch (0);
+                expect (! w.engine().isRecording(), "Cancel started a take");
+                expectEquals (w.engine().getEditCursorSample(), (juce::int64) 20000, "Cancel moved the cursor");
+            }
+
+            beginTest ("The safe answer records after the take and leaves it alone");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.engine().setEditCursorSample (20000);
+                w.main.onRecordClicked();
+                dismissQuestion (w);
+                w.main.answerCursorPunch (1);
+                expect (w.engine().isRecording(), w.main.statusLabel.getText());
+                expect (! w.main.manualPunchActive, "the safe answer punched");
+                expectEquals (w.engine().getEditCursorSample(), (juce::int64) -1, "the cursor stayed armed");
+                feedAll (w.recorder(), -0.3f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+            }
+
             beginTest ("A local press may still punch, through the same path");
             {
                 Window w;
                 w.arm ({ 0 });
                 w.engine().setEditCursorSample (20000);
                 w.main.onRecordClicked();
+                dismissQuestion (w);
+                w.main.answerCursorPunch (2);
+                expect (w.main.manualPunchActive, w.main.statusLabel.getText());
+                expect (! w.main.cursorPunchAnswered, "the answer outlived its press");
+                feedAll (w.recorder(), -0.3f, 4);
+                w.main.onStopClicked();
+                expect (w.stopped());
+            }
+
+            beginTest ("A punch during playback does not ask");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.player().setPositionSamples (20000);
+                w.player().start();
+                w.main.onRecordClicked();
+                expect (w.main.cursorPunchQuestion == nullptr, "a deliberate rolling punch asked");
                 expect (w.main.manualPunchActive, w.main.statusLabel.getText());
                 feedAll (w.recorder(), -0.3f, 4);
                 w.main.onStopClicked();
                 expect (w.stopped());
+            }
+
+            beginTest ("An answer that arrives after playback started does nothing");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.engine().setEditCursorSample (20000);
+                w.main.onRecordClicked();
+                dismissQuestion (w);
+                w.player().start();
+                for (const int answer : { 1, 2 })
+                {
+                    w.main.answerCursorPunch (answer);
+                    expect (! w.engine().isRecording(), "a stale answer started a take");
+                    expect (! w.main.manualPunchActive, "a stale answer punched");
+                }
+                expectEquals (w.engine().getEditCursorSample(), (juce::int64) 20000);
+                w.player().stop();
             }
 
             beginTest ("No remote PLAY rolls into a PUNCH window");
