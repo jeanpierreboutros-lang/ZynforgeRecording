@@ -926,7 +926,8 @@ namespace zynforge
         // snap+playhead wrapper around this.
         bool splitTrackAtSample (int track, juce::int64 timelineSample);
         // Heal Separation (Pro Tools Cmd+H): merge the two adjacent clips
-        // whose shared boundary is nearest `timelineSample`, but ONLY when
+        // whose shared boundary is nearest `timelineSample` and within a
+        // quarter of a second of it, but ONLY when
         // they're genuinely contiguous in the same file (i.e. they were split
         // from one clip and not moved/trimmed apart). Returns true if a join
         // was healed. The range variant heals every such boundary in [a, b).
