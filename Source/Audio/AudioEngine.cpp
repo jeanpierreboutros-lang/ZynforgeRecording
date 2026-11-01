@@ -2364,6 +2364,8 @@ namespace zynforge
         captureStopJob.reset();
         recorder.endFinalization();
         asyncCaptureFinalizing.store (false);
+        // ~TimeSliceThread would kill it after two seconds, mid-write.
+        mixWriterThread.stopThread (-1);
     }
 
     void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)

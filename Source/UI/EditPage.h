@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SerialWorker.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -323,7 +324,6 @@ namespace zynforge
         // (not CPU-derived) keeps the on-disk cache layout portable between
         // machines. WaveCache.wfm stores one length-prefixed section per shard.
         static constexpr int               kNumScanShards = 4;
-        static constexpr int               kScanThreadStopMs = 30000;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>> thumbnailCaches;
         ScrollViewport                     viewport;
         TimelineFollowState                followState;
@@ -390,8 +390,7 @@ namespace zynforge
         void cancelWaveCacheWork();
         void beginWaveCacheLoad (const juce::File& sessionDir);
         void beginWaveCacheSave (const juce::File& sessionDir);
-        juce::ThreadPool  waveCacheThread { 1, juce::Thread::osDefaultStackSize,
-                                            juce::Thread::Priority::low };
+        SerialWorker      waveCacheThread;
         std::atomic<int>  waveCacheWork   { 0 };
         std::atomic<int>  waveCacheLoaded { -1 };    // the load job that finished
         std::atomic<bool> waveCacheSaving { false };

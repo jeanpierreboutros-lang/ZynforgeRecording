@@ -186,6 +186,30 @@ namespace zynforge
                 MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
             };
 
+            beginTest ("Closing the recorder waits for a slow write instead of killing its thread");
+            {
+                struct SlowClient final : public juce::TimeSliceClient
+                {
+                    int useTimeSlice() override
+                    {
+                        started.store (true);
+                        juce::Thread::sleep (2500);
+                        finished.store (true);
+                        return -1;
+                    }
+                    std::atomic<bool> started { false }, finished { false };
+                } slow;
+                {
+                    MultitrackRecorder rec;
+                    expect (! rec.writerThreads.empty());
+                    rec.writerThreads.front()->addTimeSliceClient (&slow);
+                    for (int i = 0; i < 500 && ! slow.started.load(); ++i)
+                        juce::Thread::sleep (10);
+                    expect (slow.started.load(), "the writer thread never ran");
+                }
+                expect (slow.finished.load(), "the writer thread was killed mid-write");
+            }
+
             beginTest ("A crash in a continued take leaves its new audio on the timeline");
             run (false, true);
             beginTest ("Clip edits survive the rebuild, and the new audio still lands");

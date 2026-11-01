@@ -522,7 +522,7 @@ namespace zynforge
         {
             auto cache = std::make_unique<juce::AudioThumbnailCache> (256);
             auto& scanThread = cache->getTimeSliceThread();
-            scanThread.stopThread (kScanThreadStopMs);
+            scanThread.stopThread (-1);
             scanThread.startThread (juce::Thread::Priority::background);
             thumbnailCaches.push_back (std::move (cache));
         }
@@ -647,7 +647,11 @@ namespace zynforge
     {
         stopTimer();
         cancelWaveCacheWork();
-        waveCacheThread.removeAllJobs (true, -1);
+        waveCacheThread.dropAndWait();
+        // ~TimeSliceThread would kill a scan after two seconds. A scan on a
+        // slow drive can easily run that long, and it holds locks.
+        for (auto& cache : thumbnailCaches)
+            cache->getTimeSliceThread().stopThread (-1);
         // Flush the waveform cache to WaveCache.wfm in whichever session is
         // active. Best-effort: failure here only means the next launch
         // re-scans waveforms, no data loss -- so SKIP it when the timer
@@ -669,7 +673,7 @@ namespace zynforge
         cancelWaveCacheWork();
         const auto job = ++waveCacheWork;
         waveCacheLoading = true;
-        waveCacheThread.addJob ([this, sessionDir, job]
+        waveCacheThread.add ([this, sessionDir, job]
         {
             wavecache::load (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
             if (waveCacheWork.load() == job) waveCacheLoaded.store (job);
@@ -681,7 +685,7 @@ namespace zynforge
         cancelWaveCacheWork();
         const auto job = ++waveCacheWork;
         waveCacheSaving = true;
-        waveCacheThread.addJob ([this, sessionDir, job]
+        waveCacheThread.add ([this, sessionDir, job]
         {
             wavecache::save (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
             waveCacheSaving = false;
@@ -1038,7 +1042,7 @@ namespace zynforge
         cancelWaveCacheWork();
         waveCacheSaved = false;
         if (const auto sessionDir = engine.getActiveSessionDir(); sessionDir.isDirectory())
-            waveCacheThread.addJob ([sessionDir] { wavecache::fileIn (sessionDir).deleteFile(); });
+            waveCacheThread.add ([sessionDir] { wavecache::fileIn (sessionDir).deleteFile(); });
     }
 
     void EditPage::updatePlaceholder()

@@ -375,8 +375,10 @@ report "long renders are cancellable and transactionally installed" \
 # runs. Eight hand-written std::thread launches each owned their own release;
 # the track export's cancel path returned before posting it and left the
 # session busy forever after a quit-cancel. A raw thread here reopens that.
+# SerialWorker is exempt: it runs cache housekeeping and holds no reservation.
 HITS=$(grep -rn "std::thread *(" Source/UI --include='*.cpp' --include='*.h' 2>/dev/null \
-       | sed 's,//.*,,' | grep "std::thread *(" | grep -v 'Source/UI/SessionJobRunner.h')
+       | sed 's,//.*,,' | grep "std::thread *(" | grep -v 'Source/UI/SessionJobRunner.h' \
+       | grep -v 'Source/UI/SerialWorker.h')
 RUNNER_RELEASE=$(sed -n '/MessageManager::callAsync/,/});/p' Source/UI/SessionJobRunner.h 2>/dev/null \
                  | sed 's,//.*,,' | grep -n "busy.store (false)\|if (done) done()" | cut -d: -f2 | tr -d ' ' | tr '\n' '|')
 [[ "$RUNNER_RELEASE" == "state->busy.store(false);|if(done)done();|" ]] \
@@ -455,6 +457,14 @@ HITS=$(grep -rnE 'JSON::(parse|fromString)' Source/Network Source/Capture 2>/dev
        | grep -vE '^Source/Network/ConsoleLink\.cpp:[0-9]+:.*JSON::parse \(f\)')
 report "network text reaches juce::JSON::parse only through the depth guard" \
        "call linesocket::parseJson (Source/Network/LineSocket.h), never juce::JSON::parse, on anything off a socket" \
+       "$HITS"
+
+HITS=$(grep -rnE '(^|[^A-Za-z_])stopThread \(' Source --include='*.h' --include='*.cpp' --include='*.mm' \
+       | grep -v '^Source/Tests/' | grep -v 'stopThread (-1)')
+HITS="$HITS$(grep -rnE 'juce::ThreadPool' Source --include='*.h' --include='*.cpp' \
+       | grep -v '^Source/Tests/' | grep -v '^Source/UI/SerialWorker\.h:')"
+report "no thread can be killed by force" \
+       "JUCE kills a thread that outlives a stopThread timeout (0 kills at once), locks held and writes half done; a ThreadPool does it after 500 ms. Use stopThread (-1), and stop a juce::TimeSliceThread before its destructor does it with 2 s" \
        "$HITS"
 
 HITS=""

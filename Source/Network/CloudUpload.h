@@ -68,7 +68,7 @@ public:
     using Finished = std::function<void (UploadOutcome)>;
 
     UploadRun() : juce::Thread ("Cloud upload") {}
-    ~UploadRun() override { stopThread (2000); }
+    ~UploadRun() override { stopThread (-1); }
 
     bool isActive() const { return isThreadRunning(); }
 
@@ -78,7 +78,6 @@ public:
     {
         if (isThreadRunning() || commandTemplate.trim().isEmpty() || ! sessionDirectory.isDirectory())
             return false;
-        stopThread (0);
         status = juce::File::createTempFile (".zynforge-upload-status");
         status.deleteFile();
         // The subshell keeps a bare `exit` in the command from skipping the

@@ -31,7 +31,7 @@ namespace zynforge
     SessionPlayer::~SessionPlayer()
     {
         unload();
-        readerThread.stopThread (2000);
+        readerThread.stopThread (-1);   // any other timeout kills it mid-read
     }
 
     void SessionPlayer::prepare (double sr, int block)

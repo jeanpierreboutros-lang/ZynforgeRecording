@@ -134,7 +134,7 @@ namespace zynforge
             for (auto& th : writerThreads)
                 th->removeTimeSliceClient (sh.get());
         for (auto& th : writerThreads)
-            th->stopThread (2000);
+            th->stopThread (-1);   // any other timeout kills it mid-write
     }
 
     void MultitrackRecorder::prepare (double sr, int maxBlock, int numInputs)
