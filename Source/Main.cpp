@@ -121,12 +121,12 @@ public:
 
     void initialise (const juce::String& commandLine) override
     {
-        // Ignore SIGPIPE process-wide. The companion HTTP/stream server writes
-        // to client sockets; when a browser closes the page or aborts the
-        // /stream.wav audio element, the in-flight write hits a broken pipe and
-        // the default SIGPIPE action would TERMINATE the whole app (seen as the
-        // app vanishing with signal 13, no crash report). Ignoring it makes the
-        // write fail with EPIPE instead, which the socket code handles.
+        // Ignore SIGPIPE process-wide. The capture and twin links write to
+        // sockets; when the far end goes, the in-flight write hits a broken
+        // pipe and the default SIGPIPE action would TERMINATE the whole app
+        // (seen as the app vanishing with signal 13, no crash report). Ignoring
+        // it makes the write fail with EPIPE instead, which the socket code
+        // handles.
         std::signal (SIGPIPE, SIG_IGN);
 
         // Opt-in isolated preferences for repeatable UI smoke runs.

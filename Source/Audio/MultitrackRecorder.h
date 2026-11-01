@@ -203,8 +203,8 @@ namespace zynforge
 
         // ── Cross-thread access to the track vector ────────────────────────
         // The vector SHRINKS on the message thread (removeLastTrack / setTrackCount),
-        // which FREES TrackStates. Off-thread readers -- the
-        // companion server's worker threads, the OSC receiver, the MCU surface --
+        // which FREES TrackStates. Off-thread readers -- the OSC receiver,
+        // the MCU surface --
         // range-check getNumTracks() and then call getTrack(), which is a
         // TOCTOU: the vector can shrink between the two, and the read lands in
         // freed memory. condemnAllStrips() closes this for the UI, but it detaches

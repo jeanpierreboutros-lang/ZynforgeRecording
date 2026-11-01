@@ -594,7 +594,7 @@ namespace zynforge
                         {
                             renameCb ({});
                             // setNameThreadSafe, not a raw write -- same race
-                            // with the companion server's getNameThreadSafe()
+                            // with getNameThreadSafe() off the message thread
                             // as the inline rename editor had.
                             const auto reset = juce::String (stripIndex + 1);
                             state.setNameThreadSafe (reset);
@@ -737,9 +737,9 @@ namespace zynforge
             const auto typed = nameLabel.getText().trim();
             const auto newName = typed.isEmpty() ? juce::String (stripIndex + 1) : typed;
             // setNameThreadSafe, not a raw `state.name = ...`. The bare
-            // assignment raced the companion server's getNameThreadSafe() on
-            // its worker thread -- a torn / freed juce::String. The lock only
-            // helps if BOTH sides take it.
+            // assignment raced getNameThreadSafe() off the message thread --
+            // a torn / freed juce::String. The lock only helps if BOTH sides
+            // take it.
             state.setNameThreadSafe (newName);
             nameLabel.setText (newName, juce::dontSendNotification);
             setTitle (newName);   // keep the strip's accessible name in sync

@@ -1,6 +1,5 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/OscRemote.h"
-#include "../Network/CompanionServer.h"
 
 #include <cstring>
 
@@ -36,37 +35,28 @@ public:
             expect (! log.contains (canary), "diagnostic log exposed the authorization token");
         }
 
-        beginTest ("Companion capability consumes exactly 32 bytes from injected OS entropy");
+        beginTest ("OSC channel commands obey LOCK and the token, and a bad channel changes nothing");
         {
             AudioEngine engine;
-            CompanionServer server (engine);
-            int calls = 0;
-            size_t requested = 0;
-            server.entropyProviderForTests = [&] (void* output, size_t size)
-            {
-                ++calls; requested = size;
-                std::memset (output, 0x5a, size);
-                return true;
-            };
-            expect (server.start (0));
-            expectEquals (calls, 1, "capability generation bypassed the entropy provider");
-            expectEquals ((int) requested, 32);
-            expect (server.getAccessToken() == juce::String::repeatedString ("5a", 32),
-                    "capability does not encode the provided entropy");
-            server.stop();
-        }
+            engine.clearAllStripOverrides();
+            const juce::ScopeGuard cleanup { [&] { engine.clearAllStripOverrides(); } };
+            engine.setStripCount (2);
+            OscRemote osc (engine);
+            const juce::String token = "audit-only-capability";
+            osc.accessToken = token;
+            const auto muted = [&] (int track) { return engine.getRecorder().getTrack (track).muted.load(); };
 
-        beginTest ("Companion entropy failure leaves no listener or fallback token");
-        {
-            AudioEngine engine;
-            CompanionServer server (engine);
-            int calls = 0;
-            server.entropyProviderForTests = [&] (void*, size_t) { ++calls; return false; };
-            expect (! server.start (0), "service opened despite entropy failure");
-            expectEquals (calls, 1);
-            expect (! server.isRunning());
-            expect (server.getAccessToken().isEmpty());
-            server.stop();
+            engine.setControlsLocked (true);
+            osc.oscMessageReceived (juce::OSCMessage ("/zynforge/channel/1/mute", (juce::int32) 1, token));
+            expect (! muted (0), "LOCK let a remote mute through");
+            engine.setControlsLocked (false);
+
+            osc.oscMessageReceived (juce::OSCMessage ("/zynforge/channel/1/mute", (juce::int32) 1));
+            expect (! muted (0), "a command with no token changed the mix");
+            osc.oscMessageReceived (juce::OSCMessage ("/zynforge/channel/999/mute", (juce::int32) 1, token));
+            expect (! muted (0) && ! muted (1), "a bad channel changed the mix");
+            osc.oscMessageReceived (juce::OSCMessage ("/zynforge/channel/1/mute", (juce::int32) 1, token));
+            expect (muted (0), "the unlocked command did not arrive");
         }
 
         beginTest ("OSC capability consumes exactly 32 bytes from injected OS entropy");

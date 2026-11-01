@@ -238,7 +238,7 @@ namespace zynforge
         }
         // Bypass-proof guard: refuse to capture if the device clock disagrees
         // with the session rate (silent wrong-speed/pitch take). Covers every
-        // caller -- record button, transport bar, punch auto-record, companion.
+        // caller -- record button, transport bar, punch auto-record, remotes.
         if (isSampleRateMismatched())
         {
             recorder.discardTakeArms();
@@ -1078,7 +1078,7 @@ namespace zynforge
                     juce::Time::currentTimeMillis() - receivedAt);
                 // The daemon owns the capture meters and writer health, but
                 // mute/solo/name/colour are controlled by this GUI. Overlay
-                // those fields so companion controls reflect their true state.
+                // those fields so the snapshot reflects their true state.
                 const juce::ScopedLock sl (recorder.getStructureLock());
                 const int count = juce::jmin ((int) status.tracks.size(), recorder.getNumTracks());
                 for (int i = 0; i < count; ++i)
@@ -1148,7 +1148,7 @@ namespace zynforge
         {
             auto& t = recorder.getTrack (i);
             TrackStatus ts;
-            ts.name       = t.getNameThreadSafe();   // cross-thread (companion server)
+            ts.name       = t.getNameThreadSafe();   // locked: read off the message thread too
             ts.peak       = t.peak  .load (std::memory_order_relaxed);
             ts.rms        = t.rms   .load (std::memory_order_relaxed);
             ts.armed      = t.armed .load (std::memory_order_relaxed);
@@ -2404,7 +2404,6 @@ namespace zynforge
         // size so the audio thread never allocates when mix capture is on.
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
-        monitorFeed     .setSize (2, blockSize, false, true, true);
         // 64-bit output accumulator -- sized to the max supported channel
         // count (kMaxStrips) so a wide device (>64 outs) never forces an
         // allocation inside the callback.
@@ -3721,10 +3720,6 @@ namespace zynforge
                                                numSamples);
         }
 
-        // Companion stream feed -- runs at the very end so it captures
-        // EVERYTHING the engineer hears on the monitor bus (per-channel
-        // routing + stream-bus + monitor sum, all collapsed into the
-        // float output buffers by now).
         // ── Real-time click mix ────────────────────────────────────
         // Click runs on the audio thread so a tempo / voice change
         // takes effect on the next beat -- no file reload, no glitch.
@@ -3768,37 +3763,6 @@ namespace zynforge
             float* R = masterAudible && masterPair.right != outL ? outputs[masterPair.right] : nullptr;
             click.processBlock (L, R, numSamples);
         }
-
-        // What the companion stream hears. With no device pair to read, it
-        // takes the monitor mix itself.
-        const float* feedL = nullptr;
-        const float* feedR = nullptr;
-        int feedSamples = numSamples;
-        const bool companionFeed = remotes.isCompanionServerRunning();
-        if (companionFeed)
-        {
-            if (masterAudible)
-            {
-                feedL = outputs[outL];
-                feedR = outputs[masterPair.right];
-            }
-            else
-            {
-                auto* floatL = monitorFeed.getWritePointer (0);
-                auto* floatR = monitorFeed.getWritePointer (1);
-                for (int i = 0; i < blk; ++i)
-                {
-                    floatL[i] = (float) (accL[i] * mGain);
-                    floatR[i] = (float) (accR[i] * mGain);
-                }
-                feedL = floatL;
-                feedR = stereo ? floatR : floatL;
-                feedSamples = blk;
-            }
-        }
-
-        if (companionFeed)
-            remotes.feedCompanionStream (feedL, feedR, feedSamples);
 
         // CPU-load: (callback wall time) / (block period). EMA-smoothed
         // with a fast attack and slower release so the engineer sees

@@ -44,7 +44,7 @@ namespace zynforge
             AudioEngine::setTestModeSkipAudioInit (true);
             for (int pass = 0; pass < 3; ++pass)
             {
-                beginTest ("Companion status and GUI disk metrics remain safe through mirrored asynchronous STOP "
+                beginTest ("Status and GUI disk metrics remain safe through mirrored asynchronous STOP "
                            + juce::String (pass + 1));
                 const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
                     .getChildFile ("zf-async-stop-metrics-" + juce::Uuid().toString());

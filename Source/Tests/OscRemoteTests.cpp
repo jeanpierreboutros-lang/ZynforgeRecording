@@ -162,6 +162,27 @@ namespace zynforge
                         "OSC bypassed the host and started the local recorder");
             }
 
+            beginTest ("A rolling take is not stopped by a repeated OSC RECORD");
+            {
+                // Only an explicit RECORD 0 stops. RECORD 1 starts and never
+                // toggles, so a double-tap "to make sure" cannot end a take.
+                AudioEngine engine;
+                std::vector<AudioEngine::RemoteTransportAction> actions;
+                engine.setRemoteTransportHandler ([&] (auto action, juce::String&) -> std::optional<bool>
+                {
+                    actions.push_back (action);
+                    return true;
+                });
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::Generic);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 1));
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 1));
+                expectEquals ((int) actions.size(), 2);
+                for (const auto action : actions)
+                    expect (action == AudioEngine::RemoteTransportAction::StartRecord,
+                            "OSC RECORD reached the host as a toggle that stops a rolling take");
+            }
+
             beginTest ("record transport without a host fails closed");
             {
                 AudioEngine engine;

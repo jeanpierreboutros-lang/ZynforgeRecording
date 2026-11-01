@@ -130,7 +130,6 @@ add_library(ZynforgeCore STATIC
     Source/UI/SetlistBar.cpp
     Source/UI/TempoBar.cpp
     Source/UI/ClickSettingsDialog.cpp
-    Source/Network/CompanionServer.cpp
     Source/Network/RemoteControl.cpp
     Source/Network/TwinLink.cpp
     Source/UI/Meterbridge.cpp
@@ -230,7 +229,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ChannelCsvTests.cpp
     Source/Tests/ChannelStripAccessibilityTests.cpp
     Source/Tests/ClickTrackRendererTests.cpp
-    Source/Tests/CompanionServerTests.cpp
     Source/Tests/ConcurrencyAuditTests.cpp
     Source/Tests/ConsoleLinkTests.cpp
     Source/Tests/ConsoleTransportTests.cpp

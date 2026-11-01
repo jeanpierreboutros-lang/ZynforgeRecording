@@ -48,7 +48,7 @@ namespace zynforge
         AudioEngine();
         ~AudioEngine() override;
 
-        // Remote transports (OSC, companion HTTP, control surfaces) all enter
+        // Remote transports (OSC, desk macros, control surfaces) all enter
         // through this one message-thread boundary.  The host may intercept a
         // command -- capture-daemon mode does this so a remote cannot silently
         // start/stop the in-process recorder instead of the protected daemon.
@@ -192,8 +192,7 @@ namespace zynforge
         void  setMasterGainDbFast (float dB) noexcept { masterState.gainDb.store (dB, std::memory_order_relaxed); }
         void  setMasterMuted  (bool m);
         // setMasterOutputs (-1, -1) gives the master bus no output: it still
-        // meters and feeds the companion stream, and nothing lands on an
-        // interface channel.
+        // meters, and nothing lands on an interface channel.
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }
         void  setMasterOutputs (int l, int r);
@@ -499,7 +498,7 @@ namespace zynforge
         // The loop region from SessionPlayer doubles as the punch window
         // -- there's only ever one 'do this between A and B' selection.
 
-        // Companion server, console OSC (log + channel-name capture) and the
+        // Console OSC (log + channel-name capture), desk macros and the
         // MIDI control surface. Owned here so their lifetime nests inside the
         // engine's; see Source/Network/RemoteControl.h.
         RemoteControl&       getRemotes() noexcept       { return remotes; }
@@ -508,7 +507,7 @@ namespace zynforge
         // Returns recording dir if recording, else loaded playback session,
         // else an empty File.
         // ── Pair-aware, thread-safe track toggles ──────────────────────────
-        // The ONE place remote surfaces (companion server, OSC, MCU) may flip
+        // The ONE place remote surfaces (OSC, MCU) may flip
         // mute / solo / arm. Two things they all got wrong doing it themselves:
         //
         //  1. STEREO. A pair is two adjacent strips with isStereo on the L, and
@@ -1304,9 +1303,6 @@ namespace zynforge
         // hot channels can't overshoot float headroom on the way to the
         // stereo master bus.
         juce::AudioBuffer<double>                               monitorAccum;
-        // The monitor mix as float, for the companion feed while the
-        // master bus has no device output to read them from.
-        juce::AudioBuffer<float>                                monitorFeed;
 
         // 64-bit-float output accumulator. Per-strip / stream-bus
         // summing flows here in double precision; only the final
@@ -1342,7 +1338,7 @@ namespace zynforge
     public:
         ClickEngine& getClickEngine() noexcept { return click; }
     private:
-        RemoteControl remotes { *this };   // companion server, OSC, control surface
+        RemoteControl remotes { *this };   // OSC, desk macros, control surface
         std::unique_ptr<juce::PropertiesFile> appProps;
         RemoteTransportHandler remoteTransportHandler;
 
@@ -1549,8 +1545,8 @@ namespace zynforge
         float  getAudioLoadPct() const noexcept { return audioLoadPct.load (std::memory_order_relaxed); }
 
         // Phase-0 status boundary: one serialisable snapshot of transport +
-        // disk + per-track state, so consumers (UI readouts, companion
-        // server, a future capture daemon) read this instead of reaching
+        // disk + per-track state, so consumers (UI readouts, the capture
+        // daemon) read this instead of reaching
         // into recorder/engine internals. Fills from the atomics; call from
         // the message thread.
         EngineStatus captureStatus();

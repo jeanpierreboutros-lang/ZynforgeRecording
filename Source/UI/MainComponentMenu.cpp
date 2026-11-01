@@ -275,13 +275,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addSubMenu ("MIDI clock out", midiMenu);
 
             m.addSeparator();
-            const bool compRunning = engine.getRemotes().isCompanionServerRunning();
-            // id 950 -- outside every menuItemSelected dispatch range.
-            m.addItem (950, compRunning
-                               ? juce::String ("Stop companion (port " + juce::String (engine.getRemotes().getCompanionServerPort()) + ")")
-                               : juce::String ("Start companion server on :9000..."));
-            m.addItem (961, "Copy read-only confidence URL", compRunning);
-            m.addSeparator();
             m.addItem (968, "Twin Recorder...", true, twinLink.isEnabled());
             menu.addSubMenu ("Network & Surfaces", m);
         }
@@ -387,7 +380,6 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) engine.isSceneFollowEnabled()
         << '|' << (int) engine.getRemotes().isDeskMacroListening()
         << '|' << (int) useCaptureDaemon
-        << '|' << (int) engine.getRemotes().isCompanionServerRunning()
         << '|' << (int) captureSupervisor.isAttached()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording())
         << '|' << (int) songExportRunning;
@@ -544,7 +536,6 @@ void MainComponent::registerMenuCommands()
         [self] { return self != nullptr && self->consoleLink.isConnected()
                      && self->consoleLink.getProfile().canReadNames; });
     });
-    m.add (950, [this] { toggleCompanionServer(); });
     m.add (951, [this] { showAutosaveSettings(); });
     m.add (952, [this] { runQcAnalysis(); });
     m.add (953, [this] { detectSongsToMarkers(); });
@@ -554,7 +545,6 @@ void MainComponent::registerMenuCommands()
     m.add (957, [this] { consoleRestoreGains(); });
     m.add (958, [this] { toggleCaptureDaemon(); });
     m.add (975, [this] { reconnectCaptureDaemon(); });
-    m.add (961, [this] { copyConfidenceUrl(); });
     m.add (963, [this]
     {
         const bool on = ! engine.isSceneFollowEnabled();
@@ -669,47 +659,6 @@ juce::String MainComponent::consoleLinkSummary() const
     return "Console link: " + profile.displayName + " at " + consoleLink.getHost()
          + (consoleLink.isDialectConfirmed() ? ", dialect confirmed by the desk"
                                              : ", dialect not confirmed by the desk");
-}
-
-void MainComponent::copyConfidenceUrl()
-{
-    const auto url = engine.getRemotes().getCompanionAccessUrl().replace ("/?t=", "/confidence?t=");
-    if (engine.getRemotes().isCompanionServerRunning() && url.isNotEmpty())
-    {
-        juce::SystemClipboard::copyTextToClipboard (url);
-        showStatus ("Read-only confidence URL copied. Use a TLS tunnel for another device.");
-    }
-    else
-        showStatus ("Start the companion server before copying its confidence URL");
-}
-
-void MainComponent::toggleCompanionServer()
-{
-    if (engine.getRemotes().isCompanionServerRunning())
-    {
-        engine.getRemotes().stopCompanionServer();
-        showStatus ("Companion server stopped");
-    }
-    else if (engine.getRemotes().startCompanionServer (9000))
-    {
-        const auto url = engine.getRemotes().getCompanionAccessUrl();
-        // Show + copy the full URL (with access token) so the
-        // engineer can paste it on their phone without typing
-        // the 32-hex token. Companion is loopback-only by
-        // default; for phone / off-machine access put a tunnel in
-        // front of loopback (Tailscale / Cloudflare / SSH -L) -- it
-        // gives real TLS, unlike serving plaintext HTTP over Wi-Fi.
-        // See README "Companion server -- Security & secure remote access".
-        juce::SystemClipboard::copyTextToClipboard (url);
-        if (engine.getRemotes().isCompanionExposedOnLan())
-            showStatus ("! Companion EXPOSED ON LAN (plaintext) -- use a tunnel for remote access, not raw Wi-Fi");
-        else
-            showStatus ("Companion on (loopback-only) -- URL copied. For phone access, tunnel to 127.0.0.1:9000 (see README)");
-    }
-    else
-    {
-        showStatus ("Companion failed to bind port 9000 -- try a different port");
-    }
 }
 
 int MainComponent::oscListenPort() const

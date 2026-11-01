@@ -76,8 +76,6 @@ private:
     zynforge::MenuCommandTable menuCommands;
     void registerMenuCommands();
     // Menu handlers too long to sit inline in the table.
-    void copyConfidenceUrl();
-    void toggleCompanionServer();
 
     void rebuildStrips();
     void updateMixerPlaceholder();   // show/hide the MIXER empty-state overlay

@@ -38,8 +38,8 @@ public:
 
     void initialise (const juce::String&) override
     {
-        // Same process setup as the recorder: companion/stream tests write to
-        // sockets a client may close.
+        // Same process setup as the recorder: the link tests write to sockets
+        // a peer may close.
         std::signal (SIGPIPE, SIG_IGN);
         // Never touch the engineer's real preferences, before anything runs.
         zynforge::isolateSettings();

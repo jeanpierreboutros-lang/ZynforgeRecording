@@ -612,7 +612,7 @@ bool MainComponent::setStereoLink (int i, bool link)
     { showStatus ("Unlink the neighbouring stereo pair first"); return false; }
     engine.setTrackStereo (i, link);
     // The engine refuses while a take is live; then the pans must not move
-    // either (they reach the monitor, stream and NDI mid-show).
+    // either (they reach the monitor and stream mid-show).
     if (engine.getRecorder().getTrack (i).isStereo.load() != link)
     { showStatus ("Stop recording before linking or unlinking a stereo pair"); return false; }
     // Newly linked stereo -> hard-pan L/R for the full image; unlinked back to

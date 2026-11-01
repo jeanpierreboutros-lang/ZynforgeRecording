@@ -228,9 +228,9 @@ namespace zynforge
                 const auto typed = nameLabel.getText().trim();
                 const auto newName = typed.isEmpty() ? juce::String (index + 1) : typed;
                 // Go through engine.setTrackName ONLY. The raw `st.name = ...`
-                // this used to do bypassed setNameThreadSafe, racing the
-                // companion server's getNameThreadSafe() on its worker thread
-                // (torn / freed juce::String) -- and it was redundant, since
+                // this used to do bypassed setNameThreadSafe, racing
+                // getNameThreadSafe() off the message thread (torn / freed
+                // juce::String) -- and it was redundant, since
                 // setTrackName does the locked write plus persistence.
                 engine.setTrackName (index, newName);
                 // A stereo pair is ONE logical strip: mirror the name onto the

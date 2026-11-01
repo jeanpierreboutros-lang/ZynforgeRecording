@@ -209,7 +209,7 @@ namespace zynforge
 
         juce::String       name;
         // `name` is written on the message thread but ALSO copied by
-        // captureStatus() from the companion-server's detached thread -- reading
+        // captureStatus() from a thread off the message thread -- reading
         // a juce::String mid-reassignment is a data race (torn / freed buffer).
         // This SpinLock guards the cross-thread read + every write; pure
         // message-thread reads (the UI) can keep touching `name` directly since

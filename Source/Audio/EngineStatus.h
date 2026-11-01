@@ -9,8 +9,7 @@
 namespace zynforge
 {
     // A narrow, serialisable snapshot of everything a status consumer (the
-    // UI readouts, the companion server, and -- in the phased capture-split
-    // plan -- a future headless capture daemon over IPC) needs to display
+    // UI readouts, and the headless capture daemon over IPC) needs to display
     // during a take. The point of Phase 0 (see decisions.md): consumers read
     // ONE struct rather than reaching into recorder / engine internals, and
     // the struct round-trips through JSON so the same boundary works across a

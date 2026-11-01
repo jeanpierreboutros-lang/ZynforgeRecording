@@ -13,8 +13,8 @@ namespace zynforge
     //
     // MainComponent::menuItemSelected used to be one ~500-line if/else chain in
     // which a range branch swallowed every later exact id inside it -- a static
-    // item placed there silently became dead code (the companion-server item
-    // did, at id 270). The chain also kept branches for ids no menu built any
+    // item placed there silently became dead code (one did, at id 270). The
+    // chain also kept branches for ids no menu built any
     // more. Here exact ids always win, and conflicts() names every exact id
     // that sits inside a range and every pair of overlapping ranges, so a test
     // fails instead of an engineer finding a menu item that does nothing.

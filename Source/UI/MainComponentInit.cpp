@@ -789,7 +789,7 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
-    // Prevent a transport callback already queued by the companion server from
+    // Prevent a transport callback already queued by a remote from
     // entering a partially destructed MainComponent. AudioEngine invalidates
     // its own queued-callback handle at the start of its later destruction.
     engine.setRemoteTransportHandler ({});

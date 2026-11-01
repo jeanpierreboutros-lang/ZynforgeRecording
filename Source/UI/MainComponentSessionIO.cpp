@@ -2256,7 +2256,7 @@ juce::File MainComponent::getSessionsRoot() const
     // Engineer can override via the New Session / Welcome dialog ("Local
     // Storage:") -- stored in appProps as 'sessionsRoot', falling back to
     // ~/Music/Zynforge Sessions. The resolution lives on the ENGINE so the
-    // network remote-record paths (OSC, companion) share it instead of
+    // network remote-record paths (OSC, desk macros) share it instead of
     // hardcoding the Music folder.
     return engine.getSessionsRoot();
 }

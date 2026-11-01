@@ -12,7 +12,6 @@
 #include "../Audio/SceneFollow.h"
 #include "../Network/CaptureIdentity.h"
 #include "../Network/CaptureLink.h"
-#include "../Network/CompanionServer.h"
 #include "../Network/ConsoleLink.h"
 #include "../Network/LineSocket.h"
 #include "../Network/OscPacketReceiver.h"
@@ -37,7 +36,7 @@ namespace zynforge
     namespace
     {
         // The stack macOS gives a plain std::thread, which is where the capture
-        // link, the twin link and the companion workers parse.
+        // link and the twin link parse.
         constexpr size_t kWorkerStackBytes = 512 * 1024;
 
         // Deep enough to overflow that stack if a single level reaches the parser.
@@ -238,7 +237,6 @@ namespace zynforge
             testOscFlood();
             testConsoleState();
             testConsoleAddress();
-            testStream();
             testMcu();
             testTwinComparison();
             testReportLock();
@@ -803,79 +801,6 @@ namespace zynforge
                             expect (! message.address.startsWithIgnoreCase ("set"), message.address);
                         }
                 }
-            }
-        }
-
-        void testStream()
-        {
-            beginTest ("A listener that stalls loses audio, not the stream, and stays in step");
-            {
-                AudioEngine engine;
-                CompanionServer server (engine);
-                int port = 0;
-                for (int p = 19460; p < 19480 && port == 0; ++p)
-                    if (server.start (p)) port = p;
-                expect (port != 0, "companion server failed to start");
-                if (port == 0) return;
-
-                juce::StreamingSocket client;
-                expect (client.connect ("127.0.0.1", port, 1000));
-                const auto request = "GET /stream.wav?t=" + server.getAccessToken() + " HTTP/1.1\r\nHost: x\r\n\r\n";
-                expectEquals (client.write (request.toRawUTF8(), (int) request.getNumBytesAsUTF8()),
-                              (int) request.getNumBytesAsUTF8());
-
-                std::atomic<bool> feeding { true };
-                std::thread producer ([&]
-                {
-                    std::vector<float> left (480, 0.25f), right (480, -0.25f);
-                    while (feeding.load())
-                    {
-                        server.feedStreamSamples (left.data(), right.data(), 480);
-                        juce::Thread::sleep (1);
-                    }
-                });
-
-                std::vector<juce::uint8> received;
-                char chunk[8192];
-                const auto readFor = [&] (size_t bytes, int timeoutMs)
-                {
-                    const auto target = received.size() + bytes;
-                    const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
-                    while (received.size() < target && juce::Time::getMillisecondCounterHiRes() < end)
-                    {
-                        const int ready = client.waitUntilReady (true, 50);
-                        if (ready < 0) return false;
-                        if (ready == 0) continue;
-                        const int got = client.read (chunk, sizeof (chunk), false);
-                        if (got <= 0) return false;
-                        received.insert (received.end(), chunk, chunk + got);
-                    }
-                    return received.size() >= target;
-                };
-
-                expect (readFor (64 * 1024, 5000), "the stream never started");
-                juce::Thread::sleep (2500);   // long enough to fill every buffer on the way
-                const bool alive = readFor (2 * 1024 * 1024, 15000);
-                feeding.store (false);
-                producer.join();
-                expect (alive, "the server ended the stream on a stall");
-
-                // Past the WAV header every frame must still be left then right.
-                const juce::uint8 tag[] { 'd', 'a', 't', 'a' };
-                const auto start = std::search (received.begin(), received.end(), std::begin (tag), std::end (tag));
-                expect (start != received.end());
-                if (start != received.end())
-                {
-                    auto offset = (size_t) (start - received.begin()) + 8;
-                    const auto sampleAt = [&] (size_t i)
-                    { return (juce::int16) (received[i] | (received[i + 1] << 8)); };
-                    int bad = 0;
-                    for (; offset + 4 <= received.size(); offset += 4)
-                        if (sampleAt (offset) != 8191 || sampleAt (offset + 2) != -8191) ++bad;
-                    expectEquals (bad, 0, "the stream came apart mid-frame");
-                }
-                client.close();
-                server.stop();
             }
         }
 

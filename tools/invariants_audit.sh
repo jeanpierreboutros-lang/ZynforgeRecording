@@ -97,15 +97,15 @@ report "no getTrack() bounded by a player-derived count" \
        "$(printf '%s' "$HITS")"
 
 # ── 3. TrackState::name is written only through the locked setter ───────────
-# A raw `state.name = ...` races the companion server's getNameThreadSafe() on
-# its worker thread -- a torn/freed juce::String. Two sites shipped this.
+# A raw `state.name = ...` races getNameThreadSafe() off the message thread --
+# a torn/freed juce::String. Two sites shipped this.
 # `=` not followed by `=` (an == comparison is a message-thread READ, which the
 # TrackState contract explicitly allows), and never a comment line.
 HITS=$(grep -rn "state\.name *=[^=]\|st\.name *=[^=]\|\.getTrack ([^)]*)\.name *=[^=]" $SCOPE 2>/dev/null \
        | grep -v "setNameThreadSafe" \
        | grep -v ":[0-9]*: *//")
 report "TrackState::name written only via setNameThreadSafe" \
-       "raw assignment races the companion server's locked read" \
+       "raw assignment races the locked read" \
        "$HITS"
 
 # ── 4. Take globs cover every container and exclude punch sidecars ──────────
@@ -133,7 +133,7 @@ report "bare Track_* globs account for .punchbase sidecars" \
        "$(printf '%s' "$HITS")"
 
 # ── 5. New sessions honour the Local Storage override ───────────────────────
-# Three record entry points (OSC, companion, transport bar) hardcoded
+# Record entry points (OSC, transport bar) hardcoded
 # ~/Music/Zynforge Sessions, so a remote-triggered take landed on the wrong
 # drive. AudioEngine::getSessionsRoot() is the single resolver.
 HITS=$(grep -rn 'getChildFile ("Zynforge Sessions")' $SCOPE 2>/dev/null \
@@ -269,12 +269,12 @@ report "queued engine callbacks capture the invalidatable async handle" \
        "$HITS"
 
 HITS=""
-grep -q "performRemoteTransport (actionToRun" Source/Network/CompanionServer.cpp \
-    || HITS="Source/Network/CompanionServer.cpp: companion transport bypasses AudioEngine's host boundary"
 grep -q "performRemoteTransport (AudioEngine::RemoteTransportAction::StartRecord" Source/Audio/OscRemote.cpp \
     || HITS+=$'\nSource/Audio/OscRemote.cpp: OSC record bypasses AudioEngine\047s host boundary'
+grep -q "performRemoteTransport (action, error)" Source/Network/DeskMacro.cpp \
+    || HITS+=$'\nSource/Network/DeskMacro.cpp: desk macro transport bypasses AudioEngine\047s host boundary'
 report "remote transports share the host interception boundary" \
-       "daemon mode must intercept phone/OSC record and stop instead of operating the local recorder" \
+       "daemon mode must intercept OSC and desk record and stop instead of operating the local recorder" \
        "$HITS"
 
 HITS=""
@@ -387,13 +387,13 @@ report "mix rules live only in MixKernel.h" \
        "a second copy of a rule lets live playback and the bounce disagree" \
        "$HITS"
 
-# Remote control (companion server, console OSC, MIDI control surface) is ONE
+# Remote control (console OSC, desk macros, MIDI control surface) is ONE
 # by-value AudioEngine member, RemoteControl. By value: their threads call back
 # through engine.getRemotes(), and a unique_ptr is already reset while the
 # object it owned is being destroyed. One member: the engine doesn't regrow
 # its own copies of the servers.
 HITS=$(sed 's,//.*,,' Source/Audio/AudioEngine.h 2>/dev/null \
-       | grep -nE "unique_ptr<(OscRemote|CompanionServer|MidiControlSurface)>")
+       | grep -nE "unique_ptr<(OscRemote|MidiControlSurface)>")
 grep -qE '^ *RemoteControl +remotes' Source/Audio/AudioEngine.h \
     || HITS+=$'\nSource/Audio/AudioEngine.h: RemoteControl is not a by-value member named remotes'
 report "remote control is one by-value engine member" \
@@ -413,8 +413,6 @@ report "optional stereo-mix capture is controllable and failure-visible" \
 HITS=""
 grep -q 'findExecutableInPath' Source/Audio/TrackExporter.cpp \
     || HITS="Source/Audio/TrackExporter.cpp: MP3 encoder lookup can regress to a blocking child-process probe"
-grep -q 'CharPointer_UTF8::isValidString' Source/Network/CompanionServer.cpp \
-    || HITS+=$'\nSource/Network/CompanionServer.cpp: unauthenticated request bodies are decoded without UTF-8 validation'
 report "external inputs fail bounded and validated" \
        "a timed-out child-process read or malformed pre-auth network bytes can freeze/assert the app" \
        "$HITS"
