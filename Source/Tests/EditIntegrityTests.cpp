@@ -1114,6 +1114,30 @@ namespace zynforge
                 }
             }
 
+            beginTest ("Repaints reuse the zoomed-out overview of every clip on a row");
+            {
+                Show s (1, { 48000 * 60 });
+                for (int i = 1; i < 6; ++i)
+                    expect (s.engine.splitTrackAtSample (0, i * 48000 * 10));
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                row.setWaveformFiles (s.take (1), {});
+                expect (pumpUntil ([&] { return row.waveformsLoaded() && row.getWaveformSecondsForTests() > 0.0; }, 20000),
+                        "thumbnail scan");
+                juce::Image image (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                {
+                    juce::Graphics g (image);
+                    row.paint (g);
+                }
+                const auto built = row.getOverviewBuildsForTests();
+                expect (built >= 6, "setup: each clip builds an overview, got " + juce::String (built));
+                {
+                    juce::Graphics g (image);
+                    row.paint (g);
+                }
+                expectEquals (row.getOverviewBuildsForTests(), built, "a repaint rebuilt overviews it just made");
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

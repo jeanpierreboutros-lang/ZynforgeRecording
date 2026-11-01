@@ -678,8 +678,7 @@ namespace zynforge
             auto it = std::find_if (overviewCache.begin(), overviewCache.end(), matches);
             if (it == overviewCache.end())
             {
-                if (overviewCache.size() >= 4)
-                    overviewCache.erase (overviewCache.begin());
+                ++overviewBuilds;
                 CachedOverview entry;
                 entry.thumbnail = &thumb;
                 entry.channel = channel;
@@ -696,6 +695,7 @@ namespace zynforge
                 overviewCache.push_back (std::move (entry));
                 it = std::prev (overviewCache.end());
             }
+            it->lastPaint = overviewPaint;
 
             const float mid = (float) area.getCentreY();
             const float half = area.getHeight() * 0.5f;
@@ -2103,6 +2103,7 @@ namespace zynforge
 
             };   // end drawLane
             drawLane();
+            ageOverviewCache();
 
             // ─── Pinned header, drawn LAST so it floats over the waveform at
             // the scrolled-left edge instead of scrolling off with the row.
@@ -3474,6 +3475,7 @@ namespace zynforge
         juce::String getOutputRoutingTextForTests() const { return outputCombo.getText(); }
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
+        int          getOverviewBuildsForTests() const noexcept { return overviewBuilds; }
         int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }
 
         // Physical tracks this row's clip edits propagate to: both halves of a
@@ -4456,7 +4458,22 @@ namespace zynforge
             int channel { 0 }, width { 0 };
             double start { 0.0 }, end { 0.0 };
             WaveformOverview levels;
+            juce::uint32 lastPaint { 0 };
         };
+        // Every lane of every clip on screen has an entry, so the cache holds
+        // what the last two paints drew: a fixed size evicts its own entries on
+        // each repaint once a row shows more clips than it has slots. Scrolling
+        // and zooming age the rest out, so it stays bounded by the screen.
+        juce::uint32 overviewPaint  { 0 };
+        int          overviewBuilds { 0 };
+        void ageOverviewCache()
+        {
+            const auto current = overviewPaint++;
+            overviewCache.erase (std::remove_if (overviewCache.begin(), overviewCache.end(),
+                                                 [current] (const CachedOverview& entry)
+                                                 { return entry.lastPaint + 1 < current; }),
+                                 overviewCache.end());
+        }
         std::vector<CachedOverview> overviewCache;
         struct OwnThumb { juce::File file; std::unique_ptr<juce::AudioThumbnail> thumb; };
         std::vector<OwnThumb>     ownThumbs;      // files clips play instead of this strip's take
