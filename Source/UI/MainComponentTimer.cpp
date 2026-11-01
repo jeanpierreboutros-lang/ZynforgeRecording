@@ -97,6 +97,7 @@ void MainComponent::serviceCaptureDaemonLink()
     if (useCaptureDaemon)
     {
         captureSupervisor.tick();
+        serviceLostDaemon();
         const auto receivedAt = captureSupervisor.lastStatusAtMs();
         if (captureSupervisor.isAttached() && receivedAt != 0)
         {
@@ -105,7 +106,17 @@ void MainComponent::serviceCaptureDaemonLink()
             // A delayed status must not turn a disconnected/unknown take into
             // a healthy recording or clear a take whose state is unknown.
             if (juce::Time::currentTimeMillis() - receivedAt <= 2000)
-                engine.setExternalRecording (daemonStatus.recording);
+            {
+                if (daemonStatus.recording)
+                {
+                    if (! daemonTakeAdopted) adoptDaemonTake (daemonStatus, true);
+                }
+                else if (engine.isExternalRecording() && ! captureMetadataPending)
+                    // It ended without a STOP from here. Nothing else would load it.
+                    endDaemonTake (daemonStatus.captureDeviceLost
+                                       ? "Capture device stopped during the take; the daemon closed it"
+                                       : "", false, {});
+            }
         }
         // Keep idle capture pre-roll following the GUI's device/arm layout.
         // Identical configurations are cached and cause no IPC or reinitialisation.

@@ -95,6 +95,31 @@ namespace zynforge::capture
         return false;
     }
 
+    CaptureSupervisor::Reattach CaptureSupervisor::reattach()
+    {
+        if (isAttached()) return Reattach::attached;
+        { const std::lock_guard<std::mutex> g (statusLock); statusAtMs = 0; }
+        statusSeen.store (false);
+        if (! client.connect ("127.0.0.1", port)) return Reattach::nothingThere;
+        if (! client.hello (1500).ok)
+        {
+            client.disconnect();
+            return Reattach::noAnswer;
+        }
+        // A restarted daemon knows none of this GUI's configuration.
+        configuredCapture.clear();
+        failedCapture.clear(); retryCaptureAtMs = 0;
+        everAttached  = true;
+        deathReported = false;
+        return Reattach::attached;
+    }
+
+    void CaptureSupervisor::forgetRollingTake()
+    {
+        const std::lock_guard<std::mutex> g (statusLock);
+        status.recording = false;
+    }
+
     void CaptureSupervisor::disconnect()
     {
         client.disconnect();

@@ -57,6 +57,7 @@ namespace zynforge::capture
         // input feed): prepare the recorder without a device, then push
         // synthetic input blocks as if the callback fired.
         void prepareForTests (double sampleRate, int blockSize, int numInputs);
+        void dropLinkForTests() { server.dropClient(); }
         void processTestBlock (const float* const* inputs, int numChannels, int numSamples);
 
         // juce::AudioIODeviceCallback

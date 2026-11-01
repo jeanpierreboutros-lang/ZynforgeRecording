@@ -49,6 +49,18 @@ namespace zynforge::capture
         // extraArgs are appended to the launch command (tests pass
         // "--no-device"). False if neither attach nor launch worked.
         bool connectOrLaunch (int port, const juce::StringArray& extraArgs = {});
+        // A lost link, tried again. Attach only: this never launches, so it
+        // cannot start a second daemon beside one that stopped answering.
+        enum class Reattach
+        {
+            attached,       // the daemon answered and proved itself
+            nothingThere,   // nothing is listening: no daemon is running
+            noAnswer        // something holds the port but did not prove itself
+        };
+        Reattach reattach();
+        // The last status called a take rolling and that is no longer known
+        // to be so. For a caller that has proved it, or is walking away from it.
+        void forgetRollingTake();
         void disconnect();           // drop the link, leave the daemon running
         void shutdown();             // drop link; stop the daemon ONLY if idle + we launched it
 

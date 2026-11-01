@@ -764,13 +764,16 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
         // Retain the transport guard, but never show its old metrics as live.
         engine.invalidateExternalCaptureStatus();
         engine.setExternalRecording (wasRecording);
+        daemonLinkLost = true;
+        nextDaemonProbeMs = juce::Time::getMillisecondCounter();
+        daemonProbeDelayMs = 1000;
         showStatus (wasRecording
             ? "!! CAPTURE DAEMON UNAVAILABLE MID-TAKE -- may still be recording. Reconnect and verify before touching storage."
             : "Capture daemon connection lost or process exited.");
         recordButton.setButtonText (wasRecording ? "REC ?" : "RECORD");
     };
 
-    if (! captureSupervisor.connectOrLaunch (kCaptureDaemonPort))
+    if (! captureSupervisor.connectOrLaunch (captureDaemonPort))
     {
         useCaptureDaemon = false;
         showStatus ("Capture daemon unavailable (binary not found / port busy) -- in-process recording stays active.");
@@ -781,39 +784,150 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
     // adopt it -- the engineer sees the take immediately.
     juce::Thread::sleep (250);   // let the first status push land
     if (captureSupervisor.isDaemonRecording())
-    {
-        const auto status = captureSupervisor.lastStatus();
-        engine.setExternalCaptureStatus (status, captureSupervisor.lastStatusAtMs());
-        engine.setExternalRecording (true);
-        if (status.sessionPath.isNotEmpty()) engine.setActiveSessionDir (juce::File (status.sessionPath));
-        recordButton.setButtonText ("STOP");
-        if (announceReattach)
-            showStatus ("REATTACHED to a rolling capture-daemon take -- STOP closes it normally.");
-    }
+        adoptDaemonTake (captureSupervisor.lastStatus(), announceReattach);
     else
         showStatus (captureSupervisor.didLaunch()
             ? "Capture daemon launched (experimental) -- RECORD now runs out-of-process."
             : "Attached to running capture daemon -- RECORD now runs out-of-process.");
 }
 
+void MainComponent::adoptDaemonTake (const zynforge::EngineStatus& status, bool announce)
+{
+    engine.setExternalCaptureStatus (status, captureSupervisor.lastStatusAtMs());
+    engine.setExternalRecording (true);
+    daemonTakeAdopted = true;
+    if (status.sessionPath.isNotEmpty()) engine.setActiveSessionDir (juce::File (status.sessionPath));
+    recordButton.setButtonText ("STOP");
+    if (announce)
+        showStatus ("REATTACHED to a rolling capture-daemon take -- STOP closes it normally.");
+}
+
+MainComponent::LostDaemon MainComponent::resolveLostDaemon()
+{
+    using Reattach = zynforge::capture::CaptureSupervisor::Reattach;
+    switch (captureSupervisor.reattach())
+    {
+        case Reattach::attached:
+            daemonLinkLost = false;
+            daemonTakeAdopted = false;   // the next fresh status says what it is doing
+            return LostDaemon::back;
+        case Reattach::nothingThere:
+            daemonLinkLost = false;
+            captureSupervisor.forgetRollingTake();
+            return LostDaemon::gone;
+        case Reattach::noAnswer:
+            break;
+    }
+    // A probe of a daemon that will not answer waits out the handshake on this
+    // thread, so the retries back off.
+    daemonProbeDelayMs = juce::jmin (daemonProbeDelayMs * 2, (juce::uint32) 30000);
+    nextDaemonProbeMs = juce::Time::getMillisecondCounter() + daemonProbeDelayMs;
+    return LostDaemon::unknown;
+}
+
+// The timer's half: a daemon that is alive comes back by itself, and one that
+// died is known to have died, without the engineer having to ask.
+void MainComponent::serviceLostDaemon()
+{
+    if (! daemonLinkLost || captureSupervisor.isAttached()) return;
+    if ((juce::int32) (juce::Time::getMillisecondCounter() - nextDaemonProbeMs) < 0) return;
+    if (resolveLostDaemon() == LostDaemon::gone && engine.isExternalRecording())
+        endDaemonTake (kDaemonGoneMidTake, false, {});
+}
+
+bool MainComponent::lostDaemonTakeUnknown() const
+{
+    return useCaptureDaemon && ! captureSupervisor.isAttached()
+        && (engine.isExternalRecording() || captureSupervisor.isDaemonRecording());
+}
+
+void MainComponent::reconnectCaptureDaemon()
+{
+    const auto link = captureSupervisor.isAttached() ? LostDaemon::back : resolveLostDaemon();
+    if (link == LostDaemon::back)
+    {
+        showStatus ("Capture daemon reconnected.");
+        return;
+    }
+    if (link == LostDaemon::unknown)
+    {
+        showStatus ("Capture daemon is not answering, and something holds its port. Any take it was rolling "
+                    "has not been stopped. Turn the capture daemon off to record in-process.");
+        return;
+    }
+    if (engine.isExternalRecording())
+    {
+        endDaemonTake (kDaemonGoneMidTake, false, {});
+        return;
+    }
+    // Nothing is listening, so a launch here cannot be a twin.
+    showStatus (captureSupervisor.connectOrLaunch (captureDaemonPort)
+        ? "Capture daemon restarted -- RECORD runs out-of-process again."
+        : "Capture daemon could not be restarted. Turn it off to record in-process.");
+}
+
+// Never stops anything: the daemon cannot be reached. Whatever it was doing it
+// goes on doing, and this window stops claiming to know.
+void MainComponent::leaveLostDaemon()
+{
+    captureSupervisor.forgetRollingTake();
+    engine.invalidateExternalCaptureStatus();
+    engine.setExternalRecording (false);
+    daemonTakeAdopted = false;
+    daemonLinkLost = false;
+    recordButton.setButtonText ("RECORD");
+}
+
+void MainComponent::disableCaptureDaemon()
+{
+    captureSupervisor.shutdown();
+    useCaptureDaemon = false;
+    if (auto* p = engine.getAppProps())
+    {
+        p->setValue ("useCaptureDaemon", false);
+        p->saveIfNeeded();
+    }
+}
+
 void MainComponent::toggleCaptureDaemon()
 {
     if (useCaptureDaemon)
     {
+        if (lostDaemonTakeUnknown() && resolveLostDaemon() == LostDaemon::gone && engine.isExternalRecording())
+            endDaemonTake (kDaemonGoneMidTake, false, {});
+        if (lostDaemonTakeUnknown())
+        {
+            constexpr int kTurnOff = 1, kCancel = 2;
+            auto* aw = new juce::AlertWindow ("Capture daemon is not answering",
+                                              "A take may still be rolling in the capture daemon. Turning daemon "
+                                              "mode off does not stop it, and this window will no longer watch it.",
+                                              juce::MessageBoxIconType::WarningIcon, this);
+            aw->setLookAndFeel (&laf);
+            aw->addButton ("Turn Off, Leave It Rolling", kTurnOff);
+            aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+            juce::Component::SafePointer<MainComponent> self (this);
+            aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int result)
+            {
+                std::unique_ptr<juce::AlertWindow> dispose (aw);
+                if (result != kTurnOff || self == nullptr) return;
+                self->leaveLostDaemon();
+                self->disableCaptureDaemon();
+                self->showStatus ("Capture daemon off. Any take it was rolling was NOT stopped.");
+            }), false);
+            return;
+        }
         if (captureSupervisor.isDaemonRecording())
         {
             showStatus ("Daemon take rolling -- STOP it before disabling the capture daemon.");
             return;
         }
-        captureSupervisor.shutdown();
-        useCaptureDaemon = false;
+        disableCaptureDaemon();
         showStatus ("Capture daemon disabled -- recording is in-process again.");
+        return;
     }
-    else
-    {
-        useCaptureDaemon = true;
-        connectCaptureDaemon (true);
-    }
+
+    useCaptureDaemon = true;
+    connectCaptureDaemon (true);
     if (auto* p = engine.getAppProps())
     {
         p->setValue ("useCaptureDaemon", useCaptureDaemon);

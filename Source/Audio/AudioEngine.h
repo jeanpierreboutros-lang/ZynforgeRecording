@@ -197,6 +197,7 @@ namespace zynforge
         juce::int64 getCaptureLengthSamples();
         bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept;
+        bool isExternalRecording() const noexcept { return externalRecording.load (std::memory_order_acquire); }
         void setControlsLocked (bool locked) noexcept { controlsLocked.store (locked); }
         bool areControlsLocked() const noexcept { return controlsLocked.load(); }
         void setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs = 0);

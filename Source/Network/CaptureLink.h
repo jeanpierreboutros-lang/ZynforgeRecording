@@ -37,6 +37,8 @@ namespace zynforge::capture
 
         bool listen (int port, const juce::String& bindAddr = "127.0.0.1");
         void stop();
+        // Closes the connected GUI's socket and keeps listening.
+        void dropClient();
         bool isListening() const noexcept { return running.load(); }
         bool hasClient()   const noexcept { return clientConnected.load(); }
         int  getPort()     const noexcept { return listenPort.load(); }
