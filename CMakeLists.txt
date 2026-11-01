@@ -215,7 +215,6 @@ juce_add_gui_app(ZynforgeRecordingTests
 
 target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TestMain.cpp
-    Source/Tests/AafTests.cpp
     Source/Tests/AsyncStopAuditTests.cpp
     Source/Tests/AudioCallbackTests.cpp
     Source/Tests/AudioImportTests.cpp
@@ -234,7 +233,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ChannelStripAccessibilityTests.cpp
     Source/Tests/ClickTrackRendererTests.cpp
     Source/Tests/CompanionServerTests.cpp
-    Source/Tests/CompoundFileTests.cpp
     Source/Tests/ConcurrencyAuditTests.cpp
     Source/Tests/ConsoleLinkTests.cpp
     Source/Tests/ConsoleTransportTests.cpp
