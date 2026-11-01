@@ -27,8 +27,6 @@
 #include "TrackSelectDialog.h"
 #include "SessionProjPath.h"
 
-#include <array>
-
 using namespace zynforge;
 
 namespace
@@ -68,7 +66,10 @@ bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
             auto out = target.createOutputStream();
             if (in == nullptr || out == nullptr) return false;
             const auto expectedSize = child.getSize();
-            std::array<char, 1024 * 1024> buffer {};
+            // On the heap: this runs on a job thread, whose 512 KiB stack cannot
+            // hold it, and a frame that size faults the moment the function is
+            // entered.
+            std::vector<char> buffer (1024 * 1024);
             while (! in->isExhausted())
             {
                 if (cancel.load (std::memory_order_relaxed)) return false;

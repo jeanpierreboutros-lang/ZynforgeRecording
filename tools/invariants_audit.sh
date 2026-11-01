@@ -464,6 +464,15 @@ report "deployment target is accepted by the supported Xcode toolchain" \
        "Xcode 27 rejects macOS 11, while a target assigned after project() silently links a clean build for the host OS" \
        "$HITS"
 
+# A worker's stack is 512 KiB on macOS. A 1 MiB array in a function that ran on
+# a job thread faulted on entry, so Save As, Handoff and cross-volume Move took
+# the app down. Large buffers go on the heap.
+HITS=$(grep -rnE '(std::array<[a-zA-Z_:0-9 ]+, *[0-9]+ *\* *1024|(char|float|double|juce::uint8) +[a-zA-Z_]+\[[0-9]+ *\* *1024\])' $SCOPE 2>/dev/null \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//')
+report "no megabyte buffers on a thread's stack" \
+       "use std::vector or juce::HeapBlock; a worker thread has only 512 KiB of stack" \
+       "$HITS"
+
 # Every PropertiesFile shares one .settings file and saves its whole copy, so a
 # UI writer that skips the reload silently undoes a strip's patch or name.
 HITS=$(grep -rn 'saveIfNeeded' Source/UI 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
