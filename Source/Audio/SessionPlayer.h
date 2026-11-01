@@ -69,6 +69,9 @@ namespace zynforge
             return tracks[(size_t) trackIdx].length;
         }
         juce::int64 getPositionSamples()    const noexcept { return position   .load(); }
+        // Counts jumps made while rolling: a locate or a loop wrap. PLAY from
+        // a stop is not one.
+        juce::uint32 getJumpCount()         const noexcept { return jumpCount.load (std::memory_order_acquire); }
         double      getSampleRate()         const noexcept { return fileSampleRate; }
         juce::String getSessionName()       const          { return sessionName; }
         juce::File   getSessionDir()        const          { return sessionDir; }
@@ -205,6 +208,7 @@ namespace zynforge
         std::atomic<juce::int64> loopEnd     { -1 };
         std::atomic<bool>        loopEnabled { false };
         std::atomic<bool>        seekLocked  { false };
+        std::atomic<juce::uint32> jumpCount  { 0 };
 
         double deviceSampleRate { 48000.0 };
         double fileSampleRate   { 48000.0 };

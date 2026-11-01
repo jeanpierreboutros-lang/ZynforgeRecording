@@ -2199,6 +2199,8 @@ namespace zynforge
         // (session end, reorder, session load, device stop). midiClockOut is
         // declared after player, so its timer is stopped before player dies.
         midiClockOut.setTransportProbe ([this] { return player.isPlaying(); });
+        midiClockOut.setPositionProbes ([this] { return player.getJumpCount(); },
+                                        [this] { return midiBeatsAt (player.getPositionSamples()); });
 
         // Restore the stereo-mix-recording flag from the prefs file so the
         // engineer's preference survives restart.
