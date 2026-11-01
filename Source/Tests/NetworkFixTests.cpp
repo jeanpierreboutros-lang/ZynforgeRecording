@@ -816,6 +816,20 @@ namespace zynforge
                 link.disconnect();
             }
 
+            beginTest ("No Yamaha read sends a verb that can change the desk");
+            {
+                expect (yamahaScpDialect().subscribe == nullptr, "a scene-recall verb was sent as a subscription");
+                for (const auto& profile : consoleProfiles())
+                {
+                    for (const auto& builder : { profile.dialect.probe, profile.dialect.subscribe })
+                        if (builder)
+                        {
+                            const auto message = builder();
+                            expect (! message.address.containsIgnoreCase ("recall"), message.address);
+                            expect (! message.address.startsWithIgnoreCase ("set"), message.address);
+                        }
+                }
+            }
         }
 
         void testStream()
