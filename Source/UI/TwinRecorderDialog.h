@@ -310,7 +310,8 @@ namespace zynforge
                                + juce::String (peer.sampleRate, 0) + " Hz");
                     lines.add ("Other Mac health: missed " + juce::String (peer.missedSamples)
                                + ", write failures " + juce::String (peer.writeFailures)
-                               + ", disk " + juce::String (peer.diskMinutesLeft) + " min"
+                               + ", disk " + (peer.diskMinutesLeft > 0 ? juce::String (peer.diskMinutesLeft) + " min"
+                                                                       : juce::String ("unknown"))
                                + ", backup " + peer.backupHealth);
                 }
                 if (s.clockValid)

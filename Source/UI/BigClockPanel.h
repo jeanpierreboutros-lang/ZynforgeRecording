@@ -19,8 +19,11 @@ namespace zynforge
         void setMode      (Mode m);
         void setElapsed   (juce::int64 samples, double sampleRate);
         void setMarkers   (int count);
+        // Whether the numbers are live. A figure the volume probe could not
+        // refresh must read as stale, never as a confident number.
+        enum class DiskReading { Fresh, CopyStale, PrimaryStale };
         void setDiskInfo  (double freeGB, int lastWriteMs, juce::int64 missedSamples,
-                           double remainingSeconds);
+                           double remainingSeconds, DiskReading reading);
         // BS.1770 master loudness: integrated + momentary LUFS, true-peak dBTP.
         void setLoudness  (float integratedLufs, float momentaryLufs, float truePeakDb);
 
@@ -39,6 +42,7 @@ namespace zynforge
         int    lastWriteMs      { 0 };
         juce::int64 missed      { 0 };
         double remainingSeconds { 0.0 };
+        DiskReading diskReading { DiskReading::Fresh };
         bool   armedReady       { false };
         float  lufsIntegrated   { -120.0f };
         float  lufsMomentary    { -120.0f };

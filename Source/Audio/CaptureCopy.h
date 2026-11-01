@@ -39,7 +39,7 @@ namespace zynforge
             bool         failed { false };
 
             juce::HeapBlock<float> ring;           // ringFrames per channel, planar
-            juce::int64  head { 0 }, tail { 0 }, lostFrames { 0 };
+            juce::int64  head { 0 }, tail { 0 }, lostFrames { 0 }, countedLost { 0 };
             bool         accepting { false };
         };
 
@@ -56,6 +56,11 @@ namespace zynforge
 
         std::vector<Track> tracks;                 // aligned with the recorder's tracks
         std::vector<WriterChannel::StampedPart> stampedParts;
+        std::vector<PendingLeadIn> leadIns;
+
+        // Run first on this copy's thread: whatever joining the take takes. A
+        // non-empty answer says why this copy cannot, and it leaves the take.
+        std::function<juce::String (CaptureCopy&)> openForTake;
 
         std::shared_ptr<std::vector<std::unique_ptr<PreRollBuffer>>> history;
         int historySamples { 0 };
@@ -66,7 +71,7 @@ namespace zynforge
         std::atomic<int>         lastWriteMs { 0 };
         std::atomic<double>      lastProgressMs { 0.0 };
         std::atomic<bool>        overran { false }, finishing { false }, finished { false };
-        std::atomic<bool>        abandoned { false }, flushWanted { false };
+        std::atomic<bool>        abandoned { false }, flushWanted { false }, dropped { false }, opening { false };
 
         std::mutex              ringLock;
         std::condition_variable wake;
@@ -182,8 +187,15 @@ namespace zynforge
                 // Latched here, not when the thread comes back: it may never.
                 overran.store (true, std::memory_order_relaxed);
                 latchFailure();
-                if (t.lostFrames + over > droppedFrames.load (std::memory_order_relaxed))
-                    droppedFrames.store (t.lostFrames + over, std::memory_order_relaxed);
+                const auto lost = t.lostFrames + over;
+                if (lost > droppedFrames.load (std::memory_order_relaxed))
+                    droppedFrames.store (lost, std::memory_order_relaxed);
+                // A hole in the primary is a hole in the take, so it counts
+                // where every reading of missed samples looks. Per track, like
+                // the capture FIFOs count theirs.
+                if (copyIndex == 0 && lost > t.countedLost)
+                    latches->primaryLostFrames.fetch_add (lost - t.countedLost, std::memory_order_relaxed);
+                t.countedLost = juce::jmax (t.countedLost, lost);
             }
         }
 
@@ -211,12 +223,26 @@ namespace zynforge
                 for (auto& t : tracks)
                     if (t.baseFile != juce::File()) t.failed = true;
                 latchFailure();
+                dropped.store (opening.exchange (false), std::memory_order_release);
                 finished.store (true);
             }
         }
 
         void run()
         {
+            if (openForTake != nullptr)
+            {
+                const auto refusal = openForTake (*this);
+                openForTake = nullptr;
+                opening.store (false, std::memory_order_release);
+                if (refusal.isNotEmpty())
+                {
+                    leaveTake (refusal);
+                    finished.store (true, std::memory_order_release);
+                    wakeWaiters();
+                    return;
+                }
+            }
             writeHistory();
             std::vector<float> left ((size_t) kChunkFrames), right ((size_t) kChunkFrames), zeros ((size_t) kChunkFrames, 0.0f);
             auto lastFlush = juce::Time::getMillisecondCounterHiRes();
@@ -243,6 +269,25 @@ namespace zynforge
             closeFilesNow();
             finished.store (true, std::memory_order_release);
             wakeWaiters();
+        }
+
+        // Out of the take, by name. Everything the rings hold for it goes too.
+        void leaveTake (const juce::String& why)
+        {
+            for (auto& t : tracks) stopTrack (t);
+            dropped.store (true, std::memory_order_release);
+            if (abandoned.load (std::memory_order_acquire)) return;
+            latchFailure();
+            if (copyIndex == 1) latches->backupDropped.store (true, std::memory_order_relaxed);
+            else                latches->mirrorsDropped.fetch_add (1, std::memory_order_relaxed);
+            const std::lock_guard<std::mutex> guard (latches->droppedLock);
+            latches->dropped.add (why);
+        }
+
+        void failTrackAtOpen (Track& t)
+        {
+            failTrack (t);
+            stopTrack (t);
         }
 
         // Under the lock, so a waiter between its test and its sleep is not missed.
@@ -421,6 +466,33 @@ namespace zynforge
         void join()
         {
             if (worker.joinable()) worker.join();
+        }
+
+        // The copy's own work once its files have closed, on a thread of its
+        // own for the same reason the writing was: a drive that hangs strands
+        // that thread. `work` may hold only the copy and plain values.
+        void startFinishing (std::shared_ptr<CaptureCopy> self, std::function<void (CaptureCopy&)> work)
+        {
+            finished.store (false, std::memory_order_release);
+            noteProgress();
+            try
+            {
+                worker = std::thread ([self = std::move (self), work = std::move (work)]
+                {
+                    work (*self);
+                    self->finished.store (true, std::memory_order_release);
+                });
+            }
+            catch (const std::system_error&)
+            {
+                latchFailure();
+                finished.store (true, std::memory_order_release);
+            }
+        }
+
+        void noteProgress() noexcept
+        {
+            lastProgressMs.store (juce::Time::getMillisecondCounterHiRes());
         }
 
         void flushAndWait (int timeoutMs)

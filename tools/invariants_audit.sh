@@ -519,6 +519,23 @@ report "session_mix.json is written only through the mixer guard" \
        "use sessionmix::write (Source/Audio/SessionMixFile.h); it refuses a mixer that is not this session's" \
        "$HITS"
 
+# ── A take's status never waits on a drive ──────────────────────────────────
+# A stat on a dead mount blocks until the OS gives up. The 10 Hz UI tick runs on
+# the thread STOP needs, and the daemon's status runs under the lock its STOP
+# needs, so a copy's hung NAS froze the window and held the take. Take readings
+# come from the recorder's volume probes (readDiskEstimate), which only load
+# atomics. The two lines allowed below are the between-takes free-space read,
+# behind isTakeOnDisk, and the SMART poll's own thread.
+FS_CALLS='isDirectory\(\)|existsAsFile\(\)|\.exists\(\)|getBytesFreeOnVolume|getVolumeTotalSize|estimateMinutesRemaining'
+HITS=$(sed -n '/EngineStatus CaptureDaemon::buildStatus/,/^    }/p' Source/Capture/CaptureDaemon.cpp 2>/dev/null \
+       | grep -E "$FS_CALLS" | sed 's,^,buildStatus: ,')
+TICK=$(grep -nE "$FS_CALLS" Source/UI/MainComponentTimer.cpp 2>/dev/null \
+       | grep -vE 'active\.isDirectory\(\) \? active|sessRoot\.exists\(\)|getBytesFreeOnVolume\(\);|(sessionDir|backupDir)\.isDirectory\(\)$|^[0-9]+:[[:space:]]*//')
+[[ -n "$TICK" ]] && HITS+=$'\n'"Source/UI/MainComponentTimer.cpp:$TICK"
+report "a take's status path reads no disk" \
+       "read recorder.readDiskEstimate(), or gate an idle-only read behind engine.isTakeOnDisk()" \
+       "$(sed '/^$/d' <<<"$HITS")"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     green "invariants audit: CLEAN"

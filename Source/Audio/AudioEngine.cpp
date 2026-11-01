@@ -11,7 +11,7 @@ namespace zynforge
 {
     void AudioEngine::rememberRecentSession (const juce::File& dir)
     {
-        if (! dir.isDirectory() || appProps == nullptr) return;
+        if (appProps == nullptr || (! isTakeOnDisk() && ! dir.isDirectory())) return;
         const auto path = dir.getFullPathName();
 
         // Pull existing list, drop any prior occurrence of this path,
@@ -263,7 +263,33 @@ namespace zynforge
         else                              recorder.clearTimeReferenceHint();
         recorder.setClockDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
 
-        if (! recorder.startRecording (sessionDir)) return false;
+        // Both of these read or write the session's volume, so they go first:
+        // once the take rolls this thread is STOP and must not touch that volume.
+        double sr = 48000.0;
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+            sr = device->getCurrentSampleRate();
+        const auto markerSession = markers.getSessionDir();
+        const auto markerRate    = markers.getSampleRate();
+        markers.setContext (sessionDir, sr);
+        auto mix = openStereoMix (sessionDir, sr);
+
+        if (! recorder.startRecording (sessionDir))
+        {
+            markers.setContext (markerSession, markerRate);
+            if (mix.writer != nullptr)
+            {
+                mix.writer.reset();
+                mix.file.deleteFile();
+            }
+            return false;
+        }
+        if (recordStereoMixFlag.load (std::memory_order_acquire))
+        {
+            stereoMixWriteFailed.store (mix.writer == nullptr, std::memory_order_relaxed);
+            const juce::ScopedLock sl (stereoMixLock);
+            stereoMixWriter = std::move (mix.writer);
+        }
+
         // These strips are what this take was recorded with, so from here on
         // they are this folder's mixer, whichever session they came from.
         claimMixerFor (sessionDir);
@@ -286,66 +312,49 @@ namespace zynforge
         snapshotCaptureInputGains();
 
         rememberRecentSession (sessionDir);
-        double sr = 48000.0;
-        if (auto* device = deviceManager.getCurrentAudioDevice())
-            sr = device->getCurrentSampleRate();
-        markers.setContext (sessionDir, sr);
-
-        // Free-space pre-flight: estimate how long this session can
-        // capture before either drive fills. UI polls
-        // estimatedMinutesRemaining for the live "X min remaining"
-        // indicator; this initial value is also exposed via
-        // startRecordingDiskWarning so the host can show a one-shot
-        // warning if we're under 30 min.
-        diskMinutesRemaining.store (
-            recorder.estimateMinutesRemaining (sessionDir,
-                                                recorder.getBackupDirectory()),
-            std::memory_order_relaxed);
-
-        // Open the stereo mix file if the user opted in via setRecordStereoMix.
-        if (recordStereoMixFlag.load (std::memory_order_acquire))
-        {
-            if (! mixWriterThread.isThreadRunning())
-                mixWriterThread.startThread();
-
-            // Stereo bus mix lands in Export Files/ -- the location for any
-            // rendered mix / stem export.
-            auto exportDir = sessionDir.getChildFile ("Export Files");
-            const bool exportDirectoryReady = exportDir.isDirectory()
-                                           || exportDir.createDirectory().wasOk();
-            // NEVER overwrite a previous take's mix. startRecording runs again
-            // for every continue / second take into the SAME session, and the
-            // old code deleteFile()d StereoMix.wav each time -- silently
-            // destroying the earlier take's archive. Number subsequent takes
-            // (StereoMix.wav, StereoMix_02.wav, ...); the first take keeps the
-            // historic name so existing workflows are unchanged.
-            auto path = exportDir.getChildFile ("StereoMix.wav");
-            for (int take = 2; path.existsAsFile(); ++take)
-                path = exportDir.getChildFile ("StereoMix_"
-                                               + juce::String (take).paddedLeft ('0', 2) + ".wav");
-
-            juce::WavAudioFormat wav;
-            if (exportDirectoryReady)
-            {
-                if (auto* out = path.createOutputStream().release())
-                {
-                    juce::StringPairArray meta;
-                    if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
-                    {
-                        const juce::ScopedLock sl (stereoMixLock);
-                        stereoMixWriter = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
-                                              (w, mixWriterThread, 32768);
-                    }
-                    else
-                    {
-                        delete out;
-                    }
-                }
-            }
-            stereoMixWriteFailed.store (stereoMixWriter == nullptr,
-                                        std::memory_order_relaxed);
-        }
         return true;
+    }
+
+    AudioEngine::StereoMixFile AudioEngine::openStereoMix (const juce::File& sessionDir, double sr)
+    {
+        StereoMixFile mix;
+        if (! recordStereoMixFlag.load (std::memory_order_acquire)) return mix;
+
+        if (! mixWriterThread.isThreadRunning())
+            mixWriterThread.startThread();
+
+        // Stereo bus mix lands in Export Files/ -- the location for any
+        // rendered mix / stem export.
+        auto exportDir = sessionDir.getChildFile ("Export Files");
+        if (! exportDir.isDirectory() && ! exportDir.createDirectory().wasOk()) return mix;
+
+        // NEVER overwrite a previous take's mix. startRecording runs again
+        // for every continue / second take into the SAME session, and the
+        // old code deleteFile()d StereoMix.wav each time -- silently
+        // destroying the earlier take's archive. Number subsequent takes
+        // (StereoMix.wav, StereoMix_02.wav, ...); the first take keeps the
+        // historic name so existing workflows are unchanged.
+        auto path = exportDir.getChildFile ("StereoMix.wav");
+        for (int take = 2; path.existsAsFile(); ++take)
+            path = exportDir.getChildFile ("StereoMix_"
+                                           + juce::String (take).paddedLeft ('0', 2) + ".wav");
+
+        juce::WavAudioFormat wav;
+        if (auto* out = path.createOutputStream().release())
+        {
+            juce::StringPairArray meta;
+            if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
+            {
+                mix.file = path;
+                mix.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
+                                 (w, mixWriterThread, 32768);
+            }
+            else
+            {
+                delete out;
+            }
+        }
+        return mix;
     }
 
     void AudioEngine::stopRecording()
@@ -1037,11 +1046,11 @@ namespace zynforge
     {
         setExternalRecording (true);
         setActiveSessionDir (sessionDir);
-        if (sessionDir.isDirectory())
-        {
-            markers.setContext (sessionDir, sampleRate);
-            clearEditCursor();
-        }
+        if (sessionDir == juce::File()) return;
+        // The window loads these before asking the daemon to roll, off this
+        // take's clock. Only a reattach that found the take running lands here.
+        if (markers.getSessionDir() != sessionDir) markers.setContext (sessionDir, sampleRate);
+        clearEditCursor();
     }
 
     void AudioEngine::setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs)
@@ -1099,6 +1108,7 @@ namespace zynforge
             unavailable.source = "daemon-unavailable";
             unavailable.statusAgeMs = -1;
             unavailable.recording = true;
+            unavailable.primaryDiskStale = true;
             return unavailable;
         }
         // Metrics also traverse recorder shards and tracks. Protect the entire
@@ -1118,7 +1128,12 @@ namespace zynforge
         s.ringFillPct      = (float) getRingFillPct();
         s.diskMBPerSec     = (double) getDiskMBPerSec();
         s.lastWriteMs      = recorder.getLastWriteMs();
-        s.minutesRemaining = getEstimatedMinutesRemaining();
+        const auto disk    = recorder.readDiskEstimate();
+        s.minutesRemaining = disk.watching ? disk.minutes
+                                           : diskMinutesRemaining.load (std::memory_order_relaxed);
+        s.primaryFreeBytes = disk.primaryFreeBytes;
+        s.primaryDiskStale = disk.primaryStale;
+        s.copyDiskStale    = disk.copyStale;
         s.missedSamples    = recorder.getMissedSamples();
         s.integratedLufs   = getIntegratedLufs();
         s.momentaryLufs    = getMomentaryLufs();
@@ -2223,6 +2238,7 @@ namespace zynforge
     AudioEngine::AudioEngine()
         : asyncHandle (std::make_shared<std::atomic<AudioEngine*>> (this))
     {
+        markers.deferDiskWhile = [this] { return isTakeOnDisk(); };
         juce::PropertiesFile::Options opts;
         opts.applicationName     = "Zynforge Recording";
         opts.filenameSuffix      = ".settings";
@@ -2493,7 +2509,7 @@ namespace zynforge
     void AudioEngine::setActiveSessionDir (const juce::File& dir)
     {
         if (isCaptureFinalizing()) return;
-        activeSession = (dir.isDirectory() ? dir : juce::File());
+        activeSession = isTakeOnDisk() || dir.isDirectory() ? dir : juce::File();
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();

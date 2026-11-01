@@ -350,7 +350,7 @@ namespace zynforge
                 safeDir.deleteRecursively();
             }
 
-            beginTest ("new backup without original take refuses punch");
+            beginTest ("new backup without original take sits the punch out");
             {
                 const auto copyDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                     .getChildFile ("zf-punch-missingcopy-" + juce::Uuid().toString());
@@ -364,8 +364,14 @@ namespace zynforge
                 rec.setBackupDirectory (backupRoot);
                 rec.getTrack (0).armed.store (true);
                 rec.armPunchIn (punchIn);
-                expect (! rec.startRecording (copyDir));
+                expect (rec.startRecording (copyDir), "one copy must not refuse the punch");
+                rec.waitForCopiesOpenForTests();
+                expect (rec.hasBackupFailed(), "the copy was not reported");
+                expect (rec.getCopyProblems().joinIntoString ("|").contains ("does not hold the take"));
+                rec.stopRecording();
                 expectEquals (juce::String (hashing::fileSha256 (original)), hash);
+                expect (! backupRoot.getChildFile (copyDir.getFileName()).getChildFile ("Audio Files/Track_01.wav")
+                                    .existsAsFile(), "a copy with no base took the punch alone");
                 copyDir.deleteRecursively();
                 backupRoot.deleteRecursively();
             }

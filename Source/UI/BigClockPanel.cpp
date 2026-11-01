@@ -66,7 +66,8 @@ namespace zynforge
         if (count != markerCount) { markerCount = count; repaint(); }
     }
 
-    void BigClockPanel::setDiskInfo (double gb, int ms, juce::int64 mis, double remainingSec)
+    void BigClockPanel::setDiskInfo (double gb, int ms, juce::int64 mis, double remainingSec,
+                                     DiskReading reading)
     {
         // Called at the MainComponent timer rate (24 Hz). Without
         // change detection, the unconditional repaint here drives
@@ -79,7 +80,9 @@ namespace zynforge
         const bool changed = newFreeGB    != freeGB
                           || ms           != lastWriteMs
                           || mis          != missed
-                          || newRemainSec != (int) std::round (remainingSeconds);
+                          || newRemainSec != (int) std::round (remainingSeconds)
+                          || reading      != diskReading;
+        diskReading      = reading;
         freeGB           = newFreeGB;
         lastWriteMs      = ms;
         missed           = mis;
@@ -274,10 +277,20 @@ namespace zynforge
                 g.drawText (value, line, juce::Justification::topRight, false);
             };
 
+            // With a copy's drive not answering the time left is the primary's
+            // alone, so the label says that instead of implying the whole rig.
+            const bool primaryStale = diskReading == DiskReading::PrimaryStale;
+            const bool copyStale    = diskReading == DiskReading::CopyStale;
+            const auto valueCol     = primaryStale ? brand::alertAmber : brand::textPrimary;
             drawRow (right.removeFromTop (14.0f), "FREE",
-                     juce::String::formatted ("%.1f GB", freeGB));
-            drawRow (right.removeFromTop (14.0f), "RECORD TIME LEFT",
-                     formatRemaining (remainingSeconds));
+                     primaryStale ? juce::String ("STALE")
+                                  : freeGB < 0.0 ? juce::String ("--")
+                                                 : juce::String::formatted ("%.1f GB", freeGB),
+                     brand::textSecondary, valueCol);
+            drawRow (right.removeFromTop (14.0f),
+                     copyStale ? "PRIMARY TIME LEFT" : "RECORD TIME LEFT",
+                     primaryStale ? juce::String ("STALE") : formatRemaining (remainingSeconds),
+                     copyStale ? brand::alertAmber : brand::textSecondary, valueCol);
             drawRow (right.removeFromTop (14.0f), "LAST WRITE",
                      juce::String (lastWriteMs) + " ms");
             drawRow (right.removeFromTop (14.0f),

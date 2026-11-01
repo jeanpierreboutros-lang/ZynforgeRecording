@@ -91,8 +91,11 @@ public:
             expect (r.startRecording (first)); feed (r, 1); r.stopRecording();
             const auto copy = backup.dir.getChildFile ("Show/Audio Files/Track_01.wav");
             const auto size = copy.getSize();
-            expect (! r.startRecording (second)); expectEquals (copy.getSize(), size);
-            r.armContinue (0); expect (! r.startRecording (second)); expectEquals (copy.getSize(), size);
+            // That folder is another session's, so the copy sits out both passes.
+            expect (r.startRecording (second)); r.waitForCopiesOpenForTests(); feed (r, 1); r.stopRecording();
+            expect (r.hasBackupFailed()); expectEquals (copy.getSize(), size);
+            r.armContinue (0); expect (r.startRecording (second)); r.waitForCopiesOpenForTests(); feed (r, 1); r.stopRecording();
+            expect (r.hasBackupFailed()); expectEquals (copy.getSize(), size);
             const auto relocated = root.dir.getChildFile ("Moved/Show");
             relocated.getParentDirectory().createDirectory(); expect (first.moveFileTo (relocated));
             r.armContinue (0); expect (r.startRecording (relocated)); feed (r, 1); r.stopRecording();

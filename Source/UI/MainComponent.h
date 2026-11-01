@@ -713,6 +713,8 @@ private:
     std::shared_ptr<juce::ChangeListener> batchColourListenerHandle;
 
     zynforge::BigClockPanel bigClock;
+    int recordDriveWaitMs { 10000 };
+    zynforge::VolumeProbe::Reader recordDriveReaderForTests;
     zynforge::PerfDashboard perfDashboard;
     zynforge::SetlistBar    setlistBar;
     zynforge::TempoBar      tempoBar;

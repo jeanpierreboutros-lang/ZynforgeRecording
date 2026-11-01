@@ -83,7 +83,10 @@ namespace zynforge
         float         ringFillPct  { 0.0f };   // worst writer-FIFO occupancy
         double        diskMBPerSec { 0.0 };
         double        lastWriteMs  { 0.0 };    // most recent disk-flush duration
-        int           minutesRemaining { 0 };
+        int           minutesRemaining { 0 };   // 0 = not known
+        juce::int64   primaryFreeBytes { -1 };  // during a take; -1 = not known
+        bool          primaryDiskStale { false };
+        bool          copyDiskStale { false };
         juce::int64   missedSamples { 0 };
         float         integratedLufs { -120.0f };
         float         momentaryLufs  { -120.0f };
@@ -124,6 +127,9 @@ namespace zynforge
             o->setProperty ("diskMBPerSec", diskMBPerSec);
             o->setProperty ("lastWriteMs",  lastWriteMs);
             o->setProperty ("minutesRemaining", minutesRemaining);
+            o->setProperty ("primaryFreeBytes", primaryFreeBytes);
+            o->setProperty ("primaryDiskStale", primaryDiskStale);
+            o->setProperty ("copyDiskStale", copyDiskStale);
             o->setProperty ("missedSamples", missedSamples);
             o->setProperty ("integratedLufs", integratedLufs);
             o->setProperty ("momentaryLufs",  momentaryLufs);
@@ -168,6 +174,9 @@ namespace zynforge
             s.diskMBPerSec = (double) v.getProperty ("diskMBPerSec", 0.0);
             s.lastWriteMs  = (double) v.getProperty ("lastWriteMs", 0.0);
             s.minutesRemaining = (int) v.getProperty ("minutesRemaining", 0);
+            s.primaryFreeBytes = (juce::int64) v.getProperty ("primaryFreeBytes", -1);
+            s.primaryDiskStale = (bool) v.getProperty ("primaryDiskStale", false);
+            s.copyDiskStale = (bool) v.getProperty ("copyDiskStale", false);
             s.missedSamples = (juce::int64) v.getProperty ("missedSamples", 0);
             s.integratedLufs = (float) (double) v.getProperty ("integratedLufs", -120.0);
             s.momentaryLufs  = (float) (double) v.getProperty ("momentaryLufs", -120.0);

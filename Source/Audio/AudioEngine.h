@@ -1398,15 +1398,35 @@ namespace zynforge
         std::atomic<bool>   sceneFollowFlag { false };
         std::vector<int>    autoArmStreaks;
     public:
-        int   getEstimatedMinutesRemaining() const noexcept
+        // Nothing but the file so far: the take writes to it once it is live.
+        struct StereoMixFile
         {
-            return diskMinutesRemaining.load (std::memory_order_relaxed);
+            juce::File file;
+            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
+        };
+        StereoMixFile openStereoMix (const juce::File& sessionDir, double sampleRate);
+
+        int   getEstimatedMinutesRemaining() const
+        {
+            const auto disk = recorder.readDiskEstimate();
+            return disk.watching ? disk.minutes
+                                 : diskMinutesRemaining.load (std::memory_order_relaxed);
         }
-        // Force a fresh free-space probe. Cheap (one syscall per
-        // volume); UI calls this every few seconds while recording so
-        // the displayed remaining time tracks the live drain rate.
+        // From RECORD until the take's files are final. Nothing on the message
+        // thread may touch a destination's path in this window: a stat on a
+        // dead mount blocks until the OS gives up, and STOP is on this thread.
+        bool  isTakeOnDisk() const noexcept { return isRecording() || isCaptureFinalizing(); }
+        // Whether a session folder exists, without asking the disk mid-take.
+        bool  hasSessionFolder() const
+        {
+            const auto dir = getActiveSessionDir();
+            return isTakeOnDisk() ? dir != juce::File() : dir.isDirectory();
+        }
+        // Between takes only, because it stats every destination. The UI calls
+        // this every few seconds so the idle figure follows the free space.
         void  refreshDiskMinutesRemaining()
         {
+            if (isTakeOnDisk()) return;
             const auto sessionDir = recorder.getActiveSessionDir();
             if (! sessionDir.isDirectory()) { diskMinutesRemaining.store (0); return; }
             diskMinutesRemaining.store (

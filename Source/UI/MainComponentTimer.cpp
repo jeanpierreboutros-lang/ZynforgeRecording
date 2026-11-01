@@ -25,7 +25,7 @@ void MainComponent::timerCallback()
     twinLink.tick();
     updateTwinStatusLabel();
     // Every way a session can change passes here within a tick.
-    consoleLink.setSessionDir (engine.getActiveSessionDir());
+    consoleLink.setSessionDir (engine.getActiveSessionDir(), ! engine.isTakeOnDisk());
     // Keep the macOS menu's greyed/enabled states in sync with reality
     // (Undo/Redo, Edit, Track, Export) -- they're cached until we ask for a
     // refresh, so without this they freeze in the empty launch state.
@@ -319,18 +319,19 @@ void MainComponent::updateClockAndDiskCadence (double deviceSR)
                 timerSR = remote.sampleRate;
         }
 
-        // Refresh the minutes-remaining estimate every 48 ticks (4.8 s at
-        // the 10 Hz timer). Querying the volume's free bytes is one
-        // syscall per drive.
+        // Refresh the idle minutes-remaining estimate every 48 ticks (4.8 s at
+        // the 10 Hz timer). A take reads its own volume probes instead.
         if ((++diskTick % 48) == 0)
             engine.refreshDiskMinutesRemaining();
         // Disk keep-up every 12 ticks (1.2 s): three consecutive smoothed
         // samples below ~85 % of the expected bytes/sec (a few seconds,
         // plus EMA lag) flip the "disk struggling" flag so the status bar
         // warns before missed samples start landing.
+        // The rate is only wanted for a take in this process, and with no take
+        // here it would stat a backup path that may be why a take is struggling.
         if ((diskTick % 12) == 0)
-            engine.getRecorder().updateDiskHealth (
-                engine.getRecorder().estimateBytesPerSecondForArmedTracks());
+            recorder.updateDiskHealth (recorder.isRecording()
+                                           ? recorder.estimateBytesPerSecondForArmedTracks() : 0);
         // Slow SMART status poll -- every 720 ticks (72 s at 10 Hz), and
         // only when recording. Dispatched to a background thread: `diskutil
         // info` blocks for 50-200 ms normally and can hang outright on an
@@ -393,6 +394,13 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     // volume where either call can stall. Free space at GB resolution does
     // not need 10 Hz: re-query at most every 2 s, or at once when the session
     // directory changes.
+    if (engine.isTakeOnDisk())
+    {
+        cachedFreeGB = status.primaryFreeBytes >= 0
+                           ? (double) status.primaryFreeBytes / (1024.0 * 1024.0 * 1024.0) : -1.0;
+        lastDiskQueryMs = 0;
+    }
+    else
     {
         const auto active = engine.getActiveSessionDir();
         const auto nowMs  = juce::Time::getMillisecondCounter();
@@ -416,7 +424,10 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     bigClock.setDiskInfo (freeGB,
                           status.lastWriteMs,
                           status.missedSamples,
-                          remainingSec);
+                          remainingSec,
+                          status.primaryDiskStale ? BigClockPanel::DiskReading::PrimaryStale
+                          : status.copyDiskStale  ? BigClockPanel::DiskReading::CopyStale
+                                                  : BigClockPanel::DiskReading::Fresh);
     bigClock.setLoudness (status.integratedLufs,
                           status.momentaryLufs,
                           status.truePeakDb);
@@ -465,7 +476,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         // the engineer runs the whole show believing they have a copy they don't.
         const int mirrorsSkipped = status.mirrorsSkipped;
         const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
-        if (daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
+        const bool primaryNotAnswering = status.primaryDiskStale && status.source != "daemon-unavailable";
+        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
             || ! status.copyProblems.isEmpty())
         {
@@ -483,6 +495,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                 warn << "! " << mirrorsSkipped << " MIRROR"
                      << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
                                                             "or folder unusable  ";
+            if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";
+            if (status.copyDiskStale) warn << "! A COPY'S DRIVE IS NOT ANSWERING -- its free space is unknown  ";
             if (samplesMissed) warn << "! " << status.missedSamples << " SAMPLES MISSED -- the take has gaps  ";
             for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
@@ -547,11 +561,6 @@ void MainComponent::pollSmartStatusAsync()
 
     const auto sessionDir = engine.getActiveSessionDir();
     const auto backupDir  = engine.getRecorder().getBackupDirectory();
-    if (! sessionDir.isDirectory() && ! backupDir.isDirectory())
-    {
-        smartQueryInFlight.store (false, std::memory_order_release);
-        return;
-    }
 
     juce::Component::SafePointer<MainComponent> self (this);
     juce::Thread::launch ([self, sessionDir, backupDir]
@@ -615,8 +624,7 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
 
     // With no session there is no rate to disagree with: 48 kHz here is only a
     // launch default, so the next session starts from what the device runs at.
-    if (! engine.getActiveSessionDir().isDirectory() && ! engine.getPlayer().isLoaded()
-        && ! engine.isRecording())
+    if (! engine.hasSessionFolder() && ! engine.getPlayer().isLoaded() && ! engine.isRecording())
     {
         pendingSampleRate = deviceSampleRate;
         engine.setSessionSampleRate (deviceSampleRate);

@@ -58,7 +58,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         // Close the session back to the Welcome screen WITHOUT quitting --
         // so the engineer can start/open another session between sets.
-        menu.addItem (6, "Close Session", engine.getActiveSessionDir().isDirectory()
+        menu.addItem (6, "Close Session", engine.hasSessionFolder()
                                           && sessionEditable);
         menu.addSeparator();
 
@@ -68,7 +68,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // exports) and the read I/O competes with the recorder + freezes the
         // UI, so gate the whole submenu on not-recording. CSV timeline export
         // is metadata-only but gated too for a consistent "not mid-take" rule.
-        const bool hasActive = engine.getActiveSessionDir().isDirectory();
+        const bool hasActive = engine.hasSessionFolder();
         const bool canExport = hasActive && sessionEditable;   // also blocked while LOCKED
         exportMenu.addItem (10, "Export All Tracks...", canExport);
 
@@ -217,7 +217,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (51, "Meterbridge...");
         menu.addSeparator();
         menu.addItem (56, "Add Marker...\tM",
-                      engine.getActiveSessionDir().isDirectory());
+                      engine.hasSessionFolder());
         menu.addItem (53, "Memory Locations...");
         menu.addSeparator();
 
@@ -344,9 +344,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addItem (280, "Spectral auto-name strips",
                        engine.getRecorder().getNumTracks() > 0);
             m.addItem (281, "Write soundcheck report",
-                       engine.getActiveSessionDir().isDirectory() && ! engine.isRecording());
+                       engine.hasSessionFolder() && ! engine.isRecording());
             // Each reads every take file in full: never during a take.
-            const bool canAnalyse = engine.getActiveSessionDir().isDirectory() && ! engine.isRecording();
+            const bool canAnalyse = engine.hasSessionFolder() && ! engine.isRecording();
             m.addItem (282, "Analyse for noise / hum / bumps...", canAnalyse);
             m.addItem (952, "Post-show QC report...",             canAnalyse);
             m.addItem (953, "Detect songs -> markers...",         canAnalyse);
@@ -354,7 +354,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         }
 
         menu.addSeparator();
-        menu.addItem (251, "Session Info & Notes...", engine.getActiveSessionDir().isDirectory());
+        menu.addItem (251, "Session Info & Notes...", engine.hasSessionFolder());
     }
     else if (topLevelIndex == 4)  // Help
     {
@@ -386,7 +386,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) captureMetadataPending
         << '|' << (int) sessionLocked
         << '|' << (int) player.hasLoopRegion()
-        << '|' << (int) engine.getActiveSessionDir().isDirectory()
+        << '|' << (int) engine.hasSessionFolder()
         << '|' << (int) engine.isPunchModeOn()
         << '|' << (int) snapToMarkers
         << '|' << (int) cues.empty()
@@ -714,6 +714,7 @@ void MainComponent::copyConfidenceUrl()
 void MainComponent::runCloudUpload()
 {
     // Run the configured cloud-upload command with {SESSION} expanded.
+    if (engine.isTakeOnDisk()) { showStatus ("Upload after STOP -- the take's files are still being written"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory()) { showStatus ("No session active -- load or record first"); return; }
     auto* props = engine.getAppProps();
