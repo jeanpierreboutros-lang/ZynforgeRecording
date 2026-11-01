@@ -229,7 +229,7 @@ namespace zynforge
 
             void open (const juce::File& dir)
             {
-                main.openSessionFolder (dir);
+                main.openSessionFolder (dir, true);
                 main.engine.prepareForTests (kRate, kBlock);
             }
 

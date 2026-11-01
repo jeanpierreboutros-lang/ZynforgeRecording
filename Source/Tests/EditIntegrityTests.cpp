@@ -65,6 +65,7 @@ namespace zynforge
                 for (size_t i = 0; i < lengths.size(); ++i)
                     if (lengths[i] > 0) writeWav (take ((int) i + 1), lengths[i], 1, level);
                 engine.setActiveSessionDir (dir);
+                engine.claimMixerFor (dir);
                 engine.loadSession (dir);
                 engine.setStripCount (strips);
                 main.currentView = MainComponent::View::Edit;
