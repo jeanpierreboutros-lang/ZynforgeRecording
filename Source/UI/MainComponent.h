@@ -9,7 +9,6 @@
 #include "../Audio/TrackExporter.h"
 #include "../Capture/CaptureSupervisor.h"
 #include "../Network/ConsoleLink.h"
-#include "../Network/SessionMirror.h"
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AlarmBanner.h"
@@ -320,7 +319,6 @@ private:
     // Launch-time crash telemetry: offer the newest report since last run.
     void scanForCrashReports();
     void showCrashReportNotice (const juce::Array<juce::File>& reports);
-    void promptMirrorHost();
     bool configureCaptureDaemon();
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
     void toggleCaptureDaemon();
@@ -570,12 +568,8 @@ private:
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
 
-    // These objects retain references/callbacks into `engine`, so declaration
-    // order is safety-critical: construct them after the engine and destroy
-    // them before it.  They previously appeared ~175 lines before `engine`,
-    // making SessionMirror bind a reference before the engine's lifetime began
-    // and letting its destructor run after the engine had already died.
-    zynforge::SessionMirror sessionMirror { engine };
+    // These objects retain callbacks into `engine`, so declaration order is
+    // safety-critical: construct them after the engine and destroy them before it.
     // X32/M32 console link: soundcheck repatch + head-amp gain capture.
     zynforge::ConsoleLink consoleLink;
     // Capture-process split, Phase 1d: out-of-process recording behind a

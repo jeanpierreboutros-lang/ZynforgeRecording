@@ -16,7 +16,6 @@
 #include "../Network/ConsoleLink.h"
 #include "../Network/LineSocket.h"
 #include "../Network/OscPacketReceiver.h"
-#include "../Network/SessionMirror.h"
 #include "../Network/TwinLink.h"
 #include "../UI/TwinRecorderDialog.h"
 
@@ -236,7 +235,6 @@ namespace zynforge
             AudioEngine::setTestModeSkipAudioInit (true);
             testJsonGuard();
             testJsonRoutes();
-            testMirrorLayout();
             testOscFlood();
             testConsoleState();
             testConsoleAddress();
@@ -462,81 +460,6 @@ namespace zynforge
                     expect (waitFor ([&] { return replies.load() == 1; }), "the reader stopped at the hostile line");
                 }
                 client.disconnect();
-            }
-
-            beginTest ("A hostile mirror response on the message thread is refused and changes nothing");
-            {
-                AudioEngine engine;
-                engine.clearAllStripOverrides();
-                const juce::ScopeGuard cleanup { [&] { engine.clearAllStripOverrides(); } };
-                engine.setStripCount (2);
-                engine.setTrackName (0, "preserved");
-
-                SessionMirror mirror (engine);
-                mirror.host = "fixture-no-network";
-                mirror.fetchActive.store (true);
-                const auto deep = juce::String::repeatedString ("[", SessionMirror::kMaxPayloadBytes);
-                for (const auto& payload : { deep, "['\"'," + deep, "[-\"," + deep })
-                {
-                    mirror.resultPayload = payload;
-                    mirror.resultReady.store (true);
-                    mirror.timerCallback();
-                    expectEquals (engine.getRecorder().getNumTracks(), 2);
-                    expect (mirror.getLastError().isNotEmpty());
-                    expectEquals (mirror.getLastSyncMs(), (juce::int64) 0);
-                }
-            }
-        }
-
-        void testMirrorLayout()
-        {
-            beginTest ("A primary with nothing to report never empties the safety Mac");
-            {
-                AudioEngine engine;
-                engine.clearAllStripOverrides();
-                const juce::ScopeGuard cleanup { [&] { engine.clearAllStripOverrides(); } };
-                engine.setStripCount (4);
-                engine.setTrackName (0, "KICK");
-                engine.setTrackInputRouting (2, 7);
-
-                SessionMirror mirror (engine);
-                mirror.host = "fixture-no-network";
-                mirror.fetchActive.store (true);
-                const auto offer = [&] (const EngineStatus& status)
-                {
-                    mirror.resultPayload = juce::JSON::toString (status.toJson());
-                    mirror.resultReady.store (true);
-                    mirror.timerCallback();
-                };
-
-                EngineStatus unavailable;
-                unavailable.source = "daemon-unavailable";
-                unavailable.statusAgeMs = -1;
-                unavailable.recording = true;
-                offer (unavailable);
-                expectEquals (engine.getRecorder().getNumTracks(), 4);
-                expect (mirror.getLastError().containsIgnoreCase ("unavailable"), mirror.getLastError());
-                expectEquals (mirror.getLastSyncMs(), (juce::int64) 0);
-
-                offer (EngineStatus {});
-                expectEquals (engine.getRecorder().getNumTracks(), 4);
-                expect (mirror.getLastError().containsIgnoreCase ("no channels"), mirror.getLastError());
-                if (engine.getRecorder().getNumTracks() == 4)
-                    expectEquals (engine.getRecorder().getTrack (2).inputRouting.load(), 7,
-                                  "the strips were freed and regrown");
-
-                EngineStatus real;
-                real.numTracks = 2;
-                for (const auto* name : { "VOX", "GTR" })
-                {
-                    TrackStatus track;
-                    track.name = name;
-                    track.colourARGB = 0xff225577;
-                    real.tracks.push_back (track);
-                }
-                offer (real);
-                expectEquals (engine.getRecorder().getNumTracks(), 2);
-                expect (mirror.getLastError().isEmpty(), mirror.getLastError());
             }
         }
 

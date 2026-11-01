@@ -800,7 +800,6 @@ MainComponent::~MainComponent()
     zynforge::AudioDeviceDialog::closeSelfOwned();
     delete twinDialog.getComponent();
     twinLink.stop();
-    sessionMirror.stop();
 
     // Cancel + join any in-flight session job (bounce, export, copy) now,
     // explicitly, before anything else in this destructor tears down state a

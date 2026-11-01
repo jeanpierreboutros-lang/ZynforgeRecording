@@ -260,18 +260,6 @@ report "MainComponent delayed callbacks use SafePointer" \
        "a delayed raw this capture can fire after fast-quit destroys the window" \
        "$(printf '%s' "$HITS")"
 
-# A member that retains AudioEngine& must be declared after the engine so its
-# entire construction/destruction lifetime is nested inside the engine's.
-ENGINE_LINE=$(grep -n "AudioEngine *engine" Source/UI/MainComponent.h | head -1 | cut -d: -f1)
-MIRROR_LINE=$(grep -n "SessionMirror sessionMirror" Source/UI/MainComponent.h | head -1 | cut -d: -f1)
-HITS=""
-if [[ -z "$ENGINE_LINE" || -z "$MIRROR_LINE" || "$MIRROR_LINE" -le "$ENGINE_LINE" ]]; then
-    HITS="Source/UI/MainComponent.h: SessionMirror must be declared after AudioEngine"
-fi
-report "engine-reference members are nested inside AudioEngine lifetime" \
-       "constructing SessionMirror first binds a reference before AudioEngine lives and destroys it after AudioEngine dies" \
-       "$HITS"
-
 # MessageManager jobs may execute after the owner's destructor. AudioEngine's
 # shared async handle is the only sanctioned capture in these adapters.
 HITS=$(grep -rn "MessageManager::callAsync" Source/Audio Source/Network 2>/dev/null \

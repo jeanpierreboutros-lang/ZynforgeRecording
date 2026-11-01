@@ -1,4 +1,5 @@
 #include "ChannelStrip.h"
+#include <juce_audio_basics/juce_audio_basics.h>
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "StripColourPicker.h"

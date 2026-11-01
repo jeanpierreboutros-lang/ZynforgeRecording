@@ -322,15 +322,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             menu.addSubMenu ("Console", m);
         }
 
-        // ── Mirror ───────────────────────────────────────────────────────
-        {
-            juce::PopupMenu m;
-            m.addItem (290, sessionMirror.isMirroring()
-                               ? "Stop mirroring " + sessionMirror.getPrimary()
-                               : juce::String ("Mirror primary host..."));
-            menu.addSubMenu ("Mirror", m);
-        }
-
         // ── Analysis & Reports (ids 952/953 outside dispatch ranges) ──────
         {
             juce::PopupMenu m;
@@ -526,7 +517,6 @@ void MainComponent::registerMenuCommands()
     });
     m.add (990, [this] { promptStreamOutputs(); });
     m.add (281, [this] { writeSoundcheckReport(); });
-    m.add (290, [this] { promptMirrorHost(); });
     m.add (400, [this]
     {
         engine.getMidiClockOut().setEnabled (false);
