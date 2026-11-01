@@ -241,6 +241,7 @@ namespace zynforge
             testConsoleState();
             testConsoleAddress();
             testStream();
+            testMcu();
         }
 
     private:
@@ -887,6 +888,49 @@ namespace zynforge
                 }
                 client.close();
                 server.stop();
+            }
+        }
+
+        void testMcu()
+        {
+            beginTest ("A bank move clears what the old bank left on the surface");
+            {
+                AudioEngine engine;
+                engine.setStripCount (12);
+                engine.setTrackMuted (0, true);
+                engine.setTrackSoloed (0, true);
+                engine.setTrackArmed (0, true);
+                engine.setTrackName (0, "KICK");
+
+                MidiControlSurface surface (engine);
+                std::vector<juce::MidiMessage> sent;
+                surface.sendHookForTests = [&] (const juce::MidiMessage& m) { sent.push_back (m); };
+                const auto wasSent = [&] (const juce::MidiMessage& wanted)
+                {
+                    for (const auto& m : sent)
+                        if (m.getRawDataSize() == wanted.getRawDataSize()
+                            && std::memcmp (m.getRawData(), wanted.getRawData(), (size_t) m.getRawDataSize()) == 0)
+                            return true;
+                    return false;
+                };
+
+                surface.timerCallback();
+                expect (wasSent (mcu::led (mcu::Action::Mute, 0, true)));
+                expect (wasSent (mcu::scribble (0, engine.getRecorder().getTrack (0).getNameThreadSafe())));
+
+                surface.bankOffset.store (8);
+                surface.forceRefresh.store (true);
+                sent.clear();
+                surface.timerCallback();
+                expect (wasSent (mcu::led (mcu::Action::Mute, 0, false)), "the old bank's MUTE stayed lit");
+                expect (wasSent (mcu::led (mcu::Action::Solo, 0, false)), "the old bank's SOLO stayed lit");
+                expect (wasSent (mcu::led (mcu::Action::Arm,  0, false)), "the old bank's REC stayed lit");
+                expect (wasSent (mcu::scribble (0, engine.getRecorder().getTrack (8).getNameThreadSafe())));
+                expect (wasSent (mcu::scribble (4, {})), "an empty slot kept the old name");
+
+                sent.clear();
+                surface.timerCallback();
+                expect (sent.size() < 4, "an idle tick resent the whole surface");
             }
         }
 
