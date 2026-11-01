@@ -168,6 +168,7 @@ private:
     // File > Open, the Welcome dialog, and the launch auto-reopen.
     int  openSessionFolder (const juce::File& dir);
     void restoreSessionDocuments (const juce::File& dir);
+    void adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs);
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
     bool saveMixerToTakeFolder (const juce::File& dir);
     bool saveSessionStateTo (const juce::File& dir);

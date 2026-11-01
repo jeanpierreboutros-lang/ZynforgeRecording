@@ -49,6 +49,13 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
         refuse ("Open or create a session before generating a click");
         return;
     }
+    // Pinned but not loaded means no strips, so a new click would be Track_01:
+    // that session's first take.
+    if (! engine.mixerBelongsTo (sessionDir))
+    {
+        refuse (sessionDir.getFileName() + " is not loaded; open it before generating a click");
+        return;
+    }
 
     if (! sessionJobs.reserve())
     {
@@ -67,6 +74,20 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
     auto& recorder = engine.getRecorder();
     const bool addedClickStrip = clickTrackIndex < 0;
     const int previousTrackCount = recorder.getNumTracks();
+    // A new strip's number can already have audio when the mix lists fewer
+    // strips than the session has tracks, and the render replaces its target.
+    if (addedClickStrip)
+    {
+        const auto stem = juce::String::formatted ("Track_%02d", previousTrackCount + 1);
+        const auto holdsTake = [&stem] (const juce::File& folder)
+        { return ! folder.findChildFiles (juce::File::findFiles, false, stem + ".*;" + stem + "_part*").isEmpty(); };
+        if (holdsTake (audioFiles) || holdsTake (sessionDir))
+        {
+            sessionJobs.release();
+            refuse (stem + " already holds audio; a click there would replace it");
+            return;
+        }
+    }
     if (clickTrackIndex < 0)
     {
         // First press in this session -- append a fresh track at the end.
@@ -756,6 +777,17 @@ void MainComponent::consoleRestoreGains()
     consoleLink.restoreGains();
 }
 
+// Order matters: strips cannot be resized once the engine reports a take, so the
+// session has to be adopted first.
+void MainComponent::adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs)
+{
+    engine.setExternalCaptureStatus (status, receivedAtMs);
+    adoptDaemonTakeSession (status);
+    engine.setExternalRecording (true);
+    if (status.sessionPath.isNotEmpty()) engine.setActiveSessionDir (juce::File (status.sessionPath));
+    recordButton.setButtonText ("STOP");
+}
+
 void MainComponent::connectCaptureDaemon (bool announceReattach)
 {
     captureSupervisor.onDaemonDied = [this] (bool wasRecording)
@@ -782,12 +814,7 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
     juce::Thread::sleep (250);   // let the first status push land
     if (captureSupervisor.isDaemonRecording())
     {
-        const auto status = captureSupervisor.lastStatus();
-        engine.setExternalCaptureStatus (status, captureSupervisor.lastStatusAtMs());
-        adoptDaemonTakeSession (status);
-        engine.setExternalRecording (true);
-        if (status.sessionPath.isNotEmpty()) engine.setActiveSessionDir (juce::File (status.sessionPath));
-        recordButton.setButtonText ("STOP");
+        adoptRollingDaemonTake (captureSupervisor.lastStatus(), captureSupervisor.lastStatusAtMs());
         if (announceReattach)
             showStatus ("REATTACHED to a rolling capture-daemon take -- STOP closes it normally.");
     }

@@ -179,20 +179,19 @@ public:
         {
             Folder f; writeSavedShow (f, 4);
             MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
-            host.adoptDaemonTakeSession (daemonStatus (f.dir, 4));
+            host.adoptRollingDaemonTake (daemonStatus (f.dir, 4), juce::Time::currentTimeMillis());
+            expect (host.engine.isRecording(), "the take must be reported as rolling");
             expectEquals (host.engine.getRecorder().getNumTracks(), 4);
             expectEquals (stripName (host, 2), juce::String ("Saved 3"));
             expect (host.engine.mixerBelongsTo (f.dir));
             expectEquals (host.engine.getActiveSessionDir().getFullPathName(), f.dir.getFullPathName());
             expectEquals ((int) host.cues.size(), 1, "the session's cues were not loaded");
 
-            host.engine.setExternalRecording (true);
-            expect (host.engine.isRecording());
             host.engine.setExternalRecording (false);
             expect (host.saveSessionStateTo (f.dir));
             expectEquals (sessionmix::stripCountIn (f.dir), 4);
-            const auto project = juce::JSON::parse (f.project());
-            expectEquals (project["setlist"][0]["name"].toString(), juce::String ("Opener"));
+            const auto setlist = juce::JSON::parse (f.project())["setlist"];
+            expect (setlist.size() == 1 && setlist[0]["name"].toString() == "Opener", "the session's cues were lost");
             host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
         }
 
@@ -336,6 +335,38 @@ public:
             expectEquals (host.openSessionFolder (f.dir), 2);
             expectEquals (host.engine.getRecorder().getNumTracks(), 2);
             expect (host.engine.mixerBelongsTo (f.dir));
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A generated click never replaces audio in a session that is not loaded");
+        {
+            Folder f; writeSavedShow (f, 2);
+            expect (writeAudio (f.track (1)));
+            const auto original = f.track (1).loadFileAsString();
+            MainComponent host; pinUnloaded (host, f.dir);
+            bool complete = false, success = true;
+            host.generateOrRefreshClickTrack ([&] (bool ok) { success = ok; complete = true; });
+            expect (pumpUntil ([&] { return complete; }));
+            expect (! success, "a click was generated over a take in an unloaded session");
+            expect (f.track (1).loadFileAsString() == original, "a recorded take was replaced");
+            expectEquals (host.engine.getRecorder().getNumTracks(), 0);
+            host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A generated click never lands on a track number that already holds audio");
+        {
+            Folder f; f.mix().replaceWithText (mixJson (1));
+            expect (writeAudio (f.track (1))); expect (writeAudio (f.track (2)));
+            const auto original = f.track (2).loadFileAsString();
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (f.dir), 2);
+            expectEquals (host.engine.getRecorder().getNumTracks(), 1);
+            bool complete = false, success = true;
+            host.generateOrRefreshClickTrack ([&] (bool ok) { success = ok; complete = true; });
+            expect (pumpUntil ([&] { return complete; }));
+            expect (! success, "a click was generated over track 2's audio");
+            expect (f.track (2).loadFileAsString() == original, "a recorded take was replaced");
+            expectEquals (host.engine.getRecorder().getNumTracks(), 1, "the refused click left a strip behind");
             host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
         }
 
