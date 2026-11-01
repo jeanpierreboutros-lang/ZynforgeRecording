@@ -7,6 +7,8 @@
 #include "../UI/MainComponent.h"
 #include "../UI/AudioDeviceDialog.h"
 #include "../UI/ControlSurfacesDialog.h"
+#include "../UI/LedMeter.h"
+#include "../UI/Meterbridge.h"
 #include "../UI/RecordPosition.h"
 #include "../UI/SessionSettingsDialog.h"
 #include "../Audio/ChannelAlarm.h"
@@ -1251,6 +1253,22 @@ namespace zynforge
                     return w.main.metersDialog != nullptr && walk (*w.main.metersDialog);
                 };
                 expect (pumpUntil ([&] { return labelled ("Renamed"); }, 2000), "the bridge kept the old name");
+
+                const auto firstMeter = [&]() -> juce::Component*
+                {
+                    const std::function<juce::Component* (juce::Component&)> walk = [&] (juce::Component& c) -> juce::Component*
+                    {
+                        if (dynamic_cast<LedMeter*> (&c) != nullptr) return &c;
+                        for (auto* child : c.getChildren()) if (auto* hit = walk (*child)) return hit;
+                        return nullptr;
+                    };
+                    return w.main.metersDialog != nullptr ? walk (*w.main.metersDialog) : nullptr;
+                };
+                juce::Component::SafePointer<juce::Component> before (firstMeter());
+                expect (before != nullptr, "no meter to watch");
+                Meterbridge::condemnAllMeters();
+                expect (pumpUntil ([&] { return before == nullptr; }, 2000),
+                        "detached meters were never rebound, so the bridge stayed dead");
                 delete w.main.metersDialog.getComponent();
             }
 
