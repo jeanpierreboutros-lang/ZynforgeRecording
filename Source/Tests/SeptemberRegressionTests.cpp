@@ -284,7 +284,8 @@ public:
             const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
                                   .getChildFile ("zf upload \"" + juce::Uuid().toString());
             expect (root.createDirectory());
-            expect (cloud::launchUpload ("/usr/bin/touch {SESSION}/upload-finished", root));
+            cloud::UploadRun upload;
+            expect (upload.start ("/usr/bin/touch {SESSION}/upload-finished", root, {}));
             const auto marker = root.getChildFile ("upload-finished");
             for (int waited = 0; waited < 2000 && ! marker.existsAsFile(); waited += 20)
                 juce::Thread::sleep (20);

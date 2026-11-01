@@ -693,14 +693,20 @@ void MainComponent::runCloudUpload()
         showStatus ("No upload command configured -- pick \"Configure cloud upload command...\" first");
         return;
     }
-    if (zynforge::cloud::launchUpload (tmpl, sessionDir))
+    if (cloudUpload.isActive()) { showStatus ("A cloud upload is already running"); return; }
+    juce::Component::SafePointer<MainComponent> self (this);
+    const auto name = sessionDir.getFileName();
+    const bool started = cloudUpload.start (tmpl, sessionDir, [self, name] (zynforge::cloud::UploadOutcome outcome)
     {
-        showStatus ("Cloud upload started: " + sessionDir.getFileName());
-    }
-    else
-    {
-        showStatus ("Cloud upload failed to launch -- check the configured command");
-    }
+        juce::MessageManager::callAsync ([self, name, outcome]
+        {
+            if (self != nullptr)
+                self->showStatus (outcome.ok ? "Cloud upload finished: " + name
+                                             : "! Cloud upload FAILED for " + name + ": " + outcome.problem);
+        });
+    });
+    showStatus (started ? "Cloud upload started: " + sessionDir.getFileName()
+                        : juce::String ("Cloud upload failed to launch -- check the configured command"));
 }
 
 void MainComponent::toggleCompanionServer()

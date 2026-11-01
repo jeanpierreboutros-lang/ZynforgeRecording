@@ -316,7 +316,7 @@ report "asynchronous component callbacks carry a SafePointer" \
        "$(printf '%s' "$HITS")"
 
 HITS=""
-grep -q "child.start (arguments, 0)" Source/Network/CloudUpload.h \
+grep -q "child->start (arguments, 0)" Source/Network/CloudUpload.h \
     || HITS="Source/Network/CloudUpload.h: uploader captures pipes owned by a short-lived ChildProcess"
 report "detached uploads do not inherit short-lived output pipes" \
        "closing an undrained pipe can SIGPIPE a verbose uploader while the UI reports success" \
