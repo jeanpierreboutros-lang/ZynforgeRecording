@@ -171,16 +171,22 @@ namespace zynforge
             else if (chosen == 3)
             {
                 const auto s = markers.getMarker (idx).sampleOffset;
-                const auto e = player.hasLoopRegion() ? player.getLoopEnd() : (s + 1);
-                player.setLoopRegion (s, juce::jmax (e, s + 1));
+                const bool otherEdgeSet = player.hasLoopRegion();
+                const auto e = otherEdgeSet ? player.getLoopEnd() : (s + 1);
+                // Half a range is a default, not a selection: no punch.
+                if (otherEdgeSet) player.selectRange (s, juce::jmax (e, s + 1));
+                else              player.setLoopRegion (s, juce::jmax (e, s + 1));
             }
             else if (chosen == 4)
             {
                 const auto e = markers.getMarker (idx).sampleOffset;
-                const auto s = player.hasLoopRegion() ? player.getLoopStart() : 0;
+                const bool otherEdgeSet = player.hasLoopRegion();
+                const auto s = otherEdgeSet ? player.getLoopStart() : 0;
                 // Clamp the start to >= 0 so a marker at sample 0 (e-1 == -1)
                 // doesn't set a negative loop start.
-                player.setLoopRegion (juce::jmax ((juce::int64) 0, juce::jmin (s, e - 1)), e);
+                const auto start = juce::jmax ((juce::int64) 0, juce::jmin (s, e - 1));
+                if (otherEdgeSet) player.selectRange (start, e);
+                else              player.setLoopRegion (start, e);
             }
             else if (chosen == 5) player.clearLoopRegion();
             self->repaint();

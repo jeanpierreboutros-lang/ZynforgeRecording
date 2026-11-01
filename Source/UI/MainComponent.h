@@ -39,7 +39,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -96,6 +96,7 @@ private:
     };
     bool handleRecordPressDuringTake();
     bool prepareRecordStart (RecordStartPlan&);
+    void planRecordPosition (RecordStartPlan&);
     bool recordPlanHasSelection (const RecordStartPlan&);
     bool recordPlanPunches (const RecordStartPlan&);
     void runRecordPlan (RecordStartPlan&);
@@ -292,6 +293,7 @@ private:
     void togglePunchMode();
     void servicePunch();        // called each timerCallback tick
     bool wasInsidePunch { false };
+    bool punchWindowTakeActive { false };   // this take was opened by the PUNCH window
     // Pro Tools-style selection punch driven by the RECORD button: play from a
     // pre-roll lead-in, auto punch-in at the selection start and punch-out at
     // its end, then play a post-roll tail before stopping. servicePunch does
@@ -300,11 +302,7 @@ private:
     bool        punchSessionActive { false };
     juce::int64 punchOutSample     { 0 };
     juce::int64 punchPostRollEnd   { 0 };
-    bool        punchLoopWasEnabled { false };
-    bool        punchLoopNeedsRestore { false };
     bool playheadLockedForPunch();
-    void suspendLoopForPunch();
-    void restoreLoopAfterPunch();
 
     // Snap modes -- cycled by the '4' key (also surfaced in the
     // Edit menu). Off / Markers / Bars; Bars uses the engine's
@@ -441,6 +439,7 @@ private:
     void syncFloatingPanelButtons();
     void rebuildStripsIfLayoutChanged();
     void updateStatusPills();
+    void updatePunchPill();
     void updateNextCueCountdown();
     void syncStripsWithEngine();
     void surfaceAsyncReportFailure();
@@ -512,6 +511,7 @@ private:
     friend class zynforge::ConsoleVscTests;
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
+    friend class zynforge::MainWindowGuardTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.
@@ -530,6 +530,7 @@ private:
     juce::Label  danteLabel        { {}, "" };
     juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner
     juce::Label  twinStatusLabel   { {}, "" };   // link state; empty while the link is off
+    juce::Label  punchPill         { {}, "" };   // PUNCH mode, or what the next RECORD will replace
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome -- IconButton paints a glyph next to each label so
@@ -644,13 +645,6 @@ private:
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
     bool clickRefreshPending { false };   // tempo changed while the render was refused
 
-    // Arm state captured the moment a punch-in fires. servicePunch force-writes
-    // `armed = punchArmed` on every track so only the punch-armed ones capture;
-    // without restoring afterwards that rewrite was PERMANENT, silently
-    // disarming channels for the next take. Empty => no punch snapshot held.
-    std::vector<char> armStateBeforePunch;
-    void snapshotArmStateForPunch();
-    void restoreArmStateAfterPunch();
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
     bool songExportRunning { false };   // message thread; turns menu item 967 into its cancel
 

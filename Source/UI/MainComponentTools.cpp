@@ -189,26 +189,29 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
 void MainComponent::togglePunchMode()
 {
     const bool on = ! engine.isPunchModeOn();
+    if (on && daemonModeActive())
+    {
+        showStatus ("PUNCH mode needs in-process capture -- the capture daemon cannot punch");
+        return;
+    }
     engine.setPunchModeOn (on);
     if (on)
     {
-        suspendLoopForPunch();
-        // Default: punch-arm every currently-armed track. Engineer can
-        // narrow by un-arming individuals via the track's right-click
-        // menu later.
-        auto& rec = engine.getRecorder();
-        for (int i = 0; i < rec.getNumTracks(); ++i)
-            engine.setTrackPunchArmed (i,
-                rec.getTrack (i).armed.load (std::memory_order_relaxed));
-        showStatus ("Punch mode ON -- set the loop region, then press PLAY");
+        auto& player = engine.getPlayer();
+        const auto pos = player.getPositionSamples();
+        // Only crossing into the range punches, never turning the mode on
+        // inside it.
+        wasInsidePunch = player.isRangeArmed() && pos >= player.getLoopStart() && pos < player.getLoopEnd();
+        showStatus (player.isRangeArmed()
+                        ? "Punch mode ON -- press PLAY; the armed tracks punch through the selected range"
+                        : "Punch mode ON -- select a range in EDIT, then press PLAY");
     }
     else
     {
-        const bool hadCapture = engine.isRecording();
-        if (hadCapture) stopActiveCaptureAsync (false);
-        restoreArmStateAfterPunch();   // leaving punch mode must not keep the forced arms
-        restoreLoopAfterPunch();
-        if (! hadCapture && ! captureMetadataPending) showStatus ("Punch mode OFF");
+        // Only a punch ends here. A live take keeps its two-tap STOP.
+        const bool punchRolling = (punchWindowTakeActive || punchSessionActive) && engine.isRecording();
+        if (punchRolling) stopActiveCaptureAsync (false);
+        if (! punchRolling && ! captureMetadataPending) showStatus ("Punch mode OFF");
     }
 }
 
@@ -219,49 +222,6 @@ bool MainComponent::playheadLockedForPunch()
     if (! engine.getPlayer().isSeekLocked()) return false;
     showStatus ("Punch recording -- the playhead stays put until STOP");
     return true;
-}
-
-void MainComponent::suspendLoopForPunch()
-{
-    if (punchLoopNeedsRestore) return;
-    auto& player = engine.getPlayer();
-    punchLoopWasEnabled = player.isLoopEnabled();
-    punchLoopNeedsRestore = true;
-    player.setLoopEnabled (false); // a loop must not wrap before punch-out
-}
-
-void MainComponent::restoreLoopAfterPunch()
-{
-    if (! punchLoopNeedsRestore) return;
-    engine.getPlayer().setLoopEnabled (punchLoopWasEnabled);
-    punchLoopNeedsRestore = false;
-}
-
-// Capture / restore the engineer's arm layout around a punch. servicePunch has
-// to force `armed = punchArmed` so only the punch-armed tracks hit disk, but
-// that write is destructive: without restoring it, narrowing the punch set (or
-// arming more tracks after enabling PUNCH) silently left those channels
-// disarmed for the NEXT take -- a missed-recording bug on a live rig.
-void MainComponent::snapshotArmStateForPunch()
-{
-    if (! armStateBeforePunch.empty()) return;   // already holding a snapshot
-    auto& rec = engine.getRecorder();
-    const int n = rec.getNumTracks();
-    armStateBeforePunch.resize ((size_t) n);
-    for (int i = 0; i < n; ++i)
-        armStateBeforePunch[(size_t) i] =
-            rec.getTrack (i).armed.load (std::memory_order_relaxed) ? 1 : 0;
-}
-
-void MainComponent::restoreArmStateAfterPunch()
-{
-    if (armStateBeforePunch.empty()) return;
-    auto& rec = engine.getRecorder();
-    const int n = juce::jmin ((int) armStateBeforePunch.size(), rec.getNumTracks());
-    for (int i = 0; i < n; ++i)
-        rec.getTrack (i).armed.store (armStateBeforePunch[(size_t) i] != 0,
-                                      std::memory_order_relaxed);
-    armStateBeforePunch.clear();
 }
 
 void MainComponent::servicePunch()
@@ -285,7 +245,6 @@ void MainComponent::servicePunch()
                 {
                     self->engine.stopPlayback();
                     self->engine.setPunchModeOn (false);
-                    self->restoreLoopAfterPunch();
                     self->punchSessionActive = false;
                     return;
                 }
@@ -293,18 +252,20 @@ void MainComponent::servicePunch()
                 playback.setPositionSamples (self->punchOutSample);
                 self->engine.startPlayback();
             });
-            restoreArmStateAfterPunch();
         }
         return;
     }
-    const auto inside = (pos >= player.getLoopStart() && pos < player.getLoopEnd());
+    // A range nobody selected this run never punches, even in PUNCH mode.
+    const auto inside = player.isRangeArmed() && pos >= player.getLoopStart() && pos < player.getLoopEnd();
 
     if (inside && ! wasInsidePunch && player.isPlaying())
     {
-        // Crossed into the punch window -- punch-in on every punch-armed track:
-        // record fresh audio into the CURRENT session and splice it into the
-        // existing take at the punch-in point (audio before the punch-in and
-        // after the punch-out is preserved). The rest keep playing back.
+        // Crossed into the punch window -- punch-in on every track armed right
+        // now, as the R buttons show: startRecording freezes those arms as in
+        // any take. Fresh audio goes into the CURRENT session and is spliced
+        // into the existing take at the punch-in point (audio before the
+        // punch-in and after the punch-out is preserved). The rest keep
+        // playing back.
         if (! engine.isRecording())
         {
             const auto sessionDir = engine.getActiveSessionDir();
@@ -316,18 +277,16 @@ void MainComponent::servicePunch()
                 wasInsidePunch = inside;
                 return;
             }
+            if (sessionLocked || daemonModeActive())
+            {
+                showStatus (sessionLocked ? "Punch-in refused -- session is LOCKed"
+                                          : "Punch-in refused -- the capture daemon cannot punch");
+                wasInsidePunch = inside;
+                return;
+            }
             // Multi-part takes (auto-split, or built up by continue-recording)
             // are fine now: the splice reads the whole take via ConcatReader and
             // flattens it on stop, so no refusal here.
-            auto& rec = engine.getRecorder();
-
-            // Force-arm only the punch-armed tracks for the punch -- but keep
-            // the engineer's real arm layout so it can be put back on punch-out
-            // (see snapshotArmStateForPunch).
-            snapshotArmStateForPunch();
-            for (int i = 0; i < rec.getNumTracks(); ++i)
-                rec.getTrack (i).armed.store (engine.isTrackPunchArmed (i),
-                                              std::memory_order_relaxed);
             // Splice at the ACTUAL playhead where recording begins (one timer
             // tick past loopStart), so the captured audio lands at the right
             // timeline position instead of being nudged earlier to loopStart.
@@ -335,29 +294,30 @@ void MainComponent::servicePunch()
             if (! engine.startRecording (sessionDir))
             {
                 engine.getRecorder().cancelPunchIn();
-                restoreArmStateAfterPunch();
-                showStatus ("Punch-in failed -- existing take was restored");
+                const auto why = engine.getRecorder().getStartError();
+                showStatus ("Punch-in failed -- existing take is untouched"
+                            + (why.isNotEmpty() ? " (" + why + ")" : juce::String()));
                 wasInsidePunch = inside;
                 return;
             }
+            punchWindowTakeActive = true;
             lastCaptureFinalizationError.clear();
         }
     }
-    else if (! inside && wasInsidePunch && engine.isRecording())
+    else if ((! inside || ! player.isPlaying()) && punchWindowTakeActive && engine.isRecording())
     {
-        // Crossed out -- stop recording cleanly (the splice replaces the
-        // punched region; audio after the punch-out is preserved), then put the
-        // engineer's arm layout back exactly as it was before the punch.
+        // Crossed out, or the transport stopped short of the punch-out -- stop
+        // recording cleanly (the splice replaces the punched region; audio
+        // after the punch-out is preserved). A take this window did not open
+        // is not its to end.
         juce::Component::SafePointer<MainComponent> self (this);
         stopActiveCaptureAsync (false, [self] (bool saved)
         {
             if (self == nullptr || saved) return;
             self->engine.stopPlayback();
             self->engine.setPunchModeOn (false);
-            self->restoreLoopAfterPunch();
             self->punchSessionActive = false;
         });
-        restoreArmStateAfterPunch();
     }
     wasInsidePunch = inside;
 }
@@ -380,10 +340,8 @@ void MainComponent::servicePunchSession()
 
     const bool hadCapture = engine.isRecording();
     if (hadCapture) stopActiveCaptureAsync (false); // safety net
-    restoreArmStateAfterPunch();   // no-op if servicePunch already restored it
     engine.stopPlayback();
     engine.setPunchModeOn (false);
-    restoreLoopAfterPunch();
     punchSessionActive = false;
     recordButton.setButtonText ("RECORD");
     if (! hadCapture && lastCaptureFinalizationError.isEmpty()) showStatus ("Punch complete");

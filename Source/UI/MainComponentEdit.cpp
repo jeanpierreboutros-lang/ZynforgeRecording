@@ -1185,12 +1185,15 @@ void MainComponent::editStartRange()
     if (! canMutateTimeline()) return;
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
-    const auto end = player.hasLoopRegion() ? player.getLoopEnd()
-                                            : pos + (juce::int64) (player.getSampleRate() * 2.0);
+    const bool otherEdgeSet = player.hasLoopRegion();
+    const auto end = otherEdgeSet ? player.getLoopEnd()
+                                  : pos + (juce::int64) (player.getSampleRate() * 2.0);
     // Ordering guard (same as TimelineStrip's "Set as Loop In"): if the
     // playhead is at/past the existing loop end, keep end > start instead of
     // passing an inverted range that setLoopRegion treats as "clear".
-    player.setLoopRegion (pos, juce::jmax (end, pos + 1));
+    // Half a range is a default, not a selection, so it can't arm a punch.
+    if (otherEdgeSet) player.selectRange (pos, juce::jmax (end, pos + 1));
+    else              player.setLoopRegion (pos, juce::jmax (end, pos + 1));
     engine.getMarkers().drop (pos, "Range In");
     showStatus ("Range In set at playhead");
 }
@@ -1200,11 +1203,14 @@ void MainComponent::editFinishRange()
     if (! canMutateTimeline()) return;
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
-    const auto start = player.hasLoopRegion() ? player.getLoopStart() : juce::int64 (0);
+    const bool otherEdgeSet = player.hasLoopRegion();
+    const auto start = otherEdgeSet ? player.getLoopStart() : juce::int64 (0);
     // Ordering guard (same as TimelineStrip's "Set as Loop Out"): if the
     // playhead is at/before the existing loop start, keep start < end instead
     // of passing an inverted range that setLoopRegion treats as "clear".
-    player.setLoopRegion (juce::jmin (start, pos - 1), pos);
+    // Half a range is a default, not a selection, so it can't arm a punch.
+    if (otherEdgeSet) player.selectRange (juce::jmin (start, pos - 1), pos);
+    else              player.setLoopRegion (juce::jmin (start, pos - 1), pos);
     engine.getMarkers().drop (pos, "Range Out");
     showStatus ("Range Out set at playhead");
 }

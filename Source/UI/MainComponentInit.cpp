@@ -127,6 +127,11 @@ MainComponent::MainComponent()
     twinStatusLabel.setMinimumHorizontalScale (0.8f);
     addChildComponent (twinStatusLabel);
 
+    punchPill.setJustificationType (juce::Justification::centred);
+    punchPill.setFont (brand::type::ui (12.0f, true));
+    punchPill.setMinimumHorizontalScale (0.8f);
+    addChildComponent (punchPill);
+
     sessionLabel.setFont (brand::type::caption());
     sessionLabel.setColour (juce::Label::textColourId, brand::textMuted);
     sessionLabel.setJustificationType (juce::Justification::centredLeft);

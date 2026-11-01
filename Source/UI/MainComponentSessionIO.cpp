@@ -15,6 +15,7 @@
 // report; onDeviceClicked launches the audio-device dialog).
 
 #include "MainComponent.h"
+#include "RecordPosition.h"
 #include "../Audio/AudioImport.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/TrackFileTransaction.h"
@@ -162,8 +163,14 @@ int MainComponent::openSessionFolder (const juce::File& dir)
         if (s->hasProperty ("preRollSeconds"))
             engine.getRecorder().setPreRollSeconds (juce::jlimit (0, 30, (int) s->getProperty ("preRollSeconds")));
         if (s->hasProperty ("loopStart") && s->hasProperty ("loopEnd"))
-            engine.getPlayer().setLoopRegion ((juce::int64) s->getProperty ("loopStart"),
-                                             (juce::int64) s->getProperty ("loopEnd"));
+        {
+            // A saved range still loops and edits, but nobody selected it in
+            // this run, so it never arms a punch.
+            const juce::int64 start = s->getProperty ("loopStart"), end = s->getProperty ("loopEnd");
+            auto& player = engine.getPlayer();
+            if (! savedRegionSpansTimeline (start, end, player.getTotalLengthSamples()))
+                player.setLoopRegion (start, end);
+        }
         if (s->hasProperty ("sampleRate")) pendingSampleRate = (double) s->getProperty ("sampleRate");
     }
     if (engine.getPlayer().isLoaded()) pendingSampleRate = engine.getPlayer().getSampleRate();

@@ -3079,7 +3079,7 @@ namespace zynforge
                     {
                         const juce::int64 a = juce::jmin (lastDragSamples, sx);
                         const juce::int64 b = juce::jmax (lastDragSamples, sx);
-                        if (b > a) player.setLoopRegion (a, b);
+                        if (b > a) player.selectRange (a, b);
                     }
                     repaint();
                 }

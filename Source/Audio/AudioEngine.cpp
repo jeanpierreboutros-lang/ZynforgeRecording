@@ -1704,31 +1704,16 @@ namespace zynforge
         return logical;
     }
 
-    bool AudioEngine::isTrackPunchArmed (int channel) const noexcept
+    void AudioEngine::setPunchModeOn (bool on) noexcept
     {
-        if (channel < 0 || channel >= (int) punchArmed.size()) return false;
-        return punchArmed[(size_t) channel].load (std::memory_order_relaxed);
-    }
-
-    void AudioEngine::setTrackPunchArmed (int channel, bool armed)
-    {
-        if (channel < 0) return;
-        if (channel >= (int) punchArmed.size())
+        if (punchEnabled.exchange (on, std::memory_order_relaxed) == on) return;
+        if (on)
         {
-            // Grow the vector PRESERVING existing flags. std::atomic isn't
-            // copy/move-constructible, so a plain resize won't do -- build a
-            // bigger vector and carry the old values across. The previous
-            // implementation replaced the whole vector, which silently
-            // wiped every already-armed lower track whenever a higher index
-            // triggered the grow (punch-arm track 1 -> track 0 lost its arm).
-            const auto target = (size_t) channel + 1;
-            std::vector<std::atomic<bool>> grown (target);
-            for (size_t i = 0; i < punchArmed.size(); ++i)
-                grown[i].store (punchArmed[i].load (std::memory_order_relaxed),
-                                std::memory_order_relaxed);
-            punchArmed = std::move (grown);
+            punchLoopWasEnabled = player.isLoopEnabled();
+            player.setLoopEnabled (false);   // a loop must not wrap before punch-out
         }
-        punchArmed[(size_t) channel].store (armed, std::memory_order_relaxed);
+        else
+            player.setLoopEnabled (punchLoopWasEnabled);
     }
 
     bool AudioEngine::swapTracks (int a, int b)
@@ -2224,6 +2209,9 @@ namespace zynforge
         player.clearAllClips();
         player.clearLoopRegion();
         player.setLoopEnabled (false);
+        // A punch belongs to the session it was set up in. Left on, the next
+        // session's first selection would punch without anyone asking.
+        punchEnabled.store (false, std::memory_order_relaxed);
 
         trackClips.clear();
         trackPlaylists.clear();

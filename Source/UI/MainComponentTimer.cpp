@@ -4,6 +4,7 @@
 // scrolling past 5000 lines of menu / layout / setup code.
 
 #include "MainComponent.h"
+#include "RecordPosition.h"
 
 using namespace zynforge;
 
@@ -34,6 +35,7 @@ void MainComponent::timerCallback()
     syncFloatingPanelButtons();
     rebuildStripsIfLayoutChanged();
     updateStatusPills();
+    updatePunchPill();
     updateNextCueCountdown();
 
     if (clickRefreshPending && clickTrackIndex >= 0 && ! engine.isRecording()
@@ -46,7 +48,8 @@ void MainComponent::timerCallback()
     if (uiLayoutSavePending && ! sessionIoBusy.load()) requestUILayoutSave();
 
     if (cueRamp.active) updateCueRamp();
-    if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())
+    if (! engine.isRecording()) punchWindowTakeActive = false;
+    if (engine.isPunchModeOn())
         servicePunch();
     if (punchSessionActive)
         servicePunchSession();
@@ -172,6 +175,37 @@ void MainComponent::updateStatusPills()
         { danteLabel.setText (txt, juce::dontSendNotification); resized(); }
         danteLabel.setTooltip (txt);
     }
+}
+
+// PUNCH mode must read from across the room, and a menu tick does not. The
+// quieter state is the same warning about the next RECORD: it will replace
+// audio, not add to it. The answer comes from the rules RECORD itself uses.
+void MainComponent::updatePunchPill()
+{
+    auto& player = engine.getPlayer();
+    juce::String text;
+    if (engine.isPunchModeOn() && ! punchSessionActive)
+        text = "PUNCH MODE";
+    else if (! engine.isRecording() && player.isLoaded() && ! daemonModeActive())
+    {
+        const bool rolling = player.isPlaying();
+        const auto cursor  = engine.getEditCursorSample();
+        const auto pos     = manualRecordPosition (rolling, player.getPositionSamples(), cursor);
+        if (player.isRangeArmed())
+            text = "RECORD PUNCHES RANGE";
+        else if (manualRecordPunches (rolling, cursor, pos, engine.getCaptureLengthSamples(),
+                                      player.getTotalLengthSamples()))
+            text = rolling ? "RECORD PUNCHES HERE" : "RECORD PUNCHES AT CURSOR";
+    }
+    if (punchPill.getText() == text) return;
+    punchPill.setText (text, juce::dontSendNotification);
+    punchPill.setVisible (text.isNotEmpty());
+    const bool mode = text == "PUNCH MODE";
+    punchPill.setColour (juce::Label::backgroundColourId,
+                         mode ? brand::alertAmber : juce::Colours::transparentBlack);
+    punchPill.setColour (juce::Label::textColourId,
+                         mode ? brand::onSignal (brand::alertAmber) : brand::alertAmber);
+    resized();
 }
 
 void MainComponent::updateNextCueCountdown()

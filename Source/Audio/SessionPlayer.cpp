@@ -384,20 +384,40 @@ namespace zynforge
         if (! loaded.load (std::memory_order_acquire)) return false;
         const auto total = totalLength.load (std::memory_order_relaxed);
         if (position.load (std::memory_order_relaxed) < total) return true;
+        return activeLoopSpan (total).active();
+    }
+
+    SessionPlayer::LoopSpan SessionPlayer::activeLoopSpan (juce::int64 total) const noexcept
+    {
+        if (! loopEnabled.load (std::memory_order_relaxed)
+            || seekLocked.load (std::memory_order_relaxed))
+            return {};
         const auto s = loopStart.load (std::memory_order_relaxed);
-        const auto e = juce::jmin (loopEnd.load (std::memory_order_relaxed), total);
-        return loopEnabled.load (std::memory_order_relaxed) && s >= 0 && e > s;
+        const auto e = loopEnd.load (std::memory_order_relaxed);
+        if (s < 0 || e <= s) return { 0, total };
+        // A region may run past the session end (e.g. the default 2 s loop
+        // dropped near the take end): wrap at whichever comes first instead of
+        // reaching the end and stopping.
+        return { s, juce::jmin (e, total) };
     }
 
     void SessionPlayer::setLoopRegion (juce::int64 s, juce::int64 e) noexcept
     {
         if (e <= s) { clearLoopRegion(); return; }
+        rangeArmed.store (false, std::memory_order_release);
         loopStart.store (s, std::memory_order_release);
         loopEnd  .store (e, std::memory_order_release);
     }
 
+    void SessionPlayer::selectRange (juce::int64 s, juce::int64 e) noexcept
+    {
+        setLoopRegion (s, e);
+        rangeArmed.store (hasLoopRegion(), std::memory_order_release);
+    }
+
     void SessionPlayer::clearLoopRegion() noexcept
     {
+        rangeArmed.store (false, std::memory_order_release);
         loopStart.store (-1, std::memory_order_release);
         loopEnd  .store (-1, std::memory_order_release);
     }
@@ -407,6 +427,11 @@ namespace zynforge
         const auto s = loopStart.load (std::memory_order_relaxed);
         const auto e = loopEnd  .load (std::memory_order_relaxed);
         return s >= 0 && e > s;
+    }
+
+    bool SessionPlayer::isRangeArmed() const noexcept
+    {
+        return rangeArmed.load (std::memory_order_acquire) && hasLoopRegion();
     }
 
     void SessionPlayer::setTrackClips (int trackIdx, std::vector<Clip> clips)
@@ -504,12 +529,11 @@ namespace zynforge
         while (done < numSamples)
         {
             int count = numSamples - done;
-            const auto begin = loopStart.load();
-            const auto end = juce::jmin (loopEnd.load(), totalLength.load());   // same wrap point as renderBlock
-            if (loopEnabled.load() && begin >= 0 && end > begin)
+            const auto loop = activeLoopSpan (totalLength.load());   // same wrap point as renderBlock
+            if (loop.active())
             {
                 const auto pos = position.load();
-                const auto remaining = end - (pos >= end ? begin : pos);
+                const auto remaining = loop.end - (pos >= loop.end ? loop.begin : pos);
                 count = (int) juce::jmin ((juce::int64) count, juce::jmax ((juce::int64) 1, remaining));
             }
             float* shifted[kMaxAuthoritativeTracks] {};
@@ -538,15 +562,12 @@ namespace zynforge
         juce::int64       startPos = position.load (std::memory_order_acquire);
         const juce::int64 total    = totalLength.load (std::memory_order_relaxed);
 
-        const juce::int64 lStart = loopStart.load (std::memory_order_relaxed);
-        // A loop region may run past the session end (e.g. the default 2 s
-        // loop dropped near the take end): wrap at whichever comes first
-        // instead of reaching the end and stopping.
-        const juce::int64 lEnd   = juce::jmin (loopEnd.load (std::memory_order_relaxed), total);
-        // Loop playback only when the ⟲ loop-play toggle is on AND a region is
-        // set -- so selecting a range for editing doesn't force play to loop.
-        const bool        looping = loopEnabled.load (std::memory_order_relaxed)
-                                 && lStart >= 0 && lEnd > lStart;
+        // Loop playback only when the ⟲ loop-play toggle is on, so selecting
+        // a range for editing doesn't force play to loop.
+        const auto        loop    = activeLoopSpan (total);
+        const juce::int64 lStart  = loop.begin;
+        const juce::int64 lEnd    = loop.end;
+        const bool        looping = loop.active();
 
         if (looping && startPos >= lEnd)
         {

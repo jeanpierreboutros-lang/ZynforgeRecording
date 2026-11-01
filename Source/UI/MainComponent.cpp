@@ -77,8 +77,7 @@ void MainComponent::onRecordClicked()
 
 bool MainComponent::recordPlanHasSelection (const RecordStartPlan& plan)
 {
-    auto& player = engine.getPlayer();
-    return plan.continueTake && player.hasLoopRegion() && player.getLoopEnd() > player.getLoopStart();
+    return plan.continueTake && engine.getPlayer().isRangeArmed();
 }
 
 bool MainComponent::recordPlanPunches (const RecordStartPlan& plan)
@@ -113,10 +112,8 @@ bool MainComponent::handleRecordPressDuringTake()
     {
         const bool wasRecording = engine.isRecording();
         if (wasRecording) stopActiveCaptureAsync (false);
-        restoreArmStateAfterPunch();   // put the pre-punch arm layout back
         engine.stopPlayback();
         engine.setPunchModeOn (false);
-        restoreLoopAfterPunch();
         punchSessionActive = false;
         recordButton.setButtonText ("RECORD");
         if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
@@ -267,55 +264,8 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
         }
     }
 
-    // CONTINUE vs FRESH take. If a session is loaded, RECORD continues INTO it
-    // (punch-in) instead of spinning up a throwaway new session -- this is how
-    // you "keep recording on an existing take". The freshly-recorded audio is
-    // spliced into each armed track's take at the edit cursor; with no cursor
-    // set it APPENDS at the end (continue where the take stopped). Audio before
-    // the punch-in and after the punch-out is preserved. A fresh, no-session
-    // record (or daemon mode, which can't punch) still starts a new session.
-    const auto activeDir = engine.getActiveSessionDir();
-    const auto activeAudioDir = activeDir.getChildFile ("Audio Files");
-    const auto takeScanDir = activeAudioDir.isDirectory() ? activeAudioDir : activeDir;
-    const bool existingTakeMedia = takeScanDir.isDirectory()
-        && ! takeScanDir.findChildFiles (juce::File::findFiles, false,
-                                         "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
-    plan.continueTake = activeDir.isDirectory()
-                        && (engine.getPlayer().isLoaded() || existingTakeMedia)
-                        && ! daemonModeActive();
-    // While playback rolls, a manual punch uses its CURRENT playhead. The EDIT
-    // cursor may still hold the place where playback began; using it here
-    // silently turns an intended punch into an append/new part. When stopped,
-    // the explicitly placed EDIT cursor remains the insertion point.
-    // INSIDE the take -> record OVER from there (mid-take punch / splice). At the
-    // end (or a stopped, unplaced playhead at 0) -> APPEND a NEW PART
-    // (Track_NN_partXX), which never touches the existing file. An explicitly
-    // placed cursor at 0 is a deliberate punch from the start.
-    if (plan.continueTake)
-    {
-        const auto cur   = engine.getEditCursorSample();
-        const auto pos   = manualRecordPosition (engine.getPlayer().isPlaying(),
-                                                 engine.getPlayer().getPositionSamples(), cur);
-        const auto total = engine.getCaptureLengthSamples();
-        const bool explicitPosition = cur >= 0 || engine.getPlayer().isPlaying();
-        // A deliberate cursor/rolling punch may be inside a reference bed
-        // beyond the captured material. Only default append ignores the bed.
-        if ((pos < total && (pos > 0 || explicitPosition))
-            || (explicitPosition && pos < engine.getPlayer().getTotalLengthSamples()))
-        {
-            // Mid-take "record OVER from here" -- punch-in at the cursor/playhead.
-            // Works on MULTI-PART takes too: the splice reads the whole take
-            // (Track_NN + its parts) via ConcatReader and flattens it, so a take
-            // built up by continue-recording can still be punched anywhere.
-            plan.punchAt = pos; plan.continueAppend = false;
-        }
-        else
-        {
-            plan.continueAppend = true;   // at the start / end -> append a new part
-        }
-    }
-
-    plan.dir = plan.continueTake ? activeDir : makeNewSessionDir();
+    planRecordPosition (plan);
+    plan.dir = plan.continueTake ? engine.getActiveSessionDir() : makeNewSessionDir();
     plan.numTracks = numTracks;
     plan.armed = armed;
 
@@ -350,6 +300,47 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     }
 
     return true;
+}
+
+void MainComponent::planRecordPosition (RecordStartPlan& plan)
+{
+    // CONTINUE vs FRESH take. If a session is loaded, RECORD continues INTO it
+    // (punch-in) instead of spinning up a throwaway new session -- this is how
+    // you "keep recording on an existing take". The freshly-recorded audio is
+    // spliced into each armed track's take at the edit cursor; with no cursor
+    // set it APPENDS at the end (continue where the take stopped). Audio before
+    // the punch-in and after the punch-out is preserved. A fresh, no-session
+    // record (or daemon mode, which can't punch) still starts a new session.
+    const auto activeDir = engine.getActiveSessionDir();
+    const auto activeAudioDir = activeDir.getChildFile ("Audio Files");
+    const auto takeScanDir = activeAudioDir.isDirectory() ? activeAudioDir : activeDir;
+    const bool existingTakeMedia = takeScanDir.isDirectory()
+        && ! takeScanDir.findChildFiles (juce::File::findFiles, false,
+                                         "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
+    auto& player = engine.getPlayer();
+    plan.continueTake = activeDir.isDirectory()
+                        && (player.isLoaded() || existingTakeMedia)
+                        && ! daemonModeActive();
+    if (! plan.continueTake) return;
+
+    // While playback rolls, a manual punch uses its CURRENT playhead. The EDIT
+    // cursor may still hold the place where playback began; using it here
+    // silently turns an intended punch into an append/new part. When stopped,
+    // the explicitly placed EDIT cursor remains the insertion point. Anything
+    // else APPENDS a NEW PART (Track_NN_partXX), which never touches the
+    // existing file. Punches work on MULTI-PART takes too: the splice reads the
+    // whole take (Track_NN + its parts) via ConcatReader and flattens it.
+    const bool rolling = player.isPlaying();
+    const auto cursor  = engine.getEditCursorSample();
+    const auto pos     = manualRecordPosition (rolling, player.getPositionSamples(), cursor);
+    if (manualRecordPunches (rolling, cursor, pos, engine.getCaptureLengthSamples(),
+                             player.getTotalLengthSamples()))
+    {
+        plan.punchAt = pos;
+        plan.continueAppend = false;
+    }
+    else
+        plan.continueAppend = true;
 }
 
 void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
@@ -439,10 +430,6 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
 
             engine.stopPlayback();
             player.setPositionSamples (juce::jmax ((juce::int64) 0, in - preRollS));
-            suspendLoopForPunch();
-            snapshotArmStateForPunch();
-            for (int i = 0; i < plan.numTracks; ++i)
-                engine.setTrackPunchArmed (i, recorder.getTrack (i).armed.load (std::memory_order_relaxed));
             engine.setPunchModeOn (true);
             punchOutSample    = out;
             punchPostRollEnd  = out + postRollS;
@@ -455,13 +442,14 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
             {
                 engine.clearCaptureWindow();
                 recorder.cancelPunchIn();
-                restoreArmStateAfterPunch();
                 engine.setPunchModeOn (false);
-                restoreLoopAfterPunch();
                 showStatus (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
                     : "Selection punch refused -- check take and backup/mirror copies");
                 return true;
             }
+            // One selection, one punch. Left armed, the same range would take
+            // the next RECORD too, say the one meant to continue the show.
+            player.disarmRange();
             lastCaptureFinalizationError.clear();
             punchSessionActive = true;
             wasInsidePunch    = false;
@@ -505,6 +493,7 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
                  : plan.continueAppend
                  ? juce::String ("Continuing take -- recording a new part on ")
                        + juce::String (plan.armed) + " track(s)"
+                       + (engine.getPlayer().hasLoopRegion() ? " (select the range again to punch it)" : "")
                  : juce::String ("Punch-in ") + juce::String (plan.armed)
                        + " track(s) at " + juce::String (plan.punchAt / sr, 1) + " s";
         if (plan.autoRouted > 0)
