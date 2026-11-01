@@ -5,6 +5,7 @@
 
 #include "../Audio/AiffRepair.h"
 #include "../Audio/AudioEngine.h"
+#include "../Audio/CaptureCopy.h"
 #include "../Audio/FloatAiffWriter.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Capture/CaptureDaemon.h"
@@ -638,4 +639,365 @@ namespace zynforge
     };
 
     static CaptureDaemonLinkTests captureDaemonLinkTests;
+
+    // Each copy of a take has its own thread and ring. These hold one copy's
+    // thread in a write, the way a dead mount would, and watch the others.
+    class CaptureCopyTests final : public juce::UnitTest
+    {
+    public:
+        CaptureCopyTests() : UnitTest ("Capture copies", "zynforge") {}
+
+        static constexpr double kRate = 48000.0;
+        static constexpr int kBlock = 256;
+
+        struct Stall
+        {
+            explicit Stall (int index) : copyIndex (index) {}
+            ~Stall() { released.signal(); }
+            int copyIndex;
+            juce::WaitableEvent entered, released { true };
+        };
+        using Copy = MultitrackRecorder::CaptureCopy;
+
+        static void hold (MultitrackRecorder& rec, const std::shared_ptr<Stall>& stall)
+        {
+            rec.beforeCopyWriteForTests = [stall] (Copy& copy)
+            {
+                if (copy.copyIndex != stall->copyIndex) return;
+                stall->entered.signal();
+                stall->released.wait (-1);
+            };
+        }
+
+        struct Dirs
+        {
+            juce::File root = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                .getChildFile ("zf-copies-" + juce::Uuid().toString());
+            juce::File session = root.getChildFile ("primary").getChildFile ("take");
+            juce::File backup  = root.getChildFile ("backup"), mirror = root.getChildFile ("mirror");
+            Dirs() { session.createDirectory(); backup.createDirectory(); mirror.createDirectory(); }
+            ~Dirs()
+            {
+                MultitrackRecorder::deleteSessionAfterCancellingReports (session);
+                root.deleteRecursively();
+            }
+            juce::File primaryTake (const juce::String& ext = ".wav") const
+            { return session.getChildFile ("Audio Files").getChildFile ("Track_01" + ext); }
+            juce::File backupTake (const juce::String& ext = ".wav") const
+            { return backup.getChildFile ("take").getChildFile ("Audio Files").getChildFile ("Track_01" + ext); }
+            juce::File mirrorTake (const juce::String& ext = ".wav") const
+            { return mirror.getChildFile ("take").getChildFile ("Audio Files").getChildFile ("Track_01" + ext); }
+        };
+
+        static float sampleAt (juce::int64 frame, int channel) noexcept
+        {
+            return 0.4f * (float) std::sin ((double) frame * (0.01 + 0.002 * channel));
+        }
+
+        // Audio as the callback delivers it, every frame identifiable. The
+        // recorder's own counters are the only thing that decides the pace.
+        struct Feeder
+        {
+            MultitrackRecorder& rec;
+            int channels;
+            juce::int64 frame { 0 };
+
+            void block()
+            {
+                std::vector<std::vector<float>> audio ((size_t) channels, std::vector<float> ((size_t) kBlock));
+                std::vector<const float*> inputs;
+                for (int c = 0; c < channels; ++c)
+                {
+                    for (int i = 0; i < kBlock; ++i) audio[(size_t) c][(size_t) i] = sampleAt (frame + i, c);
+                    inputs.push_back (audio[(size_t) c].data());
+                }
+                rec.processBlock (inputs.data(), channels, kBlock);
+                frame += kBlock;
+            }
+
+            // The named copies stay caught up; a held one cannot.
+            void blocks (int count, const std::vector<int>& keepUp)
+            {
+                for (int b = 0; b < count; ++b)
+                {
+                    block();
+                    rec.drainOnce();
+                    for (const int index : keepUp)
+                        for (auto& copy : rec.copies)
+                            if (copy->copyIndex == index) copy->waitUntilWritten (5000);
+                }
+            }
+        };
+
+        static juce::AudioBuffer<float> read (const juce::File& file)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+            if (reader == nullptr) return {};
+            juce::AudioBuffer<float> out ((int) reader->numChannels, (int) reader->lengthInSamples);
+            reader->read (&out, 0, out.getNumSamples(), 0, true, true);
+            return out;
+        }
+
+        // Every frame is the frame played at that position.
+        void expectIntact (const juce::File& file, juce::int64 frames, const juce::String& what,
+                           int channel = 0, int fileChannel = 0)
+        {
+            const auto audio = read (file);
+            expectEquals ((juce::int64) audio.getNumSamples(), frames, what + ": wrong length");
+            if (audio.getNumSamples() != frames) return;
+            int wrong = 0;
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+                if (std::abs (audio.getSample (fileChannel, i) - sampleAt (i, channel)) > 0.0002f) ++wrong;
+            expectEquals (wrong, 0, what + ": frames differ from what was played");
+        }
+
+        void runTest() override
+        {
+            stalledCopies();
+            leftBehindAtStop();
+            everyCopyMatches();
+            ringMemory();
+        }
+
+        void stalledCopies()
+        {
+            for (const int held : { 2, 1, 0 })
+            {
+                const auto name = juce::String (held == 0 ? "primary" : held == 1 ? "backup" : "mirror");
+                beginTest ("A stalled " + name + " costs only that copy");
+                Dirs dirs;
+                auto rec = std::make_unique<MultitrackRecorder>();
+                rec->prepare (kRate, kBlock, 1);
+                rec->getTrack (0).armed.store (true);
+                rec->setBackupDirectory (dirs.backup);
+                expect (rec->setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                rec->copyRingFramesForTests = 4096;
+                auto stall = std::make_shared<Stall> (held);
+                hold (*rec, stall);
+                expect (rec->startRecording (dirs.session));
+                expectEquals ((int) rec->copies.size(), 3);
+
+                Feeder feeder { *rec, 1 };
+                feeder.block();
+                rec->drainOnce();
+                expect (stall->entered.wait (5000), "the copy never reached its write");
+                feeder.blocks (79, held == 0 ? std::vector<int> { 1, 2 }
+                                 : held == 1 ? std::vector<int> { 0, 2 } : std::vector<int> { 0, 1 });
+                const juce::int64 total = 80 * kBlock;
+
+                expectEquals (rec->getMissedSamples(), (juce::int64) 0, "the audio FIFO dropped: every copy lost it");
+                expect (held == 0 ? rec->hasPrimaryFailed() : ! rec->hasPrimaryFailed(), "primary failure latch");
+                expect (held == 1 ? rec->hasBackupFailed()  : ! rec->hasBackupFailed(),  "backup failure latch");
+                expect (held == 2 ? rec->anyMirrorFailed()  : ! rec->anyMirrorFailed(),  "mirror failure latch");
+                const auto problems = rec->getCopyProblems();
+                expectEquals (problems.size(), 1, "the banner has no named copy");
+                if (problems.size() == 1)
+                    expect (problems[0].containsIgnoreCase (held == 2 ? dirs.mirror.getFullPathName() : name), problems[0]);
+
+                stall->released.signal();
+                rec->stopRecording();
+
+                for (const int index : { 0, 1, 2 })
+                {
+                    const auto file = index == 0 ? dirs.primaryTake() : index == 1 ? dirs.backupTake() : dirs.mirrorTake();
+                    if (index != held) { expectIntact (file, total, "a healthy copy"); continue; }
+
+                    // What the ring kept lands where it was played; the rest is
+                    // silence, so this copy still lines up with the others.
+                    const auto audio = read (file);
+                    expectEquals ((juce::int64) audio.getNumSamples(), total, "the held copy lost its alignment");
+                    if (audio.getNumSamples() != total) continue;
+                    expect (std::abs (audio.getSample (0, (int) total - 1) - sampleAt (total - 1, 0)) < 0.0002f,
+                            "the tail of the held copy moved");
+                    expectEquals (audio.getSample (0, 40 * kBlock), 0.0f, "the lost span is not silence");
+                }
+
+                const auto report = juce::JSON::parse (dirs.session.getChildFile ("session.report.json"));
+                expect ((bool) report[held == 0 ? "primaryFailed" : held == 1 ? "backupFailed" : "mirrorFailed"],
+                        "the report does not flag the copy");
+                const auto* listed = report["copyProblems"].getArray();
+                expect (listed != nullptr && listed->size() == 1, "the report does not name the copy");
+            }
+        }
+
+        void leftBehindAtStop()
+        {
+            beginTest ("A copy that never comes back does not hold up STOP");
+            {
+                Dirs dirs;
+                auto rec = std::make_unique<MultitrackRecorder>();
+                rec->prepare (kRate, kBlock, 1);
+                rec->getTrack (0).armed.store (true);
+                expect (rec->setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                rec->copyStallLimitMs = 200.0;
+                auto stall = std::make_shared<Stall> (2);
+                hold (*rec, stall);
+                expect (rec->startRecording (dirs.session));
+                Feeder feeder { *rec, 1 };
+                feeder.blocks (1, { 0 });
+                expect (stall->entered.wait (5000));
+                feeder.blocks (19, { 0 });
+                std::weak_ptr<Copy> leftBehind = rec->copies.back();
+
+                const auto started = juce::Time::getMillisecondCounterHiRes();
+                rec->stopRecording();
+                expectLessThan (juce::Time::getMillisecondCounterHiRes() - started, 20000.0, "STOP waited on the dead copy");
+
+                expectIntact (dirs.primaryTake(), 20 * kBlock, "the primary");
+                expect (rec->anyMirrorFailed());
+                const auto report = juce::JSON::parse (dirs.session.getChildFile ("session.report.json"));
+                expect ((bool) report["mirrorFailed"], "the report does not flag the mirror");
+                expect (report["copyProblems"].toString().isNotEmpty() || report["copyProblems"].size() == 1,
+                        "the report does not name the mirror");
+                auto mirrors = report["tracks"][0]["mirrors"];
+                expect (mirrors.size() == 1 && (bool) mirrors[0]["failed"], "the track does not list the mirror as failed");
+
+                // The next take on the same recorder must work with that
+                // thread still stuck, and the recorder may go first.
+                rec->beforeCopyWriteForTests = {};
+                rec->armContinue (20 * kBlock);
+                expect (rec->startRecording (dirs.session), rec->getStartError());
+                expectEquals (rec->getMirrorsSkippedAtStart(), 1, "the stuck mirror was not left out");
+                expect (rec->getCopyProblems().joinIntoString (" ").contains (dirs.mirror.getFullPathName()),
+                        "the stuck mirror is not named");
+                Feeder next { *rec, 1 };
+                next.blocks (4, { 0 });
+                rec->stopRecording();
+                expect (dirs.session.getChildFile ("Audio Files").getChildFile ("Track_01_part02.wav").existsAsFile(),
+                        "the second take did not land");
+                expect (! leftBehind.expired(), "the fixture released the stuck thread too early");
+                rec.reset();
+
+                stall->released.signal();
+                const auto end = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+                while (! leftBehind.expired() && juce::Time::getMillisecondCounterHiRes() < end)
+                    juce::Thread::sleep (5);
+                expect (leftBehind.expired(), "the stuck thread never ended");
+            }
+
+            beginTest ("A primary that stalls at STOP is waited for, never left behind");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.copyStallLimitMs = 50.0;
+                auto stall = std::make_shared<Stall> (0);
+                hold (rec, stall);
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.block();
+                rec.drainOnce();
+                expect (stall->entered.wait (5000));
+                std::atomic<bool> stopped { false };
+                std::thread stopper ([&] { rec.stopRecording(); stopped.store (true); });
+                juce::Thread::sleep (400);
+                expect (! stopped.load(), "STOP walked away from the primary");
+                stall->released.signal();
+                stopper.join();
+                expectIntact (dirs.primaryTake(), kBlock, "the primary");
+            }
+        }
+
+        void everyCopyMatches()
+        {
+            beginTest ("Pre-roll and live audio reach every copy in every format, in step");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 3);
+                rec.setPreRollSeconds (1);
+                rec.getTrack (0).armed.store (true);
+                rec.getTrack (1).armed.store (true);
+                rec.getTrack (0).isStereo.store (true);
+                rec.getTrack (2).armed.store (true);
+                rec.setCaptureFormat (CaptureFormat::Wav24);
+                rec.setBackupDirectory (dirs.backup);
+                rec.setBackupCaptureFormat (CaptureFormat::Flac24);
+                expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Aiff24 } }));
+
+                Feeder feeder { rec, 3 };
+                for (int b = 0; b < 60; ++b) feeder.block();   // history before RECORD
+                expect (rec.startRecording (dirs.session));
+                for (int b = 0; b < 40; ++b) { feeder.block(); rec.drainPendingForTests(); }
+                rec.stopRecording();
+
+                const auto total = feeder.frame;
+                for (const auto& [file, name] : { std::pair { dirs.primaryTake(), "primary" },
+                                                  std::pair { dirs.backupTake (".flac"), "backup" },
+                                                  std::pair { dirs.mirrorTake (".aif"), "mirror" } })
+                {
+                    expectIntact (file, total, name, 0, 0);
+                    expectIntact (file, total, name, 1, 1);
+                    expectIntact (file.getSiblingFile ("Track_03" + file.getFileExtension()), total, name, 2, 0);
+                }
+                expectEquals (rec.getMissedSamples(), (juce::int64) 0);
+                expect (! rec.hasPrimaryFailed() && ! rec.hasBackupFailed() && ! rec.anyMirrorFailed());
+            }
+
+            beginTest ("Thirty-two tracks on three copies stay exact at live pace");
+            {
+                constexpr int kTracks = 32, kBlocks = 300;
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, kTracks);
+                for (int t = 0; t < kTracks; ++t) rec.getTrack (t).armed.store (true);
+                rec.setBackupDirectory (dirs.backup);
+                expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, kTracks };
+                for (int b = 0; b < kBlocks; ++b)
+                {
+                    feeder.block();
+                    juce::Thread::sleep (3);
+                }
+                rec.stopRecording();
+                expectEquals (rec.getMissedSamples(), (juce::int64) 0);
+                for (const auto& take : { dirs.primaryTake(), dirs.backupTake(), dirs.mirrorTake() })
+                    for (int t = 0; t < kTracks; ++t)
+                        expectIntact (take.getSiblingFile (juce::String::formatted ("Track_%02d.wav", t + 1)),
+                                      feeder.frame, take.getFullPathName(), t);
+            }
+
+            beginTest ("A copy stuck in its pre-roll holds up nothing else");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.setPreRollSeconds (1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                auto stall = std::make_shared<Stall> (2);
+                hold (rec, stall);
+
+                Feeder feeder { rec, 1 };
+                for (int b = 0; b < 60; ++b) feeder.block();
+                expect (rec.startRecording (dirs.session));
+                expect (stall->entered.wait (5000), "the mirror never reached its dump");
+                feeder.blocks (40, { 0 });
+                expectEquals (rec.copies[0]->framesDone.load(), rec.copies[0]->framesPushed.load(),
+                              "the primary waited on the mirror's dump");
+                stall->released.signal();
+                rec.stopRecording();
+                expectIntact (dirs.primaryTake(), feeder.frame, "the primary");
+                expectIntact (dirs.mirrorTake(), feeder.frame, "the mirror");
+            }
+        }
+
+        void ringMemory()
+        {
+            beginTest ("Copy rings stay bounded at any channel count");
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 1);
+            const auto bytes = [&] (int copies, int channels)
+            { return (juce::int64) rec.copyRingFrames (copies, channels) * 4 * copies * channels; };
+            expectEquals (rec.copyRingFrames (3, 64), 1 << 18, "a normal rig gets the full ring");
+            expectLessOrEqual (bytes (3, 64), (juce::int64) 1 << 30);
+            expectLessOrEqual (bytes (5, 256), (juce::int64) 1 << 30);
+            expectGreaterOrEqual (rec.copyRingFrames (5, 256), (int) kRate, "at least a second of ring");
+        }
+    };
+
+    static CaptureCopyTests captureCopyTests;
 }

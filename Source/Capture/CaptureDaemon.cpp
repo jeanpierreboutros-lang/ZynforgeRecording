@@ -396,6 +396,7 @@ namespace zynforge::capture
         s.reportWriteFailed = recorder.hasReportWriteFailed();
         s.diskStruggling = recorder.isDiskStruggling();
         s.channelAlarms  = recorder.evaluateChannelAlarms();
+        s.copyProblems   = recorder.getCopyProblems();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {

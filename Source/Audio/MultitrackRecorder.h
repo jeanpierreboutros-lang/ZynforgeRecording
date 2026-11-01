@@ -29,9 +29,9 @@ namespace zynforge
         Flac24        // 24-bit FLAC -- ~50% disk size vs WAV
     };
 
-    // Lock-free per-channel ring buffer + background disk writer.
-    // The audio thread only ever pushes; a dedicated TimeSliceClient
-    // drains and writes the configured format per track.
+    // Lock-free per-channel ring buffer + background writers. The audio
+    // thread only ever pushes; a distributor thread hands the samples to each
+    // destination, and every destination writes on its own thread (CaptureCopy).
     //
     // Pre-roll: a separate per-channel ring of N seconds is always
     // pushed (when N > 0) so RECORD can dump audio that happened
@@ -268,11 +268,10 @@ namespace zynforge
         void setAudioWorkgroup (juce::AudioWorkgroup);
 
         // Live telemetry for the CPU/disk dashboard:
-        //   - bytesPerSec: rolling 1 s window of bytes pushed to disk
-        //     (across primary, backup, and mirror writers, all channels).
-        //   - ringFillPct: 0..100, max over channels of FIFO occupancy.
-        // Both are updated by drainOnce() on the writer thread(s); the UI
-        // polls them via these accessors.
+        //   - bytesPerSec: rolling window of bytes written to disk, every copy.
+        //   - ringFillPct: 0..100, worst of the audio FIFOs and the copies' rings.
+        // Both are published by the distributor, which never blocks on a disk,
+        // so a stuck drive shows here instead of freezing the reading.
         float getDiskBytesPerSec() const noexcept;
         float getRingFillPct()     const noexcept;
         juce::File  getActiveSessionDir()  const          { return activeSessionDir; }
@@ -389,23 +388,23 @@ namespace zynforge
         }
         bool hasAsyncReportFailure() const noexcept
         { return reportAsyncState->failed.load (std::memory_order_relaxed); }
+        // One line per copy that lost audio or stopped responding, naming it,
+        // for the banner. Empty for a clean take.
+        juce::StringArray getCopyProblems() const;
         bool hasPunchSpliceFailed() const noexcept
         {
             return punchSpliceFailed.load (std::memory_order_relaxed);
         }
 
     private:
-        // Inherited but no longer used directly -- drain logic moves into
-        // per-shard ShardClients (see below). Kept as a stub returning a
-        // long delay so the base class doesn't compile-error.
+        // Inherited but no longer used directly: the distributor is a
+        // ShardClient. Kept as a stub returning a long delay so the base class
+        // doesn't compile-error.
         int useTimeSlice() override;
 
-        // One drain worker per writer-thread shard. Each owns a range of
-        // channel indices [firstChannel, lastChannel) and drains only
-        // those FIFOs on its own juce::TimeSliceThread. This is the
-        // change that lets disk I/O scale linearly with track count at
-        // 64 / 128 / 256 channels instead of being serialised through a
-        // single writer thread.
+        // The distributor: moves samples from the audio FIFOs of channels
+        // [firstChannel, lastChannel) to every copy's ring on its own
+        // juce::TimeSliceThread. It never touches a disk.
         struct ShardClient final : public juce::TimeSliceClient
         {
             MultitrackRecorder* owner          { nullptr };
@@ -416,7 +415,7 @@ namespace zynforge
             // so the global getDiskBytesPerSec() can sum without ever
             // taking a lock.
             std::atomic<float>  shardBytesPerSec      { 0.0f };
-            juce::int64         throughputAccumBytes  { 0 };
+            juce::int64         throughputBaseBytes   { 0 };
             double              throughputWindowMs    { 0.0 };
             std::atomic<int>    shardRingFillPct      { 0 };
 
@@ -429,22 +428,10 @@ namespace zynforge
             // Never taken on the audio thread (drainShard is consumer-side).
             juce::CriticalSection drainLock;
 
-            // Set by goLive for a fresh take with pre-roll; the shard writes
-            // its channels' history (under drainLock) before draining.
-            bool preRollPending { false };
-
-            // Reused planar staging buffers for the stereo-pair write path:
-            // a 2-channel writer needs its two source channels as contiguous
-            // arrays (writeFromFloatArrays is planar, not interleaved), but
-            // the L + R FIFOs each hand back a possibly-wrapped two-region
-            // ScopedRead. We copy both into these before the single 2-ch
-            // write. Owned by the shard so a steady take never reallocates.
+            // Reused planar staging buffers: the L + R FIFOs each hand back a
+            // possibly-wrapped two-region read, and the copies take contiguous
+            // arrays. Owned by the shard so a steady take never reallocates.
             std::vector<float> stageL, stageR;
-
-            // Reused all-zero buffer for the overflow silence-pad path (see
-            // drainShard). Grows once to the chunk cap then stays all zeros --
-            // never written into, so it needs no per-use clearing.
-            std::vector<float> silence;
 
             int useTimeSlice() override;
         };
@@ -530,111 +517,42 @@ namespace zynforge
             }
         };
 
+        // What one track contributes to a take, whichever copies it lands on.
+        // The files themselves belong to each CaptureCopy.
         struct WriterChannel
         {
-            std::unique_ptr<juce::AudioFormatWriter> writer;
-            std::unique_ptr<juce::AudioFormatWriter> backupWriter;
-
             // Strip names for each file's bext Description. Read once at record
-            // start: a roll opens a new part on a writer thread, which must not
+            // start: a roll opens a new part on a copy's thread, which must not
             // touch TrackState::name.
             juce::String bextNameLeft, bextNameRight;
-            // Every WAV this pass opened for this channel, on any copy, and
-            // what it was stamped with at open: the finalize patch works from
-            // this. Only one thread at a time owns it (see `mirrors` below).
+            // Every WAV this pass opened, and what it was stamped with at open:
+            // the finalize patch works from this.
             struct StampedPart
             {
                 juce::File   file;
                 juce::int64  framesBefore { 0 };     // of this pass, in earlier parts
                 juce::uint64 stampedAtOpen { 0 };
             };
-            std::vector<StampedPart> stampedParts;
-
-            // Auto-split state. WAV RIFF caps file size at 4 GiB
-            // (32-bit unsigned chunk header); AIFF caps at 2 GiB
-            // (signed 32-bit). When a writer approaches its format's
-            // limit the drain loop closes the current file and opens
-            // Track_NN_partNN with the same parameters so a long
-            // multi-hour show keeps capturing past the limit instead
-            // of silently producing a malformed header.
-            juce::int64  bytesWrittenPrimary  { 0 };  // resets at each roll
-            juce::int64  bytesWrittenBackup   { 0 };
-            juce::int64  totalSamplesPrimary  { 0 };  // never resets (sum across parts)
-            juce::int64  totalSamplesBackup   { 0 };
-            // Filenames of every part written, in order. Reported in
-            // session.report.json so the mix engineer can confirm at a
-            // glance which files belong to which track when a long take
-            // produced multiple parts.
-            juce::StringArray partFilesPrimary;
-            juce::StringArray partFilesBackup;
-            int          partNumberPrimary    { 1 };
-            int          partNumberBackup     { 1 };
-
-            // N-way mirror writers. The primary + backup pair stays
-            // intact (engineers know that workflow); these are ADDITIONAL
-            // mirror destinations on top, for crews who need three+
-            // simultaneous copies (e.g. live broadcast houses running
-            // an on-board SSD + a backup HDD + an off-board NAS).
-            // Each mirror is independent: own file path, own bytes
-            // counter, own auto-split state, own failure flag.
-            struct Mirror
-            {
-                std::unique_ptr<juce::AudioFormatWriter> writer;
-                juce::File   baseFile;
-                juce::String ext;
-                int          container         { 0 };
-                int          bitDepth          { 24 };
-                int          bytesPerSample    { 3 };
-                juce::int64  bytesWritten      { 0 };   // resets at each roll
-                juce::int64  totalSamples      { 0 };   // never resets
-                int          partNumber        { 1 };
-                juce::StringArray partFiles;
-                // Drain thread sets this to true if the mirror writer
-                // returns false from writeFromFloatArrays (disk full,
-                // path disappeared). No atomic needed -- only the
-                // drain thread for THIS channel ever touches it during
-                // a take; the report reads it on the message thread
-                // after closeWriters has serialised. Mirror with
-                // failed=true is skipped on subsequent writes.
-                bool         failed            { false };
-            };
-            std::vector<Mirror> mirrors;
-            juce::File   primaryBaseFile;     // "Audio Files/Track_01" (no extension)
-            juce::File   backupBaseFile;
-            juce::String primaryExt;          // ".wav" etc
-            juce::String backupExt;
-            int          primaryBitDepth      { 24 };
-            int          backupBitDepth       { 24 };
-            int          primaryContainer     { 0 };   // Container enum value
-            int          backupContainer      { 0 };
-            int          bytesPerSamplePrimary { 3 };
-            int          bytesPerSampleBackup  { 3 };
 
             // Interleaved-stereo capture: a stereo pair (isStereo on the L
             // track) records ONE 2-channel file named for the L slot --
             // Track_NN.wav with two channels -- instead of two mono files.
-            // The R partner's WriterChannel is left empty (no writer); its
-            // FIFO is drained here, by the L channel's drain step, which
-            // reads both FIFOs and does one 2-ch write. All destinations
-            // (primary / backup / every mirror) carry the same channel
-            // count, so one field governs the whole WriterChannel. 1 = mono
-            // (the default, every non-stereo track), 2 = interleaved stereo.
+            // The R partner's WriterChannel is left empty; its FIFO is drained
+            // here, by the L channel's step, which reads both FIFOs. Every copy
+            // carries the same channel count, so one field governs them all.
+            // 1 = mono (the default, every non-stereo track), 2 = interleaved.
             int          numChannels { 1 };
 
-            // Does this channel PARTICIPATE in the take (a writer was opened
-            // for it at record start)? The drain loop keys on this, NOT on
-            // `writer != nullptr`. Otherwise a primary write-failure (which
-            // nulls `writer`) is indistinguishable from a deliberately-empty
-            // stereo-R slot, and the whole channel -- backup, mirrors, FIFO
-            // drain -- is skipped for the rest of the take, silently freezing
-            // the backup the failover promise says keeps rolling. Empty R
-            // slots + unarmed/bus channels stay false and are skipped.
+            // Does this channel PARTICIPATE in the take? The drain keys on this
+            // rather than on any one copy's file, so a primary that failed or
+            // never opened does not stop its backup and mirrors. Empty R slots
+            // and unarmed/bus channels stay false and are skipped.
             bool         active { false };
         };
 
         // Per-channel rolling history used for pre-roll. The audio thread is
-        // the only writer (push, continuously -- NOT gated on recording); the
-        // writer threads read the detached copy once per take (dumpPreRollForShard).
+        // the only writer (push, continuously -- NOT gated on recording); each
+        // copy's thread reads the detached history once per take.
         // No lock: push publishes its data writes with a release store on
         // totalWritten that readHistory pairs with an acquire load, and the
         // ring is over-allocated by kPreRollSafetySec seconds BEYOND the
@@ -660,21 +578,35 @@ namespace zynforge
 
         void drainOnce();
         void drainShard (ShardClient&);
-        // Rewrite the header of every open writer in [first, last) so a crash
-        // mid-take leaves a self-describing file (and promotes WAV to RF64
-        // once it crosses 4 GiB). Called periodically from drainShard.
-        void flushOpenWriters (std::size_t first, std::size_t last);
-        std::atomic<double> lastWriterFlushMs { 0.0 };
         void rebuildShards();
         void closeWriters();
-        void finalizeWriterHandles();
         void allocatePreRollBuffers();
-        // Pre-roll: goLive sizes it, then each writer thread writes its own
-        // channels' history before their first live samples (see goLive).
+        // Pre-roll: goLive sizes it, then each copy's thread writes the history
+        // before its first live samples (see goLive).
         void preparePreRollDump();
-        void dumpPreRollForShard (ShardClient&);
         int  preRollHistorySamples { 0 };
-        std::atomic<int> preRollShardsPending { 0 };
+
+        // One destination of a take, with its own thread and ring (CaptureCopy.h).
+        struct CaptureCopy;
+        // Failure flags outlive the recorder: see CaptureCopy.
+        struct CaptureLatches
+        {
+            std::atomic<bool> primaryFailed { false }, backupFailed { false }, mirrorFailed { false };
+        };
+        std::shared_ptr<CaptureLatches> latches { std::make_shared<CaptureLatches>() };
+        // Primary, then the backup if it is in play, then each active mirror.
+        // Replaced only at record start, under structureLock.
+        std::vector<std::shared_ptr<CaptureCopy>> copies;
+        // Left behind at STOP and still stuck: their drive is not touched again
+        // until the thread comes back, so the next RECORD cannot hang on it.
+        std::vector<std::shared_ptr<CaptureCopy>> leftBehind;
+        bool isStillLeftBehind (const juce::File& root) const;
+        juce::StringArray droppedCopies;   // left out of this take, naming each
+        const CaptureCopy* copyAt (int copyIndex) const noexcept;
+        bool isCopyAbandoned (int copyIndex) const noexcept;
+        int  copyRingFrames (int numCopies, int channels) const noexcept;
+        juce::StringArray describeCopyProblems() const;
+        void finishCopies();
 
         // ── startRecording stages ───────────────────────────────────────
         // startRecording (MultitrackRecorder.cpp) runs these in order under
@@ -726,20 +658,6 @@ namespace zynforge
         SessionReport buildSessionReport (TakeStop&);
         void publishSessionReport (SessionReport);
 
-        // Open a writer at the given path with the given format.
-        // containerCode: 0 = WAV, 1 = AIFF, 2 = FLAC. Used both at
-        // startRecording and by the drain loop's auto-split path so a
-        // long take that crosses the WAV 4 GiB / AIFF 2 GiB chunk
-        // limit gets a fresh Track_NN_partXX.<ext> file instead of a
-        // corrupt-header tail. framesBefore: what this pass already wrote
-        // to earlier parts of this copy. A WAV joins channel.stampedParts.
-        // Returns nullptr on failure (e.g. disk full, permissions).
-        juce::AudioFormatWriter* openWriterAtPath (const juce::File& target,
-                                                   int containerCode,
-                                                   int bits,
-                                                   WriterChannel& channel,
-                                                   juce::int64 framesBefore) noexcept;
-
         // Samples since midnight of this pass's first written frame, not yet
         // wrapped into a day. An estimate until the first live block lands.
         juce::int64 passStartSamples() const noexcept;
@@ -757,17 +675,16 @@ namespace zynforge
         // writing actual gigabytes. 0 = use real limits (production).
         static void setAutoSplitThresholdBytesForTests (juce::int64 bytes) noexcept;
 
-        // Test hook: force a writer-thread drain. Production code lets
-        // the JUCE TimeSliceThread schedule this; tests feed the IO
-        // callback synchronously and need a way to flush the ring
-        // between blocks so the auto-split path doesn't roll one
-        // gigantic accumulated write.
-        void drainPendingForTests() { drainOnce(); }
+        // Test hook: force a drain and wait for every copy to write it.
+        // Production code lets the threads schedule this; tests feed the IO
+        // callback synchronously and need a way to flush the ring between
+        // blocks so the auto-split path doesn't roll one gigantic write.
+        void drainPendingForTests();
 
         // Test hook: rewrite every open writer's header right now (the same
         // thing the periodic in-take flush does), so a test can verify that a
         // crashed-but-flushed file is already readable before stopRecording.
-        void flushOpenWritersForTests() { flushOpenWriters (0, writers.size()); }
+        void flushOpenWritersForTests();
 
         // Report-write generation, keyed by SESSION.
         //
@@ -810,12 +727,17 @@ namespace zynforge
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
         friend class AsyncStopAuditTests;
         friend class ReviewCaptureRepairTests;
+        friend class CaptureCopyTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
         friend class TwinLinkTests;            // report publication ordering
         friend class CaptureMetaTests;
         friend class ChannelAlarmTests;        // what the daemon's loop latched
         std::function<void()> afterFifoReservationForTests;
         std::function<void()> beforeStampForTests;
+        std::function<void (CaptureCopy&)> beforeCopyWriteForTests;
+        int copyRingFramesForTests { 0 };
+        // How long STOP waits on a copy that has stopped making progress.
+        double copyStallLimitMs { 30000.0 };
         struct ReportTestHooks
         {
             std::function<void()> beforeScan, beforePublish, afterPublish, finished;
@@ -843,10 +765,8 @@ namespace zynforge
         juce::String startError;
         juce::AudioFormatManager formatManager;
 
-        // Writer-thread pool. We start min(8, max(2, hardware/2)) worker
-        // threads -- one TimeSliceThread per shard -- and each one drains
-        // a contiguous slice of channels. rebuildShards() reshapes the
-        // assignment when the track count changes.
+        // The distributor's thread (see chooseShardCount). rebuildShards()
+        // reshapes the assignment when the track count changes.
         std::vector<std::unique_ptr<juce::TimeSliceThread>> writerThreads;
         std::vector<std::unique_ptr<ShardClient>>           shards;
 
@@ -890,14 +810,6 @@ namespace zynforge
         clocksource::Probe clockProbe;
         std::atomic<bool>        captureDeviceLost  { false };
         std::atomic<int>         lastWriteMs        { 0 };
-        // Read-modify-written on the drain thread and reset on the message
-        // thread at record start; atomic so those accesses never tear.
-        std::atomic<juce::int64> samplesSinceFlush  { 0 };
-
-        // (Disk throughput + ring-fill accumulators now live per-shard in
-        // ShardClient. The public getters in this class sum / max across
-        // shards each time the UI polls them -- see the .cpp.)
-
         CaptureFormat captureFormat        { CaptureFormat::Wav24 };
         CaptureFormat backupCaptureFormat  { CaptureFormat::Wav24 };
         int           preRollSeconds { 0 };  // 0 = disabled
@@ -905,11 +817,10 @@ namespace zynforge
         juce::File activeSessionDir;
         juce::File backupDir;
         std::atomic<bool> backupActive  { false };
-        std::atomic<bool> backupFailed  { false };
-        // Latched for the whole take. WriterChannel::Mirror objects disappear
-        // when stopRecording closes the writers, but status/report consumers
-        // still need to know that a mirror failed during finalisation.
-        std::atomic<bool> mirrorFailed  { false };
+        std::atomic<bool>& backupFailed  { latches->backupFailed };
+        // Latched for the whole take: a copy's objects are gone after STOP, but
+        // status and report consumers still need to know.
+        std::atomic<bool>& mirrorFailed  { latches->mirrorFailed };
         // Metadata failures do not stop audio capture, but must be visible:
         // without the marker crash recovery is unavailable; without the report
         // the operator loses the take's integrity manifest.
@@ -926,13 +837,12 @@ namespace zynforge
         std::shared_ptr<AsyncReportState> reportAsyncState { std::make_shared<AsyncReportState>() };
         std::atomic<bool> punchSpliceFailed { false };
 
-        // Primary-writer failure. Drain thread sets true when a
-        // writeFromFloatArrays returns false (disk full, path gone).
-        // The audio thread keeps capturing into the ring buffer; the
-        // engineer just loses the primary file's tail. UI surfaces
-        // this so the operator can act (swap drives, etc.) -- audio
-        // continues to land on backup + any mirrors.
-        std::atomic<bool> primaryFailed { false };
+        // Primary-writer failure: a write failed (disk full, path gone) or the
+        // primary fell a whole ring behind. The audio thread keeps capturing;
+        // the engineer loses the primary's audio from there. UI surfaces this
+        // so the operator can act -- audio continues to land on backup + any
+        // mirrors.
+        std::atomic<bool>& primaryFailed { latches->primaryFailed };
 
         // Disk-struggling flag + 2-second EMA of the keep-up ratio.
         // Updated by updateDiskHealth() from the UI timer; the audio

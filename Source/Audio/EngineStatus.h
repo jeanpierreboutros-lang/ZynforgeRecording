@@ -104,6 +104,7 @@ namespace zynforge
         // Live dead-channel alarms. Additive on the daemon wire: a peer that
         // does not know the field ignores it.
         std::vector<channelalarm::Alarm> channelAlarms;
+        juce::StringArray copyProblems;   // a line per copy that lost audio, naming it
         std::vector<TrackStatus> tracks;
 
         juce::var toJson() const
@@ -143,6 +144,7 @@ namespace zynforge
             juce::Array<juce::var> alarms;
             for (const auto& a : channelAlarms) alarms.add (a.toJson());
             o->setProperty ("channelAlarms", alarms);
+            o->setProperty ("copyProblems", juce::var (copyProblems));
             juce::Array<juce::var> arr;
             for (const auto& t : tracks) arr.add (t.toJson());
             o->setProperty ("tracks", arr);
@@ -183,6 +185,8 @@ namespace zynforge
             s.diskStruggling = (bool) v.getProperty ("diskStruggling", false);
             s.captureDeviceLost = (bool) v.getProperty ("captureDeviceLost", false);
             s.captureFormat = (int) v.getProperty ("captureFormat", 0);
+            if (auto* problems = v.getProperty ("copyProblems", {}).getArray())
+                for (const auto& problem : *problems) s.copyProblems.add (problem.toString());
             if (auto* alarms = v.getProperty ("channelAlarms", {}).getArray())
                 for (const auto& alarm : *alarms)
                     s.channelAlarms.push_back (channelalarm::Alarm::fromJson (alarm));

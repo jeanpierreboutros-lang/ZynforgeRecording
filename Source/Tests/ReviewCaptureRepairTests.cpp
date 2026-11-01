@@ -1,4 +1,5 @@
 #include "../Audio/AudioEngine.h"
+#include "../Audio/CaptureCopy.h"
 #include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/SettingsFile.h"
 #include "../Audio/SpectralClassifier.h"
@@ -177,21 +178,20 @@ public:
             recorder.setBackupDirectory (backup);
             expect (recorder.setMirrors ({ { mirror, CaptureFormat::Aiff32Float } }));
             recorder.getTrack (0).armed.store (true);
+            // The swap happens on the copy's own thread, which owns its writers.
+            auto* writer = FloatAiffWriter::create (new HeaderFailureStream (fail), 48000, 1);
+            expect (writer != nullptr);
+            recorder.beforeCopyWriteForTests = [destination, swapped = false, writer]
+                (MultitrackRecorder::CaptureCopy& copy) mutable
+            {
+                if (copy.copyIndex != destination || swapped) return;
+                swapped = true;
+                copy.tracks[0].writer.reset (writer);
+            };
             expect (recorder.startRecording (dir));
             if (! recorder.isRecording()) continue;
             for (auto& shard : recorder.shards)
                 for (auto& thread : recorder.writerThreads) thread->removeTimeSliceClient (shard.get());
-            auto* writer = FloatAiffWriter::create (new HeaderFailureStream (fail), 48000, 1);
-            expect (writer != nullptr);
-            auto& channel = recorder.writers[0];
-            if (destination == 0) channel.writer.reset (writer);
-            else if (destination == 1) channel.backupWriter.reset (writer);
-            else
-            {
-                expectEquals ((int) channel.mirrors.size(), 1);
-                if (channel.mirrors.empty()) { delete writer; continue; }
-                channel.mirrors[0].writer.reset (writer);
-            }
             float data[4] { 0.25f, 0.5f, -0.25f, -0.5f };
             const float* inputs[] { data };
             recorder.processBlock (inputs, 1, 4);

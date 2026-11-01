@@ -412,7 +412,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int mirrorsSkipped = status.mirrorsSkipped;
         const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
         if (daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
-            || diskTrouble || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty())
+            || diskTrouble || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
+            || ! status.copyProblems.isEmpty())
         {
             juce::String warn;
             if (status.captureDeviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
@@ -428,6 +429,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                 warn << "! " << mirrorsSkipped << " MIRROR"
                      << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
                                                             "or folder unusable  ";
+            for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
             activeCaptureWarning = warn.trim();
             statusLabel.setText (activeCaptureWarning, juce::dontSendNotification);
