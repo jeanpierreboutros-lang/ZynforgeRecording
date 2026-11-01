@@ -9,7 +9,6 @@
 #include "StripColourPicker.h"
 #include "RenameLabel.h"
 #include "EditTrackRow.h"
-#include "WaveCacheFreshness.h"
 #include "../Audio/TrackOrder.h"
 
 #include <algorithm>
@@ -629,11 +628,8 @@ namespace zynforge
     EditPage::~EditPage()
     {
         stopTimer();
-        // Stopped here because the cache's own destructor allows two seconds.
-        // On a loaded machine a background thread can wait that long for CPU,
-        // and JUCE then kills it, which takes the process down.
-        for (auto& cache : thumbnailCaches) cache->getTimeSliceThread().signalThreadShouldExit();
-        for (auto& cache : thumbnailCaches) cache->getTimeSliceThread().stopThread (kScanThreadStopMs);
+        cancelWaveCacheWork();
+        waveCacheThread.removeAllJobs (true, -1);
         // Flush the waveform cache to WaveCache.wfm in whichever session is
         // active. Best-effort: failure here only means the next launch
         // re-scans waveforms, no data loss -- so SKIP it when the timer
@@ -641,92 +637,37 @@ namespace zynforge
         // paying a cache-sized synchronous write on every quit.
         const auto sessionDir = engine.getActiveSessionDir();
         if (! waveCacheSaved && ! engine.isRecording() && sessionDir.isDirectory())
-            saveCacheToSession (sessionDir);
+            wavecache::save (sessionDir, thumbnailCaches, [] { return false; });
     }
 
-    void EditPage::loadCacheFromSession (const juce::File& sessionDir)
+    void EditPage::cancelWaveCacheWork()
     {
-        const auto cacheFile = sessionDir.getChildFile ("WaveCache.wfm");
-        if (! cacheFile.existsAsFile() || cacheFile.getSize() < 16) return;
-
-        // A normal take may reuse Track_NN paths while an earlier waveform
-        // cache still exists. Never load those stale peaks into the new rows.
-        if (waveCachePredatesAudio (cacheFile, sessionDir))
-        {
-            cacheFile.deleteFile();
-            return;
-        }
-
-        // Versioned header: magic + (resolution<<8|rev). A cache baked at a
-        // different thumbnail resolution would re-paint as coarse stair-step
-        // blocks (its min/max points are too sparse for the new draw), so a
-        // mismatch -- including pre-header caches whose first int isn't our
-        // magic -- means delete the stale file and let the thumbnails
-        // re-scan the Track_NN.wav files at the current resolution. The
-        // stream is scoped so its file handle is released before we delete.
-        bool stale = false;
-        {
-            juce::FileInputStream in (cacheFile);
-            if (! in.openedOk()) return;
-
-            const int magic  = in.readInt();
-            const int ver    = in.readInt();
-            const int shards = in.readInt();
-            if (magic != kWaveCacheMagic || ver != kWaveCacheVersion
-                || shards != (int) thumbnailCaches.size())
-                stale = true;
-            else
-                // One length-prefixed section per shard cache. Best-effort:
-                // readFromStream returns false on a corrupt / wrong-JUCE-version
-                // body, in which case those thumbnails just re-scan -- worst
-                // case 'slow first paint', never wrong audio.
-                for (auto& cache : thumbnailCaches)
-                {
-                    const int len = in.readInt();
-                    if (len <= 0) continue;
-                    juce::MemoryBlock mb;
-                    in.readIntoMemoryBlock (mb, len);
-                    juce::MemoryInputStream mis (mb, false);
-                    cache->readFromStream (mis);
-                }
-        }
-        if (stale)
-            cacheFile.deleteFile();
+        ++waveCacheWork;
+        waveCacheLoading = false;
     }
 
-    void EditPage::saveCacheToSession (const juce::File& sessionDir)
+    void EditPage::beginWaveCacheLoad (const juce::File& sessionDir)
     {
-        const auto cacheFile = sessionDir.getChildFile ("WaveCache.wfm");
-        // Overwrite atomically -- write to a temp file then rename so
-        // a crash mid-write leaves the previous cache intact.
-        const auto tmpFile = sessionDir.getChildFile ("WaveCache.wfm.tmp");
-        tmpFile.deleteFile();
+        cancelWaveCacheWork();
+        const auto job = ++waveCacheWork;
+        waveCacheLoading = true;
+        waveCacheThread.addJob ([this, sessionDir, job]
         {
-            juce::FileOutputStream out (tmpFile);
-            if (! out.openedOk()) return;
-            out.writeInt (kWaveCacheMagic);              // header: tag the resolution
-            out.writeInt (kWaveCacheVersion);            // so a later res change drops it
-            out.writeInt ((int) thumbnailCaches.size()); // shard count
-            // One length-prefixed section per shard cache so each loads back
-            // into the same shard on reopen.
-            for (auto& cache : thumbnailCaches)
-            {
-                juce::MemoryOutputStream mos;
-                cache->writeToStream (mos);
-                out.writeInt ((int) mos.getDataSize());
-                out.write (mos.getData(), mos.getDataSize());
-            }
-            out.flush();
-        }
-        if (tmpFile.getSize() > 0)
+            wavecache::load (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
+            if (waveCacheWork.load() == job) waveCacheLoaded.store (job);
+        });
+    }
+
+    void EditPage::beginWaveCacheSave (const juce::File& sessionDir)
+    {
+        cancelWaveCacheWork();
+        const auto job = ++waveCacheWork;
+        waveCacheSaving = true;
+        waveCacheThread.addJob ([this, sessionDir, job]
         {
-            cacheFile.deleteFile();
-            tmpFile.moveFileTo (cacheFile);
-        }
-        else
-        {
-            tmpFile.deleteFile();
-        }
+            wavecache::save (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
+            waveCacheSaving = false;
+        });
     }
 
     void EditPage::setAutomationEditWrapper (AutoEditWrapper fn)
@@ -953,8 +894,11 @@ namespace zynforge
         // and also stops the double-load when both branches fire on one tick.
         if (sessionDir.isDirectory() && sessionDir != waveCacheLoadedFor)
         {
-            loadCacheFromSession (sessionDir);
             waveCacheLoadedFor = sessionDir;
+            if (wavecache::fileIn (sessionDir).existsAsFile() && ! engine.isRecording())
+                beginWaveCacheLoad (sessionDir);
+            else
+                cancelWaveCacheWork();
         }
 
         // While recording, only the ARMED rows defer to the live red capture
@@ -979,7 +923,9 @@ namespace zynforge
             list->setWaveformsFromSession (sessionDir, /*skipArmedRows*/ ! isContinue);
         }
         else
-            list->setWaveformsFromSession (sessionDir);
+            // Rows blank until the saved peaks are in: the previous session's
+            // waveforms must not sit under this session's names.
+            list->setWaveformsFromSession (waveCacheLoading ? juce::File() : sessionDir);
 
         updatePlaceholder();
         lastLoaded = engine.getPlayer().isLoaded();
@@ -1066,6 +1012,14 @@ namespace zynforge
         // waveform). forceRefreshWaveforms drops each row's cached hash and
         // re-scans, so the lanes pick up the swapped content.
         if (list != nullptr) list->forceRefreshWaveforms();
+
+        // The saved peaks are keyed by path too, and a rename keeps each file's
+        // modification time, so nothing else would notice them go stale. On the
+        // cache's own thread, so it lands after any save already in flight.
+        cancelWaveCacheWork();
+        waveCacheSaved = false;
+        if (const auto sessionDir = engine.getActiveSessionDir(); sessionDir.isDirectory())
+            waveCacheThread.addJob ([sessionDir] { wavecache::fileIn (sessionDir).deleteFile(); });
     }
 
     void EditPage::updatePlaceholder()
@@ -1085,6 +1039,12 @@ namespace zynforge
     void EditPage::timerCallback()
     {
         followSelectedClips();
+
+        if (waveCacheLoading && waveCacheLoaded.load() == waveCacheWork.load())
+        {
+            waveCacheLoading = false;
+            refresh();
+        }
 
         // Session-change detection + waveform attach run REGARDLESS of EDIT
         // visibility, so the AudioThumbnail background scan (and WaveCache.wfm
@@ -1120,6 +1080,7 @@ namespace zynforge
             recordingBaseSpanSamples = recordingTimelineSpanSamples (
                 0, player.getTotalLengthSamples(), liveRate);
             waveCacheSaved = false; // this take will change the cached media
+            cancelWaveCacheWork();  // and nothing writes to the take volume now
             // A deep post-STOP zoom would be multiplied by the growing live
             // timeline width. Return to the capture-safe range for this pass.
             if (zoom > kMaxRecordingTimelineZoom)
@@ -1189,11 +1150,18 @@ namespace zynforge
         // freshly-imported session that wasn't quit cleanly re-scanned on the
         // next open. Done once per session; skipped while recording (files
         // still growing).
-        if (! waveCacheSaved && ! rec && ! finalizing && list != nullptr && list->rowCount() > 0
+        if (waveCacheSaving.load() && engine.isSessionTransitionActive())
+        {
+            cancelWaveCacheWork();   // a session job owns these files now
+            waveCacheSaved = false;
+        }
+        if (! waveCacheSaved && ! waveCacheSaving.load() && ! waveCacheLoading
+            && ! rec && ! engine.isSessionTransitionActive()
+            && list != nullptr && list->rowCount() > 0
             && engine.getActiveSessionDir().isDirectory()
             && list->allWaveformsLoaded())
         {
-            saveCacheToSession (engine.getActiveSessionDir());
+            beginWaveCacheSave (engine.getActiveSessionDir());
             waveCacheSaved = true;
         }
 

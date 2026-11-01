@@ -11,6 +11,7 @@
 #include "../UI/EditPage.h"
 #include "../UI/EditTrackRow.h"
 #include "../UI/MainComponent.h"
+#include "../UI/WaveCacheFile.h"
 
 #include <cmath>
 #include <functional>
@@ -599,6 +600,96 @@ namespace zynforge
                 const auto emptyDrawn = render (empty);
                 expect (differs (emptyDrawn, emptySilent, laneX (empty, 0.2), laneX (empty, 0.8)) > 1000,
                         "a strip with no take drew nothing for a pasted clip");
+            }
+
+            beginTest ("A strip move replaces the saved peaks");
+            {
+                Show s (2, { 48000 });
+                expect (writeWav (s.take (2), 48000, 1, 0.1f));
+                s.engine.loadSession (s.dir);
+                s.page().refresh();
+                const auto cacheFile = wavecache::fileIn (s.dir);
+                expect (pumpUntil ([&] { return cacheFile.existsAsFile(); }, 10000), "the cache was never saved");
+                juce::MemoryBlock before;
+                expect (cacheFile.loadFileAsData (before));
+
+                expect (s.engine.reorderTracks ({ 1, 0 }));
+                const auto replaced = [&]
+                {
+                    juce::MemoryBlock now;
+                    return ! cacheFile.existsAsFile()
+                        || (cacheFile.loadFileAsData (now) && now != before);
+                };
+                expect (pumpUntil (replaced, 10000), "reopening would draw each channel's peaks on the other");
+                expect (pumpUntil ([&] { return cacheFile.existsAsFile(); }, 10000),
+                        "the rescan must save the new peaks");
+                juce::MemoryBlock after;
+                expect (cacheFile.loadFileAsData (after) && after != before, "the saved peaks are still the old ones");
+            }
+
+            beginTest ("A failed cache write leaves the good cache alone");
+            {
+                struct ShortStream final : public juce::OutputStream
+                {
+                    juce::int64 room, written { 0 };
+                    explicit ShortStream (juce::int64 capacity) : room (capacity) {}
+                    void flush() override {}
+                    bool setPosition (juce::int64) override { return false; }
+                    juce::int64 getPosition() override { return written; }
+                    bool write (const void*, size_t count) override
+                    {
+                        if (written + (juce::int64) count > room) return false;
+                        written += (juce::int64) count;
+                        return true;
+                    }
+                };
+
+                Show s (1, { 48000 });
+                juce::AudioFormatManager fm;
+                fm.registerBasicFormats();
+                wavecache::Caches caches;
+                caches.push_back (std::make_unique<juce::AudioThumbnailCache> (8));
+                juce::AudioThumbnail thumb (wavecache::kThumbResolution, fm, *caches.front());
+                thumb.setSource (new juce::FileInputSource (s.take (1)));
+                expect (pumpUntil ([&] { return thumb.isFullyLoaded(); }, 5000), "thumbnail scan");
+
+                const auto never = [] { return false; };
+                ShortStream full (1 << 24), tooSmall (32);
+                expect (wavecache::write (full, caches, never), "setup: the cache writes");
+                expect (! wavecache::write (tooSmall, caches, never), "a short write must report failure");
+
+                const auto cacheFile = wavecache::fileIn (s.dir);
+                expect (cacheFile.replaceWithText ("the good cache"));
+                expect (! wavecache::save (s.dir, caches, [] { return true; }), "a stopped save must fail");
+                expectEquals (cacheFile.loadFileAsString(), juce::String ("the good cache"),
+                              "a stopped save replaced the cache");
+                expect (s.dir.findChildFiles (juce::File::findFiles, false, "*.tmp;.*.tmp").isEmpty(),
+                        "a stopped save left its staging file");
+
+                // A file cut short by an older build is thrown away, not loaded.
+                expect (wavecache::save (s.dir, caches, never));
+                juce::MemoryBlock whole;
+                expect (cacheFile.loadFileAsData (whole));
+                expect (cacheFile.replaceWithData (whole.getData(), whole.getSize() / 2));
+                wavecache::load (s.dir, caches, never);
+                expect (! cacheFile.existsAsFile(), "a truncated cache must be dropped");
+            }
+
+            beginTest ("A session with saved peaks opens without waiting on them");
+            {
+                Show s (1, { 48000 });
+                const auto cacheFile = wavecache::fileIn (s.dir);
+                expect (pumpUntil ([&] { return cacheFile.existsAsFile(); }, 10000), "setup: cache saved");
+                expect (cacheFile.setLastModificationTime (juce::Time::getCurrentTime() + juce::RelativeTime::hours (1)));
+
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                auto rows = rowsOf (page);
+                expect (rows.size() == 1, "setup: one row");
+                if (rows.size() == 1)
+                    expect (pumpUntil ([&] { return rows[0]->getWaveformSecondsForTests() > 0.0; }, 5000),
+                            "the row never picked up its waveform after the cache loaded");
             }
 
             MainComponent::s_testConstruct = false;

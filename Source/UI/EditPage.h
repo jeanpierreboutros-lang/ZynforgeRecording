@@ -9,6 +9,7 @@
 #include "PlaceholderView.h"
 #include "TimelineMinimap.h"
 
+#include <atomic>
 #include <memory>
 #include <functional>
 #include <optional>
@@ -366,10 +367,18 @@ namespace zynforge
         // WaveCache.wfm persistence: writes the AudioThumbnailCache
         // contents to disk so the EDIT view re-renders waveforms
         // instantly on session reopen instead of re-scanning every
-        // Track_NN.wav. Pro Tools-style.
-        void loadCacheFromSession (const juce::File& sessionDir);
-        void saveCacheToSession   (const juce::File& sessionDir);
-        juce::Time lastCacheSaveTime;
+        // Track_NN.wav. Pro Tools-style. Both directions run on
+        // waveCacheThread. A job runs while waveCacheWork still holds its
+        // number; changing it cancels the job at its next chunk.
+        void cancelWaveCacheWork();
+        void beginWaveCacheLoad (const juce::File& sessionDir);
+        void beginWaveCacheSave (const juce::File& sessionDir);
+        juce::ThreadPool  waveCacheThread { 1, juce::Thread::osDefaultStackSize,
+                                            juce::Thread::Priority::background };
+        std::atomic<int>  waveCacheWork   { 0 };
+        std::atomic<int>  waveCacheLoaded { -1 };    // the load job that finished
+        std::atomic<bool> waveCacheSaving { false };
+        bool              waveCacheLoading { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditPage)
     };

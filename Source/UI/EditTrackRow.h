@@ -11,6 +11,7 @@
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
 #include "LivePeakHistory.h"
+#include "WaveCacheFile.h"
 #include "WaveformOverview.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Theme/BrandColors.h"
@@ -28,23 +29,6 @@
 
 namespace zynforge
 {
-    // Waveform thumbnail resolution: samples averaged per drawn min/max
-    // point. Lower = finer detail (and a bigger cache). 128 stays crisp
-    // when a finalized take is zoomed in well past its overview scale. The
-    // WaveCache.wfm on disk bakes thumbnails AT this resolution, so any
-    // change here must invalidate older caches -- hence kWaveCacheVersion,
-    // which is written as a header and re-checked on load. Bump the version
-    // whenever the resolution (or anything else affecting the baked data)
-    // changes, so stale coarse caches are discarded and re-scanned.
-    static constexpr int kThumbResolution = 128;
-    static constexpr int kWaveCacheMagic   = 0x5A574332; // 'ZWC2'
-    // Low byte is a revision: bump it to discard previously-saved caches even
-    // when the resolution is unchanged. rev 2 dropped caches written by the
-    // build that froze thumbnails at a fraction of a second. rev 3 (2026-06-14)
-    // changes the on-disk layout to N length-prefixed shard sections (parallel
-    // scan caches), so pre-rev-3 single-blob caches are dropped + re-scanned.
-    static constexpr int kWaveCacheVersion = (kThumbResolution << 8) | 3;
-
     // Single home for the timeline<->pixel mapping that the EDIT lanes do
     // ~a dozen times. Build one per paint/event from the lane's inner
     // rect + the session length, then map. toX rounds (the form most
@@ -224,8 +208,8 @@ namespace zynforge
             : index (trackIdx), stereo (isStereoPair), engine (eng),
               formats (formats),
               thumbCache (cache),
-              thumbnailL (kThumbResolution, formats, cache),
-              thumbnailR (kThumbResolution, formats, cache),
+              thumbnailL (wavecache::kThumbResolution, formats, cache),
+              thumbnailR (wavecache::kThumbResolution, formats, cache),
               meter (engine.getRecorder().getTrack (index))
         {
             if (stereo)
@@ -603,7 +587,7 @@ namespace zynforge
         {
             for (auto& own : ownThumbs)
                 if (own.file == file) return own.thumb.get();
-            auto thumb = std::make_unique<juce::AudioThumbnail> (kThumbResolution, formats, thumbCache);
+            auto thumb = std::make_unique<juce::AudioThumbnail> (wavecache::kThumbResolution, formats, thumbCache);
             applyThumbSource (*thumb, file, false);
             ownThumbs.push_back ({ file, std::move (thumb) });
             return ownThumbs.back().thumb.get();
