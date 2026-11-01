@@ -179,6 +179,8 @@ private:
     void restoreSessionDocuments (const juce::File& dir);
     void adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs);
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
+    bool sessionFolderIsMissing() const;
+    juce::uint32 nextAutosaveRetryMs (juce::uint32 intervalMs);
     bool saveMixerToTakeFolder (const juce::File& dir);
     bool saveSessionStateTo (const juce::File& dir);
     zynforge::SessionMetadataSnapshot captureMetadataSnapshot (const juce::File& dir, bool backup = true);
@@ -335,6 +337,7 @@ private:
 
     // Auto-save bookkeeping (see serviceAutosave / showAutosaveSettings).
     juce::uint32 lastAutosaveMs    { 0 };   // 0 = clock not started yet
+    int          autosaveFailures  { 0 };   // in a row; spaces out the retries
     int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
     juce::String lastMetadataSaveError;     // why the last save failed, for the STOP message
     juce::String lastMetadataSaveNotice;    // what the last good save had to set aside

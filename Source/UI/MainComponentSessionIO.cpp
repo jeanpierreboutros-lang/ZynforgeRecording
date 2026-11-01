@@ -666,6 +666,22 @@ void MainComponent::saveCueChanges (const juce::String& success)
     enqueueMetadataSave (engine.getActiveSessionDir(), success);
 }
 
+// The session is open but its folder is gone, usually a drive pulled. The pin
+// stays so nothing silently retargets it; saving has to wait for the drive.
+bool MainComponent::sessionFolderIsMissing() const
+{
+    const auto dir = engine.getActiveSessionDir();
+    return dir != juce::File() && ! dir.isDirectory() && engine.mixerBelongsTo (dir);
+}
+
+// 15 s, then doubling up to the autosave interval. A dead drive must keep being
+// reported, but not with a toast every 15 seconds for the rest of the show.
+juce::uint32 MainComponent::nextAutosaveRetryMs (juce::uint32 intervalMs)
+{
+    const auto doublings = juce::jlimit (0, 10, autosaveFailures++);
+    return juce::jmin ((juce::uint32) 15000u << doublings, intervalMs);
+}
+
 void MainComponent::serviceAutosave()
 {
     if (sessionIoBusy.load()) return;
@@ -676,7 +692,7 @@ void MainComponent::serviceAutosave()
     if (mins <= 0) return;                                          // Off
 
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) return;                               // nothing to save into
+    if (! dir.isDirectory() && ! sessionFolderIsMissing()) return; // nothing to save into
 
     const auto now = juce::Time::getMillisecondCounter();
     if (lastAutosaveMs == 0)                                        // first tick -> start the clock
@@ -697,12 +713,21 @@ void MainComponent::serviceAutosave()
                     + " is not loaded; open it to save it");
         return;
     }
+    const auto intervalMs = (juce::uint32) mins * 60000u;
+    if (sessionFolderIsMissing())
+    {
+        lastAutosaveMs = now - intervalMs + nextAutosaveRetryMs (intervalMs);
+        showStatus ("! AUTO-SAVE FAILED -- session folder is missing: " + dir.getFullPathName()
+                    + "; reconnect its drive");
+        return;
+    }
     juce::Component::SafePointer<MainComponent> self (this);
     enqueueMetadataSave (dir, "Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
-        [self, intervalMs = (juce::uint32) mins * 60000u] (bool ok)
+        [self, intervalMs] (bool ok)
         {
-            if (self == nullptr || ok) return;
-            const auto retryMs = juce::jmin ((juce::uint32) 15000u, intervalMs);
+            if (self == nullptr) return;
+            if (ok) { self->autosaveFailures = 0; return; }
+            const auto retryMs = self->nextAutosaveRetryMs (intervalMs);
             self->lastAutosaveMs = juce::Time::getMillisecondCounter() - intervalMs + retryMs;
             self->showStatus ("AUTO-SAVE FAILED -- check the session volume; retrying shortly");
         }, true);
@@ -1146,6 +1171,11 @@ void MainComponent::onSaveSessionState()
     if (captureMetadataPending) { showStatus ("Wait for capture finalization before saving again"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before saving session state"); return; }
     const auto dir = engine.getActiveSessionDir();
+    if (sessionFolderIsMissing())
+    {
+        showStatus ("! Session folder is missing: " + dir.getFullPathName() + "; reconnect its drive, then save");
+        return;
+    }
     if (dir.isDirectory())
     {
         enqueueMetadataSave (dir, "Saved session state -> " + dir.getFileName());
@@ -1191,6 +1221,12 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     // Initial command validation expires while the asynchronous picker is open.
     if (engine.isRecording() || captureSupervisor.isDaemonRecording() || engine.isCaptureFinalizing())
     { showStatus ("Stop recording and wait for finalization before importing"); return; }
+    if (sessionFolderIsMissing())
+    {
+        showStatus ("! Session folder is missing: " + engine.getActiveSessionDir().getFullPathName()
+                    + "; reconnect its drive before importing");
+        return;
+    }
 
     if (! sessionJobs.reserve())
     {
@@ -1357,6 +1393,13 @@ void MainComponent::onSaveSessionAs()
 {
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before Save As"); return; }
+    // Its audio is on that drive: a copy made now would be a session with none.
+    if (sessionFolderIsMissing())
+    {
+        showStatus ("! Session folder is missing: " + engine.getActiveSessionDir().getFullPathName()
+                    + "; reconnect its drive before Save As");
+        return;
+    }
     if (! sessionJobs.reserve())
     {
         showStatus ("Another session file operation is already running");

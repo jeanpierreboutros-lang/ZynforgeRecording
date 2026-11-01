@@ -628,6 +628,55 @@ public:
         }
     }
 
+    void testMissingSessionFolder()
+    {
+        beginTest ("Auto-save says so when the session's drive disappears, and keeps saying it");
+        {
+            Folder f; writeSavedShow (f, 2);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (f.dir), 0);
+            const auto gone = f.dir.getSiblingFile (f.dir.getFileName() + "-unplugged");
+            const juce::ScopeGuard restore { [&] { gone.moveFileTo (f.dir); } };
+            expect (f.dir.moveFileTo (gone));
+
+            host.statusLabel.setText ({}, juce::dontSendNotification);
+            autosaveDue (host);
+            host.serviceAutosave();
+            expect (host.statusLabel.getText().contains ("AUTO-SAVE FAILED"), host.statusLabel.getText());
+            expect (host.statusLabel.getText().contains (f.dir.getFileName()), "the missing folder must be named");
+
+            host.onSaveSessionState();
+            expect (host.statusLabel.getText().contains ("missing"), host.statusLabel.getText());
+            expect (host.chooser == nullptr, "Save fell through to Save As with the session's drive gone");
+
+            host.onSaveSessionAs();
+            expect (host.statusLabel.getText().contains ("missing"), host.statusLabel.getText());
+            expect (host.chooser == nullptr, "Save As could repin the session to a folder with no audio");
+            host.completeAudioImport ({ gone.getChildFile ("anything.wav") });
+            expect (host.statusLabel.getText().contains ("missing"), host.statusLabel.getText());
+            expect (host.engine.getActiveSessionDir() == f.dir, "the pin moved off the missing session");
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("An autosave that keeps failing backs off instead of repeating every 15 seconds");
+        {
+            Folder f; writeSavedShow (f, 2);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (f.dir), 0);
+            const juce::uint32 interval = 5 * 60000;
+            expectEquals ((int) host.nextAutosaveRetryMs (interval), 15000);
+            expectEquals ((int) host.nextAutosaveRetryMs (interval), 30000);
+            expectEquals ((int) host.nextAutosaveRetryMs (interval), 60000);
+            expectEquals ((int) host.nextAutosaveRetryMs (interval), 120000);
+            expectEquals ((int) host.nextAutosaveRetryMs (interval), 240000);
+            expectEquals ((int) host.nextAutosaveRetryMs (interval), (int) interval);
+            expectEquals ((int) host.nextAutosaveRetryMs (interval), (int) interval);
+            host.autosaveFailures = 0;
+            expectEquals ((int) host.nextAutosaveRetryMs (60000), 15000);
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -639,6 +688,7 @@ public:
         testOpeningTheOpenSession();
         testDamagedFiles();
         testSettingsWriters();
+        testMissingSessionFolder();
     }
 };
 
