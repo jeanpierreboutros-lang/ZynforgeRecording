@@ -982,6 +982,53 @@ public:
         }
     }
 
+    void testHeldRecordPress()
+    {
+        beginTest ("A RECORD press during an idle save is held and runs when the save ends");
+        {
+            Folder f;
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.setActiveSessionDir (f.dir); host.engine.claimMixerFor (f.dir);
+
+            juce::WaitableEvent entered, release;
+            std::atomic_store (&sessionbackup::beforeSnapshotForTests,
+                std::make_shared<const std::function<void()>> ([&] { entered.signal(); release.wait (5000); }));
+            const juce::ScopeGuard clearHook { [&]
+            {
+                release.signal();
+                std::atomic_store (&sessionbackup::beforeSnapshotForTests, std::shared_ptr<const std::function<void()>>());
+            } };
+
+            host.enqueueMetadataSave (f.dir, {}, {}, true, true);
+            expect (entered.wait (5000));
+            host.onRecordClicked();
+            expect (host.recordPressHeldAtMs != 0, "the press was refused");
+            expect (host.statusLabel.getText().contains ("held"), host.statusLabel.getText());
+
+            release.signal();
+            // No strips here, so the replayed press stops at RECORD's first refusal.
+            expect (pumpUntil ([&] { return host.pendingMetadataSaves == 0; }));
+            expectEquals ((int) host.recordPressHeldAtMs, 0);
+            expect (host.statusLabel.getText().contains ("+CH"), host.statusLabel.getText());
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A held press expires, and a session job never holds one");
+        {
+            Folder f;
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.recordPressHeldAtMs = juce::Time::getMillisecondCounter() - 60000;
+            host.releaseHeldRecordPress();
+            expect (host.statusLabel.getText().contains ("press RECORD again"), host.statusLabel.getText());
+
+            expect (host.sessionJobs.reserve());
+            host.onRecordClicked();
+            expectEquals ((int) host.recordPressHeldAtMs, 0, "a long job must refuse, not hold");
+            host.sessionJobs.release();
+            host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -998,6 +1045,7 @@ public:
         testRemoveLastCapture();
         testCloudUpload();
         testOpenMessages();
+        testHeldRecordPress();
     }
 };
 

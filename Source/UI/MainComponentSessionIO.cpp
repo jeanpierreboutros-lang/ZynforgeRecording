@@ -639,6 +639,7 @@ void MainComponent::enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot s
             }
             if (completion) completion (result.ok && sameSession
                 && (! self->metadataContinuationReserved || snapshotStillCurrent));
+            self->releaseHeldRecordPress();
         };
         // Replaced layout requests retire synchronously during enqueue on the
         // message thread; worker completions are marshalled back normally.

@@ -64,7 +64,19 @@ void MainComponent::updateMixerPlaceholder()
 void MainComponent::onRecordClicked()
 {
     if (captureMetadataPending || (sessionIoBusy.load() && ! engine.isRecording()))
-    { showStatus ("Wait for recording finalization / session saving to finish"); return; }
+    {
+        // An autosave or layout write is over in moments and nobody chose to
+        // start it, so it must not cost the engineer the press. Copies, exports
+        // and a stop's finalization are not held: those can take far longer.
+        if (! captureMetadataPending && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
+        {
+            recordPressHeldAtMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
+            showStatus ("RECORD held -- starting as soon as this save finishes");
+            return;
+        }
+        showStatus ("Wait for recording finalization / session saving to finish");
+        return;
+    }
     // RECORD is a sequence: a press during a take (or a refused daemon state)
     // is consumed first; otherwise every pre-flight refusal runs before
     // anything is changed; then the take starts through the daemon, as a
@@ -84,6 +96,19 @@ bool MainComponent::recordPlanHasSelection (const RecordStartPlan& plan)
 bool MainComponent::recordPlanPunches (const RecordStartPlan& plan)
 {
     return plan.punchAt >= 0 || recordPlanHasSelection (plan);
+}
+
+// A press may only start a take while it is still the engineer's intent. Past
+// this, a stalled write would start a take long after they stopped waiting.
+void MainComponent::releaseHeldRecordPress()
+{
+    static constexpr juce::uint32 kLongestHoldMs = 5000;
+    if (recordPressHeldAtMs == 0 || pendingMetadataSaves != 0) return;
+    const auto heldForMs = juce::Time::getMillisecondCounter() - recordPressHeldAtMs;
+    recordPressHeldAtMs = 0;
+    if (sessionLocked) return;
+    if (heldForMs > kLongestHoldMs) showStatus ("Saving took too long -- press RECORD again");
+    else                            onRecordClicked();
 }
 
 void MainComponent::runRecordPlan (RecordStartPlan& plan)
@@ -887,7 +912,9 @@ std::optional<bool> MainComponent::handleRemoteTransport (
 
         onRecordClicked();
         if (engine.isRecording()) return true;
-        error = "recording could not start; check the host pre-flight message";
+        error = recordPressHeldAtMs != 0
+                  ? "a session save is finishing; RECORD starts when it ends"
+                  : "recording could not start; check the host pre-flight message";
         return false;
     }
 
