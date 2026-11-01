@@ -2,8 +2,33 @@
 
 #include <juce_core/juce_core.h>
 
+#include "../Audio/MultitrackRecorder.h"
+
 namespace zynforge
 {
+    // FLAC counts at its uncompressed size, which is conservative.
+    inline int captureBytesPerSample (CaptureFormat format) noexcept
+    {
+        return (format == CaptureFormat::Wav16 || format == CaptureFormat::Aiff16
+                || format == CaptureFormat::Flac16)                                         ? 2
+             : (format == CaptureFormat::Wav32Float || format == CaptureFormat::Aiff32Float) ? 4
+             : 3;
+    }
+
+    // What a take needs free before RECORD starts: 30 minutes at this rate, arm
+    // count and format. Pre-flight shares this so the two can never disagree.
+    inline juce::int64 recordHeadroomBytes (double sampleRate, int armedTracks, CaptureFormat format) noexcept
+    {
+        return (juce::int64) (sampleRate * armedTracks * captureBytesPerSample (format)) * 60 * 30;
+    }
+
+    // Pre-flight's green tick. With nothing armed there is no rate to measure,
+    // so it falls back to a plain floor.
+    inline bool preflightDiskOk (double freeGB, juce::int64 wantBytes, int armedTracks) noexcept
+    {
+        return armedTracks == 0 ? freeGB > 5.0 : freeGB * 1.0e9 >= (double) wantBytes;
+    }
+
     // A rolling manual punch starts where playback is NOW. The edit cursor is
     // only an insertion point when transport is stopped; otherwise an old
     // cursor (often at zero) turns a punch into an unrelated continuation.

@@ -1066,7 +1066,7 @@ namespace zynforge
         void resetAllStripState();
 
         // Forwards to MultitrackRecorder.
-        void setBackupDirectory (const juce::File& dir);
+        bool setBackupDirectory (const juce::File& dir);   // persists only what the recorder took
 
         // N-way mirror destinations. Wraps recorder.setMirrors and
         // persists via appProps so the engineer's mirror setup

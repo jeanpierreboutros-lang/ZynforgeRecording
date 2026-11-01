@@ -2330,15 +2330,16 @@ namespace zynforge
         streamOutR.store (r, std::memory_order_relaxed);
     }
 
-    void AudioEngine::setBackupDirectory (const juce::File& dir)
+    bool AudioEngine::setBackupDirectory (const juce::File& dir)
     {
-        recorder.setBackupDirectory (dir);
+        if (! recorder.setBackupDirectory (dir)) return false;
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();
             appProps->setValue ("backupDirectory", dir.getFullPathName());
             appProps->saveIfNeeded();
         }
+        return true;
     }
 
     void AudioEngine::setTrackStream (int channelIndex, bool enabled)

@@ -274,20 +274,9 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     // 24-bit if unknown). Surface the actual free GB so the engineer
     // knows what to clear.
     {
-        const double sr = device->getCurrentSampleRate();
-        // Derive bytes-per-sample from the capture format -- hardcoding 24-bit
-        // let a 32-float session start on a drive with < 30 min real headroom
-        // (~33% optimistic), the exact disk-full-mid-set case this guard exists
-        // to prevent. FLAC uses its uncompressed size (conservative).
-        const auto fmt = engine.getRecorder().getCaptureFormat();
-        const int  bytesPerSample =
-              (fmt == zynforge::CaptureFormat::Wav16 || fmt == zynforge::CaptureFormat::Aiff16
-               || fmt == zynforge::CaptureFormat::Flac16)                                            ? 2
-            : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
-            : 3;
-        const juce::int64 bytesPerSec    = (juce::int64) (sr * plan.armed * bytesPerSample);
-        const juce::int64 wantBytes      = bytesPerSec * 60 * 30;  // 30 min headroom
-        const juce::int64 freeBytes      = plan.dir.getParentDirectory().getBytesFreeOnVolume();
+        const juce::int64 wantBytes = recordHeadroomBytes (device->getCurrentSampleRate(), plan.armed,
+                                                           engine.getRecorder().getCaptureFormat());
+        const juce::int64 freeBytes = plan.dir.getParentDirectory().getBytesFreeOnVolume();
         if (freeBytes > 0 && freeBytes < wantBytes)
         {
             const double freeGB = freeBytes / 1.0e9;
@@ -1067,10 +1056,20 @@ void MainComponent::onBackupClicked()
             self->showStatus ("Backup folder rejected: " + rejection);
             return;
         }
-        self->engine.setBackupDirectory (dir);
-        self->backupButton.setButtonText ("BACKUP OK");
-        self->showStatus ("Backup folder -> " + dir.getFileName());
+        self->applyBackupFolder (dir);
     });
+}
+
+void MainComponent::applyBackupFolder (const juce::File& dir)
+{
+    // The chooser can close after a take started behind it.
+    if (! engine.setBackupDirectory (dir))
+    {
+        showStatus ("Backup folder not changed -- a take is rolling or finalizing");
+        return;
+    }
+    backupButton.setButtonText ("BACKUP OK");
+    showStatus ("Backup folder -> " + dir.getFileName());
 }
 
 
@@ -1431,18 +1430,10 @@ void MainComponent::showPreflightChecklist()
         : fmt == zynforge::CaptureFormat::Flac16     ? "FLAC/16"
                                                       : "?";
 
-    // 30-minute headroom estimate at the active configuration. Derive the real
-    // bytes-per-sample from the format (was hardcoded to 3 = 24-bit, so a 32f
-    // session read ~33% too optimistic and could hit disk-full mid-set). FLAC
-    // uses its uncompressed size, which is conservative (it compresses).
-    const int bytesPerSample =
-          (fmt == zynforge::CaptureFormat::Wav16 || fmt == zynforge::CaptureFormat::Aiff16
-           || fmt == zynforge::CaptureFormat::Flac16)                                       ? 2
-        : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
-        : 3;   // 24-bit WAV / AIFF / FLAC
-    const juce::int64 bytesPerSec = (juce::int64) (sr * juce::jmax (1, armed) * bytesPerSample);
-    const double minHeadroom = bytesPerSec > 0 ? (freeGB * 1.0e9 / (double) bytesPerSec) / 60.0
-                                                : 0.0;
+    // Headroom at the active configuration, by the rule RECORD refuses on, so
+    // this list can never call a disk fine that RECORD then turns away.
+    const auto wantBytes = recordHeadroomBytes (sr, juce::jmax (1, armed), fmt);
+    const double minHeadroom = wantBytes > 0 ? (freeGB * 1.0e9 / (double) wantBytes) * 30.0 : 0.0;
 
     auto chk = [] (bool ok, bool warn = false) -> juce::String
     {
@@ -1469,7 +1460,7 @@ void MainComponent::showPreflightChecklist()
          << chk (! cues.empty(), cues.empty())
                           << "Setlist cues: " << (int) cues.size() << "\n"
          << "\n"
-         << chk (freeGB > 5.0, freeGB > 1.0)
+         << chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0)
          << "Disk free:    " << juce::String (freeGB, 1) << " GB ("
          << juce::String (minHeadroom, 0) << " min headroom at " << fmtStr << ")\n"
          << chk (! engine.isRecording())
@@ -1550,9 +1541,9 @@ void MainComponent::showPreflightChecklist()
 
     // Measured write speed of the session volume vs what the armed
     // configuration demands (uncompressed worst case, with 1.5x margin
-    // for filesystem jitter mid-show). Reuses the format-derived
-    // bytesPerSample computed for the headroom estimate above.
-    const double needMBps = zynforge::preflight::requiredWriteMBps (sr, juce::jmax (1, armed), bytesPerSample);
+    // for filesystem jitter mid-show).
+    const double needMBps = zynforge::preflight::requiredWriteMBps (sr, juce::jmax (1, armed),
+                                                                    captureBytesPerSample (fmt));
     if (engine.isRecording())
     {
         // NEVER probe mid-take. measureWriteSpeedMBps writes 16 MB
