@@ -155,7 +155,8 @@ namespace zynforge
         void openRenameDialog (int markerIndex)
         {
             auto& markers = engine.getMarkers();
-            const auto current = markers.getMarker (markerIndex).name;
+            const auto marker = markers.getMarker (markerIndex);
+            const auto current = marker.name;
             auto* aw = new juce::AlertWindow ("Rename marker",
                                               "Name:",
                                               juce::MessageBoxIconType::NoIcon);
@@ -173,13 +174,15 @@ namespace zynforge
 
             juce::Component::SafePointer<EditTimeRuler> self (this);
             aw->enterModalState (true,
-                juce::ModalCallbackFunction::create ([aw, self, markerIndex] (int r)
+                juce::ModalCallbackFunction::create ([aw, self, markerId = marker.runtimeId] (int r)
                 {
                     std::unique_ptr<juce::AlertWindow> dispose (aw);
                     if (r != 1 || self == nullptr) return;
                     const auto typed = dispose->getTextEditorContents ("n").trim();
                     if (typed.isEmpty()) return;
-                    self->engine.getMarkers().renameMarker (markerIndex, typed);
+                    const int index = self->engine.getMarkers().indexOfId (markerId);
+                    if (index < 0) return;   // removed, or another session opened
+                    self->engine.getMarkers().renameMarker (index, typed);
                     self->engine.getMarkers().save();
                     self->repaint();
                 }),
@@ -202,14 +205,7 @@ namespace zynforge
             // length): the unconditional 4 Hz repaint re-shaped the ruler's
             // text labels forever at idle.
             if (active) { repaint(); return; }
-            juce::int64 sig = engine.getPlayer().getPositionSamples()
-                            ^ (engine.getPlayer().getTotalLengthSamples() << 1)
-                            ^ (engine.getPlayer().getLoopStart() << 2)
-                            ^ (engine.getPlayer().getLoopEnd()   << 3)
-                            ^ (engine.getEditCursorSample()      << 4);
-            const auto& list = engine.getMarkers().getAll();
-            sig ^= (juce::int64) list.size() << 40;
-            for (const auto& m : list) sig += m.sampleOffset;
+            const auto sig = idleSignature();
             if (sig != lastIdleSig)
             {
                 lastIdleSig = sig;
@@ -506,6 +502,20 @@ namespace zynforge
         }
 
     public:
+        // Everything the ruler draws while the transport is idle.
+        juce::int64 idleSignature() const
+        {
+            juce::int64 sig = engine.getPlayer().getPositionSamples()
+                            ^ (engine.getPlayer().getTotalLengthSamples() << 1)
+                            ^ (engine.getPlayer().getLoopStart() << 2)
+                            ^ (engine.getPlayer().getLoopEnd()   << 3)
+                            ^ (engine.getEditCursorSample()      << 4);
+            const auto& list = engine.getMarkers().getAll();
+            sig ^= (juce::int64) list.size() << 40;
+            for (const auto& m : list) sig += m.sampleOffset + m.name.hashCode64();
+            return sig;
+        }
+
         // Wall-clock label. Below an hour: M:SS; an hour or more:
         // H:MM:SS. `decimals` appends fractional seconds (tenths) so the
         // scale stays readable when zoomed past one major-tick / second.

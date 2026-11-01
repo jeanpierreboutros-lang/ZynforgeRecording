@@ -2270,7 +2270,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         }
     }
 
-    // WaveCache.wfm is written on demand by EditPage::saveCacheToSession
+    // WaveCache.wfm is written on demand by EditPage (wavecache::save)
     // (on close) and read back on session open. No placeholder needed.
 
     // Only clear the previous session after every filesystem operation has

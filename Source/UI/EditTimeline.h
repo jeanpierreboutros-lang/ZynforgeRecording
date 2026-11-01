@@ -126,21 +126,61 @@ namespace zynforge
     // Which clip on `dst` corresponds to the clip [start, start+len) on another
     // track. Clip INDICES are per-track, so an edit-group broadcast that reuses
     // the source index edits whichever clip happens to sit at that position on
-    // the peer. Match by timeline overlap instead: the peer clip containing the
-    // source clip's midpoint. -1 = the peer has nothing there (skip it).
+    // the peer. Match by timeline overlap instead: of the peer clips containing
+    // the source clip's midpoint, the one sharing the most of its span (lists
+    // are not in timeline order, and clips can overlap). -1 = the peer has
+    // nothing there (skip it).
     inline int clipIndexAtMidpoint (const std::vector<Clip>& dst,
                                     juce::int64 srcStart, juce::int64 srcLen) noexcept
     {
         if (srcLen <= 0) return -1;
         const juce::int64 mid = srcStart + srcLen / 2;
+        int best = -1;
+        juce::int64 bestShared = -1;
         for (int i = 0; i < (int) dst.size(); ++i)
         {
             const auto& c = dst[(size_t) i];
-            if (mid >= c.timelineStartSamples
-                && mid <  c.timelineStartSamples + c.fileLengthSamples)
-                return i;
+            const auto end = c.timelineStartSamples + c.fileLengthSamples;
+            if (mid < c.timelineStartSamples || mid >= end) continue;
+            const auto shared = juce::jmin (end, srcStart + srcLen)
+                              - juce::jmax (c.timelineStartSamples, srcStart);
+            if (shared > bestShared) { best = i; bestShared = shared; }
         }
-        return -1;
+        return best;
+    }
+
+    // The clip on `dst` that is the same edit as clip srcIdx of `src`. The
+    // exact span decides first, counting identical stacked spans in order, so
+    // a short clip pasted inside a long one or a clip dragged over its
+    // neighbour still finds its own twin: a midpoint alone lands on whichever
+    // overlapping clip it falls in. A stereo partner that has drifted out of
+    // step (a session edited by an older build) keeps its parallel index while
+    // the two lists are the same length. Anything else matches by overlap.
+    inline int matchingClipIndex (const std::vector<Clip>& src, int srcIdx,
+                                  const std::vector<Clip>& dst, bool stereoPartner) noexcept
+    {
+        if (srcIdx < 0 || srcIdx >= (int) src.size()) return -1;
+        const auto& source = src[(size_t) srcIdx];
+        const auto sameSpan = [&source] (const Clip& c)
+        {
+            return c.timelineStartSamples == source.timelineStartSamples
+                && c.fileLengthSamples == source.fileLengthSamples;
+        };
+
+        int rank = 0;
+        for (int i = 0; i < srcIdx; ++i)
+            if (sameSpan (src[(size_t) i])) ++rank;
+        int firstSameSpan = -1;
+        for (int i = 0; i < (int) dst.size(); ++i)
+            if (sameSpan (dst[(size_t) i]))
+            {
+                if (firstSameSpan < 0) firstSameSpan = i;
+                if (rank-- == 0) return i;
+            }
+        if (firstSameSpan >= 0) return firstSameSpan;
+
+        if (stereoPartner && dst.size() == src.size()) return srcIdx;
+        return clipIndexAtMidpoint (dst, source.timelineStartSamples, source.fileLengthSamples);
     }
 
     // Overlapping neighbours IN TIMELINE ORDER, as (outgoing, incoming) list
