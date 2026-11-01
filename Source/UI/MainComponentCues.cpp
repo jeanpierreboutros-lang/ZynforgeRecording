@@ -297,7 +297,10 @@ void MainComponent::jumpToCue (int index)
     // successful completion.
     clickNeedsRefresh = clickTrackIndex >= 0
                      && (clickNeedsRefresh || hadTempoMap || ! cue.tempoCurve.empty());
-    if (clickNeedsRefresh)
+    // A take can't reload the click, so the timer does it after the take stops.
+    if (clickNeedsRefresh && engine.isRecording())
+        clickRefreshPending = true;
+    else if (clickNeedsRefresh)
     {
         const auto cuePosition = cue.samplePos;
         juce::Component::SafePointer<MainComponent> self (this);

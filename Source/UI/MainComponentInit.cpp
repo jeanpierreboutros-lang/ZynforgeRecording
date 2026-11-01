@@ -36,6 +36,7 @@ MainComponent::MainComponent()
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {
+        cueRamp.active = false;   // its targets are strip indices, and those just moved
         for (auto& cue : cues)
             if (auto* lanes = cue.automation.getArray())
             {
