@@ -1,5 +1,11 @@
 # Show readiness — planned SD5 recording
 
+## Decision as of 2026-11-01
+
+`main` now carries the market-moves work: Scene Follow, desk macros, timestamped BWF, the dead-channel alarm, clock source in pre-flight, DAW and song export, the Twin Recorder link and Mac packaging. **None of it is installed.** Both Macs and the current DMG are still `281c6c0` / protocol 4, and the decision below stands for that build.
+
+Do not take the new source to a show until it has been installed on purpose and has passed the hardware steps in *Market-moves acceptance* in [FIELD-TEST.md](FIELD-TEST.md). The dead-channel alarm and the BWF patch both touch the capture path, and neither has seen a real interface. 938 test groups pass, which says nothing about a real desk, a real stream loss or two real Macs.
+
 ## Decision as of 2026-10-29
 
 Both Macs and the current DMG have verified `281c6c0` / protocol 4 (see

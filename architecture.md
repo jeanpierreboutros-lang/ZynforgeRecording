@@ -224,6 +224,19 @@ The companion runs an accept thread + per-connection writes off the message thre
 ### MIDI control surfaces (`Source/Audio/McuProtocol.h` + `MidiControlSurface.{h,cpp}`)
 `McuProtocol.h` is a header-only, hardware-free set of Mackie Control Universal encode/decode helpers (fader law, button notes, V-pot relative encoders + ring, channel-pressure meters, scribble-strip SysEx, **master fader on MIDI ch 9, jog wheel on CC 0x3C, and the 10-digit time display**) — fully unit-tested in `Source/Tests/McuProtocolTests.cpp`. `MidiControlSurface` opens a paired MIDI in/out, runs a 15 Hz echo timer, and is bidirectional: inbound faders/V-pots/buttons/jog drive channel + transport state (channel writes use guarded engine setters with stereo-pair semantics; transport is marshalled to the message thread), and the timer pushes faders, LEDs, meters, names, the master fader and the playhead time display back to the surface. Banked 8 strips at a time. Wired from the Control Surfaces dialog (`enableControlSurface`/`disableControlSurface` on the engine).
 
+### Market-moves components (2026-10-31)
+
+- `Source/Audio/SceneFollow.h`: the pure rule for a console scene recall, plus marker navigation. Applied by `RemoteControl::onConsoleScene`, which both console paths call.
+- `Source/Network/DeskMacro.{h,cpp}`: `DeskMacroListener`, an opt-in `OscPacketReceiver` with one pinned source. Owned by `RemoteControl`, created on first start; message thread after the reader's source filter.
+- `Source/Network/ConsoleLog.h`: one line per console message. `RemoteControl::logOsc` is the single sink. `RemoteControl::Host` carries `sessionIoBusy`, the status line and the EDIT scroll from `MainComponent`.
+- `ConsoleEvent::Type::StereoLink`: read tier, X32/M32 only. `ConsoleLink::onTraffic` feeds the log.
+- `Source/Audio/BwfStamp.h`: bext chunk walker, the one post-close 8-byte patch, and `sTRK` channel names. Called from `MultitrackRecorder::stampTakeFiles`, after every writer closed and before the hash thread starts.
+- `Source/Audio/ChannelAlarm.h`: the dead-channel tiers. The audio thread stores one relaxed `TrackState::lastInputSignal` per block; `MultitrackRecorder::evaluateChannelAlarms` runs the `Monitor` off the audio thread, from the status snapshot and the daemon's status loop.
+- `Source/Audio/ClockSource.{h,cpp}`: reads the device's clock source through the HAL, only on `clocksource::Probe`'s own thread, with a bounded wait.
+- `Source/Audio/SessionInterchange.h`, `ReaperProject.h`, `DawProject.h`, `ProjectExport.h`: capture, resolve and write DAW projects. `SongExport.{h,cpp}` cuts marker ranges through the absolute window grid of the mix render.
+
+**Twin Recorder link** (`Source/Network/TwinLink.{h,cpp}`). `TwinLink` is owned by `MainComponent` and reaches the app only through `twin::TwinHost`. Three threads: the link worker owns every socket; the report thread edits `session.report.json`, so a slow disk cannot look like a dead link; the message thread runs all logic. The worker authenticates frames and posts `Event`s to an inbox, which `tick()` (10 Hz, from `timerCallback`) and an `AsyncUpdater` drain. Outbound commands wait in `outbox`, and the latest status sits in a one-slot `publishedStatus` that the worker sends every 500 ms itself, so a stalled message thread does not read as a dead link. Wire format is newline JSON: `twin.hello`, `twin.auth`, `twin.accept` or `twin.refused`, then `twin.frame { seq, body, mac }`. A frame's body is one of `status`, `start`, `startResult`, `stop`, `stopResult`, `marker`, `summary`.
+
 ## 6. Data Flow / Core Workflows
 
 ### Capture daemon — protocol 4 on both Macs and the current DMG
@@ -341,7 +354,7 @@ Bounce stems, bounce stereo mix, Strip Silence, and Consolidate all run through 
 ## 7. Technical Decisions and Constraints
 
 - **No plugin hosting** — see `decisions.md`. The product is a recorder + VSC, not a DAW.
-- **macOS-first** — no Windows / Linux build. CoreAudio is assumed. Apple Silicon optimisations (NEON, `AudioWorkgroup`) are first-class.
+- **macOS only** — no Windows or Linux build, by owner decision (2026-10-31). CoreAudio is assumed. Apple Silicon optimisations (NEON, `AudioWorkgroup`) are first-class.
 - **Thread model** — the message thread and the audio thread are the only threads with UI / audio responsibilities. Background writers run on `TimeSliceThread`s the engine owns. HTTP workers run per-connection in `CompanionServer`. No general thread pool.
 - **`std::atomic` is the only RT-safe message channel** between message and audio threads. No locks in the audio callback.
 - **Persistence first** — every user-visible state round-trips through `.zfproj` or `appProps`. See ADR *Persistence first* in `decisions.md`.

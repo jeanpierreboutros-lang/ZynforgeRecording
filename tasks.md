@@ -1,5 +1,29 @@
 # Project Tasks
 
+## Market moves — 2026-11-01
+
+The market review produced 13 items. Twelve are built or waiting on the owner; Windows was cancelled by the owner.
+
+- [x] Scene follow in virtual soundcheck; desk macros; stereo pairs from the desk (X32 / M32 only); desk log and test kit.
+- [x] Timestamped BWF on every WAV part and copy; channel names in raw files; clock source in pre-flight and the report; dead-channel alarm.
+- [x] Export Reaper Project, Export DAWproject, Export Songs.
+- [x] Twin Recorder link between two Macs.
+- [x] `LICENSE`, `THIRD-PARTY-NOTICES.md`, `tools/notarize.sh`, Local Network usage string.
+- [x] Cancelled by the owner: Windows port (ADR *macOS only*).
+- [ ] Owner: run the *DiGiCo desk test kit* in FIELD-TEST.md at an SD5 and send back the log and the software version. Until then every DiGiCo address stays UNVERIFIED, including whether a Macro OSC device sends what the listener accepts.
+- [ ] Owner: X32 / M32 check of `/config/chlink/N-M` and Scene Follow against a real desk.
+- [ ] Decide: scene markers through LOCK on the OSC listener path (see the ADR).
+- [ ] **Twin Recorder field test** (M): FIELD-TEST.md steps on the MacBook Pro and Mac mini, including a pulled cable mid-take on a disposable session. Tested over loopback only so far.
+- [ ] **Twin status: dead-channel count.** `EngineStatus::channelAlarms` now exists; the twin status does not carry it yet. Add a count to `MacStatus`, `statusBody` and the panel.
+- [ ] Owner: run *Capture metadata and dead-channel alarm* in FIELD-TEST.md on the real interface, including a real stream loss.
+- [ ] Owner: open a real show's `.RPP` and a `.dawproject` in real DAWs.
+- [ ] Owner: send a reference `.aaf` from Pro Tools; AAF export stays blocked until then.
+- [ ] Owner: Apple Developer ID, then a real `tools/notarize.sh` run.
+- [ ] Decide: JUCE licence tier before selling ([docs/SELLING-CHECKLIST.md](docs/SELLING-CHECKLIST.md)).
+- [ ] Decide: `F_FULLFSYNC` for capture files. macOS `fsync` does not force the drive's cache.
+- [ ] Decide: NDI trademark text before selling.
+- [ ] Twin: STOP during link loss, and Stop & Quit, leave the follower rolling by design. It is stopped by hand.
+
 ## October bug hunt — 2026-10-29
 
 Seven read-only reviewers covered capture, the real-time engine, editing/renders, session I/O, the EDIT view, the main window and network (about 100 findings). All are fixed or closed, each with a test that fails on the old code (see [CHANGELOG.md](CHANGELOG.md) and [testing.md](testing.md)). 689 groups pass in Release, ASan/UBSan, TSan and CI.

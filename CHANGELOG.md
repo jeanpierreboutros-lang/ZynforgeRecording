@@ -23,6 +23,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added — console and virtual soundcheck
+
+- **Scene Follow** (Session ▸ Console, off by default): outside a take, a console scene or snapshot recall moves the playhead to the marker of that name without changing the transport state.
+- **Desk macro control** (Session ▸ Console, off by default): a console's macro keys can run RECORD, STOP, PLAY, PAUSE and marker commands over OSC, from one configured desk address, through the normal pre-flight, two-tap STOP and LOCK.
+- **Stereo pairs from the desk**: creating a session from a connected X32 / M32 links its stereo pairs.
+- **Create Session from Connected Console** button in Control Surfaces.
+- **Save Console Log** (Session ▸ Console): the OSC debug log now covers the console link and the OSC listener in both directions, with sender, types, values and timestamps, keeps 50,000 lines instead of 200, and removes access tokens.
+
+### Changed — console and virtual soundcheck
+
+- A console scene recall no longer drops a marker outside a take. Scene recalls on the OSC listener now also use the scene's name when the desk sends one.
+- The OSC debug log records messages that arrive under LOCK, and bundles and datagrams it could not parse.
+
+### Added — capture metadata and dead-channel alarm
+
+- Added: WAV takes carry their real time of day as a BWF TimeReference, on primary, backup and mirrors and on every part. Taken from locked LTC/MTC when chase is live, otherwise the computer's clock. `session.report.json` records `timeReference` and `timeReferenceSource`.
+- Added: strip names inside raw files, as `sTRK1=`/`sTRK2=` in the bext Description.
+- Added: the device clock source in pre-flight and the report, with a warning on an internal clock.
+- Added: dead-channel alarm (channel fault, input stream lost, no signal yet) in the status line, `/confidence`, `/state.json` and the report.
+- Fixed: a punched WAV lost its whole bext chunk. It now keeps the original take's stamp and text.
+
+### Added — DAW handoff and song export
+
+- Export Reaper Project: a plain-text `.RPP` with tracks, items, fades, clip gain, markers, tempo and relative audio paths. An unedited export renders in REAPER to match the session mix (measured: see testing.md).
+- Export DAWproject: a `.dawproject` with audio referenced externally, for Cubase, Studio One and Bitwig. Schema-validated; not yet opened in a DAW.
+- Export Songs: per-song mix and/or stems from marker ranges, in any export format, to `Export Files/Songs/NN - Name/`, with `Stereo pair = one file`.
+- Verified Show Handoff includes both project files, listed in the manifest as generated.
+
+### Added — Twin Recorder link
+
+- **Twin Recorder link** (off by default; Session ▸ Network & Surfaces ▸ Twin Recorder). Two Macs, each with its own interface, disks and session, start and stop together and watch each other's health. The leader always starts first and a dead follower never delays it. Losing the network never stops or starts a take on either Mac; the header shows TWIN LOST. The follower runs its own full pre-flight and its refusal text shows on the leader. Sample rate, armed count and session name mismatches warn on both Macs and never refuse. Markers relay to the follower's own capture position. `session.report.json` gains a `twin` block on both Macs (peer, role, clock offset, link-loss intervals, the peer's final counts) and the leader shows a comparison line after both finalize. Protects against a computer, drive or interface failure, not an app bug. Not yet tried on two real Macs; see FIELD-TEST.md.
+
+### Changed — Twin Recorder link
+
+- `session.report.json` keeps a `twin` block through hashing and through a continued take.
+- Socket framing and the JSON nesting guard moved to `Source/Network/LineSocket.h`, shared by the capture link, the companion and the twin link. No behaviour change.
+
+### Added — Mac distribution
+
+- `LICENSE` (all rights reserved) and `THIRD-PARTY-NOTICES.md`, which the DMG now carries.
+- `tools/notarize.sh`: signs on a copy, inside-out, with per-binary entitlements, verifies, notarizes, staples and builds a DMG. Not yet run with a real Developer ID.
+- The app now says why it uses the local network (`NSLocalNetworkUsageDescription`).
+
 ### Installed — October 29, both Macs
 
 - Both Macs and a new universal DMG run `281c6c0` with its protocol-4 helper: every October bug-hunt fix, deferred lead-ins and exact split fades. Hashes, rollback paths and the startup observation are in [INSTALL.md](INSTALL.md); no recording was made at installation.

@@ -8,6 +8,109 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ---
 
+## Market-moves acceptance — not yet performed
+
+Everything in this section needs hardware or a person. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
+
+### DiGiCo desk test kit (SD5, hardware only)
+
+Our DiGiCo addresses are UNVERIFIED. This one session settles what they should be. Use a disposable session on a desk that isn't running a show. Nothing below changes the desk beyond adding one External Control device.
+
+**Before you start, write down:**
+
+- SD5 software version (Master screen / System info) and the console's IP address on the network the Mac is on.
+- The Mac's IP address, and this app's build.
+
+**Set up the recorder:**
+
+1. Session ▸ Network & Surfaces ▸ Control Surfaces ▸ DiGiCo ▸ Protocol Settings. Tick **Debug: log OSC traffic**. Note the Listen Port (default 8000). Enter the Console IP. Close.
+2. Tick DiGiCo in the list so the listener runs. Optionally also Session ▸ Console ▸ Console: connect... with the DiGiCo profile, so both paths run. Write down which you used.
+3. Session ▸ Console ▸ desk macro control. Enter the desk's IP and tick **Listen for desk macros**. Note the port (default 9301). Copy the addresses.
+
+**Set up the desk:**
+
+4. Setup > External Control: add a Macro OSC device pointing at this Mac, on port 9301. Then add or edit any OSC target for the app's Listen Port if the desk offers one.
+5. Create a macro for `/zynforge/macro/marker` with an integer message of 1, and another for `/zynforge/macro/stop`. Do NOT add any special handling for a third-party device type on the desk.
+
+**Run the tests, in order, noting the wall-clock time of each:**
+
+6. Fire three different snapshots, then one of them again.
+7. Rename one channel.
+8. Fire the marker macro once. Press it again quickly (under a quarter of a second).
+9. Create a session with a marker named exactly like a snapshot, turn on Session ▸ Console ▸ follow scenes to markers, and fire that snapshot.
+10. In a disposable take, fire the stop macro once, wait a second, and fire it again.
+11. Session ▸ Console ▸ Save Console Log. Keep the file.
+
+**What each result proves:**
+
+| In the log | It proves |
+| --- | --- |
+| `osc <- <desk ip>:<port>  /Console/Snapshots/recall ,is 5 "Verse"` | Our address and argument order are right. Mark the DiGiCo dialect's snapshot parse as verified for that software version. |
+| An `osc <-` line for a snapshot with a different address | The real address: fix `handleDiGiCo` and `digicoDialect`, then re-run. |
+| A snapshot line with a number and no name | Follow can only match "Scene N" markers on this desk. |
+| No `osc <-` line for a snapshot, but other desk traffic appears | This OSC path doesn't carry recalls on this software. Scene markers and Follow can't work from it. |
+| A rename shows `/Console/Channels/N/name ,s "..."` | Live name following works. |
+| `[bundle, not acted on]` lines | The desk sends bundles, which neither console path acts on. That is a code change, and the log shows the addresses it needs. |
+| `refused by the parser` lines | The desk sends a type we refuse. The line shows the address and type tags. |
+| `macro <- <desk ip>:<port>  /zynforge/macro/marker ,i 1` followed by `macro: marker dropped` | Desk macros work, and integer messages arrive as integers. |
+| `macro <-` with `,f` or `,s` and no action | The desk sends another type. The listener accepts only none or integer; change the macro's message type. |
+| `macro: repeat inside the debounce window, ignored` after one press | The desk double-fires. The debounce is doing its job. |
+| The panel shows dropped datagrams and a different "latest" address | The desk sends from another interface. Put that address in the panel. |
+| Nothing at all from the desk | Network or port: check the Mac's firewall and the desk's target address first. |
+| Step 10: first press leaves the take running with "STOP armed"; second ends it cleanly | The two-tap guard holds from the desk. |
+
+**Send back:** the saved log, the SD5 software version, and the wall-clock notes.
+
+### Scene Follow and X32 stereo (X32 / M32, hardware only)
+
+1. Connect the link. Fire a scene outside a take: no marker appears. Turn Follow on with a marker named "Scene N", fire scene N: the playhead jumps and the transport doesn't change. Confirm the desk's `/-show/prepos/current` fires once per recall. With a desk talking to both the link and the OSC listener, a scene with duplicate markers must step once: the two reports count as one inside 250 ms.
+2. On the desk, link channels 1-2. In Control Surfaces, press Create Session from Connected Console. Confirm one stereo strip in MIXER, EDIT and PATCH, and that `/config/chlink/1-2` appears in the saved log.
+
+### Capture metadata and dead-channel alarm (real hardware)
+
+Nothing below has been tried on hardware. The recorder side is proven only against synthetic input and a Mac's built-in devices.
+
+1. **Clock source.** On the RME/MADI rig, open pre-flight with the interface on internal, then on word clock and MADI. Confirm each row names the source and that internal warns. Note what a Dante interface reports; if it reports nothing the row must say so without a failure.
+2. **Clock in the report.** Record a take; `clockSource` and `clockSourceKind` must match the row.
+3. **Timecode stamp.** With LTC locked, record, stop, and import into Reaper or Pro Tools using the BWF time. Measure against a hardware recorder or a slate on the same timecode. Record the offset: the label is read at RECORD and can be up to a frame old (two on MTC), and the code does not compensate for converter or driver latency, so expect up to a frame plus converter delay. Repeat with MTC, and with no chase (the Mac's clock).
+4. **Spotting.** Import a take into Pro Tools, Reaper and Cubase with "use BWF time". Confirm each spots to the stamped time and that the channel name appears where the DAW shows sTRK or description.
+5. **Real stream loss.** While recording from the MADI/Dante rig, pull the stream for 5 s. Expect one INPUT STREAM LOST alarm, on the status line and `/confidence`, clearing on restore, and one stream entry plus each channel in `session.report.json`. Then confirm what the driver delivered during the drop: the alarm only sees exact zeros, so a driver that repeats its last buffer or outputs a non-zero value will not alarm.
+6. **Single channel.** Pull one mic or stagebox line. An analog input has a noise floor, so it should NOT alarm unless the path delivers digital zero. Then mute a channel's direct out at the console and note whether that alarms. If the console's direct outs are post-gate, expect a channel fault whenever a gate closes for 3 s.
+7. **RF64.** The patch has run on a synthetic RF64 file with JUCE's layout. On a real take over 4 GiB, run `tools/verify_take.sh` and check the stamp in the file.
+
+### DAW handoff
+
+- **Open the `.dawproject` in Cubase, Studio One and Bitwig.** UNVERIFIED: no DAW that reads DAWproject is installed on the development machines. It is valid against the format's `Project.xsd` and `MetaData.xsd` and follows its reference layout for clips in seconds with external files. Confirm: every track present with its name and colour, stereo tracks stereo, clips at the right time and source offset, fades present, audio online from the relative path, markers in place, fader and pan plausible. Note how each DAW treats overlapping clips and which fade curve it uses.
+- **Open a real show's `.RPP` in REAPER on the owner's own configuration**, from an external drive, and play across a part boundary. The fixture proof uses a private configuration and seconds of audio; a many-gigabyte RF64 take on a show drive has not been tried.
+- **Hand a Verified Show Handoff to another machine** and open both project files from the handoff folder, confirming the audio comes online without relinking.
+- **Export Songs on a multi-hour show:** confirm memory stays flat, the status line updates, Cancel Song Export stops within a moment, and the first and last samples of each song line up with a marker on a whole-session bounce in a DAW.
+
+### Twin Recorder (not yet performed)
+
+Use the owner's two Macs on the show network: **MacBook Pro 192.168.68.81** (leader) and **Mac mini 192.168.68.72** (follower). Use disposable sessions only. Both Macs must run the same build. The Recording app is ad-hoc signed, so macOS may ask for Local Network or firewall permission the first time the follower listens or the leader connects: allow it, and confirm in System Settings ▸ Privacy & Security ▸ Local Network and ▸ Network ▸ Firewall. If the app was denied, the leader stays on CONNECTING and nothing else fails.
+
+1. **Pair.** On the mini: Session ▸ Network & Surfaces ▸ Twin Recorder, role Follower, Listen for leader. Note the code and the address shown. On the MacBook: role Leader, enter 192.168.68.72 and the code, Connect. Expect LINKED on both and TWIN OK in both headers. Confirm the panel's warning text is visible and reads as "not an independent recorder".
+2. **Wrong code.** Disconnect, enter a wrong code, Connect. Expect a refusal on the leader, one refused attempt counted on the follower, and no further attempts in the follower's count over 30 seconds.
+3. **Mismatch warnings.** Give the Macs different armed counts and session names. Expect warnings on both, and that RECORD is not refused. Set them equal and confirm the warnings clear.
+4. **Start and stop.** With matching setups and the same test tone on both inputs, press RECORD on the leader. Expect both rolling within a second. Press STOP once on the leader: the leader arms, the follower keeps rolling. Press STOP again: both finalize. Expect a compare line on the leader and a `twin` block in both `session.report.json` files, then run `tools/verify_take.sh` on both sessions.
+5. **Follower refusal.** Disarm all tracks on the follower and press RECORD on the leader. Expect the leader to roll and to show the follower's reason. Repeat with LOCK on at the follower: expect "session is locked". Stop the leader.
+6. **Pull the network cable mid-take.** On a disposable session, start both and let them roll for two minutes. Pull the mini's network cable. Expect TWIN LOST on both within about 3 seconds, both takes still rolling, and both clocks advancing. After a minute, plug it back in. Expect the link back within a few seconds, both still rolling, and nothing restarted. Stop from the leader. Both reports must show one link-loss interval of about the right length.
+7. **Pull it, then stop.** Start both, pull the cable, press STOP twice on the leader. Expect a warning that the follower did not stop. Plug it back in. The follower must still be rolling, and the leader must say so. Stop the follower by hand with its own two taps, and confirm the leader's take did not change.
+8. **Interface failure.** Start both, then unplug the leader's audio interface. Expect the leader's take to finalize with its device-lost warning, and the follower to keep rolling and report it. Replug, press RECORD on the leader, then stop from the leader. Expect the follower to stop.
+9. **Follower dies.** Start both, force-quit the follower. Expect TWIN LOST on the leader within about 3 seconds and the leader's take unaffected.
+10. **Quit.** With a take rolling on the leader, choose Quit ▸ Stop & Quit. The leader must finish quitting without delay. The follower must keep rolling with TWIN LOST. Stop it by hand.
+11. **Marker.** During a take, drop a marker on the leader. Confirm it lands on the follower at that Mac's capture position, which will differ slightly from the leader's.
+12. **Daemon mode.** Enable the capture daemon on one Mac and repeat step 4.
+
+Record the clock offset each panel shows; on a healthy LAN the two should be opposite in sign and within a few milliseconds of each other in size.
+
+### Notarized build (needs an Apple Developer ID)
+
+1. Store the credentials once (`xcrun notarytool store-credentials`), then run `tools/notarize.sh --check` and fix what it reports.
+2. Run `tools/notarize.sh`. Only a reported status of `Accepted` counts.
+3. Mount the DMG on a Mac that has never seen this app, install it, and confirm Gatekeeper opens it without a warning, the microphone prompt appears, and the Local Network prompt shows the app's own reason.
+4. Confirm `LICENSE` and `THIRD-PARTY-NOTICES.md` are in the DMG root, and that NDI still loads if the runtime is installed.
+
 ## October 5 follow-up acceptance — `443c769`, not yet performed (repeat on the installed `281c6c0`)
 
 Run these checks on disposable sessions; retain measured results and leave
@@ -291,7 +394,8 @@ The protocol logic is unit-tested; these confirm it against real gear. Open
 3. Turn on **"Debug: log OSC traffic"**, open **"View OSC Log..."**.
 4. From the desk: change a channel name / gain trim and recall a scene. Confirm
    in the log you see `<- /Console/... ` (or `/sq/`, `/sslnet/`, `/Yamaha/`),
-   names/Trim-Follow update, and a marker drops. Console dialect input is
+   names/Trim-Follow update, and, during a take, a marker drops. Outside a take
+   no marker drops. Console dialect input is
    intentionally read-only for arm/mute/transport; those messages must not
    change the session.
 5. **Bidirectional:** set the **Console IP + Receive Port**, hit **"Request ALL

@@ -1,5 +1,109 @@
 # Decisions Log
 
+## macOS only — 2026-10-31
+
+**Status:** Accepted.
+**Context:** A Windows port was started during the market review work and stopped the same day at the owner's request.
+**Decision:** The product stays on macOS, with no Windows or Linux build. The started port is kept only on the local branch `archive/windows-port-local` and was never merged or pushed to `main`.
+**Consequences:** CoreAudio stays assumed, `Source/Audio/ClockSource.cpp` needs no other platform, and the market comparison on platform reach stands as a known gap.
+
+## Distribution: all rights reserved, Developer ID, and the JUCE licence — 2026-10-31
+
+**Status:** Accepted for the repository; the licence purchase is the owner's open decision.
+**Context:** The repo had no licence file while its DMGs were public, and the app was only ad-hoc signed. JUCE is AGPLv3 or commercial.
+**Decision:** `LICENSE` reserves all rights, `THIRD-PARTY-NOTICES.md` lists every shipped component, and `tools/notarize.sh` produces a Developer ID build from a copy of the app. Distribution now rests on a JUCE licence rather than the AGPLv3: the two cannot coexist with a closed product.
+**Consequences:** At JUCE's free Starter tier nothing is owed while revenue stays under $20,000; [docs/SELLING-CHECKLIST.md](docs/SELLING-CHECKLIST.md) lists the tiers and what has to be true before selling. Nothing has been bought or accepted for the owner. Notarization has not run, because it needs the owner's Developer ID.
+
+## Desk macro control: a pinned source address, despite the earlier rejection — 2026-10-31
+
+**Status:** Accepted. Narrows, for this one listener, the alternative rejected in *Inbound remote control is authenticated or read-only* (2026-08-18: "Source-IP allowlist (rejected: spoofable/brittle across DHCP)"), and the sentence there that console transport control "is intentionally removed" from inbound listeners.
+
+**Context:** Generic OSC needs a per-start text token as its final argument. A DiGiCo Macro OSC device can send only address-only or integer messages, so a desk macro can't reach it, and the console dialects deliberately can't drive transport. Engineers want RECORD and marker keys on the desk.
+
+**Decision:** Add an opt-in listener with its own UDP port (default 9301) that accepts datagrams from one configured IPv4 source, checked on the reader thread before parsing. It takes only eight exact addresses, address-only or integer. It is off on every launch. It refuses under LOCK. Every transport command goes through `performRemoteTransport`, so RECORD runs full pre-flight and STOP keeps the two-tap guard. Identical commands inside 250 ms count once.
+
+**Residual risk, stated plainly:** UDP has no handshake, so a source address is not an identity. Any host on the LAN can forge a datagram that appears to come from the desk, and an attacker who can see the traffic gets the address list too; the messages are plaintext and carry no secret. While the listener is on, such a host can do what a desk macro can: start a take that pre-flight allows, play, pause, drop markers, move the playhead outside a take, and STOP (needing two sends more than 250 ms and less than 2 s apart, which a deliberate attacker can do). It can therefore end a live take. It cannot arm, mute, patch, rename, delete or overwrite anything: a fresh take never replaces a take, and a stopped take is finalized normally.
+
+**Why that is acceptable here:** the 2026-08-18 rejection was about making an allowlist THE authorization for the whole Generic command set, on by default for any OSC client, with arm, mute and channel control behind it. This listener is different in each of those: the engineer opts in on every launch, it is reachable only from one named address, and its command set is the short list above, each behind an entry point that already refuses for itself. A show network is normally a closed console network, and an attacker on it can already send a desk anything the desk accepts. A DHCP change fails closed: the desk stops being heard, and the setup panel shows the count of dropped datagrams and the latest sender.
+
+**What would invalidate this:** adding any command that can arm, mute, patch or touch files; accepting a subnet, hostname or wildcard; or starting the listener automatically. Each needs a new decision. An engineer on a shared or venue network should leave it off.
+
+**Alternatives considered:** A token in the address path (rejected: it would have to be typed into a console macro, then sits in the show file, and does not change per start). Treating integer arguments as a PIN (rejected: a static number over plaintext UDP, security theatre). Using the console link's connected socket (rejected: DiGiCo macro devices send to a configured target and we cannot verify they reply to source ports).
+
+**Related documents:** `Source/Network/DeskMacro.{h,cpp}`, `Source/Network/OscPacketReceiver.h`, `Source/Tests/ConsoleVscTests.cpp`, README *Desk macro control*.
+
+## Scene recalls: a shared rule, and LOCK left as each path had it — 2026-10-31
+
+**Context:** A recall always dropped a marker, so a virtual soundcheck left strays and never moved the playhead. The rule existed in two places.
+
+**Decision:** One decision function (`scenefollow::decide`) behind `RemoteControl::onConsoleScene`, called by both paths. A take marks; otherwise no marker; Follow is opt-in. LOCK refuses Follow on both paths, but the OSC listener's existing gate also stops a recall from marking a take under LOCK, and the console link's never did. Both were left alone.
+
+**Rationale:** Opening the listener's gate weakens a guard. Adding one to the link would silently lose a locked show's markers, and a locked show is the normal state during a show. The difference is pinned by a test.
+
+**Consequences:** Engineers on the OSC listener who LOCK during a show still get no scene markers, as before. If the owner wants scene markers through LOCK on that path, that is a decision to open the gate for one message.
+
+## The EDIT cursor is cleared by a remote locate — 2026-10-31
+
+**Context:** PLAY and RECORD prefer a placed EDIT cursor when stopped, so a Follow or macro locate would be undone by the next PLAY.
+
+**Decision:** `RemoteControl::locate` clears the cursor rather than moving it. A moved cursor at sample 0 would read as a deliberate punch from the start; a cleared one at 0 appends a new part, which never touches a take. Cmd+1..9 marker jumps are unchanged.
+
+## 2026-10-31: One post-close write, 8 bytes, compare-and-swap
+
+**Context.** A BWF time reference must name the file's first sample, but JUCE fixes the bext block at writer creation and writers open before the first live block. The rule until now was that a closed capture file is never touched.
+**Decision.** Open with an estimate, and after close patch only the 8 TimeReference bytes, in place. The patch walks RIFF/RF64 chunks, requires a whole bext block, and writes only if the bytes hold what this recorder stamped at open. It runs before hashing. A refusal is reported and never marks the audio bad.
+**Alternatives.** Rewriting the file through JUCE (`replaceMetadataInFile` can fall back to copying the audio, which is unacceptable); an offset in the report only (a DAW would never see it); keeping one writer open past stop (the header flush would rewrite the block).
+**Consequences.** One narrow exception to "closed capture files are immutable", and it stays the only one. A crash leaves the estimate, not the exact value: for a take that was stamped from a timecode hint that estimate is still timecode-derived.
+
+## 2026-10-31: The dead-channel alarm keys on exact zero, not on silence
+
+**Context.** Silence is normal in a show, so a level threshold would cry wolf all night, and an alarm nobody trusts is worse than none.
+**Decision.** Only exact digital zero counts. A mic or DI always has a noise floor; a lost path delivers zeros.
+**Consequences.** A converter or console that sends a stuck non-zero value is not detected. A console that sends real digital zero on purpose (post-gate or muted direct outs) raises a false channel fault. The alarm observes and never touches the take, so a false one costs attention, not audio.
+
+## 2026-10-31: Clock-source reads go through a bounded probe
+
+**Context.** `AudioObjectGetPropertyData` is a synchronous call into coreaudiod and a driver with no timeout.
+**Decision.** The HAL is only read on the probe's own thread; callers wait a bounded time or not at all. One read at a time, so a stalled driver costs one parked thread. It deliberately cannot be joined: the thread owns only `shared_ptr` state and may outlive the probe.
+**Consequences.** A report can say `unavailable` for a take stopped before the read finished. This is the one thread in the capture path that may outlive its owner, and it touches nothing else.
+
+## DAW interchange: capture, resolve, write; automation stays out — 2026-10-31
+
+**Context.** The only DAW handoff was a CSV. Two formats had to describe the same session, and a project file that mis-describes a show is worse than none: a mix engineer would trust it.
+
+**Decision.** A shared model, built in two steps: plain values captured on the message thread, then a worker resolve that opens take headers, cuts clips at part boundaries, collapses stereo pairs and refuses any missing media. Both writers read only the resolved model. Audio stays by reference in both formats. Each export reports what it approximated or left out, in a summary and inside the file.
+
+**Automation is not exported.** Lanes interpolate in dB with tension and S-curves, a strip holds its fader before the first point, stereo pairs keep a pan lane per side, and the lanes interact with VCA and trim. Neither format can hold that exactly: both would need densified curves, and the DAWproject side could not be checked in any DAW here. It ships without it, and every export says so. The fader, pan and mute carried are the static values.
+
+**Clip gain in DAWproject.** The format has no clip gain attribute. A gain expression lane is schema-valid, but no importer was available to test and one public converter logs it as unsupported, so it is reported as left out rather than written unverified.
+
+**Stereo width in REAPER.** Dual-pan mode (`PANMODE 6`, side pans in `VOLPAN` fields 4 and 5) with the -3 dB law reproduces the session's per-side pans exactly, so pairs carry their real image. A pair linked with both pans at centre is a mono sum in the session and stays one in REAPER. DAWproject has one pan per track and carries the balance, with a note.
+
+**Consequences.** Automation-heavy sessions need a stem bounce to keep their moves. A session with hand-drawn tempo changes keeps only its base tempo in the project.
+
+## Twin Recorder link: authenticated, not encrypted; a dead link never acts — 2026-10-31
+
+**Context.** The owner runs two Macs that can each receive the same console feed. A second machine that starts and stops with the first protects against the failures a single machine cannot survive: a computer, a drive, an interface. It does not protect against a bug in this app, because both Macs run it, so it must never be presented as an independent recorder.
+
+**Decision.** A leader connects over TCP to a follower (default port 9310, bound only while enabled). The roles are local choices. Pairing uses a code of 80 bits from OS entropy, typed once, with mutual HMAC-SHA256 challenge/response and fresh nonces per connection, reusing `CaptureIdentity.h`. Role labels in the transcript stop a proof being reflected. The session key derives from the code and both nonces.
+
+Every frame after the handshake carries a sequence number and its own HMAC under the session key, tagged by direction. Authenticated traffic is the requirement, and a handshake alone would not give that: anyone on-path could inject a `stop` into an authenticated TCP stream. With per-frame MACs an injected, replayed or reflected frame ends the connection, which is safe because a dropped link changes nothing on either Mac.
+
+**Traffic is authenticated, not encrypted.** Anyone on the network can read session names, track counts and transport state, and can see when a take starts. Keep the link on a private show network. There is no TLS because it would mean a new dependency or an in-app crypto stack for metadata that is not secret; the companion ADR reached the same view. The pairing code is not stored, because no Keychain helper exists, so an app restart means pairing again.
+
+Safety rules, in priority order: link loss never stops, starts or alters a take; the leader starts first and only queues; `stop` is sent only after the leader's confirmed two-tap STOP ended the take; the follower runs its own full pre-flight; the follower cannot command the leader.
+
+**Smaller choices, and why.**
+- *A follower take started by hand stays rolling on leader STOP.* Leaving a take rolling is the recoverable outcome; ending one the link did not start is not, and the leader says so.
+- *A link RECORD that would punch on the follower is refused.* A stale EDIT cursor would otherwise replace audio in the follower's take with nobody at that Mac.
+- *A leader punch does not relay.* It edits that Mac's take.
+- *Stop & Quit does not stop the follower.* It is not a two-tap STOP, and the follower carries on with TWIN LOST.
+- *Addresses are IPv4 literals.* `StreamingSocket::connect` resolves names with `getaddrinfo`, which has no timeout, and that would make quit unbounded.
+- *A wrong code stops the leader's retries.* Otherwise it would knock once a second for the rest of the show. Re-enabling tries again.
+- *One connection at a time, and a new caller is refused rather than superseding.* After a real loss the old connection times out within 3 s and the retrying leader gets in. An attacker can hold the single handshake slot for 1.5 s at a time and so delay pairing, which affects no take.
+
+**Consequences.** An operator can be left with a follower still rolling after the leader stops: a STOP pressed during link loss is deliberately never delivered later, so the leader warns and the follower is stopped by hand. Comparison is arithmetic on two reports, with no audio comparison or gap repair. The wall-clock offset is an NTP-style estimate from millisecond timestamps, for reading two reports side by side; it is not a sample-accurate alignment, and nothing here locks the two Macs' clocks. Widening exposure: this is a new listening port while enabled, which is why it is off by default and bound only while enabled.
+
 ## Follow-up capture, persistence and control contracts — 2026-10-05
 
 **Context.** The follow-up review reproduced 21 defects after S6, including

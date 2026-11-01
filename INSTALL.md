@@ -228,6 +228,12 @@ open "/Applications/Zynforge Recording.app"
 
 If copying or verification fails, do not launch the partial installation. Preserve it separately and restore the complete previous bundle. Test microphone permission, selected device, daemon startup and a disposable recording after installation. A verified signature alone is not an audio-path test.
 
+## Developer ID build
+
+Not run yet: it needs the owner's Developer ID. Local installs above stay ad-hoc signed.
+
+```bash
+
 ## Rollback
 
 The October 5 two-Mac cleanup removed all inventoried older app bundles at the user's request. There is currently no local old-version rollback copy. Since 2026-10-29 each Mac keeps its `443c769` bundle as `/Applications/Zynforge Recording.app.backup-20261029-*-before-281c6c0`; earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.

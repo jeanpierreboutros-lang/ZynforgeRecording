@@ -10,6 +10,7 @@ package hashes, test counts or acceptance claims into new guides.
 
 | Document | Owns |
 | --- | --- |
+| [SELLING-CHECKLIST.md](SELLING-CHECKLIST.md) | What has to be true before selling: JUCE licence, Developer ID, NDI text, notices |
 | [README](../README.md) | Product overview, current status, quick build and entry points |
 | [Installation](../INSTALL.md) | Per-Mac/package identities, hashes, startup evidence and retained rollback paths |
 | [Testing](../testing.md) | Automated coverage, commands, test isolation and validation limits |

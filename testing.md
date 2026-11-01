@@ -1,5 +1,66 @@
 # Testing Strategy — ZynForge Recording
 
+## Market moves — 2026-11-01
+
+Current source: the `ZynforgeRecordingTests` app passes **938 groups / 0 failures** in Release, under ASan/UBSan (once in the standard setup, once from a fresh home) and under TSan, with no sanitizer reports. That is 689 before this work, plus 249 new groups: *Console VSC* 75, *Twin recorder link* 50, *Capture metadata* 40, *Dead-channel alarm* 30, *Session interchange* 23, *Twin recorder host* 18 and *Song export* 13. Both static gates pass. `tools/test_notarize.py` passes 16 tests. `tools/test_auto_stop.py` passes.
+
+None of the new dialogs, panels or native menu ticks were operated by hand, and nothing here has run on a console or between two Macs: see *Market-moves acceptance* in [FIELD-TEST.md](FIELD-TEST.md).
+
+**A hang found by this suite.** Stereo pairs inside a stream fault spun `channelalarm::Monitor::live` forever: a short-circuited `||` skipped the loop's own increment. In the app that froze the status timer on the message thread, on exactly the fault the alarm exists for. *Dead-channel alarm* now pins it twice, through the Monitor and through the callback. A hang fails no assertion, so run a suite under a time limit when it can loop; this one spun for almost three hours before anyone looked.
+
+**Run the final pass through `open`.** A directly launched test app is never frontmost, so it has no real keyboard focus. A host's Welcome window takes focus in its name field when the app is frontmost, and a focused text field keeps Cmd keys, so one test failed only through `open`. A filtered run or a direct launch cannot show this kind of failure. Run sanitizers with a fresh home as well: CI starts from one, so the first-run tour and Welcome appear there.
+
+**Capture rules were broken on purpose.** Five were reverted in one build and each failed in its own test: the stamp's compare-and-swap, stamping before hashing, removing spliced files from the stamp list, a stale clock reading, and watching the right side of a pair. The hang above was red before its fix.
+
+### Console and virtual soundcheck
+
+- *Console VSC* (`Source/Tests/ConsoleVscTests.cpp`) drives both scene paths through one assertion set on a real `MainComponent`: Follow on and off, stopped and playing, duplicates, no match, seek lock, `sessionIoBusy`, LOCK, and daemon and local capture. It covers macro parsing, source filtering over a real UDP socket, integer 0, debounce, the two-tap STOP on a real local take and RECORD pre-flight; X32 chlink encode/parse, pair linking, the session-file round trip and an end-to-end create against a simulated desk; and log capture, cap and token redaction over real sockets.
+- Result on `feature/console-vsc` at e2ebc6a, Release arm64: 762 groups, 0 failures (baseline 689, plus 73 in *Console VSC*). Each of the 73 was seen failing in one of three deliberate-break builds. ASan, UBSan and TSan were not run on this branch.
+- The create-session end-to-end test waits out the real 3 s collection delay.
+- Not covered headlessly: the native menu tick, the Save Console Log file chooser (`writeConsoleLog`, after it, is covered), and the look of the Desk Macro panel and the hub's new button. Neither panel has been opened in a running app.
+- The two-path echo rule (`scenefollow::RecallEchoFilter`) was red-checked: with the filter disabled, *Console VSC* failed on the extra step (expected 240000, actual 720000).
+
+### Capture metadata and dead-channel alarm
+
+New suites: `Capture metadata` (`Source/Tests/CaptureMetaTests.cpp`) and `Dead-channel alarm` (`Source/Tests/ChannelAlarmTests.cpp`). `Source/Tests/LtcTestSignal.h` now holds the LTC generator, shared with `Timecode chase`.
+
+`Capture metadata` runs `tools/verify_take.sh` against a real stamped take and skips it (logged) when ffprobe, jq or xxd are missing. It also runs the HAL reader against every input device on the machine: it passes with none, and the log shows what each device reports.
+
+### DAW handoff and song export
+
+Suites added: *Session interchange*, *Song export*. 
+
+**REAPER proof (not part of the suite, needs REAPER installed):**
+
+```bash
+ZF_EXPORT_FIXTURE_DIR=/tmp/fx "build/.../Zynforge Recording Tests" --test-filter="Session interchange"
+tools/verify_reaper_export.py /tmp/fx --work /tmp/fx-work --schemas <folder with Project.xsd, MetaData.xsd>
+```
+
+It renders the fixture session with `REAPER -renderproject`, compares the result with the engine's own mix sample for sample, reads every track, item, source and marker back through REAPER's scripting API, and validates the `.dawproject` with `xmllint`. REAPER runs in the background from a private resource folder and quits itself.
+
+Run it after any change to `ReaperProject.h`, `DawProject.h` or `SessionInterchange.h`.
+
+Result on REAPER 7.48/OSX64 (x86_64, under Rosetta), 2026-10-31, fixture of 13 strips over 10 s (mono edits, stereo pairs, a take in two parts, FLAC, 24-bit and float AIFF, float WAV, unlinked stereo, a cross-track clip, a muted track, an enclosed overlap, a narrow pair, clip gain, fades of both shapes, pans, master fader):
+- Script-driven render against `renderStereoMix`: 480000 frames both ways. Identical to five decimals in every second except the two holding the equal-power fades, where the peak difference is 0.00039 (69 dB below the mix). That is REAPER's shape 7 against the session's sine.
+- Read back: 11 tracks, 15 items, 2 markers, all sources online; names with quotes, ampersand, non-ASCII and edge spaces intact; colours, gains, pans, fades, shapes, CHANMODE, sample rate, tempo, master fader and notes as written. REAPER's own save keeps ITEMMIX 1 and TIMELOCKMODE 0.
+- `project.xml` and `metadata.xml` validate against the format's XSDs with `xmllint`.
+
+`-renderproject` itself works on tiny projects but races REAPER's start-up audio-device prompt on anything larger, so the tool renders from a script (action 42230). The private configuration names an audio device that does not exist and no plug-in folders.
+
+Not covered: a real show's size, REAPER on the owner's own configuration, and any DAW that reads DAWproject.
+
+### Twin Recorder
+
+- **Twin Recorder**: `--test-filter="Twin recorder"` runs *Twin recorder link* (two real `TwinLink` endpoints over loopback, a fake host, hand-driven sockets for hostile peers, and a relay that stops forwarding to act as a pulled cable) and *Twin recorder host* (the link wired into the real `MainComponent`, with a hand-driven follower). About 26 s per run on this machine. A 12-run loop found one real flake: a 5 s wait on the report hash pass, which runs at background priority and starved while other branches were building. That wait is now 30 s, and it returns as soon as the pass runs. After that change the suite passed 20 of 20 runs, then 12 of 12 on the branch's final commit, on a machine also building other branches. The full suite is 757 groups, 0 failures, in Release; ASan, UBSan and TSan were not run on this branch.
+- Red evidence: deliberate regressions were applied to the committed code and each went red in the named test, including link loss stopping a take, a wrong code accepted, a stale `stop` crossing onto a new connection, any take end stopping the follower, a follower commanding a leader, a report written during a take, and the two report-carry paths. Removing the pre-auth depth guard crashes the process on 12,000 `[`, which is the crash the guard exists to prevent.
+- The link's timing is configurable (`Config::linkTimeoutMs` and friends) so the tests run at a tenth of the real periods. The 3 s link timeout itself is exercised only in the field.
+- What these tests cannot show: real network behaviour, macOS permission prompts, or two real audio devices. The host suite has no audio device, so `prepareRecordStart`'s device checks are not reached with a passing device; the record stage after them (`runRecordPlan`) is driven directly.
+
+### Mac distribution
+
+`tools/test_notarize.py` drives `tools/notarize.sh` against stand-in tools: signing order, entitlements, refusing a rejected submission and refusing to overwrite a published DMG. A real notarization has not run, because it needs the owner's Developer ID.
+
 ## October 29 structural-debt pass (source after `69aab9f`)
 
 Current source: the `ZynforgeRecordingTests` app passes **689 groups / 0 failures** in Release, under ASan/UBSan and TSan (no reports) and in CI on `abb83bf`, after the split-fade merge (11 new groups in *Editing fixes* and *October audit regressions*, red against the old clip model by up to 0.499). Before that it passed **678 groups** (675 before the deferred lead-ins; the three lead-in groups failed against the previous recorder: silence written at start, no recovery, no split), under **ASan/UBSan/float-cast-overflow** and under **ThreadSanitizer** (run on `12188dd`, arm64 Debug, no sanitizer reports); CI passed on `967f721`. That covers the lead's punch/session fixes and the merged network, editing, EDIT-view and engine branches. Two interim Release counts recorded during the merges (623, 666) were short. After each merge that added a test file to CMakeLists, the first incremental Xcode build did not compile that file, so those runs lacked the *Editing fixes* (12) and *Engine review repairs* (9) groups. Both suites ran and passed in later runs. After a CMakeLists change, check that the expected suite names appear in the log, not just the total. The engine branch adds *Engine review repairs* (`EngineReviewRepairTests.cpp`) and 14 LTC groups in *Timecode chase* (synthesized SMPTE 12M at 24/25/29.97 DF/30 fps; tones, program audio and random biphase bits must never LOCK); its locate-race test lost 228/300 locates on the old player. The EDIT-view branch adds the *EDIT view audit 2026-10-29* suite (in `EditTrackRowTests.cpp`; red against the unfixed code for every finding, including a counting reader that saw 200,000 thumbnail reads for a 400 px window at deep zoom). The bug-hunt fixes added *Punch and session guards* (19 groups: stale punch/continue arms, the punch playhead/loop lock, the capture-origin splice, per-copy splice rollback and archiving, empty punches, refusal messages, New Session under a take, undo on New Session, main-window guards, AppleDouble project lookup). Red check: a build with every lead fix's behaviour reverted (arm64, `red_mutations` patch) failed each of those tests, and the stale-export test crashed on the out-of-range index, which is the reported bug. That crash stopped the run, so a second build reverted only the analysis, linked-patch and click-refresh guards: all three of those checks failed. The AppleDouble lookup test passed on the old code too: macOS's directory enumeration already hides `._` files, so that finding did not reproduce and the filter is defence in depth. The network branch adds 10 groups to *OSC remote*, *Companion server* and *Network audit fixes*, and the editing branch adds *Editing fixes 2026-10-29* plus groups in *Channel CSV*, *Timeline export* and *Transients*. Each was shown red by its author against the unfixed code; the nested-OSC and nested-JSON tests crashed the test process (SIGBUS) before the fix. Before them, 587 groups passed under **ASan/UBSan/float-cast-overflow** and under **ThreadSanitizer** (run on `2615b65`: mix kernel, recorder stages and `RemoteControl` included) (arm64 Debug builds; no sanitizer report files; runtimes confirmed linked with `otool -L`). Both static gates are clean (the invariants gate has 31 checks). *Mix kernel* (5 groups) tests each shared mix rule on its own; *Audio callback* gained "Live playback and the offline bounce mix the same session identically", which plays a session through the callback and compares it with `renderStereoMix` sample for sample. New suites: *Strip reorder* (6 groups, drives the EDIT row's real mouse handlers), *Session jobs* (6 groups, including a strip removal in the middle of a stereo-mix render) and *Strip lifetime and mixer fingerprint* (3 groups; ASan reports a heap-use-after-free in it when the keep-alives are removed). Each new test and gate rule was shown to fail against an injected regression before landing. Nothing from this pass is installed on either Mac.
