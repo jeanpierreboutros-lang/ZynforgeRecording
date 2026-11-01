@@ -1406,6 +1406,140 @@ namespace zynforge
             hungVolumeStats();
             markersBehindTheTake();
             refusedStartLeavesNothing();
+            punchesWithHoles();
+        }
+
+        struct PunchRig
+        {
+            Dirs dirs;
+            juce::int64 baseFrames { 0 };
+            juce::MemoryBlock primaryBase, backupBase, mirrorBase;
+
+            static juce::MemoryBlock bytesOf (const juce::File& file)
+            {
+                juce::MemoryBlock block;
+                file.loadFileAsData (block);
+                return block;
+            }
+
+            void configure (MultitrackRecorder& rec) const
+            {
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (dirs.backup);
+                rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } });
+            }
+
+            // A take on every copy, whose exact bytes the punch must not cost.
+            bool recordBase (UnitTest& test)
+            {
+                MultitrackRecorder rec;
+                configure (rec);
+                if (! rec.startRecording (dirs.session)) return false;
+                Feeder feeder { rec, 1 };
+                feeder.blocks (60, { 0, 1, 2 });
+                baseFrames = feeder.frame;
+                rec.stopRecording();
+                primaryBase = bytesOf (dirs.primaryTake());
+                backupBase  = bytesOf (dirs.backupTake());
+                mirrorBase  = bytesOf (dirs.mirrorTake());
+                test.expect (primaryBase.getSize() > 0 && backupBase.getSize() > 0 && mirrorBase.getSize() > 0);
+                return primaryBase.getSize() > 0;
+            }
+
+            int archivedFrames (const juce::File& copyRoot) const
+            {
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                int frames = 0;
+                for (const auto& file : copyRoot.getChildFile ("Session File Backups")
+                                                .findChildFiles (juce::File::findFiles, true, "Track_01*.wav"))
+                    if (std::unique_ptr<juce::AudioFormatReader> reader { fm.createReaderFor (file) })
+                        frames += (int) reader->lengthInSamples;
+                return frames;
+            }
+        };
+
+        void punchesWithHoles()
+        {
+            beginTest ("A punch with a FIFO gap keeps the original on every copy");
+            {
+                PunchRig rig;
+                if (! rig.recordBase (*this)) return;
+                MultitrackRecorder rec;
+                rig.configure (rec);
+                rec.armPunchIn (10 * kBlock);
+                expect (rec.startRecording (rig.dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.frame = 1000000;
+                feeder.blocks (20, { 0, 1, 2 });
+                rec.missedSamples.fetch_add (kBlock);   // what a full FIFO adds
+                rec.stopRecording();
+
+                expect (rec.hasPunchSpliceFailed(), "the failure was not latched");
+                expect (PunchRig::bytesOf (rig.dirs.primaryTake()) == rig.primaryBase, "the primary lost its original");
+                expect (PunchRig::bytesOf (rig.dirs.backupTake()) == rig.backupBase, "the backup lost its original");
+                expect (PunchRig::bytesOf (rig.dirs.mirrorTake()) == rig.mirrorBase, "the mirror lost its original");
+                expectEquals (rig.archivedFrames (rig.dirs.session), 20 * kBlock, "the punch audio was not kept");
+                expect (rec.getCopyProblems().joinIntoString ("|").contains ("Punch discarded"),
+                        "the banner did not say so");
+                const auto report = rig.dirs.session.getChildFile ("session.report.json").loadFileAsString();
+                expect (report.contains ("Punch discarded"), "the report did not say so");
+                expect (report.contains ("\"punchSpliceFailed\": true"), "the report missed the failure");
+                expect (! rig.dirs.session.getChildFile ("Audio Files")
+                                 .getChildFile ("Track_01.punchbase.wav").existsAsFile(), "a sidecar stayed behind");
+            }
+
+            beginTest ("A punch the primary lost audio from keeps the original on every copy");
+            {
+                PunchRig rig;
+                if (! rig.recordBase (*this)) return;
+                MultitrackRecorder rec;
+                rig.configure (rec);
+                rec.copyRingFramesForTests = Copy::kChunkFrames;
+                auto stall = std::make_shared<Stall> (0);
+                hold (rec, stall);
+                rec.armPunchIn (10 * kBlock);
+                expect (rec.startRecording (rig.dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.frame = 1000000;
+                feeder.blocks ((Copy::kChunkFrames * 3) / kBlock, { 1, 2 });
+                stall->holding.store (false);
+                stall->released.signal();
+                rec.stopRecording();
+
+                expect (rec.hasPunchSpliceFailed(), "the failure was not latched");
+                expect (PunchRig::bytesOf (rig.dirs.primaryTake()) == rig.primaryBase, "the primary lost its original");
+                expect (PunchRig::bytesOf (rig.dirs.backupTake()) == rig.backupBase, "the backup lost its original");
+                expect (PunchRig::bytesOf (rig.dirs.mirrorTake()) == rig.mirrorBase, "the mirror lost its original");
+                expectGreaterThan (rig.archivedFrames (rig.dirs.session), 0, "the punch audio was not kept");
+            }
+
+            beginTest ("A copy with a hole in the punch keeps its take; the others take the punch");
+            {
+                PunchRig rig;
+                if (! rig.recordBase (*this)) return;
+                MultitrackRecorder rec;
+                rig.configure (rec);
+                rec.copyRingFramesForTests = Copy::kChunkFrames;
+                auto stall = std::make_shared<Stall> (2);
+                hold (rec, stall);
+                rec.armPunchIn (10 * kBlock);
+                expect (rec.startRecording (rig.dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.frame = 1000000;
+                feeder.blocks ((Copy::kChunkFrames * 3) / kBlock, { 0, 1 });
+                stall->holding.store (false);
+                stall->released.signal();
+                rec.stopRecording();
+
+                expect (! rec.hasPunchSpliceFailed(), "a copy's hole must not cost the primary its punch");
+                expect (PunchRig::bytesOf (rig.dirs.primaryTake()) != rig.primaryBase, "the primary did not take the punch");
+                expect (PunchRig::bytesOf (rig.dirs.backupTake()) != rig.backupBase, "the backup did not take the punch");
+                expect (PunchRig::bytesOf (rig.dirs.mirrorTake()) == rig.mirrorBase, "the mirror took a punch with a hole");
+                expect (rec.anyMirrorFailed(), "the mirror was not reported failed");
+                expect (rec.getCopyProblems().joinIntoString ("|").contains ("kept its pre-punch take"),
+                        "the banner did not name the copy");
+            }
         }
 
         // A stat that can be stopped from answering.

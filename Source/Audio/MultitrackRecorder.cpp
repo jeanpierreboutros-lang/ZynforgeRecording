@@ -2209,6 +2209,7 @@ namespace zynforge
             juce::File main;                // Track_NN.<ext>
             std::vector<juce::File> fresh;  // every part the punch wrote, in order
             juce::int64 maxBytesPerFile { 0 };
+            bool complete { true };         // this copy holds every frame of the punch
         };
         struct PunchWriterFiles { PunchFiles primary, backup; std::vector<PunchFiles> mirrors; };
 
@@ -2431,13 +2432,14 @@ namespace zynforge
         const auto* primaryCopy = copyAt (0);
         const auto* backupCopy  = isCopyAbandoned (1) ? nullptr : copyAt (1);
         if (isCopyAbandoned (1)) stop.backupWasRunning = false;
-        const auto punchPath = [] (const CaptureCopy::Track& t)
+        const auto punchPath = [] (const CaptureCopy& copy, const CaptureCopy::Track& t)
         {
             TakeStop::PunchFiles files;
             if (t.baseFile == juce::File()) return files;
             files.main = t.baseFile.withFileExtension (t.ext);
             for (const auto& name : t.partFiles) files.fresh.push_back (t.baseFile.getSiblingFile (name));
             files.maxBytesPerFile = maxBytesForContainer (t.container);
+            files.complete = ! t.failed && ! copy.overran.load (std::memory_order_relaxed);
             return files;
         };
         for (size_t i = 0; i < writers.size(); ++i)
@@ -2449,14 +2451,14 @@ namespace zynforge
                 const auto& t = primaryCopy->tracks[i];
                 wr.totalSamplesPrimary = t.totalSamples;
                 wr.partFilesPrimary    = t.partFiles;
-                if (stop.doPunch) pf.primary = punchPath (t);
+                if (stop.doPunch) pf.primary = punchPath (*primaryCopy, t);
             }
             if (backupCopy != nullptr)
             {
                 const auto& t = backupCopy->tracks[i];
                 wr.totalSamplesBackup = t.totalSamples;
                 wr.partFilesBackup    = t.partFiles;
-                if (stop.doPunch) pf.backup = punchPath (t);
+                if (stop.doPunch) pf.backup = punchPath (*backupCopy, t);
             }
             for (size_t mi = 0; writers[i].active && mi < activeMirrors.size(); ++mi)
             {
@@ -2472,7 +2474,7 @@ namespace zynforge
                 const auto& t = copy->tracks[i];
                 wr.mirrors.push_back ({ activeMirrors[mi].root, t.totalSamples, t.partFiles,
                                         t.failed || copy->overran.load (std::memory_order_relaxed) });
-                if (stop.doPunch) pf.mirrors.push_back (punchPath (t));
+                if (stop.doPunch) pf.mirrors.push_back (punchPath (*copy, t));
             }
             stop.writers.push_back (std::move (wr));
             stop.punchFiles.push_back (std::move (pf));
@@ -2543,6 +2545,7 @@ namespace zynforge
             std::vector<juce::File> baseParts;  // stashed .punchbase sidecars
             bool                    attempted { false };  // this copy was stashed
             bool                    spliced   { false };  // splice to tmp succeeded
+            bool                    complete  { true };   // holds every frame of the punch
         };
         auto prepareCopy = [&] (const TakeStop::PunchFiles& files) -> CopySplice
         {
@@ -2570,6 +2573,12 @@ namespace zynforge
                     if (ps.existsAsFile()) cs.baseParts.push_back (ps); else break;
                 }
             }
+            // Splicing a capture with a hole would replace audio that is on
+            // disk and good with silence the engineer never played, and then
+            // delete the original. A FIFO gap sits before the copies split, so
+            // it is in every one of them.
+            cs.complete = files.complete && stop.totalMissed == 0;
+            if (! cs.complete) return cs;
             cs.tmp = fresh.getSiblingFile (
                 fresh.getFileNameWithoutExtension() + ".punchtmp" + fresh.getFileExtension());
             cs.spliced = splicePunchTake (fm, cs.baseParts, cs.freshParts, punchPos, cs.tmp,
@@ -2634,6 +2643,8 @@ namespace zynforge
             return true;
         };
 
+        bool punchDiscarded = false;
+        juce::StringArray copiesKeptTheirTake;
         for (size_t i = 0; i < punchFiles.size() && i < writerSnapshots.size(); ++i)
         {
             // Prepare a splice for every copy of this track: [primary,
@@ -2663,10 +2674,11 @@ namespace zynforge
             }
 
             // The primary decides whether the punch landed. A backup or mirror
-            // that cannot splice (its writer never opened, its drive filled)
-            // keeps its pre-punch take and is reported failed; it must not
-            // throw away a good primary punch. If the primary cannot splice,
-            // every copy goes back to its base so they agree.
+            // that cannot splice (its writer never opened, its drive filled, its
+            // capture has a hole) keeps its pre-punch take and is reported
+            // failed; it must not throw away a good primary punch. If the
+            // primary cannot splice, every copy goes back to its base so they
+            // agree, and the punch audio goes to the archive.
             auto& primary = copies[0];
             if (primary.spliced && install (primary))
             {
@@ -2681,6 +2693,10 @@ namespace zynforge
                         continue;
                     }
                     rollBack (c, true);
+                    if (! c.complete)
+                        copiesKeptTheirTake.addIfNotAlreadyThere (
+                            ci == 1 ? juce::String ("Backup")
+                                    : "Mirror " + activeMirrors[ci - 2].root.getFullPathName());
                     if (ci == 1)
                     {
                         backupFailed.store (true, std::memory_order_relaxed);
@@ -2697,6 +2713,7 @@ namespace zynforge
             else
             {
                 punchSpliceFailed.store (true, std::memory_order_relaxed);
+                punchDiscarded = punchDiscarded || ! primary.complete;
                 for (auto& c : copies)
                 {
                     if (! c.attempted) { for (const auto& part : c.tmpParts) part.deleteFile(); continue; }
@@ -2723,6 +2740,19 @@ namespace zynforge
                     if (ml > 0) writerSnapshots[i].mirrors[mi].totalSamples = ml;
                 }
             }
+        }
+
+        juce::StringArray notes;
+        if (punchDiscarded)
+            notes.add ("Punch discarded: its capture has a gap, so the original take stays. "
+                       "The punch audio is in Session File Backups");
+        for (const auto& copy : copiesKeptTheirTake)
+            notes.add (copy + " kept its pre-punch take: its punch capture has a gap");
+        if (! notes.isEmpty())
+        {
+            stop.copyProblems.addArray (notes);
+            const juce::ScopedLock sl (structureLock);
+            droppedCopies.addArray (notes);
         }
     }
 
