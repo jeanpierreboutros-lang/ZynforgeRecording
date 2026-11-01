@@ -198,7 +198,7 @@ MainComponent::MainComponent()
             patchDialog = nullptr;
             return;
         }
-        patchDialog = zynforge::PatchPage::launch (engine);
+        openPatchWindow();
     };
 
     // VSC chip uses the dedicated brand::signalVsc() colour so the
@@ -371,7 +371,7 @@ MainComponent::MainComponent()
             metersDialog = nullptr;
             return;
         }
-        metersDialog = zynforge::Meterbridge::launch (engine);
+        openMetersWindow();
     };
     metersButton.setTooltip ("Open the floating meterbridge -- drag onto a second display.");
     addAndMakeVisible (metersButton);

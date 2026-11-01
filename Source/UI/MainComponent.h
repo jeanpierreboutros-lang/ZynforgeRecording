@@ -152,7 +152,10 @@ private:
     void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();
+    void applyBackupFolder (const juce::File&);
     void onVscClicked();
+    void openPatchWindow();
+    void openMetersWindow();
     void applyLockState();
     // Returns true if the recovery dialog was shown (and onClosed is deferred
     // to its close). Returns false if there was nothing to recover, in which

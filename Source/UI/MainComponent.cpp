@@ -978,6 +978,21 @@ void MainComponent::applyLockState()
                                                       : "Idle");
 }
 
+// The header tab and the menu open the same one window. Only a tracked window
+// is reached by LOCK and by the reaper that frees it after its close box.
+void MainComponent::openPatchWindow()
+{
+    if (auto* w = patchDialog.getComponent()) { w->toFront (true); return; }
+    patchDialog = zynforge::PatchPage::launch (engine);
+    if (patchDialog != nullptr) patchDialog->setEnabled (! sessionLocked);
+}
+
+void MainComponent::openMetersWindow()
+{
+    if (auto* w = metersDialog.getComponent()) { w->toFront (true); return; }
+    metersDialog = zynforge::Meterbridge::launch (engine);
+}
+
 void MainComponent::forgetSessionUiState()
 {
     lastCaptureFinalizationError.clear();

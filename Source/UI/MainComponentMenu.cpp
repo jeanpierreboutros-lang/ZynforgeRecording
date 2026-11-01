@@ -481,8 +481,8 @@ void MainComponent::registerMenuCommands()
     m.add (99,  [this] { confirmAndQuit(); });
 
     // Session
-    m.add (50,  [this] { zynforge::PatchPage::launch (engine); });
-    m.add (51,  [this] { zynforge::Meterbridge::launch (engine); });
+    m.add (50,  [this] { openPatchWindow(); });
+    m.add (51,  [this] { openMetersWindow(); });
     m.add (52,  [this] { onVscClicked(); });
     m.add (53,  [this] { zynforge::MarkerListDialog::launch (engine); });
     m.add (54,  [this] { showPreflightChecklist(); });
