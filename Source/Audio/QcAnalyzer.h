@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "LoudnessMeter.h"
@@ -43,7 +44,7 @@ namespace zynforge::qc
     constexpr int   kClipRunSamples       = 3;
     constexpr int   kMaxStoredClipEvents  = 200;
 
-    inline TrackQc analyzeFile (const juce::File& f)
+    inline TrackQc analyzeFile (const juce::File& f, const std::atomic<bool>* cancel = nullptr)
     {
         TrackQc qc;
         qc.file = f;
@@ -88,6 +89,7 @@ namespace zynforge::qc
 
         for (juce::int64 pos = 0; pos < qc.lengthSamples; pos += block)
         {
+            if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return qc;
             const int n = (int) juce::jmin ((juce::int64) block, qc.lengthSamples - pos);
             if (! reader->read (&buf, 0, n, pos, true, true)) break;   // ALL channels (native stereo = one 2-ch file)
             const int nch = juce::jmin (buf.getNumChannels(), 8);

@@ -48,6 +48,7 @@ void MainComponent::timerCallback()
     if (uiLayoutSavePending && ! sessionIoBusy.load()) requestUILayoutSave();
 
     if (cueRamp.active) updateCueRamp();
+    cancelAnalysisForTake();
     if (! engine.isRecording()) punchWindowTakeActive = false;
     if (engine.isPunchModeOn())
         servicePunch();

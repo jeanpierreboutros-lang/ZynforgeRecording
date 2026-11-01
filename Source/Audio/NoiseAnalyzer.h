@@ -3,6 +3,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include <atomic>
 #include <vector>
 #include "MultiPartReader.h"
 #include "AtomicFile.h"
@@ -48,18 +49,20 @@ namespace zynforge
     public:
         static NoiseFinding analyseFile (const juce::File& wavFile,
                                           int trackIdx,
-                                          const juce::String& name)
+                                          const juce::String& name,
+                                          const std::atomic<bool>* cancel = nullptr)
         {
             juce::AudioFormatManager fm;
             fm.registerBasicFormats();
             auto reader = ConcatReader::create (fm, findTakeParts (wavFile));
-            return analyseReader (reader.get(), trackIdx, name);
+            return analyseReader (reader.get(), trackIdx, name, cancel);
         }
 
     private:
         friend class ReviewCaptureRepairTests;
         static NoiseFinding analyseReader (juce::AudioFormatReader* reader, int trackIdx,
-                                            const juce::String& name)
+                                            const juce::String& name,
+                                            const std::atomic<bool>* cancel = nullptr)
         {
             NoiseFinding nf;
             nf.track = trackIdx;
@@ -110,6 +113,7 @@ namespace zynforge
 
             for (juce::int64 pos = 0; pos + kFftSize <= total; pos += hopSamples)
             {
+                if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return nf;
                 chunk.clear();
                 if (! reader->read (&chunk, 0, kFftSize, pos, true, true))
                 { nf.error = "Audio read failed at sample " + juce::String (pos); return nf; }
@@ -207,8 +211,10 @@ namespace zynforge
     public:
         // Scan the session, write noise_report.json, return findings
         // for the UI to also display.
+        // A cancelled scan stops at its next read and writes no report.
         static std::vector<NoiseFinding> analyseSession (const juce::File& sessionDir,
-                                                          std::function<juce::String (int)> trackNameOf)
+                                                          std::function<juce::String (int)> trackNameOf,
+                                                          const std::atomic<bool>* cancel = nullptr)
         {
             std::vector<NoiseFinding> findings;
             if (! sessionDir.isDirectory()) return findings;
@@ -232,7 +238,8 @@ namespace zynforge
                 const int idx = mainTakeTrackNumber (f) - 1;
                 if (idx < 0) continue;
                 const auto nm = trackNameOf ? trackNameOf (idx) : stem;
-                findings.push_back (analyseFile (f, idx, nm));
+                findings.push_back (analyseFile (f, idx, nm, cancel));
+                if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
             }
 
             // Emit JSON to noise_report.json.

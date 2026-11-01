@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include <algorithm>
@@ -37,7 +38,8 @@ namespace zynforge::songs
     // Per-file peak-envelope flags: flags[w] = 1 when window w's peak is
     // above threshold. Streams the file; never holds more than one block.
     inline std::vector<char> envelopeFlags (const juce::File& f, float thresholdDb,
-                                            double windowSec, double& srOut)
+                                            double windowSec, double& srOut,
+                                            const std::atomic<bool>* cancel = nullptr)
     {
         std::vector<char> flags;
         juce::AudioFormatManager fm;
@@ -53,6 +55,7 @@ namespace zynforge::songs
         flags.reserve ((size_t) (reader->lengthInSamples / win + 1));
         for (juce::int64 p = 0; p < reader->lengthInSamples; p += win)
         {
+            if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
             const int n = (int) juce::jmin ((juce::int64) win, reader->lengthInSamples - p);
             buf.clear();
             if (! reader->read (&buf, 0, n, p, true, false)) break;

@@ -272,6 +272,8 @@ private:
     void runSpectralAutoName();
     void writeSoundcheckReport();
     bool refuseAnalysisNow();
+    void cancelAnalysisForTake();
+    bool analysisResultWanted (const juce::File& scannedSession, bool cancelled);
     void runNoiseAnalysis();
     void runQcAnalysis();
     void detectSongsToMarkers();
@@ -671,6 +673,10 @@ private:
     // (declared above) is still alive. Declared after sessionIoBusy, which it
     // references.
     zynforge::SessionJobRunner sessionJobs { sessionIoBusy };
+    // Report scans get their own runner because RECORD waits on sessionIoBusy,
+    // and a take may never wait for a report. See cancelAnalysisForTake.
+    std::atomic<bool>          analysisBusy { false };
+    zynforge::SessionJobRunner analysisJobs { analysisBusy };
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);

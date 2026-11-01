@@ -375,7 +375,34 @@ bool MainComponent::refuseAnalysisNow()
     { showStatus ("Analysis runs after recording stops -- it reads every take file"); return true; }
     if (sessionIoBusy.load())
     { showStatus ("Wait for the session operation to finish"); return true; }
+    if (analysisBusy.load())
+    { showStatus ("An analysis is already running"); return true; }
     return false;
+}
+
+// RECORD must never wait for a report, so a scan holds its own reservation
+// rather than the session's, and the take cancels the scan. Polled from the
+// timer because a take can start from the button, a remote or a punch window.
+void MainComponent::cancelAnalysisForTake()
+{
+    if (analysisBusy.load() && engine.isRecording()) analysisJobs.cancel();
+}
+
+// A report dialog is modal: over a live take it would stand between the
+// engineer and STOP.
+bool MainComponent::analysisResultWanted (const juce::File& scannedSession, bool cancelled)
+{
+    if (engine.isRecording() || captureMetadataPending || cancelled)
+    {
+        showStatus ("Analysis stopped for the take -- run it again after recording");
+        return false;
+    }
+    if (engine.getActiveSessionDir() != scannedSession)
+    {
+        showStatus ("Analysis finished for the previous session; nothing was changed");
+        return false;
+    }
+    return true;
 }
 
 void MainComponent::runNoiseAnalysis()
@@ -417,7 +444,7 @@ void MainComponent::runNoiseAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, sessionDir, names]
+    analysisJobs.start ([self, sessionDir, names] (const std::atomic<bool>& cancelled) -> zynforge::SessionJobRunner::Completion
     {
         const auto findings = zynforge::NoiseAnalyzer::analyseSession (
             sessionDir,
@@ -426,19 +453,21 @@ void MainComponent::runNoiseAnalysis()
                 return (idx >= 0 && idx < names.size())
                     ? names[idx]
                     : juce::String ("Track ") + juce::String (idx + 1);
-            });
+            },
+            &cancelled);
 
         const auto summary = noiseAnalysisSummary (findings);
+        const bool wasCancelled = cancelled.load();
 
-        juce::MessageManager::callAsync ([self, summary, findings]
+        return [self, summary, findings, sessionDir, wasCancelled]
         {
-            if (self == nullptr) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir, wasCancelled)) return;
             self->showStatus (summary);
             // Sortable table replaces the text dump -- engineer clicks
             // column headers to sort by worst hum / most bumps /
             // highest noise floor.
             zynforge::NoiseReportDialog::launch (findings);
-        });
+        };
     });
 }
 
@@ -471,9 +500,11 @@ void MainComponent::runQcAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, sessionDir, audioDir, files, names]
+    analysisJobs.start ([self, sessionDir, audioDir, files, names] (const std::atomic<bool>& cancelled) -> zynforge::SessionJobRunner::Completion
     {
         std::vector<zynforge::qc::TrackQc> results;
+        const auto stoppedForTake = [self, sessionDir]
+        { if (self != nullptr) self->analysisResultWanted (sessionDir, true); };
         for (const auto& f : files)
         {
             const auto stem = f.getFileNameWithoutExtension();          // "Track_NN" or "Track_NN_partXX"
@@ -485,7 +516,8 @@ void MainComponent::runQcAnalysis()
             // Also skips punch sidecars and Track_NN_consolidated_K renders.
             const int idx = zynforge::mainTakeTrackNumber (f) - 1;
             if (idx < 0) continue;
-            auto q = zynforge::qc::analyzeFile (f);
+            auto q = zynforge::qc::analyzeFile (f, &cancelled);
+            if (cancelled.load()) return stoppedForTake;
             q.trackIndex = idx;
             q.name = (idx < names.size() && names[idx].isNotEmpty()) ? names[idx] : stem;
             results.push_back (std::move (q));
@@ -500,6 +532,8 @@ void MainComponent::runQcAnalysis()
             if (v.hasProperty ("missedSamples"))
                 missed = (juce::int64) v.getProperty ("missedSamples", -1);
         }
+
+        if (cancelled.load()) return stoppedForTake;
 
         // Write the morning-after text report next to the exports.
         const auto exportDir = sessionDir.getChildFile ("Export Files");
@@ -522,12 +556,12 @@ void MainComponent::runQcAnalysis()
             + (reportSaved ? ". Saved " + reportTxt.getFileName() + "."
                            : ". WARNING: report file could not be saved.");
 
-        juce::MessageManager::callAsync ([self, summary, results]() mutable
+        return [self, summary, results, sessionDir]() mutable
         {
-            if (self == nullptr) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir, false)) return;
             self->showStatus (summary);
             zynforge::QcReportDialog::launch (std::move (results));
-        });
+        };
     });
 }
 
@@ -882,7 +916,7 @@ void MainComponent::detectSongsToMarkers()
     showStatus ("Detecting songs (multi-track quorum scan)...");
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, files, sessionDir]
+    analysisJobs.start ([self, files, sessionDir] (const std::atomic<bool>& cancelled) -> zynforge::SessionJobRunner::Completion
     {
         const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
         std::vector<std::vector<char>> flags;
@@ -898,20 +932,18 @@ void MainComponent::detectSongsToMarkers()
                 continue;
             double fileSr = 0.0;
             auto fl = zynforge::songs::envelopeFlags (f, params.thresholdDb,
-                                                      params.windowSec, fileSr);
+                                                      params.windowSec, fileSr, &cancelled);
+            if (cancelled.load()) break;
             if (fileSr > 0.0) sr = fileSr;
             if (! fl.empty()) flags.push_back (std::move (fl));
         }
-        const auto found = zynforge::songs::detect (flags, sr, params);
+        const bool wasCancelled = cancelled.load();
+        const auto found = wasCancelled ? decltype (zynforge::songs::detect (flags, sr, params)) {}
+                                        : zynforge::songs::detect (flags, sr, params);
 
-        juce::MessageManager::callAsync ([self, found, sessionDir]
+        return [self, found, sessionDir, wasCancelled]
         {
-            if (self == nullptr) return;
-            if (self->engine.getActiveSessionDir() != sessionDir)
-            {
-                self->showStatus ("Song detection finished for the previous session; no markers were changed");
-                return;
-            }
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir, wasCancelled)) return;
             if (found.empty())
             {
                 self->showStatus ("No songs detected -- try Marker List to add them by hand.");
@@ -925,7 +957,7 @@ void MainComponent::detectSongsToMarkers()
                 markers.drop (s.startSample, "Song " + juce::String (++n));
             self->showStatus (juce::String (n) + " song marker" + (n == 1 ? "" : "s")
                               + " dropped -- rename them in the Marker List.");
-        });
+        };
     });
 }
 
