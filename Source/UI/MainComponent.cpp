@@ -64,7 +64,8 @@ void MainComponent::updateMixerPlaceholder()
 void MainComponent::onRecordClicked()
 {
     if (captureMetadataPending || (sessionIoBusy.load() && ! engine.isRecording()))
-    { showStatus ("Wait for recording finalization / session saving to finish"); return; }
+    { showRecordRefusal ("Wait for recording finalization / session saving to finish"); return; }
+    recordRefusal.clear();
     // RECORD is a sequence: a press during a take (or a refused daemon state)
     // is consumed first; otherwise every pre-flight refusal runs before
     // anything is changed; then the take starts through the daemon, as a
@@ -93,8 +94,8 @@ void MainComponent::runRecordPlan (RecordStartPlan& plan)
     if (punch && (twinStartInFlight || remoteStartInFlight))
     {
         remotePunchRefused = true;
-        showStatus (juce::String (twinStartInFlight ? "Twin" : "Remote")
-                    + " RECORD refused -- this Mac would punch into its take; clear the EDIT cursor or selection and stop playback");
+        showRecordRefusal (juce::String (twinStartInFlight ? "Twin" : "Remote")
+                           + " RECORD refused -- this Mac would punch into its take; clear the EDIT cursor or selection and stop playback");
         return;
     }
     applyRecordAutoRouting (plan);
@@ -135,7 +136,7 @@ bool MainComponent::handleRecordPressDuringTake()
     // on the next RECORD press -- that would look protected while it is not.
     if (useCaptureDaemon && ! captureSupervisor.isAttached())
     {
-        showStatus ("Capture daemon is unavailable -- reconnect or disable daemon mode before recording");
+        showRecordRefusal ("Capture daemon is unavailable -- reconnect or disable daemon mode before recording");
         return true;
     }
 
@@ -145,7 +146,7 @@ bool MainComponent::handleRecordPressDuringTake()
     // completing a take with the requested deliverable missing.
     if (daemonModeActive() && engine.getRecordStereoMix())
     {
-        showStatus ("Stereo stream-mix recording is unavailable in capture-daemon mode; disable it or use in-process capture");
+        showRecordRefusal ("Stereo stream-mix recording is unavailable in capture-daemon mode; disable it or use in-process capture");
         return true;
     }
 
@@ -192,21 +193,20 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     const int numTracks = recorder.getNumTracks();
     if (numTracks == 0)
     {
-        statusLabel.setText ("Add a channel with +CH before recording.", juce::dontSendNotification);
+        showRecordRefusal ("Add a channel with +CH before recording.");
         return false;
     }
 
     auto* device = engine.getDeviceManager().getCurrentAudioDevice();
     if (device == nullptr)
     {
-        statusLabel.setText ("No audio device open -- pick one with DEVICE.", juce::dontSendNotification);
+        showRecordRefusal ("No audio device open -- pick one with DEVICE.");
         return false;
     }
     const int numInputs = device->getActiveInputChannels().countNumberOfSetBits();
     if (numInputs == 0)
     {
-        statusLabel.setText ("Device has 0 active inputs -- open DEVICE and enable inputs.",
-                             juce::dontSendNotification);
+        showRecordRefusal ("Device has 0 active inputs -- open DEVICE and enable inputs.");
         return false;
     }
 
@@ -219,8 +219,7 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed)) ++armed;
     if (armed == 0)
     {
-        statusLabel.setText ("Arm at least one track (R button) before recording.",
-                             juce::dontSendNotification);
+        showRecordRefusal ("Arm at least one track (R button) before recording.");
         return false;
     }
 
@@ -232,7 +231,7 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
                            || recorder.getTrack (i).streamSend.load (std::memory_order_relaxed);
         if (! hasStreamSource)
         {
-            showStatus ("StereoMix is enabled but no channel is sent to STREAM; enable a STREAM send before recording");
+            showRecordRefusal ("StereoMix is enabled but no channel is sent to STREAM; enable a STREAM send before recording");
             return false;
         }
     }
@@ -256,10 +255,9 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
                 return ((k == std::floor (k)) ? juce::String ((int) k)
                                               : juce::String (k, 1)) + " kHz";
             };
-            statusLabel.setText ("Recording blocked -- device " + khz (devSR)
-                                 + " != session " + khz (sessionSR)
-                                 + ". Match the clock first.",
-                                 juce::dontSendNotification);
+            showRecordRefusal ("Recording blocked -- device " + khz (devSR)
+                               + " != session " + khz (sessionSR)
+                               + ". Match the clock first.");
             srMismatchWarned = 0.0;          // re-arm so the dialog pops again
             checkDeviceSampleRate (devSR);   // show the explanatory warning
             return false;                    // <-- do NOT start recording
@@ -293,10 +291,8 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
         if (freeBytes > 0 && freeBytes < wantBytes)
         {
             const double freeGB = freeBytes / 1.0e9;
-            statusLabel.setText ("Drive has only "
-                                 + juce::String (freeGB, 1)
-                                 + " GB free -- < 30 min headroom. Clear space before recording.",
-                                 juce::dontSendNotification);
+            showRecordRefusal ("Drive has only " + juce::String (freeGB, 1)
+                               + " GB free -- < 30 min headroom. Clear space before recording.");
             return false;
         }
     }
@@ -382,7 +378,7 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
 {
     auto& recorder = engine.getRecorder();
     if (! configureCaptureDaemon())
-    { showStatus ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
+    { showRecordRefusal ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
     juce::BigInteger arms;
     for (int i = 0; i < plan.numTracks; ++i)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
@@ -404,8 +400,7 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
         recordButton.setButtonText ("STOP");
     }
     else
-        statusLabel.setText ("Daemon record failed -- check Session > Capture daemon.",
-                             juce::dontSendNotification);
+        showRecordRefusal ("Daemon record failed -- check Session > Capture daemon.");
 }
 
 bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
@@ -445,7 +440,7 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
                 engine.clearCaptureWindow();
                 recorder.cancelPunchIn();
                 engine.setPunchModeOn (false);
-                showStatus (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
+                showRecordRefusal (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
                     : "Selection punch refused -- check take and backup/mirror copies");
                 return true;
             }
@@ -513,11 +508,10 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
     }
     else
     {
-        statusLabel.setText (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
-                             : plan.continueTake && ! plan.continueAppend
-                             ? "Punch refused -- could not safely open the existing take or writer files"
-                             : "Failed to start recording -- could not open writer files.",
-                             juce::dontSendNotification);
+        showRecordRefusal (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
+                           : plan.continueTake && ! plan.continueAppend
+                           ? "Punch refused -- could not safely open the existing take or writer files"
+                           : "Failed to start recording -- could not open writer files.");
     }
 }
 
@@ -856,7 +850,7 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         if (useCaptureDaemon && ! captureSupervisor.isAttached())
         {
             error = "capture daemon is unavailable";
-            showStatus ("Remote RECORD refused -- capture daemon is unavailable");
+            showRecordRefusal ("Remote RECORD refused -- capture daemon is unavailable");
             return false;
         }
         // During a punch's post-roll a RECORD press would end the punch.
@@ -980,6 +974,18 @@ void MainComponent::applyLockState()
                               : engine.isRecording()  ? "Recording"
                               : engine.isPlaying()    ? "Playing"
                                                       : "Idle");
+}
+
+void MainComponent::forgetSessionUiState()
+{
+    lastCaptureFinalizationError.clear();
+    recordRefusal.clear();
+    cues.clear();
+    currentCueIndex = -1;
+    setlistBar.setCues (cues, currentCueIndex);
+    cueRamp.active = false;     // its strip indices mean nothing in the next session
+    wasInsidePunch = false;
+    analysisJobs.cancel();
 }
 
 void MainComponent::onVscClicked()

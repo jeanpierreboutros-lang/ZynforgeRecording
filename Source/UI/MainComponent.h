@@ -12,6 +12,7 @@
 #include "../Network/SessionMirror.h"
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
+#include "AlarmBanner.h"
 #include "AutomationToolbar.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
@@ -446,6 +447,9 @@ private:
     void updateClockAndDiskCadence (double deviceSR);
     void updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing);
     void updateCaptureWarnings (const zynforge::EngineStatus& status);
+    // The loud row: a standing alarm, or a refused RECORD until it times out.
+    void refreshAlarmBanner();
+    void showRecordRefusal (const juce::String& reason);
     // Open a modal warning if the loaded session's SR doesn't match the device.
     void warnIfSampleRateMismatch();
 
@@ -527,6 +531,9 @@ private:
     juce::Label  titleLabel        { {}, "ZYNFORGE  RECORDING" };
     juce::Label  statusLabel       { {}, "Idle" };
     juce::String activeCaptureWarning;
+    zynforge::AlarmBanner alarmBanner;
+    juce::String recordRefusal;              // shown in the banner, then clears itself
+    juce::uint32 recordRefusalShownMs { 0 };
     juce::Label  midiStatusLabel   { {}, "" };
     juce::Label  nextCueLabel      { {}, "" };
     juce::Label  danteLabel        { {}, "" };

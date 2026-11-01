@@ -127,6 +127,8 @@ MainComponent::MainComponent()
     twinStatusLabel.setMinimumHorizontalScale (0.8f);
     addChildComponent (twinStatusLabel);
 
+    addChildComponent (alarmBanner);
+
     punchPill.setJustificationType (juce::Justification::centred);
     punchPill.setFont (brand::type::ui (12.0f, true));
     punchPill.setMinimumHorizontalScale (0.8f);

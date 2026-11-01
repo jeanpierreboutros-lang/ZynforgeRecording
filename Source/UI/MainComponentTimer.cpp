@@ -469,6 +469,36 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             statusLabel.setText ("Idle", juce::dontSendNotification);
         activeCaptureWarning.clear();
     }
+    refreshAlarmBanner();
+}
+
+void MainComponent::refreshAlarmBanner()
+{
+    constexpr juce::uint32 kRefusalShownMs = 8000;
+    if (recordRefusal.isNotEmpty()
+        && (engine.isRecording()
+            || juce::Time::getMillisecondCounter() - recordRefusalShownMs > kRefusalShownMs))
+        recordRefusal.clear();
+
+    // What threatens the take outranks a refused press. A failed finalization
+    // stays up after STOP, until the next take or another session.
+    auto text = activeCaptureWarning;
+    if (text.isEmpty()) text = lastCaptureFinalizationError;
+    if (text.isEmpty() && engine.isRecording()) text = srWarnLabel.getText();
+    if (text.isEmpty()) text = recordRefusal;
+
+    // Everything is danger but the quiet "no signal yet" notice, which has no '!'.
+    const auto level = activeCaptureWarning.isNotEmpty() && ! activeCaptureWarning.containsChar ('!')
+                           ? AlarmBanner::Level::Notice : AlarmBanner::Level::Danger;
+    if (alarmBanner.show (text, level)) resized();
+}
+
+void MainComponent::showRecordRefusal (const juce::String& reason)
+{
+    recordRefusal = reason;
+    recordRefusalShownMs = juce::Time::getMillisecondCounter();
+    showStatus (reason);
+    refreshAlarmBanner();
 }
 
 // Query SMART health for the session + backup volumes on a BACKGROUND thread.
