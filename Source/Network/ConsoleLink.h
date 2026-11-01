@@ -90,7 +90,11 @@ namespace zynforge
         // however it came about, and before any action on the desk: gains and a
         // saved patch from another show must never reach this one. An empty
         // file means no session.
-        void       setSessionDir (const juce::File&);
+        // With mayReadDisk false (a take is on disk, and this runs on the message
+        // thread) the new session's saved state is read by a later call.
+        void       setSessionDir (const juce::File&, bool mayReadDisk = true);
+        // The state file written off this thread, for mid-take saves.
+        void       saveInBackground (const juce::File& sessionDir) const;
 
         // Progress callback (message thread): fired when a routing reply
         // or gain reply arrives, and when enter/exit/restore complete.
@@ -150,6 +154,7 @@ namespace zynforge
         void confirmDialectForTests() noexcept { dialectConfirmed = true; }
 
     private:
+        bool stateLoadPending { false };
         friend class NetworkFixTests;
         void handleMessage (const ConsoleMessage&);
         // ONE repeating heartbeat, three jobs; it runs while the link is up.

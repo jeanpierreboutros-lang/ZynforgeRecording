@@ -2,13 +2,99 @@
 #include "AtomicFile.h"
 #include "SessionRepair.h"
 
+#include <juce_events/juce_events.h>
+
 #include <algorithm>
+#include <mutex>
+#include <optional>
+#include <thread>
 
 namespace zynforge
 {
     static juce::File markersFileFor (const juce::File& dir)
     {
         return dir.getChildFile ("markers.json");
+    }
+
+    static bool writeMarkers (const juce::File& dir, const juce::String& json, juce::File& kept)
+    {
+        if (! dir.isDirectory()) return false;
+        kept = sessionrepair::keepIfUnreadable (markersFileFor (dir));
+        return atomicfile::writeText (markersFileFor (dir), json);
+    }
+
+    // The newest list waiting to reach the disk. Only the newest matters, each
+    // one is the whole list, and the thread exits once nothing is waiting. It
+    // owns this and nothing of the manager, so a write that never returns
+    // strands only that thread.
+    struct MarkersManager::SaveQueue
+    {
+        struct Save { juce::File dir; juce::String json; };
+
+        std::mutex lock;
+        std::optional<Save> waiting;
+        bool writing { false };
+        std::function<void()> beforeWriteForTests;
+        MarkersManager* owner { nullptr };   // message thread only
+
+        // Later saves must queue behind a write in progress, or a slow old list
+        // could land on top of a newer one.
+        bool isBusy()
+        {
+            const std::lock_guard<std::mutex> guard (lock);
+            return writing;
+        }
+
+        static void add (const std::shared_ptr<SaveQueue>& queue, Save save)
+        {
+            {
+                const std::lock_guard<std::mutex> guard (queue->lock);
+                queue->waiting = std::move (save);
+                if (queue->writing) return;
+                queue->writing = true;
+            }
+            std::thread ([queue]
+            {
+                juce::Thread::setCurrentThreadName ("Marker writer");
+                for (;;)
+                {
+                    Save next;
+                    std::function<void()> hook;
+                    {
+                        const std::lock_guard<std::mutex> guard (queue->lock);
+                        if (! queue->waiting.has_value()) { queue->writing = false; return; }
+                        next = std::move (*queue->waiting);
+                        queue->waiting.reset();
+                        hook = queue->beforeWriteForTests;
+                    }
+                    if (hook != nullptr) hook();
+                    juce::File kept;
+                    writeMarkers (next.dir, next.json, kept);
+                    if (kept != juce::File())
+                        juce::MessageManager::callAsync ([queue, kept]
+                        {
+                            if (queue->owner != nullptr && queue->owner->onDamagedFileKept != nullptr)
+                                queue->owner->onDamagedFileKept (kept);
+                        });
+                }
+            }).detach();
+        }
+    };
+
+    MarkersManager::MarkersManager() : saveQueue (std::make_shared<SaveQueue>())
+    {
+        saveQueue->owner = this;
+    }
+
+    MarkersManager::~MarkersManager()
+    {
+        saveQueue->owner = nullptr;
+    }
+
+    void MarkersManager::setBeforeDeferredWriteForTests (std::function<void()> hook)
+    {
+        const std::lock_guard<std::mutex> guard (saveQueue->lock);
+        saveQueue->beforeWriteForTests = std::move (hook);
     }
 
     void MarkersManager::setContext (const juce::File& dir, double sr)
@@ -136,7 +222,8 @@ namespace zynforge
 
     bool MarkersManager::save() const
     {
-        if (! sessionDir.isDirectory()) return false;
+        const bool deferred = diskDeferred() || saveQueue->isBusy();
+        if (! deferred && ! sessionDir.isDirectory()) return false;
 
         juce::DynamicObject::Ptr root (new juce::DynamicObject());
         root->setProperty ("sampleRate", sampleRate);
@@ -161,10 +248,16 @@ namespace zynforge
         root->setProperty ("markers", arr);
 
         const auto json = juce::JSON::toString (juce::var (root.get()), true);
-        if (const auto kept = sessionrepair::keepIfUnreadable (markersFileFor (sessionDir));
-            kept != juce::File() && onDamagedFileKept)
+        if (deferred)
+        {
+            SaveQueue::add (saveQueue, { sessionDir, json });
+            return true;
+        }
+        juce::File kept;
+        const bool written = writeMarkers (sessionDir, json, kept);
+        if (kept != juce::File() && onDamagedFileKept)
             onDamagedFileKept (kept);
-        return atomicfile::writeText (markersFileFor (sessionDir), json);
+        return written;
     }
 
     bool MarkersManager::load()

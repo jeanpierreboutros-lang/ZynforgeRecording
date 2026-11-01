@@ -14,6 +14,7 @@
 #include "ChannelAlarm.h"
 #include "ClockSource.h"
 #include "TrackState.h"
+#include "VolumeProbe.h"
 
 namespace zynforge
 {
@@ -289,10 +290,27 @@ namespace zynforge
         // backup is active), divides by the projected rate, and
         // returns whichever drive runs out first. Returns 0 if no
         // session is active or no tracks are armed; returns INT_MAX
-        // when free space is effectively unbounded.
+        // when free space is effectively unbounded. It stats every
+        // destination, so it is for between takes only: once a take is
+        // on disk the numbers come from readDiskEstimate.
         juce::int64 estimateBytesPerSecondForArmedTracks() const noexcept;
         int         estimateMinutesRemaining (const juce::File& primaryVolume,
                                               const juce::File& backupVolume) const noexcept;
+
+        // What the take's volume probes last published. Reads atomics only, so
+        // the window and the daemon can call it however dead a mount is. A copy
+        // that stops answering is left out of `minutes` and flagged; it never
+        // changes the primary's numbers. A primary that stops answering leaves
+        // no number at all.
+        struct DiskEstimate
+        {
+            bool        watching { false };       // a take is on disk
+            int         minutes { 0 };            // 0 = not known
+            juce::int64 primaryFreeBytes { -1 };  // -1 = not known
+            bool        primaryStale { false };
+            bool        copyStale { false };
+        };
+        DiskEstimate readDiskEstimate() const;
 
         // Disk-keep-up health, as a proxy for the SMART data we don't
         // (currently) read. Returns true if actual bytes/sec has been
@@ -602,6 +620,24 @@ namespace zynforge
         std::vector<std::shared_ptr<CaptureCopy>> leftBehind;
         bool isStillLeftBehind (const juce::File& root) const;
         juce::StringArray droppedCopies;   // left out of this take, naming each
+
+        // Every destination of the take on disk, each with its own probe.
+        // Built once before go-live and only read until finalization drops it.
+        struct WatchedVolume
+        {
+            std::shared_ptr<VolumeProbe> probe;
+            std::shared_ptr<const CaptureCopy> copy;
+            int bytesPerSample { 0 };
+        };
+        struct DiskWatch
+        {
+            std::vector<WatchedVolume> volumes;
+            double sampleRate { 0.0 };
+            double startedMs { 0.0 };
+            double staleAfterMs { 0.0 };
+        };
+        void startDiskWatch();
+        std::shared_ptr<const DiskWatch> diskWatch;   // std::atomic_load / store only
         const CaptureCopy* copyAt (int copyIndex) const noexcept;
         bool isCopyAbandoned (int copyIndex) const noexcept;
         int  copyRingFrames (int numCopies, int channels) const noexcept;
@@ -754,6 +790,9 @@ namespace zynforge
         int copyRingFramesForTests { 0 };
         // How long STOP waits on a copy that has stopped making progress.
         double copyStallLimitMs { 30000.0 };
+        VolumeProbe::Reader volumeReaderForTests;
+        int    volumeProbePeriodMs { 2000 };
+        double volumeStaleAfterMs { 15000.0 };
         struct ReportTestHooks
         {
             std::function<void()> beforeScan, beforePublish, afterPublish, finished;

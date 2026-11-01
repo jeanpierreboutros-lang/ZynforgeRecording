@@ -543,9 +543,17 @@ namespace zynforge
         return true;
     }
 
-    void ConsoleLink::setSessionDir (const juce::File& dir)
+    void ConsoleLink::setSessionDir (const juce::File& dir, bool mayReadDisk)
     {
-        if (dir == sessionDir) return;
+        if (dir == sessionDir)
+        {
+            if (mayReadDisk && stateLoadPending)
+            {
+                stateLoadPending = false;
+                if (dir.isDirectory()) loadFrom (dir);
+            }
+            return;
+        }
         sessionDir = dir;
 
         // Gains and any saved patch belong to the session just left. A desk
@@ -567,7 +575,8 @@ namespace zynforge
             patchDeadlineMs = 0;
             patch = Patch::Unknown;
         }
-        if (dir.isDirectory()) loadFrom (dir);
+        stateLoadPending = ! mayReadDisk;
+        if (mayReadDisk && dir.isDirectory()) loadFrom (dir);
     }
 
     // The patch half of the state file, written when the desk moves. Gains keep
@@ -590,6 +599,13 @@ namespace zynforge
         if (! sessionDir.isDirectory()) return false;
         return atomicfile::writeText (sessionDir.getChildFile (kStateFileName),
                                       juce::JSON::toString (toJson()));
+    }
+
+    void ConsoleLink::saveInBackground (const juce::File& sessionDir) const
+    {
+        juce::Thread::launch ([file = sessionDir.getChildFile (kStateFileName),
+                               json = juce::JSON::toString (toJson())]
+                              { atomicfile::writeText (file, json); });
     }
 
     bool ConsoleLink::loadFrom (const juce::File& sessionDir)

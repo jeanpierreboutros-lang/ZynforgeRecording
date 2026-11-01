@@ -774,7 +774,13 @@ void MainComponent::consoleCaptureGains()
             return;
         }
         const auto sess = self->engine.getActiveSessionDir();
-        if (sess.isDirectory() && self->consoleLink.saveTo (sess))
+        if (self->engine.isTakeOnDisk())
+        {
+            self->consoleLink.saveInBackground (sess);
+            self->showStatus (juce::String ((int) self->consoleLink.getCapturedGains().size())
+                              + " head-amp gains captured");
+        }
+        else if (sess.isDirectory() && self->consoleLink.saveTo (sess))
             self->showStatus (juce::String ((int) self->consoleLink.getCapturedGains().size())
                               + " head-amp gains captured -> "
                               + zynforge::ConsoleLink::kStateFileName);

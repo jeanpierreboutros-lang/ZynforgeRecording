@@ -448,7 +448,7 @@ void MainComponent::promptCueName (const juce::String& title,
 
 void MainComponent::addCueAtTransport()
 {
-    if (! engine.getActiveSessionDir().isDirectory())
+    if (! engine.hasSessionFolder())
     {
         showStatus ("Open or create a session before adding cues");
         return;

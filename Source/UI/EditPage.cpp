@@ -222,6 +222,7 @@ namespace zynforge
         // already-recorded tracks.
         void setWaveformsFromSession (const juce::File& sessionDir, bool skipArmedRows = false)
         {
+            waveformSession = sessionDir;
             if (! sessionDir.isDirectory())
             {
                 for (auto& r : rows) r->setWaveformFiles ({}, {});
@@ -265,6 +266,19 @@ namespace zynforge
                 const auto file = engine.getTrackAudioFile (trackIdx, &channel);
                 r->setWaveformFiles (file.existsAsFile() ? file : findTrackFile (trackIdx), {}, channel);
             }
+        }
+
+        // The same outcome for a take on disk, with no disk: resolving a file
+        // means stat and directory scans on the message thread, and the take's
+        // primary may be the mount that has stopped answering. Rows already show
+        // what they should; a new session folder holds nothing to show yet.
+        void holdWaveformsForTake (const juce::File& sessionDir, bool skipArmedRows)
+        {
+            const bool sameSession = sessionDir == waveformSession;
+            waveformSession = sessionDir;
+            for (auto& r : rows)
+                if (! sameSession || (skipArmedRows && rowIsArmed (*r)))
+                    r->setWaveformFiles ({}, {});
         }
 
         // While recording, the WAV files grow on disk but the file path
@@ -497,6 +511,7 @@ namespace zynforge
         juce::AudioFormatManager&                 formats;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>>& thumbCaches;
         std::vector<std::unique_ptr<TrackRow>>    rows;
+        juce::File waveformSession;   // the folder the rows last resolved against
         int                                       viewportHeight { 480 };
         int                                       reorderLineY { -1 };   // swatch-drag drop line; -1 = none
     };
@@ -914,10 +929,18 @@ namespace zynforge
         // that branch) silently skipped the cache and re-scanned every WAV.
         // A dedicated marker makes the load immune to the caller's ordering
         // and also stops the double-load when both branches fire on one tick.
-        if (sessionDir.isDirectory() && sessionDir != waveCacheLoadedFor)
+        if (engine.isTakeOnDisk())
+        {
+            if (sessionDir != waveCacheLoadedFor)
+            {
+                waveCacheLoadedFor = sessionDir;
+                cancelWaveCacheWork();
+            }
+        }
+        else if (sessionDir.isDirectory() && sessionDir != waveCacheLoadedFor)
         {
             waveCacheLoadedFor = sessionDir;
-            if (wavecache::fileIn (sessionDir).existsAsFile() && ! engine.isRecording())
+            if (wavecache::fileIn (sessionDir).existsAsFile())
                 beginWaveCacheLoad (sessionDir);
             else
                 cancelWaveCacheWork();
@@ -942,7 +965,7 @@ namespace zynforge
             // them). A CONTINUE writes a separate new part, so the armed track's
             // existing file is stable -- keep showing its waveform.
             const bool isContinue = engine.getRecorder().getRecordBaseSamples() > 0;
-            list->setWaveformsFromSession (sessionDir, /*skipArmedRows*/ ! isContinue);
+            list->holdWaveformsForTake (sessionDir, /*skipArmedRows*/ ! isContinue);
         }
         else
             // Rows blank until the saved peaks are in: the previous session's

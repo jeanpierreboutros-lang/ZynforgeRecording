@@ -34,10 +34,23 @@ namespace zynforge
     public:
         // Set the active session. Tries to load markers.json from the
         // directory; clears the in-memory list if absent.
+        MarkersManager();
+        ~MarkersManager();
+        MarkersManager (const MarkersManager&) = delete;
+        MarkersManager& operator= (const MarkersManager&) = delete;
+
         void setContext (const juce::File& sessionDir, double sampleRate);
         void clearContext();
 
-        bool hasContext() const noexcept       { return sessionDir.isDirectory(); }
+        // True while the session's volume must not be touched from the calling
+        // thread (a take is on disk, and a dead mount would freeze STOP). Saves
+        // then go to a writer thread and the markers stay safe in memory.
+        std::function<bool()> deferDiskWhile;
+
+        bool hasContext() const
+        {
+            return diskDeferred() ? sessionDir != juce::File() : sessionDir.isDirectory();
+        }
         juce::File getSessionDir() const       { return sessionDir; }
         double     getSampleRate() const       { return sampleRate; }
 
@@ -66,7 +79,13 @@ namespace zynforge
         // A save moved a damaged markers.json aside rather than replace it.
         std::function<void (const juce::File& kept)> onDamagedFileKept;
 
+        struct SaveQueue;
+        // Called on the writer thread just before it touches the disk.
+        void setBeforeDeferredWriteForTests (std::function<void()> hook);
+
     private:
+        bool diskDeferred() const { return deferDiskWhile != nullptr && deferDiskWhile(); }
+
         // Keep `markers` ascending by sampleOffset (stable, so equal-position
         // markers preserve insertion order). Consumers — next/previous nav,
         // timeline draw order — assume ascending.
@@ -79,5 +98,6 @@ namespace zynforge
         // removeMarker() can't make the next auto-name collide with an existing
         // one (which the old markers.size()+1 scheme did).
         int          markerCounter { 0 };
+        std::shared_ptr<SaveQueue> saveQueue;
     };
 }

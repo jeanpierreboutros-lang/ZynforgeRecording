@@ -375,9 +375,11 @@ namespace zynforge::capture
         s.sessionPath    = recorder.getActiveSessionDir().getFullPathName();
         s.positionSamples = recorder.getRecordTimelineSamples();
         s.elapsedSamples = recorder.getSamplesSinceStart();
-        if (s.recording)
-            s.minutesRemaining = recorder.estimateMinutesRemaining (
-                recorder.getActiveSessionDir(), recorder.getBackupDirectory());
+        const auto disk = recorder.readDiskEstimate();
+        s.minutesRemaining = disk.minutes;
+        s.primaryFreeBytes = disk.primaryFreeBytes;
+        s.primaryDiskStale = disk.primaryStale;
+        s.copyDiskStale    = disk.copyStale;
         s.sampleRate     = currentSampleRate.load();
         s.blockSize      = currentBlockSize.load();
         s.audioLoadPct    = audioLoadPct.load();

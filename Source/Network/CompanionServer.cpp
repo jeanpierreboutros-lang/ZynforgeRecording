@@ -389,7 +389,8 @@ function render(state) {
     for (const issue of issues) { const li = document.createElement("li"); li.textContent = issue; warningsEl.append(li); }
     for (const notice of notices) { const li = document.createElement("li"); li.className = "notice"; li.textContent = notice; warningsEl.append(li); }
     metrics.replaceChildren();
-    metric("Time remaining", state.minutesRemaining > 0 ? state.minutesRemaining + " min" : "—");
+    metric("Time remaining", state.primaryDiskStale ? "stale"
+        : state.minutesRemaining > 0 ? state.minutesRemaining + (state.copyDiskStale ? " min (primary only)" : " min") : "—");
     metric("Missed samples", String(state.missedSamples || 0));
     metric("Audio load", Math.round(state.audioLoadPct || 0) + "%");
     metric("Writer ring", Math.round(state.ringFillPct || 0) + "%");

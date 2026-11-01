@@ -855,6 +855,7 @@ namespace zynforge
             return false;
         }
 
+        startDiskWatch();
         goLive (take);
         wentLive = true;
         return true;
@@ -2294,6 +2295,8 @@ namespace zynforge
         // Clean stop -- remove the recovery marker.
         if (activeSessionDir.isDirectory())
             activeSessionDir.getChildFile ("recording.session").deleteFile();
+
+        std::atomic_store (&diskWatch, std::shared_ptr<const DiskWatch>());
     }
 
     // The exact BWF stamp, on every WAV this pass wrote: the first frame's real
@@ -3273,20 +3276,21 @@ namespace zynforge
         return (float) worst;
     }
 
+    static int bytesPerSampleOf (CaptureFormat format) noexcept
+    {
+        switch (format)
+        {
+            case CaptureFormat::Wav16:  case CaptureFormat::Aiff16: case CaptureFormat::Flac16: return 2;
+            case CaptureFormat::Wav32Float: case CaptureFormat::Aiff32Float:                    return 4;
+            default: return 3;
+        }
+    }
+
     juce::int64 MultitrackRecorder::estimateBytesPerSecondForArmedTracks() const noexcept
     {
         // bytesPerSec for a single armed mono track = sampleRate * bitsPerSample / 8.
-        auto bitsFor = [] (CaptureFormat f) -> int
-        {
-            switch (f)
-            {
-                case CaptureFormat::Wav16:  case CaptureFormat::Aiff16: case CaptureFormat::Flac16: return 16;
-                case CaptureFormat::Wav32Float: case CaptureFormat::Aiff32Float:                    return 32;
-                default: return 24;
-            }
-        };
-        const int bytesPerSampPrimary = bitsFor (captureFormat)       / 8;
-        const int bytesPerSampBackup  = bitsFor (backupCaptureFormat) / 8;
+        const int bytesPerSampPrimary = bytesPerSampleOf (captureFormat);
+        const int bytesPerSampBackup  = bytesPerSampleOf (backupCaptureFormat);
         const bool backupOn = isRecording()
                                 ? (backupActive.load (std::memory_order_relaxed)
                                    && ! backupFailed.load (std::memory_order_relaxed))
@@ -3317,12 +3321,12 @@ namespace zynforge
             for (size_t mi = 0; mi < activeMirrors.size(); ++mi)
                 if (const auto* copy = copyAt (2 + (int) mi))
                     mirrorChannelBytes += copy->liveChannels.load (std::memory_order_relaxed)
-                                        * (bitsFor (activeMirrors[mi].format) / 8);
+                                        * bytesPerSampleOf (activeMirrors[mi].format);
         }
         else
         {
             for (const auto& mc : mirrorConfigs)
-                mirrorChannelBytes += captureChannels * (bitsFor (mc.format) / 8);
+                mirrorChannelBytes += captureChannels * bytesPerSampleOf (mc.format);
         }
 
         // FLAC compresses ~50% typical; treat its byte rate as the
@@ -3335,18 +3339,73 @@ namespace zynforge
                                  + mirrorChannelBytes));
     }
 
+    void MultitrackRecorder::startDiskWatch()
+    {
+        auto watch = std::make_shared<DiskWatch>();
+        watch->sampleRate   = sampleRate;
+        watch->startedMs    = juce::Time::getMillisecondCounterHiRes();
+        watch->staleAfterMs = volumeStaleAfterMs;
+        const VolumeProbe::Reader reader = volumeReaderForTests != nullptr ? volumeReaderForTests
+                                                                           : VolumeProbe::readVolume;
+        for (const auto& copy : copies)
+        {
+            const auto format = copy->copyIndex == 0 ? captureFormat
+                              : copy->copyIndex == 1 ? backupCaptureFormat
+                                                     : activeMirrors[(std::size_t) copy->copyIndex - 2].format;
+            watch->volumes.push_back ({ std::make_shared<VolumeProbe> (copy->root, reader, volumeProbePeriodMs),
+                                        copy, bytesPerSampleOf (format) });
+        }
+        std::atomic_store (&diskWatch, std::shared_ptr<const DiskWatch> (std::move (watch)));
+    }
+
+    MultitrackRecorder::DiskEstimate MultitrackRecorder::readDiskEstimate() const
+    {
+        DiskEstimate estimate;
+        const auto watch = std::atomic_load (&diskWatch);
+        if (watch == nullptr) return estimate;
+        estimate.watching = true;
+
+        // Copies on one volume drain it together; a mirror on its own drive
+        // must not shorten the primary's figure.
+        struct Volume { juce::uint64 id; juce::int64 freeBytes; juce::int64 bytesPerMinute; };
+        std::vector<Volume> volumes;
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        for (const auto& watched : watch->volumes)
+        {
+            const bool isPrimary = watched.copy->copyIndex == 0;
+            const auto channels  = watched.copy->liveChannels.load (std::memory_order_relaxed);
+            if (! isPrimary && channels <= 0) continue;   // not writing: no drive to run out of
+
+            const auto reading = watched.probe->latest();
+            if (now - (reading.atMs > 0.0 ? reading.atMs : watch->startedMs) > watch->staleAfterMs)
+            {
+                (isPrimary ? estimate.primaryStale : estimate.copyStale) = true;
+                continue;
+            }
+            if (reading.atMs <= 0.0
+                || ! preflight::freeSpaceKnown (reading.freeBytes, reading.totalBytes)) continue;
+            if (isPrimary) estimate.primaryFreeBytes = reading.freeBytes;
+
+            const auto rate = (juce::int64) (watch->sampleRate * channels * watched.bytesPerSample * 60.0);
+            const auto volume = std::find_if (volumes.begin(), volumes.end(), [&] (const Volume& v)
+                                              { return reading.volumeId != 0 && v.id == reading.volumeId; });
+            if (volume != volumes.end()) volume->bytesPerMinute += rate;
+            else volumes.push_back ({ reading.volumeId, reading.freeBytes, rate });
+        }
+        if (estimate.primaryFreeBytes < 0) return estimate;   // no primary, no figure
+
+        int minutes = std::numeric_limits<int>::max();
+        for (const auto& volume : volumes)
+            if (volume.bytesPerMinute > 0)
+                minutes = juce::jmin (minutes, (int) juce::jmin ((juce::int64) std::numeric_limits<int>::max(),
+                                                                 volume.freeBytes / volume.bytesPerMinute));
+        estimate.minutes = minutes == std::numeric_limits<int>::max() ? 0 : minutes;
+        return estimate;
+    }
+
     int MultitrackRecorder::estimateMinutesRemaining (const juce::File& primaryVolume,
                                                       const juce::File& backupVolume) const noexcept
     {
-        auto bitsFor = [] (CaptureFormat f) -> int
-        {
-            switch (f)
-            {
-                case CaptureFormat::Wav16: case CaptureFormat::Aiff16: case CaptureFormat::Flac16: return 16;
-                case CaptureFormat::Wav32Float: case CaptureFormat::Aiff32Float: return 32;
-                default: return 24;
-            }
-        };
         int captureChannels = 0;
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
@@ -3360,11 +3419,9 @@ namespace zynforge
         }
         if (sampleRate <= 0.0 || captureChannels <= 0) return 0;
 
-        const auto rateFor = [&] (CaptureFormat f, int channels = -1) -> juce::int64
+        const auto rateFor = [&] (CaptureFormat f) -> juce::int64
         {
-            return (juce::int64) (sampleRate
-                                  * (channels >= 0 ? channels : captureChannels)
-                                  * (bitsFor (f) / 8));
+            return (juce::int64) (sampleRate * captureChannels * bytesPerSampleOf (f));
         };
         constexpr int kEffectivelyUnbounded = std::numeric_limits<int>::max() / 2;
 
@@ -3392,23 +3449,14 @@ namespace zynforge
         };
 
         addVolumeRate (primaryVolume, rateFor (captureFormat));
-        const bool rolling = isRecording();
-        if (backupVolume.exists()
-            && (rolling ? backupActive.load (std::memory_order_relaxed)
-                        : backupDir.isDirectory()))
+        // A copy stuck after the last take is exactly the path that would hang
+        // these stats, and the take after it will not use that destination.
+        if (! isStillLeftBehind (backupVolume) && backupVolume.exists() && backupDir.isDirectory())
             addVolumeRate (backupVolume, rateFor (backupCaptureFormat));
 
-        const auto& mirrors = rolling ? activeMirrors : mirrorConfigs;
-        for (size_t mi = 0; mi < mirrors.size(); ++mi)
-        {
-            int channels = captureChannels;
-            if (rolling)
-            {
-                const auto* copy = copyAt (2 + (int) mi);
-                channels = copy != nullptr ? copy->liveChannels.load (std::memory_order_relaxed) : 0;
-            }
-            addVolumeRate (mirrors[mi].root, rateFor (mirrors[mi].format, channels));
-        }
+        for (const auto& mirror : mirrorConfigs)
+            if (! isStillLeftBehind (mirror.root))
+                addVolumeRate (mirror.root, rateFor (mirror.format));
 
         int minutes = kEffectivelyUnbounded;
         for (const auto& volume : volumes)

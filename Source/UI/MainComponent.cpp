@@ -481,6 +481,11 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
     zynforge::bwf::TimeAnchor timecode;
     juce::String refusal;
     bool unanswered = false;
+    // Before asking: once the daemon rolls, this thread stays off its volume.
+    auto& markers = engine.getMarkers();
+    const auto markerSession = markers.getSessionDir();
+    const auto markerRate    = markers.getSampleRate();
+    markers.setContext (dir, rate);
     if (captureSupervisor.startRecording (dir, numTracks, (int) engine.getRecorder().getCaptureFormat(), arms,
                                           engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var(),
                                           &refusal, &unanswered))
@@ -504,7 +509,6 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
     {
         // Not a refusal. The window must not call this failed and move on while
         // the daemon rolls into a session it does not know about.
-        dir.createDirectory();
         lastCaptureFinalizationError.clear();
         engine.beginExternalTake (dir, rate);
         engine.claimMixerFor (dir);
@@ -515,8 +519,11 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         showStatus ("Daemon has not answered RECORD yet -- the take may be rolling");
     }
     else
+    {
+        markers.setContext (markerSession, markerRate);
         showRecordRefusal (refusal.isNotEmpty() ? "Daemon refused RECORD: " + refusal
                                                 : juce::String ("Daemon record failed -- check Session > Capture daemon."));
+    }
 }
 
 bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
@@ -1277,7 +1284,7 @@ void MainComponent::onFileMenuClicked()
 {
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     const auto activeDir   = engine.getActiveSessionDir();
-    const bool hasActive   = activeDir.isDirectory();
+    const bool hasActive   = engine.hasSessionFolder();
 
     juce::PopupMenu menu;
     menu.addItem (1, "Open Session...");
@@ -1487,7 +1494,7 @@ void MainComponent::confirmAndQuit()
     }
     const bool recording = engine.isRecording() || captureSupervisor.isDaemonRecording();
     const auto activeDir = engine.getActiveSessionDir();
-    const bool hasActiveSession = activeDir.isDirectory() && engine.mixerBelongsTo (activeDir);
+    const bool hasActiveSession = engine.hasSessionFolder() && engine.mixerBelongsTo (activeDir);
 
     // Recording in progress is its own conversation -- two buttons,
     // primary "Stop & Quit" / Cancel. No Save question because the
@@ -1630,6 +1637,12 @@ void MainComponent::confirmAndQuit()
 
 void MainComponent::showPreflightChecklist()
 {
+    // Every check below goes to the drives, from this thread.
+    if (engine.isTakeOnDisk())
+    {
+        showStatus ("Pre-flight reads the drives -- run it before the take or after STOP");
+        return;
+    }
     // Build a one-screen status report -- green checks for what's OK,
     // amber warnings for risks, red items for blockers. Engineer
     // reads this before downbeat to verify the rig.

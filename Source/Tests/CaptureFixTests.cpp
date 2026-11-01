@@ -936,15 +936,56 @@ namespace zynforge
                 }, 5000), "no fresh daemon status");
                 expect (main.engine.dropMarkerAtCurrentPosition ("Scene 1") > 0, "the marker was refused");
 
+                // The write goes behind the take, on its own thread.
+                expect (pumpUntil ([&]
+                {
+                    return rig.session.getChildFile ("markers.json").loadFileAsString().contains ("Scene 1");
+                }, 5000), "the take has no marker file");
                 expectEquals (previous.getChildFile ("markers.json").loadFileAsString(), before,
                               "the marker went into the previous session");
-                expect (rig.session.getChildFile ("markers.json").loadFileAsString().contains ("Scene 1"),
-                        "the take has no marker file");
 
                 bool done = false;
                 main.stopActiveCaptureAsync (false, [&] (bool) { done = true; });
                 expect (pumpUntil ([&] { return done; }, 8000));
                 expect (main.engine.getMarkers().getCount() >= 1, "the marker did not survive STOP");
+            }
+
+            beginTest ("A drive that stops answering cannot hold the daemon or its STOP");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                juce::WaitableEvent released { true };
+                const juce::ScopeGuard letGo { [&released] { released.signal(); } };
+                auto& recorder = rig.daemon.getRecorder();
+                recorder.volumeProbePeriodMs = 10;
+                recorder.volumeStaleAfterMs = 200.0;
+                recorder.volumeReaderForTests = [&released] (const juce::File&)
+                {
+                    released.wait (-1);
+                    return VolumeProbe::Reading();
+                };
+                if (! startTake (rig, rig.session)) return;
+
+                // Status can only keep arriving if nothing under the daemon's
+                // command lock is waiting on the drive.
+                expect (pumpUntil ([&]
+                {
+                    main.serviceCaptureDaemonLink();
+                    const auto status = main.engine.captureStatus();
+                    return status.source == "daemon" && status.primaryDiskStale;
+                }, 8000), "the stale reading never reached the window");
+                const auto status = main.engine.captureStatus();
+                expectEquals (status.minutesRemaining, 0, "a stale drive still showed a number");
+                expectEquals (status.primaryFreeBytes, (juce::int64) -1);
+
+                main.updateCaptureWarnings (status);
+                expect (main.alarmBanner.getText().contains ("PRIMARY DRIVE NOT ANSWERING"),
+                        main.alarmBanner.getText());
+
+                bool done = false;
+                main.stopActiveCaptureAsync (false, [&] (bool) { done = true; });
+                expect (pumpUntil ([&] { return done; }, 8000), "STOP waited on the dead drive");
             }
 
             beginTest ("A window that reattaches can mark the take it found");
@@ -961,7 +1002,10 @@ namespace zynforge
                         && main.engine.captureStatus().source == "daemon";
                 }, 8000));
                 expect (main.engine.dropMarkerAtCurrentPosition ("After the crash") > 0, "the marker was refused");
-                expect (rig.session.getChildFile ("markers.json").loadFileAsString().contains ("After the crash"));
+                expect (pumpUntil ([&]
+                {
+                    return rig.session.getChildFile ("markers.json").loadFileAsString().contains ("After the crash");
+                }, 5000), "the marker never reached the take's folder");
             }
 
             beginTest ("Missed samples and copy problems reach the banner");
@@ -1359,6 +1403,232 @@ namespace zynforge
             everyCopyMatches();
             ringMemory();
             stuckDriveReadings();
+            hungVolumeStats();
+            markersBehindTheTake();
+            refusedStartLeavesNothing();
+        }
+
+        // A stat that can be stopped from answering.
+        struct Volume
+        {
+            Volume (juce::int64 freeBytes, juce::uint64 id)
+            {
+                answer.freeBytes = freeBytes;
+                answer.totalBytes = freeBytes * 2;
+                answer.volumeId = id;
+            }
+            ~Volume() { released.signal(); }
+            VolumeProbe::Reading read()
+            {
+                if (holding.load()) released.wait (-1);
+                return answer;
+            }
+            VolumeProbe::Reading answer;
+            std::atomic<bool> holding { false };
+            juce::WaitableEvent released { true };
+        };
+
+        // Run on a thread of its own: code that wrongly waits on the hung stat
+        // has to fail this test, not wedge the whole suite.
+        static bool finishesWithin (int timeoutMs, std::function<void()> work)
+        {
+            auto finished = std::make_shared<juce::WaitableEvent> (true);
+            std::thread ([finished, work = std::move (work)]
+            {
+                work();
+                finished->signal();
+            }).detach();
+            return finished->wait (timeoutMs);
+        }
+
+        bool readsUntil (MultitrackRecorder& rec,
+                         const std::function<bool (const MultitrackRecorder::DiskEstimate&)>& wanted,
+                         MultitrackRecorder::DiskEstimate& out)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+            while (juce::Time::getMillisecondCounterHiRes() < end)
+            {
+                auto reading = std::make_shared<MultitrackRecorder::DiskEstimate>();
+                if (! finishesWithin (1000, [&rec, reading] { *reading = rec.readDiskEstimate(); }))
+                {
+                    expect (false, "reading the estimate waited on the drive");
+                    return false;
+                }
+                out = *reading;
+                if (wanted (out)) return true;
+                juce::Thread::sleep (5);
+            }
+            return false;
+        }
+
+        void hungVolumeStats()
+        {
+            using Estimate = MultitrackRecorder::DiskEstimate;
+            // 8,640,000 bytes a minute: one 24-bit channel at 48 kHz.
+            constexpr juce::int64 kPerMinute = 8640000;
+
+            beginTest ("A drive that stops answering costs only its own reading");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (dirs.backup);
+                rec.volumeProbePeriodMs = 10;
+                rec.volumeStaleAfterMs = 200.0;
+                // The backup would fill first, so a held-over backup figure shows.
+                auto primary = std::make_shared<Volume> (kPerMinute * 1000, 1);
+                auto backup  = std::make_shared<Volume> (kPerMinute * 100, 2);
+                rec.volumeReaderForTests = [primary, backup, session = dirs.session] (const juce::File& root)
+                {
+                    return (root == session ? primary : backup)->read();
+                };
+                expect (! rec.readDiskEstimate().watching, "nothing to watch before a take");
+                expect (rec.startRecording (dirs.session));
+
+                Estimate seen;
+                expect (readsUntil (rec, [] (const Estimate& e) { return e.minutes == 100; }, seen),
+                        "the first volume to fill should set the figure");
+                expect (seen.watching);
+                expectEquals (seen.primaryFreeBytes, kPerMinute * 1000);
+                expect (! seen.primaryStale && ! seen.copyStale);
+
+                backup->holding.store (true);
+                backup->released.reset();
+                expect (readsUntil (rec, [] (const Estimate& e) { return e.copyStale; }, seen),
+                        "a copy's dead drive never read as stale");
+                expectEquals (seen.minutes, 1000, "the primary's figure must stand alone");
+                expectEquals (seen.primaryFreeBytes, kPerMinute * 1000);
+                expect (! seen.primaryStale, "a copy's stat decided the primary's reading");
+
+                backup->holding.store (false);
+                backup->released.signal();
+                expect (readsUntil (rec, [] (const Estimate& e) { return ! e.copyStale && e.minutes == 100; }, seen),
+                        "a drive that came back should read as live again");
+
+                primary->holding.store (true);
+                primary->released.reset();
+                expect (readsUntil (rec, [] (const Estimate& e) { return e.primaryStale; }, seen),
+                        "a primary that stopped answering never read as stale");
+                expectEquals (seen.minutes, 0, "a stale primary still gave a confident number");
+                expectEquals (seen.primaryFreeBytes, (juce::int64) -1);
+
+                expect (finishesWithin (20000, [&rec] { rec.stopRecording(); }), "STOP waited on the stat");
+                expect (! rec.readDiskEstimate().watching, "the probes outlived the take");
+                primary->released.signal();
+            }
+
+            beginTest ("Copies on one drive drain it together");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (dirs.backup);
+                rec.volumeProbePeriodMs = 10;
+                auto shared = std::make_shared<Volume> (kPerMinute * 1000, 7);
+                rec.volumeReaderForTests = [shared] (const juce::File&) { return shared->read(); };
+                expect (rec.startRecording (dirs.session));
+                Estimate seen;
+                expect (readsUntil (rec, [] (const Estimate& e) { return e.minutes == 500; }, seen),
+                        "two copies on one volume should halve its time");
+                rec.stopRecording();
+            }
+
+            beginTest ("Two real paths on one drive read as one volume");
+            {
+                Dirs dirs;
+                const auto a = VolumeProbe::readVolume (dirs.session);
+                const auto b = VolumeProbe::readVolume (dirs.backup);
+                expect (a.volumeId != 0, "no volume id");
+                expect (a.volumeId == b.volumeId);
+                expect (a.totalBytes > 0);
+                const auto missing = VolumeProbe::readVolume (dirs.session.getChildFile ("a").getChildFile ("b"));
+                expect (missing.volumeId == a.volumeId, "a folder not made yet is on its parent's drive");
+            }
+        }
+
+        void markersBehindTheTake()
+        {
+            beginTest ("A marker during a take never waits on the take's drive");
+            Dirs dirs;
+            MarkersManager markers;
+            markers.setContext (dirs.session, kRate);
+            markers.deferDiskWhile = [] { return true; };
+            auto entered  = std::make_shared<juce::WaitableEvent>();
+            auto released = std::make_shared<juce::WaitableEvent> (true);
+            const juce::ScopeGuard letGo { [released] { released->signal(); } };
+            markers.setBeforeDeferredWriteForTests ([entered, released]
+            {
+                entered->signal();
+                released->wait (-1);
+            });
+
+            expect (finishesWithin (2000, [&markers]
+            {
+                markers.drop (10, "One");
+            }), "the marker waited on the drive");
+            expect (entered->wait (5000), "the save never left this thread");
+            expect (finishesWithin (2000, [&markers]
+            {
+                markers.drop (20, "Two");
+                markers.renameMarker (0, "First");
+            }), "a marker during a stuck write waited on it");
+            expectEquals (markers.getCount(), 2);
+            expect (markers.hasContext(), "a stuck drive lost the session");
+
+            const auto file = dirs.session.getChildFile ("markers.json");
+            expect (! file.existsAsFile(), "the writer was held");
+            released->signal();
+
+            // The writer thread may need a moment; only the newest list counts.
+            const auto hasBoth = [&file]
+            {
+                const auto text = file.loadFileAsString();
+                return text.contains ("First") && text.contains ("Two");
+            };
+            const auto end = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+            while (! hasBoth() && juce::Time::getMillisecondCounterHiRes() < end)
+                juce::Thread::sleep (5);
+            expect (hasBoth(), "the newest list never reached the disk");
+
+            // Out of the take the next save lands in order with the last one.
+            markers.deferDiskWhile = nullptr;
+            markers.drop (30, "Three");
+            const auto settled = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+            while (! file.loadFileAsString().contains ("Three")
+                   && juce::Time::getMillisecondCounterHiRes() < settled)
+                juce::Thread::sleep (5);
+            expect (file.loadFileAsString().contains ("Three"));
+            expect (file.loadFileAsString().contains ("First"));
+        }
+
+        void refusedStartLeavesNothing()
+        {
+            beginTest ("A refused RECORD leaves the markers it found and no stereo mix file");
+            Dirs dirs;
+            AudioEngine::setTestModeSkipAudioInit (true);
+            AudioEngine engine;
+            engine.prepareForTests (kRate, kBlock);
+            engine.setStripCount (1);
+            engine.getRecorder().getTrack (0).armed.store (true);
+            auto& markers = engine.getMarkers();
+            const auto previous = dirs.root.getChildFile ("previous");
+            previous.createDirectory();
+            markers.setContext (previous, kRate);
+            markers.drop (5, "Keep");
+            engine.setRecordStereoMix (true);
+
+            // The recorder refuses this one after the engine has prepared for it.
+            
+            
+            const auto mix = dirs.session.getChildFile ("Export Files").getChildFile ("StereoMix.wav");
+            engine.getRecorder().setBackupDirectory (dirs.session.getChildFile ("inside"));
+            expect (! engine.startRecording (dirs.session), "the backup inside the session must refuse");
+            expect (! mix.existsAsFile(), "a refused start left a stereo mix file");
+            expect (markers.getSessionDir() == previous, "a refused start moved the markers");
+            expectEquals (markers.getCount(), 1);
+            expectEquals (markers.getLast().name, juce::String ("Keep"));
         }
 
         void stalledCopies()
