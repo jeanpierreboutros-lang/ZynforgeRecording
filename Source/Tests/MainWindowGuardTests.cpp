@@ -368,7 +368,14 @@ namespace zynforge
                 player.start();
                 std::vector<float> left ((size_t) kBlock), right ((size_t) kBlock);
                 float* outs[] { left.data(), right.data() };
-                player.processBlock (outs, 2, kBlock);
+                // Starting is a jump, and a jump waits for every track's audio,
+                // so the first blocks may hold the playhead where it is.
+                const auto start = player.getPositionSamples();
+                for (int i = 0; i < 400 && player.getPositionSamples() == start; ++i)
+                {
+                    player.processBlock (outs, 2, kBlock);
+                    if (player.getPositionSamples() == start) juce::Thread::sleep (5);
+                }
                 expect (player.isPlaying(), "playback stopped at the session end");
                 expectEquals (player.getPositionSamples(), (juce::int64) (kBlock - kBlock / 2));
                 player.stop();
