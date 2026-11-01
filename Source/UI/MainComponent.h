@@ -203,6 +203,11 @@ private:
                               const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
 public:
+    // The cue list after a Crop or Ripple Delete on `tracks`. With a whole
+    // timeline the cues themselves move; a cue in the removed audio goes.
+    static std::vector<zynforge::SetlistBar::Cue> cuesAfterCut (
+        const std::vector<zynforge::SetlistBar::Cue>& cues, const zynforge::timelinecut::Cut&,
+        const std::vector<int>& tracks, bool wholeTimeline);
     // Called from Main.cpp's systemRequestedQuit so an unsaved
     // session / running recording prompts BEFORE the app shuts down.
     void confirmAndQuit();
@@ -324,11 +329,24 @@ private:
     juce::uint32 lastAutosaveMs    { 0 };   // 0 = clock not started yet
     int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
     juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
+    juce::File        clipClipboardSession;   // the session those clips belong to
     int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
     void recordUndoSnapshot (const juce::String& label);
     // Clip/playlist undo: capture engine.playlistsToJson() before the edit,
     // pass it here after; records an undoable step only if clips changed.
     void pushClipUndo (const juce::String& label, const juce::var& before);
+    // Crop and Ripple Delete: everything they move, as one undo step.
+    struct TimelineSnapshot
+    {
+        zynforge::AudioEngine::TimelineState engineState;
+        std::vector<zynforge::SetlistBar::Cue> cues;
+    };
+    TimelineSnapshot captureTimeline() const;
+    void restoreTimeline (TimelineSnapshot target, const TimelineSnapshot& replaced);
+    void commitTimelineCut (const juce::String& label, const TimelineSnapshot& before,
+                            const zynforge::timelinecut::Cut&, const std::vector<int>& tracks);
+    int  rippleTimeline (const juce::String& label, const std::vector<int>& tracks,
+                         juce::int64 start, juce::int64 end);
     void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();
@@ -367,6 +385,7 @@ private:
     // Option+R bulk record-arm toggle over the current strip selection.
     void armSelection();
     void editCropToLoopRange();
+    void consolidateTracks (const std::vector<int>& targets, juce::int64 start, juce::int64 end);
     void editSetRangeToLoopRange();
     void editToggleSnap();
     void editSplitAtPlayhead();
@@ -668,6 +687,11 @@ private:
     // (declared above) is still alive. Declared after sessionIoBusy, which it
     // references.
     zynforge::SessionJobRunner sessionJobs { sessionIoBusy };
+    // QC, noise analysis and song detection: owned and joined like a session
+    // job, but they only read, so they hold no session reservation. RECORD must
+    // never wait for one; the 10 Hz timer stops it when a take starts.
+    std::atomic<bool> analysisBusy { false };
+    zynforge::SessionJobRunner analysisJobs { analysisBusy };
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);

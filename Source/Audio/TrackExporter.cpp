@@ -1,8 +1,10 @@
 #include "TrackExporter.h"
+#include "CheckedFileStream.h"
 #include "FloatAiffWriter.h"
 #include "CheckedReaderSource.h"
 #include "MultiPartReader.h"
 #include "ProcessSearch.h"
+#include "SincResampler.h"
 
 #include <cmath>
 
@@ -27,6 +29,32 @@ namespace zynforge
             error = "Could not install completed export; previous file was preserved";
             return false;
         }
+
+        constexpr const char* kFinalWriteFailed = "Final write failed (destination full?)";
+    }
+
+    // Bit depth the chosen container can actually write. FLAC tops out at
+    // 24-bit, so a blanket jlimit(16, 32) handed it 32 and createWriterFor
+    // returned nullptr -- the export died with an opaque "Cannot create
+    // writer" instead of just using the best depth FLAC supports.
+    static int bitsForFormat (ExportFormat fmt, int requested)
+    {
+        if (fmt == ExportFormat::Flac24) return juce::jlimit (16, 24, requested);
+        return juce::jlimit (16, 32, requested);
+    }
+
+    juce::String TrackExporter::sizeRefusal (const ExportOptions& opts, int numChannels,
+                                             juce::int64 frames)
+    {
+        if (opts.format != ExportFormat::Aiff24) return {};
+        const bool floating = bitsForFormat (opts.format, opts.bitsPerSample) == 32;
+        const auto limit = floating ? FloatAiffWriter::kMaxDataBytes : (juce::uint64) 0xfff00000u;
+        const auto bytes = (juce::uint64) juce::jmax<juce::int64> (0, frames) * (juce::uint64) numChannels
+                         * (juce::uint64) (bitsForFormat (opts.format, opts.bitsPerSample) / 8);
+        if (bytes <= limit) return {};
+        return "An AIFF file of this format stops at " + juce::String ((double) limit / 1.0e9, 1)
+             + " GB and this one needs " + juce::String ((double) bytes / 1.0e9, 1)
+             + " GB. Export WAV or FLAC instead.";
     }
 
     TrackExporter::TrackExporter()
@@ -67,16 +95,6 @@ namespace zynforge
         // block forever if path lookup stalls on an unavailable volume.
         return processsearch::findExecutableInPath (
             "lame", juce::SystemStats::getEnvironmentVariable ("PATH", {}));
-    }
-
-    // Bit depth the chosen container can actually write. FLAC tops out at
-    // 24-bit, so a blanket jlimit(16, 32) handed it 32 and createWriterFor
-    // returned nullptr -- the export died with an opaque "Cannot create
-    // writer" instead of just using the best depth FLAC supports.
-    static int bitsForFormat (ExportFormat fmt, int requested)
-    {
-        if (fmt == ExportFormat::Flac24) return juce::jlimit (16, 24, requested);
-        return juce::jlimit (16, 32, requested);
     }
 
     static std::unique_ptr<juce::AudioFormatWriter> makePcmWriter (
@@ -148,13 +166,16 @@ namespace zynforge
         const auto destSR    = opts.sampleRate;
         const auto srcLen    = reader->lengthInSamples;
         const auto destLen   = (juce::int64) ((double) srcLen * destSR / srcSR);
+        outError = sizeRefusal (opts, channels, destLen);
+        if (outError.isNotEmpty()) return false;
 
         // For MP3 we first render to a temp WAV at the chosen sample rate,
         // then call out to lame.
         const bool isMp3   = (opts.format == ExportFormat::Mp3);
         const auto finalPcmFile = destWithoutExt.withFileExtension (extensionFor (opts.format));
         const auto destPcmFile = temporarySibling (finalPcmFile, ".wav");
-        std::unique_ptr<juce::FileOutputStream> outStream (destPcmFile.createOutputStream());
+        const auto closeFailed = CheckedFileStream::makeFailedFlag();
+        auto outStream = CheckedFileStream::open (destPcmFile, closeFailed);
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
         // For MP3 we always render the intermediate WAV at 24-bit.
@@ -206,6 +227,12 @@ namespace zynforge
                 return false;
             }
             writer = nullptr;   // flush + close
+            if (closeFailed->load())
+            {
+                outError = kFinalWriteFailed;
+                destPcmFile.deleteFile();
+                return false;
+            }
             if (! isMp3)
                 return installCompletedExport (destPcmFile, finalPcmFile, outError);
             return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
@@ -213,7 +240,7 @@ namespace zynforge
 
         // Keep the reader alive and propagate decoder/I/O failures through resampling.
         CheckedReaderSource readerSrc (*reader);
-        juce::ResamplingAudioSource    resampler (&readerSrc, false, channels);
+        SincResampler resampler (&readerSrc, channels);
         resampler.setResamplingRatio (srcSR / destSR);
         const int block = 4096;
         resampler.prepareToPlay (block, destSR);
@@ -257,6 +284,12 @@ namespace zynforge
         }
         writer = nullptr;     // flush + close
         resampler.releaseResources();
+        if (closeFailed->load())
+        {
+            outError = kFinalWriteFailed;
+            destPcmFile.deleteFile();
+            return false;
+        }
 
         if (! isMp3)
             return installCompletedExport (destPcmFile, finalPcmFile, outError);
@@ -290,11 +323,14 @@ namespace zynforge
         const auto destSR  = opts.sampleRate;
         const auto srcLen  = juce::jmax (readerL->lengthInSamples, readerR->lengthInSamples);
         const auto destLen = (juce::int64) ((double) srcLen * destSR / srcSR);
+        outError = sizeRefusal (opts, 2, destLen);
+        if (outError.isNotEmpty()) return false;
 
         const bool isMp3 = (opts.format == ExportFormat::Mp3);
         const auto finalPcmFile = destWithoutExt.withFileExtension (extensionFor (opts.format));
         const auto destPcmFile = temporarySibling (finalPcmFile, ".wav");
-        std::unique_ptr<juce::FileOutputStream> outStream (destPcmFile.createOutputStream());
+        const auto closeFailed = CheckedFileStream::makeFailedFlag();
+        auto outStream = CheckedFileStream::open (destPcmFile, closeFailed);
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
         const int bits = isMp3 ? 24 : bitsForFormat (opts.format, opts.bitsPerSample);
@@ -313,8 +349,8 @@ namespace zynforge
         // resampled mono blocks into one stereo block per write.
         CheckedReaderSource readerSrcL (*readerL);
         CheckedReaderSource readerSrcR (*readerR);
-        juce::ResamplingAudioSource   resL (&readerSrcL, false, 1);
-        juce::ResamplingAudioSource   resR (&readerSrcR, false, 1);
+        SincResampler resL (&readerSrcL, 1);
+        SincResampler resR (&readerSrcR, 1);
         resL.setResamplingRatio (srcSR / destSR);
         resR.setResamplingRatio (srcSR / destSR);
         const int block = 4096;
@@ -357,9 +393,9 @@ namespace zynforge
         resL.releaseResources();
         resR.releaseResources();
 
-        if (! finalized)
+        if (! finalized || closeFailed->load())
         {
-            outError = "Final audio header flush failed";
+            outError = finalized ? kFinalWriteFailed : "Final audio header flush failed";
             destPcmFile.deleteFile();
             return false;
         }
@@ -378,7 +414,8 @@ namespace zynforge
         const auto finalFile = dest.withFileExtension (TrackExporter::extensionFor (opts.format));
         temporary = temporarySibling (finalFile, ".wav");
 
-        std::unique_ptr<juce::FileOutputStream> stream (temporary.createOutputStream());
+        closeFailed = CheckedFileStream::makeFailedFlag();
+        auto stream = CheckedFileStream::open (temporary, closeFailed);
         if (stream == nullptr) return;
         writer = convertOnCommit
             ? makePcmWriter (ExportFormat::Wav24, stream.get(), renderRate, (unsigned int) numChannels, 32)
@@ -404,6 +441,7 @@ namespace zynforge
         const bool finalized = flushFloatAiffBeforeClose (writer.get());
         writer = nullptr;
         if (! finalized) { error = "Final audio header flush failed"; return false; }
+        if (closeFailed->load()) { error = kFinalWriteFailed; return false; }
 
         if (convertOnCommit)
             return exporter.exportTrack (temporary, destWithoutExt, options, error);

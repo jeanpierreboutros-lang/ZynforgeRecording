@@ -288,6 +288,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/StereoExportTests.cpp
     Source/Tests/StripLifetimeTests.cpp
     Source/Tests/TimecodeTests.cpp
+    Source/Tests/TimelineEditTests.cpp
     Source/Tests/SessionInterchangeTests.cpp
     Source/Tests/SongExportTests.cpp
     Source/Tests/TimelineExportTests.cpp

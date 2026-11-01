@@ -88,7 +88,12 @@ namespace zynforge
 
             juce::String text;
             juce::Colour fg = brand::textPrimary;
-            switch (columnId)
+            if (q.error.isNotEmpty())
+            {
+                text = columnId == 1 ? q.name + ": " + q.error : "--";
+                fg = brand::accentRecord;
+            }
+            else switch (columnId)
             {
                 case 1: text = q.name; break;
                 case 2: text = juce::String (q.peakDb, 1);
