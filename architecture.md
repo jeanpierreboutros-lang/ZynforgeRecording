@@ -14,8 +14,10 @@ each pass 689 groups with zero failures and no sanitizer reports; interactive an
 physical capture acceptance remains open. [INSTALL.md](INSTALL.md) owns package
 identities; [the follow-up register](docs/history/REVIEW-REPAIRS-2026-10-05.md) and
 [earlier S6 audit](docs/history/AUDIT-2026-10-05.md) retain separate evidence.
+`main` is ahead of that build; this document describes `main`, and
+[testing.md](testing.md) holds its results.
 
-A local STOP crosses the recorder's capture boundary once, publishes recording=false and retains a finalization lease. `AudioEngine::stopRecordingAsync` owns the worker that drains queues, closes writers, splices punches, starts integrity reporting and prepares playback readers. Only the message thread installs prepared player/clip state, including refreshed explicit-source readers after a punch; comp clip state survives but stale source descriptors do not. The owned job retires old readers off that thread before invoking its completion. Deferred device configuration waits for the same ownership boundary. Repeated STOP/start/structural mutation cannot reuse finalizing writer state. The synchronous engine entry remains for legacy callers. The daemon's host acknowledgement/load path still has separate synchronous costs.
+A local STOP crosses the recorder's capture boundary once, publishes recording=false and retains a finalization lease. `AudioEngine::stopRecordingAsync` owns the worker that drains queues, closes writers, splices punches, starts integrity reporting and prepares playback readers. Only the message thread installs prepared player/clip state, including refreshed explicit-source readers after a punch; comp clip state survives but stale source descriptors do not. The owned job retires old readers off that thread before invoking its completion. Deferred device configuration waits for the same ownership boundary. Repeated STOP/start/structural mutation cannot reuse finalizing writer state. The synchronous engine entry remains for legacy callers. A daemon STOP has its own owned thread (`CaptureSupervisor::stopRecordingAsync`) and loads its media on the same worker (`AudioEngine::finishExternalTakeAsync`), through `endDaemonTake`.
 
 `MainComponent` holds its pending capture/session guard across media completion and subsequent metadata persistence. It captures settings, mixer, project and layout into immutable serialized values. `SessionMetadataWriter` owns one serial worker for project merge/write and backup copies; it never reads UI or engine objects. Explicit/full saves keep individual ordered outcomes. Unstarted layout-only writes coalesce with one callback per job, do not save unrelated mixer edits, and the queue caps unstarted jobs at sixteen with visible rejection. Navigation stays available while timeline/session mutation is guarded. Content comparison prevents an older save from marking newer non-undo edits clean.
 
@@ -50,8 +52,8 @@ applied during configuration. Historical field takes used earlier source.
 - `TrackState::referenceMedia` identifies generated backing beds and persists in session mix metadata. Default capture append length excludes reference tracks, while explicit cursor/rolling punches retain their requested position. A click bed must not push a first take to the end of the backing file.
 - Capture validates non-overlapping stereo pairs and compatibility with existing media before opening writers. A missing hardware input supplies silence for that channel while the available stereo side continues.
 - Backup/mirror provenance binds a replica to its primary session identity. Unknown nonempty destinations are refused; relocation retains identity, while a live fork cannot claim the original's replica. Continuations pad each participating destination to the shared start position; pre-roll histories detach at one callback boundary.
-- Device-stop handling closes the optional stereo-mix writer, retains the interrupted endpoint and queues engine finalization once. Repeated STOP must not reload away subsequent edits. Daemon failure warnings survive completion.
-- `captureInputGainDb` persists as the take's gain reference; zero dB is valid. Reopen initializes live gain from that reference. Live input feeds aux buses without playback trim compensation, and VCA mute gates post-fader sends in both live and offline paths.
+- Device-stop handling closes the optional stereo-mix writer, retains the interrupted endpoint and starts one finalization on the STOP worker (`launchCaptureStopJob`), then reports `onTakeInterrupted`. Repeated STOP must not reload away subsequent edits. Daemon failure warnings survive completion.
+- `captureInputGainDb` persists as the take's gain reference, with `captureInputGainKnown` saying the desk really reported it; zero dB is valid, and a session from before the flag reads a stored zero as no reference. Reopen initializes live gain from that reference and clears `liveInputGainKnown`. Live input feeds aux buses without playback trim compensation, and VCA mute gates post-fader sends in both live and offline paths.
 - `inputPeak` contains input-only activity for auto-arm. Playback display peaks cannot trigger it, and linked stereo arms change together. Capture and LOCK still block automatic arming.
 - Modern `Audio Files` and legacy root media merge per track, with modern media preferred. Explicit cross-track source identity is retained through playback/rendering, trim bounds use the actual source length, and grouped edits compute one legal delta before mutating peers.
 - Delete confirmation reserves session I/O. Its callback rechecks recording and session identity before deleting or clearing state. Console reconnect preserves the saved stage patch until restoration succeeds; unknown remote state must not replace that saved patch.
@@ -76,14 +78,14 @@ graph TB
     UI -->|message thread| Eng
     Eng -->|audio thread| Rec
     Eng -->|audio thread| Play
-    Rec -->|sharded TimeSliceThread drains| Disk
+    Rec -->|distributor, then one thread per copy| Disk
     UI --> Supervisor[CaptureSupervisor]
     Supervisor <-->|authenticated local socket, protocol 4| Daemon[CaptureDaemon process]
     Daemon --> DaemonRec[Separate device callback and recorder]
     DaemonRec --> Disk
     UI --> Metadata[SessionMetadataWriter serial worker]
     Metadata --> Disk
-    Play -->|BufferingAudioReader| Disk
+    Play -->|PlaybackReader| Disk
     Eng --> Mark
     Eng -->|owns by value| Remote
     Remote --> OSC
@@ -114,8 +116,8 @@ ZynforgeRecording/
 │   ├── Main.cpp                       — JUCE app entry + window
 │   ├── Audio/                         — real-time + persistence layer
 │   │   ├── AudioEngine.{h,cpp}        — hub; AudioIODeviceCallback
-│   │   ├── MultitrackRecorder.{h,cpp} — input → audio/gap timeline → sharded writers
-│   │   ├── SessionPlayer.{h,cpp}      — clip-aware playback via BufferingAudioReader
+│   │   ├── MultitrackRecorder.{h,cpp} — input → audio/gap timeline → one writer thread per copy
+│   │   ├── SessionPlayer.{h,cpp}      — clip-aware playback via PlaybackReader
 │   │   ├── TrackState.h               — per-track atomics (peak, RMS, armed, mute, gain, …)
 │   │   ├── EngineStatus.h            — serialisable status snapshot (capture-split Phase 0 boundary)
 │   │   ├── Markers.{h,cpp}            — per-session marker store
@@ -172,10 +174,10 @@ ZynforgeRecording/
 The hub. Owns `juce::AudioDeviceManager`, the recorder, the player, markers, OSC, the companion server, timecode chase, the VCA bus state (`kNumVcas = 8`), per-strip aux sends, and every persistent store. Implements `juce::AudioIODeviceCallback`. Exposes the public API for the UI: transport, routing, VCA, aux sends, takes, cue tempo curves, soft-takeover ramps.
 
 ### MultitrackRecorder (`Source/Audio/MultitrackRecorder.{h,cpp}`)
-Real-time-safe input path. Per-channel `juce::AbstractFifo` buffers feed sharded `TimeSliceThread` writers. WAV/AIFF support 16/24-bit PCM; WAV and AIFF-C support 32-bit float; FLAC supports 16/24-bit PCM. Periodic header flush reduces the recoverability window but does not guarantee power-loss durability. Supports a parallel backup writer with an independent format (e.g. WAV/24 primary + FLAC/24 backup), plus N extra mirror destinations. **Failover keys on a per-channel `WriterChannel::active` flag, not `writer != nullptr`** — a failed primary keeps the channel draining so backup + mirrors keep capturing (a nulled primary is otherwise indistinguishable from a deliberately-empty stereo-R slot).
+Real-time-safe input path. Per-channel `juce::AbstractFifo` buffers feed one distributor `TimeSliceThread`, which does no disk work and hands samples to a ring and a writer thread per destination (`Source/Audio/CaptureCopy.h`). WAV/AIFF support 16/24-bit PCM; WAV and AIFF-C support 32-bit float; FLAC supports 16/24-bit PCM. Periodic header flush reduces the recoverability window but does not guarantee power-loss durability. Supports a parallel backup writer with an independent format (e.g. WAV/24 primary + FLAC/24 backup), plus N extra mirror destinations. **Failover keys on a per-channel `WriterChannel::active` flag, not `writer != nullptr`** — a failed primary keeps the channel draining so backup + mirrors keep capturing (a nulled primary is otherwise indistinguishable from a deliberately-empty stereo-R slot).
 
 ### SessionPlayer (`Source/Audio/SessionPlayer.{h,cpp}`)
-Real-time-safe output path. Wraps each take (`Track_NN.<ext>` + `_partXX` continuations, any of WAV/FLAC/AIFF) in non-blocking `juce::BufferingAudioReader`s, stitching multi-part takes via `ConcatReader`. Clip-aware: walks per-track clip lists, honours mute / lock / gain / fade per clip. The authoritative clip list is resolved **before** the whole-file length short-circuit, so a clip placed past a track's own file length still plays (live monitor matches the offline bounce). Session swap defers the reader-vector mutation until in-flight callbacks drain.
+Real-time-safe output path. Wraps each take (`Track_NN.<ext>` + `_partXX` continuations, any of WAV/FLAC/AIFF) in non-blocking `PlaybackReader`s (`Source/Audio/PlaybackReader.h`), stitching multi-part takes via `ConcatReader`. A jump is held, silent and with the position still, until every track has its target in RAM (see the 2026-11-01 ADR *The player owns its disk reader*). Clip-aware: walks per-track clip lists, honours mute / lock / gain / fade per clip. The authoritative clip list is resolved **before** the whole-file length short-circuit, so a clip placed past a track's own file length still plays (live monitor matches the offline bounce). Session swap defers the reader-vector mutation until in-flight callbacks drain.
 
 ### UI layer (`Source/UI/`)
 Message-thread only. `MainComponent` runs a 10 Hz `juce::Timer` that pulls atomics off engine + tracks and repaints. Three logical views (MIXER / EDIT / PATCH) share state through the engine — view drift is a bug, not a feature.
@@ -190,7 +192,7 @@ Message-thread only. `MainComponent` runs a 10 Hz `juce::Timer` that pulls atomi
 
 **Transactional file operations.** Save As is a clone into a new or empty directory, never a merge: save the source, copy on the owned/cancellable `sessionJobs` worker (`SessionJobRunner`), then switch by reopening the completed clone. Failure removes a newly-created partial clone and leaves the source active. Relocation rejects descendants/existing targets, saves first, uses an atomic same-volume move or cancellable cross-volume copy, and reports old-folder cleanup failure without pretending the complete destination failed. Copy/move/bounce set `sessionIoBusy` and `AudioEngine::sessionTransitionActive`; record/play/strip mutations and competing jobs fail closed until structure ownership is released. The destructor cancels and joins both export and bounce workers.
 
-**EDIT view (`EditPage.cpp`).** Each clip renders as a DAW region block: a bordered block with a name header + its own waveform drawn from the clip's file region (so move/slip-trim show the right audio; the continuous thumbnail is only the no-clips fallback). The waveform is drawn at `waveZoom × clipLinearGain`, so a clip's shape scales with its gain. Each clip carries a Pro Tools-style **gain fader** in its bottom-left corner (drag mode 7: relative ride, Alt-click → 0 dB). The per-row header column (swatch / name / R-I-S-M / VIEW / slim `LedMeter` / routing) is **pinned** — drawn last via `paintHeader(g, headerOriginX())` and hit-tested through `inWavePane/inSwatch/inNameZone`, with a `ScrollViewport` that re-pins on horizontal scroll. A faint 1-2-5 s timeline grid sits behind the clips; clip Move + trim drags snap through `engine.snapSampleToGrid`. Single-key tools `S/T/R/G/F/B`; `Cmd+E` separates, `Cmd+H` heals, `E` zooms to selection. Edit-menu ops Strip Silence (slider dialog) / Heal / Consolidate map to `AudioEngineClips.cpp` methods; all clip edits are undoable through `pushClipUndo`. Mixer ops are undoable via the coalesced `pollMixerUndo` poll (see *Undo model* in `CLAUDE.md`).
+**EDIT view (`EditPage.cpp`).** `ClipEditTargets.h` resolves clip command targets; `WaveCacheFile.h` reads and writes the peak cache on `EditPage::waveCacheThread`. Each clip renders as a DAW region block: a bordered block with a name header + its own waveform drawn from the clip's file region (so move/slip-trim show the right audio; the continuous thumbnail is only the no-clips fallback). The waveform is drawn at `waveZoom × clipLinearGain`, so a clip's shape scales with its gain. Each clip carries a Pro Tools-style **gain fader** in its bottom-left corner (drag mode 7: relative ride, Alt-click → 0 dB). The per-row header column (swatch / name / R-I-S-M / VIEW / slim `LedMeter` / routing) is **pinned** — drawn last via `paintHeader(g, headerOriginX())` and hit-tested through `inWavePane/inSwatch/inNameZone`, with a `ScrollViewport` that re-pins on horizontal scroll. A faint 1-2-5 s timeline grid sits behind the clips; clip Move + trim drags snap through `engine.snapSampleToGrid`. Single-key tools `S/T/R/G/F/B`; `Cmd+E` separates, `Cmd+H` heals, `E` zooms to selection. Edit-menu ops Strip Silence (slider dialog) / Heal / Consolidate map to `AudioEngineClips.cpp` methods; all clip edits are undoable through `pushClipUndo`. Mixer ops are undoable via the coalesced `pollMixerUndo` poll (see *Undo model* in `CLAUDE.md`).
 
 **Settings dialogs.** Four dialogs cover distinct concerns:
 - `SessionSettingsDialog` — editable: audio format / sample rate / bit depth. Menu label: "Session Format & Recording...".
@@ -205,7 +207,7 @@ Single source of truth for visual identity. `ZynForgeLookAndFeel` overrides butt
 ### Network (`Source/Network/`)
 `CompanionServer` exposes `/`, `/state.json`, `/cmd`, and `/stream.wav` for a tablet client. Transport commands are marshalled to the message thread and the worker waits for the real result: an unusable record arm returns 409 rather than a false success. `OscRemote` parses five inbound dialects (Generic, DiGiCo, A&H SQ, SSL Live, Yamaha / RIVAGE). Console dialects intentionally accept names/colours, trim or preamp-follow values and scene/marker notifications without application-token authentication; these change recorder/session state, so the interfaces are not entirely read-only. Console transport/arm/mute controls are disallowed. Generic control requires the per-start token as the final string argument.
 
-The host intercepts all remote RECORD and STOP actions in `MainComponent::handleRemoteTransport`: both local and daemon recording use the active-session preflight, while a first STOP only arms the two-second guard and returns a refusal that asks for confirmation. Without a host handler, engine-level remote record/stop fail closed and the standalone transport bar cannot start/end capture; neither may create a timestamped session or bypass confirmation. `CaptureSupervisor` timestamps actual status pushes; the engine marks snapshots older than two seconds unavailable and overlays host-owned strip controls on fresh daemon meter/writer data. The backup pruner selects only timestamped snapshots, never `reorder_*` transaction journals.
+The host intercepts all remote RECORD and STOP actions in `MainComponent::handleRemoteTransport`: both local and daemon recording use the active-session preflight, a RECORD that would punch is refused (`remoteStartInFlight`, checked in `runRecordPlan`), and a first STOP only arms the two-second guard and returns a refusal that asks for confirmation. Without a host handler, engine-level remote record/stop fail closed and the standalone transport bar cannot start/end capture; neither may create a timestamped session or bypass confirmation. `CaptureSupervisor` timestamps actual status pushes; the engine marks snapshots older than two seconds unavailable and overlays host-owned strip controls on fresh daemon meter/writer data. The backup pruner selects only timestamped snapshots, never `reorder_*` transaction journals.
 
 `ConsoleLink` (`Source/Network/ConsoleLink.{h,cpp}`) is the **outbound** counterpart for virtual soundcheck — Behringer X32 / Midas M32 over OSC (UDP 10023). It owns one `juce::DatagramSocket` shared by an `OSCSender` + an `OscPacketReceiver` (formerly `juce::OSCReceiver`) (the desk replies to the request's source port, so send and listen must share a port); the socket is **recreated on every `connect()`** because `DatagramSocket::shutdown()` permanently invalidates the handle. Two jobs: (1) **soundcheck repatch** — `enterSoundcheck()` queries the four `/config/routing/IN/*` blocks, stashes whatever the show patch is, then sets the card-return blocks; `exitSoundcheck()` restores the stash verbatim (never assumes analog). (2) **head-amp gain capture/restore** — `captureGains()` polls `/headamp/NNN/gain`, `restoreGains()` writes them back; both persist to the session's `console_state.json` so show-night state survives to VSC day. A transport seam (`setSendHook`/`injectReply`) lets `ConsoleLinkTests` assert every message against the public X32 protocol with no console attached. `ConsoleLink` is itself a `juce::Timer`: a ~1.2–1.5 s watchdog started on each routing/gain query aborts cleanly if the desk never replies (a lost UDP packet would otherwise hang the soundcheck flow), and an `opGen` counter invalidates stale timers so a late reply can't resurrect an aborted op.
 
@@ -223,6 +225,19 @@ The companion runs an accept thread + per-connection writes off the message thre
 
 ### MIDI control surfaces (`Source/Audio/McuProtocol.h` + `MidiControlSurface.{h,cpp}`)
 `McuProtocol.h` is a header-only, hardware-free set of Mackie Control Universal encode/decode helpers (fader law, button notes, V-pot relative encoders + ring, channel-pressure meters, scribble-strip SysEx, **master fader on MIDI ch 9, jog wheel on CC 0x3C, and the 10-digit time display**) — fully unit-tested in `Source/Tests/McuProtocolTests.cpp`. `MidiControlSurface` opens a paired MIDI in/out, runs a 15 Hz echo timer, and is bidirectional: inbound faders/V-pots/buttons/jog drive channel + transport state (channel writes use guarded engine setters with stereo-pair semantics; transport is marshalled to the message thread), and the timer pushes faders, LEDs, meters, names, the master fader and the playhead time display back to the surface. Banked 8 strips at a time. Wired from the Control Surfaces dialog (`enableControlSurface`/`disableControlSurface` on the engine).
+
+### Fix-pass components (2026-11-01)
+
+- `Source/Audio/CaptureCopy.h`: one thread and ring per destination of a take. Its state is shared so an abandoned copy's thread can outlive the recorder.
+- `Source/Audio/AiffRepair.h`, `FlacRepair.h`: repair a header older than its audio, from `recoverInterruptedPunches` and session open.
+- `Source/Audio/PlaybackReader.h`: the player's RAM-block reader, with a cue and a second read position.
+- `Source/Audio/SincResampler.h`: windowed-sinc conversion for exports and imports.
+- `Source/Audio/TimelineCut.h`: the one position mapping for Crop and Ripple Delete.
+- `Source/Audio/SessionMixFile.h`, `SessionRepair.h`: the guarded writer of `session_mix.json`, and moving damaged session files aside at open.
+- `Source/UI/RecordPosition.h`: what RECORD does at a position, shared by RECORD, the header pill and pre-flight.
+- `Source/UI/ClipEditTargets.h`, `WaveCacheFile.h`: EDIT's clip command targets and its peak cache.
+- `Source/UI/SerialWorker.h`: one low-priority worker that always joins, for jobs that would otherwise want a `ThreadPool`.
+- `MainComponent::analysisJobs`: a second `SessionJobRunner` with its own flag and no session reservation, for noise, QC and song scans.
 
 ### Market-moves components (2026-10-31)
 
@@ -267,7 +282,7 @@ sequenceDiagram
     loop every audio block
         CoreAudio->>AudioEngine: audioDeviceIOCallbackWithContext
         AudioEngine->>MultitrackRecorder: push input → AbstractFifo
-        Note over MultitrackRecorder: sharded TimeSliceThreads<br/>drain audio/gap timeline → selected format
+        Note over MultitrackRecorder: distributor TimeSliceThread fills each copy's ring<br/>one thread per copy writes audio/gap timeline → selected format
     end
     User->>MainComponent: Click STOP
     MainComponent->>AudioEngine: stopRecordingAsync() after STOP guard
@@ -304,8 +319,8 @@ Bounce stems, bounce stereo mix, Strip Silence, and Consolidate all run through 
 
 ### Session persistence
 - Per-session (authoritative): `session_mix.json` carries the full per-strip mixer state — name, colour, gain, pan, mute/solo/monitor/arm, routing, stereo, VCA + edit group, output mute, stream send, and **aux sends** (4 slots of `{bus, dB, post}`, moved here from global appProps on 2026-06-04 to stop cross-session leaks) — plus session tempo + tempo map. `.zfproj` carries setlist, cues (with strip UUIDs), playlists (Takes), automation, UI layout, and `formatVersion`. `markers.json` carries markers.
-- Loading a session starts from `AudioEngine::clearSessionState()` and treats the persisted `trackCount` as exact. Invalid/missing mix JSON returns false so the open funnel reconstructs the mixer from audio; previous-session strips, cues, automation, stereo flags, tempo and loop state never survive as fallback values.
-- Auto-save writes on every configured interval, not only when the undo-stack count changes. Recordings, routing, cue recalls and imports are legitimate state mutations that do not necessarily add undo units. The clean baseline advances only after every live metadata write and the backup snapshot succeed; failure is surfaced and retried after 15 seconds.
+- Loading a session starts from `AudioEngine::clearSessionState()` and treats the persisted `trackCount` as exact, except that zero strips over existing audio falls back to the audio count. Invalid/missing mix JSON returns false so the open funnel reconstructs the mixer from audio; previous-session strips, cues, automation, stereo flags, tempo and loop state never survive as fallback values.
+- Auto-save writes on every configured interval, not only when the undo-stack count changes. Recordings, routing, cue recalls and imports are legitimate state mutations that do not necessarily add undo units. The clean baseline advances only after every live metadata write and the backup snapshot succeed; failure is surfaced and retried after 15 seconds, doubling up to the interval. An unloaded session is skipped with a status line and no retry.
 - Cross-session: `appProps` (`~/Library/Application Support/Zynforge Recording/`) carries app-global prefs (sessions root, MIDI clock source, LTC source strip, default template, active-session dir for relaunch) and a small set of **latent-leak** per-strip keys still pending migration to `session_mix.json` — `strip_isbus_*` and automation `safe`/`vTrim`/`pTrim` (tracked in `tasks.md`). New sessions wipe the per-index appProps overrides; the session files are authoritative.
 
 ### Follow-up capture and external-input contracts
@@ -344,7 +359,7 @@ Bounce stems, bounce stereo mix, Strip Silence, and Consolidate all run through 
 - **Punch timing.** A punch take locks the player (`SessionPlayer::setSeekLocked`, set in `AudioEngine::startRecording`, cleared by both stop paths): `setPositionSamples` and loop-on are no-ops for every caller. The audio callback passes each block's playhead to `MultitrackRecorder::processBlock`; the first live block of a punch records `punchCaptureOrigin`, which becomes the take clock base and the splice point.
 - **Punch splice.** The primary copy decides. A backup/mirror that cannot splice keeps its pre-punch take and is reported failed; a primary failure rolls every copy back. Unspliced punch audio moves to `<copy>/Session File Backups/Unspliced Punch <time>/`. A punch that captured nothing is not a failure.
 - **Deferred lead-ins.** `openTakeWriters` reserves part slots for any copy with less audio than the timeline position, and opens the pass's audio after them. `writeLeadInMarkers` records each reservation in `Audio Files/Pending Lead-ins/`; `completeLeadIns` (finalization) fills the slots with silence from the real timeline start; `recoverInterruptedPunches` completes leftovers. Such a track's take is `Track_NN` (silence) + `Track_NN_partKK` (audio).
-- **Pre-roll** is sized in `goLive` and written by each writer shard before its first live samples, so the live FIFO keeps draining.
+- **Pre-roll** is sized in `goLive` and written by each copy's own thread before that copy's first live sample, so a slow dump costs that copy alone.
 - **Inbound OSC** (`OscRemote`, the console link's `OscUdpTransport`) uses `OscPacketReceiver` (`Source/Network/OscPacketReceiver.h`): its own receive thread and a bounds-checked parser that caps bundle nesting at 8, delivering on the message thread through `juce::OSCReceiver::Listener`. Companion `/cmd` refuses JSON nested deeper than 16.
 - **Input routing.** `TrackState::inputRouting` is the requested patch and the only value persisted; `effectiveInputRouting()` wraps it onto a smaller device for the callback, the views and record-start checks.
 - **Timecode chase.** `TimecodeChase` LOCKs only on decoded, consecutive LTC frames, with fps from the sync-to-sync period; only the selected source feeds and reports liveness. `SessionPlayer` advances position and wraps loops with a compare-and-swap from the block start, so a locate during a render survives.
@@ -355,7 +370,7 @@ Bounce stems, bounce stereo mix, Strip Silence, and Consolidate all run through 
 
 - **No plugin hosting** — see `decisions.md`. The product is a recorder + VSC, not a DAW.
 - **macOS only** — no Windows or Linux build, by owner decision (2026-10-31). CoreAudio is assumed. Apple Silicon optimisations (NEON, `AudioWorkgroup`) are first-class.
-- **Thread model** — the message thread and the audio thread are the only threads with UI / audio responsibilities. Background writers run on `TimeSliceThread`s the engine owns. HTTP workers run per-connection in `CompanionServer`. No general thread pool.
+- **Thread model** — the message thread and the audio thread are the only threads with UI / audio responsibilities. Capture runs on one distributor `TimeSliceThread` the engine owns plus one thread per copy of a take. HTTP workers run per-connection in `CompanionServer`. No thread pool, and no thread is killed: see the 2026-11-01 ADR *No thread is killed*.
 - **`std::atomic` is the only RT-safe message channel** between message and audio threads. No locks in the audio callback.
 - **Persistence first** — every user-visible state round-trips through `.zfproj` or `appProps`. See ADR *Persistence first* in `decisions.md`.
 - **Design system is the source of truth** — every painted surface goes through `brand::*` tokens + `dialog::*` helpers. See `coding-standards.md`.
