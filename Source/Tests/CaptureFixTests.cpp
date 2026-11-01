@@ -99,6 +99,61 @@ namespace zynforge
         void runTest() override
         {
             aiffCrashSurvival();
+            punchPastATracksEnd();
+        }
+
+        static std::unique_ptr<MultitrackRecorder> recorderFor (const juce::File& dir, float value, int blocks,
+                                                                std::function<void (MultitrackRecorder&)> arm = {})
+        {
+            auto rec = std::make_unique<MultitrackRecorder>();
+            rec->prepare (kRate, kBlock, 1);
+            rec->getTrack (0).armed.store (true);
+            if (arm) arm (*rec);
+            if (rec->startRecording (dir)) feed (*rec, blocks, 1, value);
+            rec->stopRecording();
+            return rec;
+        }
+
+        void punchPastATracksEnd()
+        {
+            beginTest ("A punch past a track's end lands where it was played");
+            {
+                const auto dir = tempDir ("punch-past");
+                recorderFor (dir, 0.25f, 40);
+                const auto take = dir.getChildFile ("Audio Files").getChildFile ("Track_01.wav");
+                const juce::int64 base = 40 * kBlock, punchAt = 100 * kBlock;
+                expectEquals (lengthOf (take), base);
+
+                recorderFor (dir, 0.75f, 20, [&] (MultitrackRecorder& rec) { rec.armPunchIn (punchAt); });
+
+                expectEquals (lengthOf (take), punchAt + 20 * kBlock, "the take did not grow to the punch's end");
+                const auto audio = samplesOf (take);
+                expect (std::abs (audio[(size_t) base - 1] - 0.25f) < 0.001f, "the base was damaged");
+                expect (audio[(size_t) base] == 0.0f && audio[(size_t) punchAt - 1] == 0.0f,
+                        "the gap before the punch is not silence");
+                expect (std::abs (audio[(size_t) punchAt] - 0.75f) < 0.001f, "the punch landed early");
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
+
+            beginTest ("A punch past the end of a multi-part take keeps every part and its place");
+            {
+                const auto dir = tempDir ("punch-past-parts");
+                recorderFor (dir, 0.25f, 10);
+                recorderFor (dir, 0.5f, 10, [] (MultitrackRecorder& rec) { rec.armContinue (10 * kBlock); });
+                const auto audioDir = dir.getChildFile ("Audio Files");
+                expect (audioDir.getChildFile ("Track_01_part02.wav").existsAsFile());
+
+                const juce::int64 punchAt = 40 * kBlock;
+                recorderFor (dir, 0.75f, 10, [&] (MultitrackRecorder& rec) { rec.armPunchIn (punchAt); });
+
+                const auto take = audioDir.getChildFile ("Track_01.wav");
+                expectEquals (lengthOf (take), punchAt + 10 * kBlock);
+                const auto audio = samplesOf (take);
+                expect (std::abs (audio[15 * kBlock] - 0.5f) < 0.001f, "the second part was lost");
+                expect (audio[30 * kBlock] == 0.0f, "the gap is not silence");
+                expect (std::abs (audio[(size_t) punchAt] - 0.75f) < 0.001f, "the punch landed early");
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
         }
 
         void aiffCrashSurvival()

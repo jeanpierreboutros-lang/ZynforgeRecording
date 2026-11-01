@@ -22,6 +22,20 @@ namespace zynforge
         return kept;
     }
 
+    inline bool writeSilentFrames (juce::AudioFormatWriter& writer, int channels, juce::int64 frames)
+    {
+        constexpr int kBlock = 16384;
+        const std::vector<float> zeros ((std::size_t) kBlock, 0.0f);
+        const std::vector<const float*> planes ((std::size_t) channels, zeros.data());
+        for (auto remaining = frames; remaining > 0;)
+        {
+            const int count = (int) juce::jmin ((juce::int64) kBlock, remaining);
+            if (! writer.writeFromFloatArrays (planes.data(), channels, count)) return false;
+            remaining -= count;
+        }
+        return true;
+    }
+
     // Splice core, working from an already-open base READER (single file or a
     // ConcatReader spanning a multi-part take). Writes a brand-new outFile in
     // `baseExt`'s container; never mutates inputs. See splicePunchFile for the
@@ -44,7 +58,11 @@ namespace zynforge
         if ((int) insR->numChannels != chans)                      return false;
         if (std::abs (insR->sampleRate - baseR.sampleRate) > 1.0)  return false;
 
-        const juce::int64 punchIn    = juce::jlimit ((juce::int64) 0, baseLen, punchInSample);
+        // The punch stays where it was played. A track that ended before it
+        // gets silence up to that point, never an early landing.
+        const juce::int64 punchIn    = juce::jmax ((juce::int64) 0, punchInSample);
+        const juce::int64 baseHead   = juce::jmin (punchIn, baseLen);
+        const juce::int64 gap        = punchIn - baseHead;
         const juce::int64 afterStart = juce::jmin (baseLen, punchIn + insLen);
         const juce::int64 afterLen   = baseLen - afterStart;
 
@@ -70,7 +88,8 @@ namespace zynforge
         os.release();
 
         bool ok = true;
-        if (punchIn > 0)                      ok = w->writeFromAudioReader (baseR, 0,          punchIn);
+        if (baseHead > 0)                     ok = w->writeFromAudioReader (baseR, 0,          baseHead);
+        if (ok && gap > 0)                    ok = writeSilentFrames (*w, chans, gap);
         if (ok && insLen)                     ok = w->writeFromAudioReader (*insR, 0,          insLen);
         if (ok && afterLen > 0)               ok = w->writeFromAudioReader (baseR, afterStart, afterLen);
 
@@ -93,15 +112,13 @@ namespace zynforge
     // i.e. `insert` REPLACES base's region [punchIn, punchIn+insertLen); base's
     // audio BEFORE the punch-in and AFTER the punch-out is preserved. This is
     // the destructive punch-in an engineer expects: drop in on a section, keep
-    // the rest of the take.
+    // the rest of the take. A punch past base's end extends it: silence fills
+    // [baseLen, punchIn), so `insert` still starts at punchIn.
     //
     // Output format (sample rate / channels / bit depth / container) matches
     // `base`. Returns false (deleting any partial outFile) if either reader
     // fails to open or the two files disagree on channel count / sample rate
     // -- splicing mismatched audio would corrupt the take, so we refuse.
-    //
-    // punchInSample is clamped to [0, baseLen]; punching at/after the end simply
-    // appends `insert` (the "extend the take" case falls out for free).
     inline bool splicePunchFile (juce::AudioFormatManager& fm,
                                  const juce::File& base,
                                  const juce::File& insert,
