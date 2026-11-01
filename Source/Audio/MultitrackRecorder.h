@@ -813,6 +813,7 @@ namespace zynforge
         friend class PunchSessionGuardTests;   // splice-failure fixtures
         friend class TwinLinkTests;            // report publication ordering
         friend class CaptureMetaTests;
+        friend class ChannelAlarmTests;        // what the daemon's loop latched
         std::function<void()> afterFifoReservationForTests;
         std::function<void()> beforeStampForTests;
         struct ReportTestHooks

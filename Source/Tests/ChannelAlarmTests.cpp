@@ -80,6 +80,14 @@ namespace zynforge
             return alarms;
         }
 
+        // What the daemon's own status loop has latched, read without evaluating
+        // anything: a test that evaluated would be doing the loop's job for it.
+        static std::vector<Alarm> latchedByLoop (MultitrackRecorder& recorder)
+        {
+            const juce::ScopedLock sl (recorder.alarmLock);
+            return recorder.alarmMonitor.history (0);
+        }
+
         // ── The engine harness ────────────────────────────────────────────
         struct Rig
         {
@@ -695,9 +703,16 @@ namespace zynforge
                 capture.processTestBlock (signal, 1, kBlock);
                 for (int b = 0; b < 30; ++b) capture.processTestBlock (silence, 1, kBlock);
                 capture.getRecorder().drainPendingForTests();
-                juce::Thread::sleep (400);   // the status loop's tick has to see it
+                // A tick right after the disconnect can spend its write budget on
+                // the dead socket, so wait for the loop rather than a fixed time.
+                expect (waitUntil ([&] { return ! latchedByLoop (capture.getRecorder()).empty(); }, 10000),
+                        "the status loop never saw the fault");
                 capture.processTestBlock (signal, 1, kBlock);
-                juce::Thread::sleep (400);
+                expect (waitUntil ([&]
+                {
+                    const auto alarms = latchedByLoop (capture.getRecorder());
+                    return ! alarms.empty() && alarms[0].recovered;
+                }, 10000), "the status loop never saw the recovery");
                 capture.getRecorder().stopRecording();
 
                 const auto alarms = latchedIn (dir);
