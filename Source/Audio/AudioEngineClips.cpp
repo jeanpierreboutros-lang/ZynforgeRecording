@@ -11,6 +11,7 @@
 // seedDefaultClips.
 
 #include "AudioEngine.h"
+#include "CheckedFileStream.h"
 #include "MultiPartReader.h"
 #include "SessionInterchange.h"
 
@@ -1070,11 +1071,12 @@ namespace zynforge
             return true;
         }
 
-        std::unique_ptr<juce::AudioFormatWriter> createWav24Writer (const juce::File& f, double sr, int channels)
+        std::unique_ptr<juce::AudioFormatWriter> createWav24Writer (const juce::File& f, double sr, int channels,
+                                                                    const CheckedFileStream::Failed& closeFailed)
         {
             f.deleteFile();
             juce::WavAudioFormat wav;
-            std::unique_ptr<juce::FileOutputStream> os (f.createOutputStream());
+            auto os = CheckedFileStream::open (f, closeFailed);
             if (os == nullptr) return nullptr;
             std::unique_ptr<juce::AudioFormatWriter> w (
                 wav.createWriterFor (os.get(), sr, (unsigned int) channels, 24, {}, 0));
@@ -1150,7 +1152,8 @@ namespace zynforge
                                                    const std::atomic<bool>* cancel)
     {
         const auto temporary = bounceTemporary (dest);
-        auto writer = createWav24Writer (temporary, sampleRate, 1);
+        const auto closeFailed = CheckedFileStream::makeFailedFlag();
+        auto writer = createWav24Writer (temporary, sampleRate, 1, closeFailed);
         if (writer == nullptr) { temporary.deleteFile(); return false; }
         const bool ok = forEachArrangementWindow (track, 0, totalSamples,
             [&] (const float* data, juce::int64, int winLen)
@@ -1160,7 +1163,7 @@ namespace zynforge
                 return writer->writeFromFloatArrays (chans, 1, winLen);
             });
         writer.reset();
-        if (! ok) { temporary.deleteFile(); return false; }
+        if (! ok || closeFailed->load()) { temporary.deleteFile(); return false; }
         return installBounce (temporary, dest);
     }
 
@@ -1441,7 +1444,8 @@ namespace zynforge
                                              const std::atomic<bool>* cancel)
     {
         const auto temporary = bounceTemporary (dest);
-        auto writer = createWav24Writer (temporary, sampleRate, 2);
+        const auto closeFailed = CheckedFileStream::makeFailedFlag();
+        auto writer = createWav24Writer (temporary, sampleRate, 2, closeFailed);
         if (writer == nullptr) { temporary.deleteFile(); return false; }
         const bool ok = forEachStereoPairWindow (trackL, 0, totalSamples,
             [&] (const juce::AudioBuffer<float>& stereo, juce::int64, int winLen)
@@ -1702,14 +1706,6 @@ namespace zynforge
         std::sort (tracks.begin(), tracks.end());
         tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
 
-        struct Job
-        {
-            int track { -1 };
-            std::vector<Clip> original;
-            std::vector<Clip> result;
-            bool succeeded { false };
-        };
-
         const auto sessionDir = getActiveSessionDir();
         if (! sessionDir.isDirectory())
         {
@@ -1818,7 +1814,8 @@ namespace zynforge
 
         const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
         {
-            auto w = createWav24Writer (dst, sr, 1);
+            const auto closeFailed = CheckedFileStream::makeFailedFlag();
+            auto w = createWav24Writer (dst, sr, 1, closeFailed);
             if (w == nullptr) return false;
             // Stream the edited arrangement for just [a, b) straight to the
             // writer -- no whole-track buffer.
@@ -1828,7 +1825,8 @@ namespace zynforge
                     const float* chans[1] = { data };
                     return w->writeFromFloatArrays (chans, 1, winLen);
                 });
-            if (! ok) { w.reset(); dst.deleteFile(); return false; }
+            w.reset();
+            if (! ok || closeFailed->load()) { dst.deleteFile(); return false; }
         }
 
         // Replace the clips in [start, end) with one clip referencing dst.

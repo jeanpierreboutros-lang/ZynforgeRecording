@@ -627,9 +627,12 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 {
     if (engine.isRecording()) { showStatus ("Stop recording before exporting tracks"); return; }
     auto sourceDir = engine.getActiveSessionDir();
-    if (! sourceDir.isDirectory() || ! destDir.isDirectory()) return;
-
-    destDir.createDirectory();
+    if (! sourceDir.isDirectory()) { showStatus ("No active session to export"); return; }
+    if (destDir.createDirectory().failed())
+    {
+        showStatus ("Export failed: cannot create " + destDir.getFullPathName());
+        return;
+    }
 
     // Imported/generated media can coexist with legacy root-level takes.
     // Prefer the modern file for each track, then fall back to its legacy file.
@@ -692,14 +695,8 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 
         auto& trackState = rec.getTrack (i);
         const bool stereo = trackState.isStereo.load (std::memory_order_relaxed);
-        // Replace '.' too: the exporter appends the extension via
-        // withFileExtension, which treats a name like "Out 2.1" as if ".1"
-        // were the extension -- so "Out 2.1" and "Out 2.2" both collapsed to
-        // "...Out 2.wav" and the second export silently overwrote the first.
-        const auto safeName = trackState.name.replaceCharacter ('/', '_')
-                                              .replaceCharacter ('\\', '_')
-                                              .replaceCharacter ('.', '_');
-        const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1) + safeName;
+        const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1)
+                            + zynforge::songexport::safeName (trackState.getNameThreadSafe());
 
         ExportJob job;
         job.destStem = destDir.getChildFile (baseName);
@@ -739,6 +736,13 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
         if (job.srcL.existsAsFile()) jobs.push_back (std::move (job));
         else
         {
+            // After unlinking a native pair, the right strip's audio is the
+            // second channel of the left's file, which this export writes.
+            int fileChannel = 0;
+            if (i > 0 && std::find (channelIndices.begin(), channelIndices.end(), i - 1) != channelIndices.end()
+                && engine.getTrackAudioFile (i, &fileChannel).existsAsFile() && fileChannel == 1)
+                continue;
+
             // Empty, never-recorded strips are expected in Export All. A
             // selected strip, a previously loaded source, or a dangling
             // continuation part is missing media and makes the batch partial.
@@ -875,7 +879,7 @@ void MainComponent::completeBounceStems (juce::File dest)
             if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
                 continue;
             const auto& ts = rec.getTrack (t);
-            const auto safe = ts.getNameThreadSafe().replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
+            const auto safe = zynforge::songexport::safeName (ts.getNameThreadSafe());
             stems.push_back ({ t, ts.isStereo.load (std::memory_order_relaxed),
                                dest.getChildFile (juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav") });
         }
