@@ -256,11 +256,8 @@ MainComponent::MainComponent()
     gridButton.onClick = [this]
     {
         mixerGridView = ! mixerGridView;
-        if (auto* props = engine.getAppProps())
-        {
-            props->setValue ("mixerGridView", mixerGridView);
-            props->saveIfNeeded();
-        }
+        zynforge::updateSettings (engine.getAppProps(), [this] (juce::PropertiesFile& props)
+                                  { props.setValue ("mixerGridView", mixerGridView); });
         lastTrackCount = -1;   // force a strip relayout on the next tick
         resized();
     };
@@ -832,11 +829,8 @@ MainComponent::MainComponent()
             if (firstRun)
             {
                 self->showFirstRunTutorial();
-                if (auto* p = self->engine.getAppProps())
-                {
-                    p->setValue ("tutorialShown", true);
-                    p->saveIfNeeded();
-                }
+                zynforge::updateSettings (self->engine.getAppProps(), [] (juce::PropertiesFile& p)
+                                          { p.setValue ("tutorialShown", true); });
                 juce::Timer::callAfterDelay (350, [self] { if (self != nullptr) self->showStartupWelcome(); });
             }
             else
@@ -890,14 +884,13 @@ void MainComponent::setStripWidthPreset (StripWidth p)
 {
     if (p == stripWidthPreset) return;
     stripWidthPreset = p;
-    if (auto* props = engine.getAppProps())
+    zynforge::updateSettings (engine.getAppProps(), [p] (juce::PropertiesFile& props)
     {
         const auto code = (p == StripWidth::XS) ? "XS"
                         : (p == StripWidth::S)  ? "S"
                         : (p == StripWidth::L)  ? "L" : "M";
-        props->setValue ("stripWidthPreset", code);
-        props->saveIfNeeded();
-    }
+        props.setValue ("stripWidthPreset", code);
+    });
     // Reflect the active preset in the button toggle visuals + relayout
     // the strip viewport so the engineer sees the new density right away.
     stripXsButton.setToggleState (p == StripWidth::XS, juce::dontSendNotification);

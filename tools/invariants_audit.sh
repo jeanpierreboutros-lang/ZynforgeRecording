@@ -464,6 +464,14 @@ report "deployment target is accepted by the supported Xcode toolchain" \
        "Xcode 27 rejects macOS 11, while a target assigned after project() silently links a clean build for the host OS" \
        "$HITS"
 
+# Every PropertiesFile shares one .settings file and saves its whole copy, so a
+# UI writer that skips the reload silently undoes a strip's patch or name.
+HITS=$(grep -rn 'saveIfNeeded' Source/UI 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
+    | grep -v '^Source/UI/TwinRecorderDialog\.h:')
+report "UI settings writes reload first" \
+       "use zynforge::updateSettings (Source/Audio/SettingsFile.h); TwinRecorderDialog reloads through its host" \
+       "$HITS"
+
 # The recorder's strips are not always a session's mixer, and a write of an
 # unloaded mixer replaced a whole show's session_mix.json with zero strips. So
 # only SessionMixFile.h names that file for writing. The listed files read it,

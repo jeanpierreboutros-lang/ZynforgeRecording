@@ -759,8 +759,8 @@ void MainComponent::editCloudUploadCommand()
                 if (result == 1 && self != nullptr && self->engine.getAppProps() != nullptr)
                 {
                     const auto v = aw->getTextEditorContents ("cmd").trim();
-                    self->engine.getAppProps()->setValue ("cloudUploadCommand", v);
-                    self->engine.getAppProps()->saveIfNeeded();
+                    zynforge::updateSettings (self->engine.getAppProps(), [&v] (juce::PropertiesFile& p)
+                                              { p.setValue ("cloudUploadCommand", v); });
                     self->showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
                                             : juce::String ("Cloud upload command saved"));
                 }

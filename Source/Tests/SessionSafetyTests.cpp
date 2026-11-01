@@ -7,6 +7,7 @@
 #include "../Audio/SessionMixFile.h"
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/AtomicFile.h"
+#include "../Audio/SettingsFile.h"
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -604,6 +605,29 @@ public:
         }
     }
 
+    void testSettingsWriters()
+    {
+        beginTest ("A UI preference save keeps the patch another writer just saved");
+        {
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.setStripCount (8);
+            host.engine.setTrackInputRouting (5, 3);
+            host.setStripWidthPreset (MainComponent::StripWidth::L);
+            host.engine.setTrackInputRouting (6, 2);
+            host.setStripWidthPreset (MainComponent::StripWidth::S);
+            auto* props = host.engine.getAppProps();
+            expect (props != nullptr);
+            if (props != nullptr)
+            {
+                reloadSettingsReplacing (*props);
+                expectEquals (props->getIntValue ("strip_in_5", -1), 3, "a preference save rolled the patch back");
+                expectEquals (props->getIntValue ("strip_in_6", -1), 2);
+            }
+            host.setStripWidthPreset (MainComponent::StripWidth::M);
+            host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -614,6 +638,7 @@ public:
         testMixerOwnership();
         testOpeningTheOpenSession();
         testDamagedFiles();
+        testSettingsWriters();
     }
 };
 

@@ -1026,7 +1026,8 @@ void MainComponent::editCycleNudgeValue()
     for (int i = 0; i < (int) (sizeof (steps) / sizeof (int)); ++i)
         if (steps[i] == nudgeMs) { idx = i; break; }
     nudgeMs = steps[(idx + 1) % (int) (sizeof (steps) / sizeof (int))];
-    if (auto* props = engine.getAppProps()) props->setValue ("editNudgeMs", nudgeMs);
+    zynforge::updateSettings (engine.getAppProps(), [this] (juce::PropertiesFile& props)
+                              { props.setValue ("editNudgeMs", nudgeMs); });
     showStatus ("Nudge value: " + juce::String (nudgeMs) + " ms"
                 + "  (Alt+Left/Right or numpad +/- to nudge the selected clip)");
 }

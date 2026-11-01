@@ -392,7 +392,8 @@ namespace zynforge
         job.retired = player.installPreparedSession (std::move (job.prepared), true);
         invalidateTransientCache();
         activeSession = job.directory;
-        if (appProps != nullptr) appProps->setValue ("activeSessionDir", activeSession.getFullPathName());
+        updateSettings (appProps.get(), [this] (juce::PropertiesFile& props)
+                        { props.setValue ("activeSessionDir", activeSession.getFullPathName()); });
         seedDefaultClips (true, true);
         player.finishPreparedClipPublication();
         player.setPositionSamples (juce::jlimit ((juce::int64) 0, player.getTotalLengthSamples(), job.recordEnd));

@@ -649,12 +649,11 @@ void MainComponent::promptConsoleConnect()
                 self->showStatus ("Console link failed -- check the IP and the network");
                 return;
             }
-            if (auto* p = self->engine.getAppProps())
+            zynforge::updateSettings (self->engine.getAppProps(), [&] (juce::PropertiesFile& p)
             {
-                p->setValue ("consoleHost", host);
-                p->setValue ("consoleProfile", profileIdx);
-                p->saveIfNeeded();
-            }
+                p.setValue ("consoleHost", host);
+                p.setValue ("consoleProfile", profileIdx);
+            });
             // Pull the channel names straight away so the session labels
             // itself the moment the desk is reachable.
             if (self->consoleLink.getProfile().canReadNames)
@@ -842,11 +841,8 @@ void MainComponent::toggleCaptureDaemon()
         useCaptureDaemon = true;
         connectCaptureDaemon (true);
     }
-    if (auto* p = engine.getAppProps())
-    {
-        p->setValue ("useCaptureDaemon", useCaptureDaemon);
-        p->saveIfNeeded();
-    }
+    zynforge::updateSettings (engine.getAppProps(), [this] (juce::PropertiesFile& p)
+                              { p.setValue ("useCaptureDaemon", useCaptureDaemon); });
 }
 
 bool MainComponent::configureCaptureDaemon()
@@ -888,9 +884,8 @@ void MainComponent::scanForCrashReports()
     // First-ever run: don't dump historic reports on a fresh install --
     // just set the baseline and start watching from here.
     const double lastMs = props->getDoubleValue ("lastCrashScanMs", 0.0);
-    props->setValue ("lastCrashScanMs",
-                     (double) juce::Time::getCurrentTime().toMilliseconds());
-    props->saveIfNeeded();
+    zynforge::updateSettings (props, [] (juce::PropertiesFile& p)
+                              { p.setValue ("lastCrashScanMs", (double) juce::Time::getCurrentTime().toMilliseconds()); });
     if (lastMs <= 0.0) return;
 
     const auto reports = zynforge::crashscan::findNewReports (

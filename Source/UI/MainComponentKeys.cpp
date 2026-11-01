@@ -448,8 +448,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
                     if (key.getModifiers().isShiftDown())
                     {
                         const auto z = editPage->getZoom();
-                        props->setValue (storeKey, (double) z);
-                        props->saveIfNeeded();
+                        zynforge::updateSettings (props, [&] (juce::PropertiesFile& p)
+                                                  { p.setValue (storeKey, (double) z); });
                         showStatus ("EDIT zoom preset " + juce::String (slot)
                                     + " stored at " + juce::String (z, 2) + "x");
                     }

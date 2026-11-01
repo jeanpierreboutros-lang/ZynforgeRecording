@@ -743,8 +743,8 @@ void MainComponent::showAutosaveSettings()
         if (auto* cb = aw->getComboBoxComponent ("interval")) idx = cb->getSelectedItemIndex();
         const int mins = mapMins[juce::jlimit (0, 5, idx)];
 
-        if (auto* p = self->engine.getAppProps())
-        { p->setValue ("autosaveMinutes", mins); p->saveIfNeeded(); }
+        zynforge::updateSettings (self->engine.getAppProps(), [mins] (juce::PropertiesFile& p)
+                                  { p.setValue ("autosaveMinutes", mins); });
         self->lastAutosaveMs = 0;   // restart the clock against the new interval
         self->showStatus (mins > 0 ? ("Auto-save every " + juce::String (mins)
                                       + (mins == 1 ? " minute" : " minutes"))
@@ -2307,11 +2307,8 @@ juce::File MainComponent::getDefaultTemplate() const
 
 void MainComponent::setDefaultTemplate (const juce::File& templateFile)
 {
-    if (auto* props = engine.getAppProps())
-    {
-        props->setValue ("defaultTemplateFile", templateFile.getFullPathName());
-        props->saveIfNeeded();
-    }
+    zynforge::updateSettings (engine.getAppProps(), [&templateFile] (juce::PropertiesFile& props)
+                              { props.setValue ("defaultTemplateFile", templateFile.getFullPathName()); });
     showStatus (templateFile == juce::File{}
                   ? juce::String ("Default template cleared")
                   : "Default template -> " + templateFile.getFileNameWithoutExtension());

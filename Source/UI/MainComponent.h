@@ -28,6 +28,7 @@
 #include "MenuCommandTable.h"
 #include "SessionJobRunner.h"
 #include "SessionMetadataWriter.h"
+#include "../Audio/SettingsFile.h"
 #include "TempoBar.h"
 #include "TimelineStrip.h"
 #include "Toast.h"

@@ -420,11 +420,8 @@ void MainComponent::showStartupWelcome()
             return;
         }
 
-        if (auto* p = self->engine.getAppProps())
-        {
-            p->setValue ("sessionsRoot", r.location.getFullPathName());
-            p->saveIfNeeded();
-        }
+        zynforge::updateSettings (self->engine.getAppProps(), [&r] (juce::PropertiesFile& p)
+                                  { p.setValue ("sessionsRoot", r.location.getFullPathName()); });
         self->engine.getRecorder().setCaptureFormat (r.captureFormat);
         self->engine.setActiveSessionDir (sessionFolder);
 
@@ -554,14 +551,13 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
         // Persist the new sessions root (used by makeNewSessionDir +
         // every future file dialog) and remember the chosen format
         // so the dB readout / capture matches.
-        if (auto* props = self->engine.getAppProps())
+        zynforge::updateSettings (self->engine.getAppProps(), [&r] (juce::PropertiesFile& props)
         {
-            props->setValue ("sessionsRoot",      r.location.getFullPathName());
-            props->setValue ("sessionName",       r.name);
-            props->setValue ("interleavedFlag",   r.interleaved);
-            props->setValue ("ioPreset",          r.ioSettings);
-            props->saveIfNeeded();
-        }
+            props.setValue ("sessionsRoot",      r.location.getFullPathName());
+            props.setValue ("sessionName",       r.name);
+            props.setValue ("interleavedFlag",   r.interleaved);
+            props.setValue ("ioPreset",          r.ioSettings);
+        });
 
         // Pin this folder as the active session so Save / Save As light
         // up immediately (engine.getActiveSessionDir() now reports it
