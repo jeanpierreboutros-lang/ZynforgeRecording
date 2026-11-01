@@ -501,6 +501,8 @@ private:
     // before everything above, so its threads never outlive what the host uses.
     zynforge::twin::TwinLink twinLink { *this };
     bool twinStartInFlight { false };   // this RECORD arrived over the twin link
+    bool remoteStartInFlight { false }; // this RECORD arrived from any remote surface
+    bool remotePunchRefused { false };  // and it was refused because it would punch
 
     friend class zynforge::MainTransportRegressionTests;
     friend class zynforge::TwinLinkHostTests;

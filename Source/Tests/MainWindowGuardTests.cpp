@@ -260,6 +260,7 @@ namespace zynforge
             parkedPlayheadAppends();
             punchModeUsesLiveArms();
             punchModeLeavesWithTheSession();
+            remoteNeverPunches();
         }
 
     private:
@@ -700,6 +701,101 @@ namespace zynforge
                 w.open (w.session);
                 w.main.updatePunchPill();
                 expect (! w.main.punchPill.isVisible(), "the pill outlived the session");
+            }
+        }
+
+        void remoteNeverPunches()
+        {
+            using Action = AudioEngine::RemoteTransportAction;
+
+            beginTest ("A remote RECORD refuses to punch at a placed cursor");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.engine().setEditCursorSample (20000);
+                juce::String error;
+                expect (! w.engine().performRemoteTransport (Action::StartRecord, error));
+                expect (! w.engine().isRecording(), "a remote RECORD punched");
+                expect (! w.main.manualPunchActive);
+                expect (w.main.statusLabel.getText().containsIgnoreCase ("punch"), w.main.statusLabel.getText());
+                expect (error.containsIgnoreCase ("punch"), error);
+            }
+
+            beginTest ("A remote RECORD refuses to punch at a rolling playhead");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.player().setPositionSamples (20000);
+                w.engine().startPlayback();
+                juce::String error;
+                expect (! w.engine().performRemoteTransport (Action::ToggleRecord, error));
+                expect (! w.engine().isRecording(), "a remote RECORD punched while rolling");
+                w.engine().stopPlayback();
+            }
+
+            beginTest ("A remote RECORD refuses to punch a selected range, and leaves it armed");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.player().selectRange (1000, 2000);
+                juce::String error;
+                expect (! w.engine().performRemoteTransport (Action::StartRecord, error));
+                expect (! w.engine().isRecording());
+                expect (! w.main.punchSessionActive, "a remote RECORD rolled a selection punch");
+                expect (w.player().isRangeArmed());
+            }
+
+            beginTest ("A remote RECORD at a parked playhead appends");
+            {
+                Window w;
+                w.arm ({ 0 });
+                const auto total = w.player().getTotalLengthSamples();
+                w.player().setPositionSamples (20000);
+                juce::String error;
+                expect (w.engine().performRemoteTransport (Action::StartRecord, error), error);
+                expect (w.engine().isRecording());
+                feedAll (w.recorder(), -0.3f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+                expectWithinAbsoluteError (meanOf (trackFile (w.session, 0), 0, total),
+                                           levelOf (0), 1.0e-3f, "a parked remote RECORD overwrote the take");
+            }
+
+            beginTest ("A local press may still punch, through the same path");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.engine().setEditCursorSample (20000);
+                w.main.onRecordClicked();
+                expect (w.main.manualPunchActive, w.main.statusLabel.getText());
+                feedAll (w.recorder(), -0.3f, 4);
+                w.main.onStopClicked();
+                expect (w.stopped());
+            }
+
+            beginTest ("No remote PLAY rolls into a PUNCH window");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.main.togglePunchMode();
+                juce::String error;
+                expect (! w.engine().performRemoteTransport (Action::StartPlay, error));
+                expect (error.containsIgnoreCase ("punch"), error);
+                expect (! w.engine().isPlaying());
+                w.main.togglePunchMode();
+                expect (w.engine().performRemoteTransport (Action::StartPlay, error), error);
+                w.engine().stopPlayback();
+            }
+
+            beginTest ("A remote RECORD during a punch's post-roll leaves the punch alone");
+            {
+                Window w;
+                w.main.punchSessionActive = true;
+                juce::String error;
+                expect (! w.engine().performRemoteTransport (Action::StartRecord, error));
+                expect (error.containsIgnoreCase ("punch"), error);
+                expect (w.main.punchSessionActive);
+                w.main.punchSessionActive = false;
             }
         }
     };

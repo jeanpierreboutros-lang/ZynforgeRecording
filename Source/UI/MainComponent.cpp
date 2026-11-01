@@ -88,11 +88,13 @@ bool MainComponent::recordPlanPunches (const RecordStartPlan& plan)
 void MainComponent::runRecordPlan (RecordStartPlan& plan)
 {
     const bool punch = recordPlanPunches (plan);
-    // A press on this Mac can punch on purpose. A twin start cannot: nobody
+    // A press on this Mac can punch on purpose. A remote start cannot: nobody
     // here chose that cursor, and a punch replaces audio in this Mac's take.
-    if (punch && twinStartInFlight)
+    if (punch && (twinStartInFlight || remoteStartInFlight))
     {
-        showStatus ("Twin RECORD refused -- this Mac would punch into its take; clear the EDIT cursor or selection and stop playback");
+        remotePunchRefused = true;
+        showStatus (juce::String (twinStartInFlight ? "Twin" : "Remote")
+                    + " RECORD refused -- this Mac would punch into its take; clear the EDIT cursor or selection and stop playback");
         return;
     }
     applyRecordAutoRouting (plan);
@@ -807,6 +809,14 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     {
         if (captureMetadataPending || pendingMetadataSaves != 0)
         { error = "session finalization or saving is pending"; return false; }
+        // Rolling into the selected range in PUNCH mode opens a punch, and no
+        // remote may start one.
+        if (action != A::StopPlay && engine.isPunchModeOn() && ! engine.isPlaying())
+        {
+            error = "PUNCH mode is on; start playback on the host";
+            showStatus ("Remote PLAY refused -- PUNCH mode is on");
+            return false;
+        }
         return std::nullopt;
     }
 
@@ -849,10 +859,19 @@ std::optional<bool> MainComponent::handleRemoteTransport (
             showStatus ("Remote RECORD refused -- capture daemon is unavailable");
             return false;
         }
+        // During a punch's post-roll a RECORD press would end the punch.
+        if (punchSessionActive)
+        {
+            error = "a punch is in progress on the host";
+            return false;
+        }
 
+        const juce::ScopedValueSetter<bool> remoteStart (remoteStartInFlight, true);
+        remotePunchRefused = false;
         onRecordClicked();
         if (engine.isRecording()) return true;
-        error = "recording could not start; check the host pre-flight message";
+        error = remotePunchRefused ? "RECORD would punch into the take; clear the cursor or selection on the host"
+                                   : "recording could not start; check the host pre-flight message";
         return false;
     }
 
