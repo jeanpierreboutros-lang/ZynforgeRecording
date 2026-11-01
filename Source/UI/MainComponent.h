@@ -180,6 +180,16 @@ private:
     void adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs);
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
     bool sessionFolderIsMissing() const;
+    void completeSaveAs (const juce::File& source, const juce::File& dest);
+    void completeRelocate (const juce::File& oldDir, const juce::File& newParent);
+    void completeShowHandoff (const juce::File& source, const juce::File& dest);
+    bool carryMixerInto (const juce::File& copy);
+    void startHandoffCopy (const juce::File& source, const juce::File& dest);
+    // When a job's save of the source fails, whether to go on from what is on
+    // disk. The tests stand in for the dialog through continueFromDiskPromptForTests.
+    void offerContinueFromDisk (const juce::String& action, const juce::String& carried,
+                                std::function<void()> proceed, std::function<void()> cancel);
+    std::function<bool (const juce::String& text)> continueFromDiskPromptForTests;
     juce::uint32 nextAutosaveRetryMs (juce::uint32 intervalMs);
     bool saveMixerToTakeFolder (const juce::File& dir);
     bool saveSessionStateTo (const juce::File& dir);

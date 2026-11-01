@@ -21,9 +21,10 @@ public:
 
     struct Folder
     {
-        juce::File dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-            .getChildFile ("zf-session-safety-" + juce::Uuid().toString());
-        Folder() { dir.createDirectory(); dir.getChildFile ("Audio Files").createDirectory(); }
+        juce::File dir;
+        explicit Folder (const juce::File& root = juce::File::getSpecialLocation (juce::File::tempDirectory))
+            : dir (root.getChildFile ("zf-session-safety-" + juce::Uuid().toString()))
+        { dir.createDirectory(); dir.getChildFile ("Audio Files").createDirectory(); }
         ~Folder() { dir.deleteRecursively(); }
         juce::File project() const { return dir.getChildFile (dir.getFileName() + ".zfproj"); }
         juce::File mix() const { return dir.getChildFile ("session_mix.json"); }
@@ -677,6 +678,137 @@ public:
         }
     }
 
+    // A session on read-only media: the folder refuses new files, so every save
+    // fails. Permissions need a real Mac volume. The private test home can sit on
+    // exFAT, which has none, so these sessions live in /tmp.
+    static juce::File permissionsRoot() { return juce::File ("/tmp"); }
+    void makeReadOnly (const Folder& f)
+    {
+        f.dir.setReadOnly (true);
+        expect (! atomicfile::writeText (f.dir.getChildFile ("probe"), "x"), "the fixture is not really read-only");
+    }
+    static void makeWritable (const Folder& f)  { f.dir.setReadOnly (false); }
+
+    void testReadOnlySessions()
+    {
+        beginTest ("Save As and Show Handoff copy an ordinary session end to end");
+        {
+            Folder f; writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            const auto saved = f.dir.getSiblingFile (f.dir.getFileName() + "-saved-as");
+            const auto handoff = f.dir.getSiblingFile (f.dir.getFileName() + "-handoff");
+            const juce::ScopeGuard removeCopies { [&] { saved.deleteRecursively(); handoff.deleteRecursively(); } };
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) > 0);
+
+            expect (host.sessionJobs.reserve());
+            host.completeShowHandoff (f.dir, handoff);
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }, 20000));
+            expect (handoff.getChildFile ("Audio Files/Track_01.wav").existsAsFile(), "the handoff has no audio");
+
+            expect (host.sessionJobs.reserve());
+            host.completeSaveAs (f.dir, saved);
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }, 20000));
+            expect (saved.getChildFile ("Audio Files/Track_01.wav").existsAsFile(), "Save As has no audio");
+            expect (host.engine.mixerBelongsTo (saved));
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("Save As copies a read-only session and keeps the unsaved edits");
+        {
+            Folder f (permissionsRoot()); writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            const auto dest = f.dir.getSiblingFile (f.dir.getFileName() + "-copy");
+            const juce::ScopeGuard removeDest { [&] { dest.deleteRecursively(); } };
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) > 0);
+            host.engine.setTrackName (0, "Edited on read-only media");
+            expect (host.lastSavedUndoUnits >= 0);
+
+            makeReadOnly (f);
+            const juce::ScopeGuard writable { [&] { makeWritable (f); } };
+            juce::String prompted;
+            host.continueFromDiskPromptForTests = [&] (const juce::String& text) { prompted = text; return true; };
+            expect (host.sessionJobs.reserve());
+            host.completeSaveAs (f.dir, dest);
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }));
+            expect (prompted.isNotEmpty(), "the engineer was not told the source could not be saved");
+            expect (dest.getChildFile ("Audio Files/Track_01.wav").existsAsFile(), "the audio was not copied");
+            expect (host.engine.getActiveSessionDir() == dest);
+            expect (host.engine.mixerBelongsTo (dest));
+            expectEquals (stripName (host, 0), juce::String ("Edited on read-only media"), "the copy lost the unsaved edit");
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("Declining the prompt leaves a read-only session where it is");
+        {
+            Folder f (permissionsRoot()); writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            const auto dest = f.dir.getSiblingFile (f.dir.getFileName() + "-declined");
+            const juce::ScopeGuard removeDest { [&] { dest.deleteRecursively(); } };
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) > 0);
+            makeReadOnly (f);
+            const juce::ScopeGuard writable { [&] { makeWritable (f); } };
+            host.continueFromDiskPromptForTests = [] (const juce::String&) { return false; };
+            expect (host.sessionJobs.reserve());
+            host.completeSaveAs (f.dir, dest);
+            expect (! host.sessionIoBusy.load(), "a declined prompt must release the reservation");
+            expect (! dest.exists() || dest.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0);
+            expect (host.engine.getActiveSessionDir() == f.dir);
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("Move and Handoff of a read-only session ask, then go on from the disk");
+        {
+            Folder f (permissionsRoot()); writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            const auto parent = f.dir.getSiblingFile (f.dir.getFileName() + "-new-home");
+            const auto handoff = f.dir.getSiblingFile (f.dir.getFileName() + "-handoff");
+            expect (parent.createDirectory().wasOk());
+            const juce::ScopeGuard removeCopies { [&] { parent.deleteRecursively(); handoff.deleteRecursively(); } };
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) > 0);
+            host.engine.setTrackName (0, "Edited on read-only media");
+            makeReadOnly (f);
+            const juce::ScopeGuard writable { [&] { makeWritable (f); } };
+
+            int prompts = 0;
+            host.continueFromDiskPromptForTests = [&] (const juce::String&) { ++prompts; return true; };
+            expect (host.sessionJobs.reserve());
+            host.completeShowHandoff (f.dir, handoff);
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }, 20000));
+            expectEquals (prompts, 1, "the handoff did not say it could not save");
+            expect (handoff.getChildFile ("Audio Files/Track_01.wav").existsAsFile(), "the handoff has no audio");
+
+            // A read-only folder cannot be renamed away, so this takes the copy
+            // path a move between drives takes.
+            expect (host.sessionJobs.reserve());
+            host.completeRelocate (f.dir, parent);
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }, 20000));
+            expectEquals (prompts, 2, "the move did not say it could not save");
+            const auto moved = parent.getChildFile (f.dir.getFileName());
+            expect (moved.getChildFile ("Audio Files/Track_01.wav").existsAsFile(), "the move has no audio");
+            expect (host.engine.getActiveSessionDir() == moved);
+            expectEquals (stripName (host, 0), juce::String ("Edited on read-only media"), "the move lost the unsaved edit");
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A writable session moves without asking");
+        {
+            Folder f; writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            const auto parent = f.dir.getSiblingFile (f.dir.getFileName() + "-new-home");
+            expect (parent.createDirectory().wasOk());
+            const juce::ScopeGuard removeParent { [&] { parent.deleteRecursively(); } };
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) > 0);
+            bool prompted = false;
+            host.continueFromDiskPromptForTests = [&] (const juce::String&) { prompted = true; return true; };
+            expect (host.sessionJobs.reserve());
+            host.completeRelocate (f.dir, parent);
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }));
+            expect (! prompted, "a session that saved normally must not ask");
+            expect (host.engine.getActiveSessionDir().getParentDirectory() == parent);
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -689,6 +821,7 @@ public:
         testDamagedFiles();
         testSettingsWriters();
         testMissingSessionFolder();
+        testReadOnlySessions();
     }
 };
 

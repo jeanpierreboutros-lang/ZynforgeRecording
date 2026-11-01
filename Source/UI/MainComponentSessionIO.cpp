@@ -1427,83 +1427,81 @@ void MainComponent::onSaveSessionAs()
     chooser->launchAsync (flags, [chooserSelf, this, source] (const juce::FileChooser& fc)
     {
         if (chooserSelf == nullptr) return;
-        auto dest = fc.getResult();
+        const auto dest = fc.getResult();
         if (dest.getFullPathName().isEmpty()) { sessionJobs.release(); return; }
+        completeSaveAs (source, dest);
+    });
+}
 
-        if (source == dest)
-        {
-            const bool ok = saveSessionStateTo (dest);
-            sessionJobs.release();
-            showStatus (ok ? "Session saved" : "Save failed -- check permissions / free space");
-            return;
-        }
+void MainComponent::completeSaveAs (const juce::File& source, const juce::File& dest)
+{
+    if (source == dest)
+    {
+        const bool ok = saveSessionStateTo (dest);
+        sessionJobs.release();
+        showStatus (ok ? "Session saved" : "Save failed -- check permissions / free space");
+        return;
+    }
 
-        const bool createdDestination = ! dest.exists();
-        if (createdDestination && dest.createDirectory().failed())
-        { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
-        if (! dest.isDirectory())
-        { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
+    const bool createdDestination = ! dest.exists();
+    if (createdDestination && dest.createDirectory().failed())
+    { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
+    if (! dest.isDirectory())
+    { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
 
-        // Refuse a destination INSIDE the source: copyDirectoryTo would copy
-        // the growing destination into itself.
-        if (source.isDirectory() && pathsafety::isSameOrDescendant (source, dest))
-        {
-            sessionJobs.release();
-            showStatus ("Save As failed -- pick a folder outside the current session");
-            return;
-        }
+    // Refuse a destination INSIDE the source: copyDirectoryTo would copy
+    // the growing destination into itself.
+    if (source.isDirectory() && pathsafety::isSameOrDescendant (source, dest))
+    {
+        sessionJobs.release();
+        showStatus ("Save As failed -- pick a folder outside the current session");
+        return;
+    }
 
-        // Save As is a clone, never a merge.  Refusing a non-empty folder
-        // prevents JUCE's copyFileTo from deleting same-named destination
-        // files and prevents an old session from becoming a hybrid.
-        if (! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty())
-        {
-            sessionJobs.release();
-            showStatus ("Save As needs a new or empty folder");
-            return;
-        }
+    // Save As is a clone, never a merge.  Refusing a non-empty folder
+    // prevents JUCE's copyFileTo from deleting same-named destination
+    // files and prevents an old session from becoming a hybrid.
+    if (! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty())
+    {
+        sessionJobs.release();
+        showStatus ("Save As needs a new or empty folder");
+        return;
+    }
 
-        const bool needsCopy = source.isDirectory() && source != dest;
-        if (! needsCopy)
-        {
-            if (! ensureSessionScaffold (dest))
-            {
-                removePartialCopy (dest, createdDestination);
-                sessionJobs.release();
-                showStatus ("Save As failed -- couldn't create the session files");
-                return;
-            }
-            engine.setActiveSessionDir (dest);
-            engine.claimMixerFor (dest);
-            const bool ok = saveSessionStateTo (dest);
-            sessionJobs.release();
-            showStatus (ok ? "Saved As -> " + dest.getFileName()
-                           : "Save As failed -- check permissions / free space");
-            return;
-        }
-
-        // Freeze a complete source snapshot before the background copy begins.
-        if (! saveSessionStateTo (source))
+    const bool needsCopy = source.isDirectory() && source != dest;
+    if (! needsCopy)
+    {
+        if (! ensureSessionScaffold (dest))
         {
             removePartialCopy (dest, createdDestination);
             sessionJobs.release();
-            showStatus ("Save As failed -- couldn't save the current session");
+            showStatus ("Save As failed -- couldn't create the session files");
             return;
         }
+        engine.setActiveSessionDir (dest);
+        engine.claimMixerFor (dest);
+        const bool ok = saveSessionStateTo (dest);
+        sessionJobs.release();
+        showStatus (ok ? "Saved As -> " + dest.getFileName()
+                       : "Save As failed -- check permissions / free space");
+        return;
+    }
 
-        // The folder copy carries the AUDIO -- gigabytes on a real show -- so it
-        // runs on the owned export thread instead of freezing the message
-        // thread for the duration. The state files are written afterwards, back
-        // on the message thread, because saveSessionStateTo touches engine state.
-        engine.setSessionTransitionActive (true);
-        showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
-
-        juce::Component::SafePointer<MainComponent> self (this);
-        sessionJobs.launch ([self, source, dest, createdDestination] (const std::atomic<bool>& cancel)
-                            -> zynforge::SessionJobRunner::Completion
+    // The folder copy carries the AUDIO -- gigabytes on a real show -- so it
+    // runs on the owned export thread instead of freezing the message
+    // thread for the duration. The state files are written afterwards, back
+    // on the message thread, because saveSessionStateTo touches engine state.
+    juce::Component::SafePointer<MainComponent> self (this);
+    auto copySession = [self, source, dest, createdDestination] (bool carryEdits)
+    {
+        if (self == nullptr) return;
+        self->engine.setSessionTransitionActive (true);
+        self->showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
+        self->sessionJobs.launch ([self, source, dest, createdDestination, carryEdits] (const std::atomic<bool>& cancel)
+                                  -> zynforge::SessionJobRunner::Completion
         {
             const bool ok = copyDirectoryCancellable (source, dest, cancel);
-            return [self, ok, dest, createdDestination]
+            return [self, ok, dest, createdDestination, carryEdits]
             {
                 if (self == nullptr) return;
                 self->engine.setSessionTransitionActive (false);
@@ -1513,11 +1511,58 @@ void MainComponent::onSaveSessionAs()
                     self->showStatus ("Save As cancelled or failed -- source session is unchanged");
                     return;
                 }
+                const bool carried = ! carryEdits || self->carryMixerInto (dest);
                 self->openSessionFolder (dest);
-                self->showStatus ("Saved As -> " + dest.getFileName());
+                self->showStatus (carried ? "Saved As -> " + dest.getFileName()
+                                          : "Saved As -> " + dest.getFileName() + "; unsaved changes could not be carried over");
             };
         });
-    });
+    };
+
+    // Freeze a complete source snapshot before the background copy begins.
+    if (saveSessionStateTo (source)) { copySession (false); return; }
+    // Nothing in memory is this session's, so there is nothing to lose.
+    if (! engine.mixerBelongsTo (source)) { copySession (false); return; }
+    offerContinueFromDisk ("Save As", "Your unsaved changes will be saved into the copy.",
+                           [copySession] { copySession (true); },
+                           [self, dest, createdDestination]
+                           {
+                               if (self == nullptr) return;
+                               removePartialCopy (dest, createdDestination);
+                               self->sessionJobs.release();
+                               self->showStatus ("Save As cancelled -- source session is unchanged");
+                           });
+}
+
+// A session on read-only media keeps its edits only in memory. The copy made
+// from it is the first place they can be saved, so they go there.
+bool MainComponent::carryMixerInto (const juce::File& copy)
+{
+    engine.claimMixerFor (copy);
+    return saveSessionStateTo (copy);
+}
+
+void MainComponent::offerContinueFromDisk (const juce::String& action, const juce::String& carried,
+                                           std::function<void()> proceed, std::function<void()> cancel)
+{
+    const auto text = action + " could not save the current state into the session first"
+        + (lastMetadataSaveError.isNotEmpty() ? " (" + lastMetadataSaveError + ")" : juce::String())
+        + ".\n\nContinue from the files as they are on disk? " + carried;
+    if (continueFromDiskPromptForTests)
+    {
+        if (continueFromDiskPromptForTests (text)) proceed(); else cancel();
+        return;
+    }
+    auto* aw = new juce::AlertWindow (action + " needs a decision", text, juce::MessageBoxIconType::NoIcon, this);
+    aw->setLookAndFeel (&laf);
+    aw->addButton ("Continue", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel",   0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw, proceed = std::move (proceed), cancel = std::move (cancel)] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result == 1) proceed(); else cancel();
+        }), false);
 }
 
 // The rate the session's audio is actually AT -- what the export dialog should
@@ -1945,83 +1990,102 @@ void MainComponent::exportShowHandoff()
         if (self == nullptr) return;
         const auto dest = fc.getResult();
         if (dest == juce::File()) { self->sessionJobs.release(); return; }
-        if (pathsafety::isSameOrDescendant (source, dest) || dest.isSymbolicLink())
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Choose a new handoff folder outside the source session");
-            return;
-        }
-        if (dest.exists() && (! dest.isDirectory()
-                              || ! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty()))
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Handoff needs a new or empty folder; nothing was overwritten");
-            return;
-        }
-        if (! dest.isDirectory() && dest.createDirectory().failed())
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Could not create the handoff folder");
-            return;
-        }
-        if (! self->saveSessionStateTo (source))
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Handoff cancelled: session metadata could not be saved");
-            return;
-        }
-        const auto timelineCsv = self->buildTimelineCsv();
-        if (timelineCsv.isEmpty())
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Handoff cancelled: session timeline is unavailable");
-            return;
-        }
-        const auto interchange = self->engine.captureInterchange();
-        const auto version = applicationVersion();
-        // A crash or quit mid-copy must leave a visible incomplete marker,
-        // not a plausible-looking folder with a few truncated recordings.
-        const auto incomplete = dest.getChildFile ("HANDOFF INCOMPLETE.txt");
-        if (! atomicfile::writeText (incomplete,
-             "This show handoff was interrupted or failed. Do not deliver it as verified.\n"))
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Could not create the handoff safety marker");
-            return;
-        }
+        self->completeShowHandoff (source, dest);
+    });
+}
 
-        self->engine.setSessionTransitionActive (true);
-        self->showStatus ("Creating handoff in background: " + dest.getFileName());
-        self->sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version]
-                                  (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
+void MainComponent::completeShowHandoff (const juce::File& source, const juce::File& dest)
+{
+    if (pathsafety::isSameOrDescendant (source, dest) || dest.isSymbolicLink())
+    {
+        sessionJobs.release();
+        showStatus ("Choose a new handoff folder outside the source session");
+        return;
+    }
+    if (dest.exists() && (! dest.isDirectory()
+                          || ! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty()))
+    {
+        sessionJobs.release();
+        showStatus ("Handoff needs a new or empty folder; nothing was overwritten");
+        return;
+    }
+    if (! dest.isDirectory() && dest.createDirectory().failed())
+    {
+        sessionJobs.release();
+        showStatus ("Could not create the handoff folder");
+        return;
+    }
+    if (saveSessionStateTo (source) || ! engine.mixerBelongsTo (source))
+    {
+        startHandoffCopy (source, dest);
+        return;
+    }
+    juce::Component::SafePointer<MainComponent> self (this);
+    offerContinueFromDisk ("The handoff",
+                           "The handoff is verified against the source, so unsaved changes will not be in it.",
+                           [self, source, dest] { if (self != nullptr) self->startHandoffCopy (source, dest); },
+                           [self]
+                           {
+                               if (self == nullptr) return;
+                               self->sessionJobs.release();
+                               self->showStatus ("Handoff cancelled: session metadata could not be saved");
+                           });
+}
+
+void MainComponent::startHandoffCopy (const juce::File& source, const juce::File& dest)
+{
+    const auto timelineCsv = buildTimelineCsv();
+    if (timelineCsv.isEmpty())
+    {
+        sessionJobs.release();
+        showStatus ("Handoff cancelled: session timeline is unavailable");
+        return;
+    }
+    const auto interchange = engine.captureInterchange();
+    const auto version = applicationVersion();
+    // A crash or quit mid-copy must leave a visible incomplete marker,
+    // not a plausible-looking folder with a few truncated recordings.
+    const auto incomplete = dest.getChildFile ("HANDOFF INCOMPLETE.txt");
+    if (! atomicfile::writeText (incomplete,
+         "This show handoff was interrupted or failed. Do not deliver it as verified.\n"))
+    {
+        sessionJobs.release();
+        showStatus ("Could not create the handoff safety marker");
+        return;
+    }
+
+    engine.setSessionTransitionActive (true);
+    showStatus ("Creating handoff in background: " + dest.getFileName());
+    juce::Component::SafePointer<MainComponent> self (this);
+    sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version]
+                        (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
+    {
+        showhandoff::Result result;
+        if (copyDirectoryCancellable (source, dest, cancel))
+            result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel,
+                [&] (const juce::File& copy, juce::String& warning)
+                { return projectexport::writeForHandoff (interchange, copy, version, cancel, warning); });
+        else
+            result = { false, "Copy cancelled or failed" };
+
+        if (result.ok && ! incomplete.deleteFile())
+            result = { false, "Could not remove the incomplete marker" };
+
+        if (! result.ok)
+            atomicfile::writeText (incomplete,
+                "This show handoff is incomplete: " + result.message + "\nDo not deliver it as verified.\n");
+        return [self, dest, result]
         {
-            showhandoff::Result result;
-            if (copyDirectoryCancellable (source, dest, cancel))
-                result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel,
-                    [&] (const juce::File& copy, juce::String& warning)
-                    { return projectexport::writeForHandoff (interchange, copy, version, cancel, warning); });
+            if (self == nullptr) return;
+            self->engine.setSessionTransitionActive (false);
+            if (result.ok)
+                self->showStatus ((result.captureReportWarning
+                    ? "! Handoff copy verified; CAPTURE REPORT NEEDS REVIEW: "
+                    : "Verified handoff ready: ") + dest.getFullPathName());
             else
-                result = { false, "Copy cancelled or failed" };
-
-            if (result.ok && ! incomplete.deleteFile())
-                result = { false, "Could not remove the incomplete marker" };
-
-            if (! result.ok)
-                atomicfile::writeText (incomplete,
-                    "This show handoff is incomplete: " + result.message + "\nDo not deliver it as verified.\n");
-            return [self, dest, result]
-            {
-                if (self == nullptr) return;
-                self->engine.setSessionTransitionActive (false);
-                if (result.ok)
-                    self->showStatus ((result.captureReportWarning
-                        ? "! Handoff copy verified; CAPTURE REPORT NEEDS REVIEW: "
-                        : "Verified handoff ready: ") + dest.getFullPathName());
-                else
-                    self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
-                                      + " -- " + result.message);
-            };
-        });
+                self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
+                                  + " -- " + result.message);
+        };
     });
 }
 
@@ -2058,43 +2122,44 @@ void MainComponent::relocateActiveSession()
             if (chooserSelf == nullptr) return;
             const auto newParent = fc.getResult();
             if (! newParent.isDirectory()) { sessionJobs.release(); return; }
+            completeRelocate (oldDir, newParent);
+        });
+}
 
-            const auto newDir = newParent.getChildFile (oldDir.getFileName());
-            if (newDir == oldDir)
-            { sessionJobs.release(); showStatus ("That's already the session's location."); return; }
-            if (pathsafety::isSameOrDescendant (oldDir, newParent)
-                || pathsafety::isSameOrDescendant (oldDir, newDir))
-            {
-                sessionJobs.release();
-                showStatus ("Move failed -- the destination cannot be inside the session");
-                return;
-            }
-            if (newDir.exists())
-            {
-                sessionJobs.release();
-                showStatus ("A folder named \"" + oldDir.getFileName()
-                            + "\" already exists there -- pick another location.");
-                return;
-            }
+void MainComponent::completeRelocate (const juce::File& oldDir, const juce::File& newParent)
+{
+    const auto newDir = newParent.getChildFile (oldDir.getFileName());
+    if (newDir == oldDir)
+    { sessionJobs.release(); showStatus ("That's already the session's location."); return; }
+    if (pathsafety::isSameOrDescendant (oldDir, newParent)
+        || pathsafety::isSameOrDescendant (oldDir, newDir))
+    {
+        sessionJobs.release();
+        showStatus ("Move failed -- the destination cannot be inside the session");
+        return;
+    }
+    if (newDir.exists())
+    {
+        sessionJobs.release();
+        showStatus ("A folder named \"" + oldDir.getFileName()
+                    + "\" already exists there -- pick another location.");
+        return;
+    }
 
-            if (! saveSessionStateTo (oldDir))
-            {
-                sessionJobs.release();
-                showStatus ("Move failed -- couldn't save the current session");
-                return;
-            }
+    juce::Component::SafePointer<MainComponent> self (this);
+    auto moveSession = [self, oldDir, newParent, newDir] (bool carryEdits)
+    {
+        if (self == nullptr) return;
+        // Drop any open playback handles so the files aren't busy while
+        // we move them, then do the (possibly cross-volume) move off the
+        // message thread so a big session can't freeze the UI.
+        self->engine.stopPlayback();
+        self->engine.setSessionTransitionActive (true);
+        self->showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
 
-            // Drop any open playback handles so the files aren't busy while
-            // we move them, then do the (possibly cross-volume) move off the
-            // message thread so a big session can't freeze the UI.
-            engine.stopPlayback();
-            engine.setSessionTransitionActive (true);
-            showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
-
-            juce::Component::SafePointer<MainComponent> self (this);
-            sessionJobs.launch ([self, oldDir, newDir] (const std::atomic<bool>& cancel)
-                                -> zynforge::SessionJobRunner::Completion
-            {
+        self->sessionJobs.launch ([self, oldDir, newDir, carryEdits] (const std::atomic<bool>& cancel)
+                                  -> zynforge::SessionJobRunner::Completion
+        {
                 bool relocated = oldDir.moveFileTo (newDir);   // instant within a volume
                 bool oldCopyRemains = false;
                 if (! relocated)                               // cross-volume: copy + delete
@@ -2109,7 +2174,7 @@ void MainComponent::relocateActiveSession()
                         newDir.deleteRecursively();
                 }
 
-                return [self, relocated, oldCopyRemains, oldDir, newDir]
+                return [self, relocated, oldCopyRemains, oldDir, newDir, carryEdits]
                 {
                     if (self == nullptr) return;
                     self->engine.setSessionTransitionActive (false);
@@ -2118,6 +2183,7 @@ void MainComponent::relocateActiveSession()
                         self->showStatus ("Move failed -- check permissions / free space. Session left in place.");
                         return;
                     }
+                    const bool carried = ! carryEdits || self->carryMixerInto (newDir);
                     // The default sessions folder stays where it was: moving one
                     // session to an archive drive must not send every New
                     // Session, import and crash-recovery scan there too.
@@ -2125,10 +2191,21 @@ void MainComponent::relocateActiveSession()
                     self->showStatus (oldCopyRemains
                         ? "Session moved, but the old folder could not be fully removed: "
                             + oldDir.getFullPathName()
-                        : "Session moved to " + newDir.getFullPathName());
+                        : (carried ? "Session moved to " : "Session moved, without its unsaved changes, to ")
+                            + newDir.getFullPathName());
                 };
-            });
         });
+    };
+
+    if (saveSessionStateTo (oldDir) || ! engine.mixerBelongsTo (oldDir)) { moveSession (false); return; }
+    offerContinueFromDisk ("Move", "Your unsaved changes will be saved in the new location.",
+                           [moveSession] { moveSession (true); },
+                           [self]
+                           {
+                               if (self == nullptr) return;
+                               self->sessionJobs.release();
+                               self->showStatus ("Move cancelled -- the session was not moved");
+                           });
 }
 
 void MainComponent::onLoadSessionClicked()
