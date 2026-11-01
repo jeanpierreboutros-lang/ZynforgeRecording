@@ -1713,8 +1713,10 @@ namespace zynforge
             if (auto* clips = showLive ? nullptr : engine.tryClipsFor (index))
             {
                 const auto& player = engine.getPlayer();
-                const juce::int64 totalSamples = player.isLoaded()
-                    ? player.getTotalLengthSamples() : 0;
+                // The lanes' own span: during a take it is the recording's, and
+                // a block on the file's length stretches against the ruler.
+                const juce::int64 totalSamples = player.isLoaded() && player.getTotalLengthSamples() > 0
+                    ? laneTimelineSamples() : 0;
                 if (totalSamples > 0)
                 {
                     const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);

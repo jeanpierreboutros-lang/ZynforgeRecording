@@ -1107,6 +1107,7 @@ namespace zynforge
             if (zoom > kMaxRecordingTimelineZoom)
             {
                 zoom = kMaxRecordingTimelineZoom;
+                resized();
                 if (onZoomChanged) onZoomChanged (zoom);
             }
         }
@@ -1115,6 +1116,9 @@ namespace zynforge
         // cleared. Writing `rec` alone here at 24 Hz fought the host's 10 Hz
         // write, so the lock flickered and mouse edits got through.
         applyReadOnly (hostReadOnly || rec);
+        // The lock is wider than a take (a metadata save holds it too); this
+        // red label says a take is rolling, so it follows the take alone.
+        recordingEditLabel.setVisible (rec || finalizing);
         const bool transportActive = rec || engine.getPlayer().isPlaying();
         const bool wasFollowing = followState.isFollowing();
         const bool wasTransportActive = followState.isTransportActive();
@@ -1471,7 +1475,6 @@ namespace zynforge
     {
         if (readOnlyWhileRecording == readOnly) return;
         readOnlyWhileRecording = readOnly;
-        recordingEditLabel.setVisible (readOnly);
         // Passing mouse events through the rows keeps the viewport's pan and
         // scroll gestures available. The ruler's marker/range edits stay inert.
         // No component is disabled, so waveform paint and zoom chrome retain

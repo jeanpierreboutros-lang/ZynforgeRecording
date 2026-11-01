@@ -1138,6 +1138,75 @@ namespace zynforge
                 expectEquals (row.getOverviewBuildsForTests(), built, "a repaint rebuilt overviews it just made");
             }
 
+            beginTest ("A row keeps to the ruler during a take");
+            {
+                Show s (2, { 0, 48000 });
+                s.engine.setTrackArmed (0, true);
+                EditPage::TrackRow row (1, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                row.setWaveformFiles (s.take (2), {});
+                expect (pumpUntil ([&] { return row.waveformsLoaded(); }, 5000), "thumbnail scan");
+                expect (s.engine.startRecording (s.dir), "setup: the take rolls");
+                juce::Image image (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                {
+                    juce::Graphics g (image);
+                    row.paint (g);
+                }
+                s.engine.stopRecording();
+                // One second of audio on a five-minute recording span.
+                int painted = 0;
+                for (int x = laneX (row, 0.3); x < laneX (row, 0.9); ++x)
+                    if (image.getPixelAt (x, 50) != brand::bgStrip) ++painted;
+                expect (painted < (laneX (row, 0.9) - laneX (row, 0.3)) / 4,
+                        "the clip block stretched across the recording span: " + juce::String (painted));
+            }
+
+            beginTest ("A take started past the live zoom limit relays out at once");
+            {
+                Show s (2, { 0, 480000 });
+                s.page().setBounds (0, 0, 1400, 500);
+                s.page().refresh();
+                s.page().setZoom (64.0f);
+                s.engine.setTrackArmed (0, true);
+                expect (s.engine.startRecording (s.dir), "setup: the take rolls");
+                expect (pumpUntil ([&] { return s.page().getZoom() <= kMaxRecordingTimelineZoom; }, 2000), "zoom clamp");
+                juce::Component* content = nullptr;
+                for (auto* child : s.page().getChildren())
+                    if (auto* viewport = dynamic_cast<juce::Viewport*> (child)) content = viewport->getViewedComponent();
+                if (content != nullptr)
+                    expect (content->getWidth() < 1400 * 20, "the lanes kept the deep zoom's width: "
+                            + juce::String (content->getWidth()));
+                s.engine.stopRecording();
+            }
+
+            beginTest ("After an unlink the R row draws its channel of the shared file");
+            {
+                Show s (2, {});
+                expect (writeWav (s.take (1), 48000, 2));
+                s.engine.loadSession (s.dir);
+                s.engine.setStripCount (2);
+                s.page().refresh();
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 2, "setup: two mono rows");
+                if (rows.size() == 2)
+                    expect (pumpUntil ([&] { return rows[1]->getWaveformSecondsForTests() > 0.0; }, 5000),
+                            "the R row drew nothing though its clip plays");
+            }
+
+            beginTest ("The REC label follows a take, not every timeline lock");
+            {
+                Show s (1, { 48000 });
+                juce::Label* label = nullptr;
+                for (auto* child : s.page().getChildren())
+                    if (auto* l = dynamic_cast<juce::Label*> (child); l != nullptr && l->getText().contains ("EDIT LOCKED"))
+                        label = l;
+                expect (label != nullptr, "setup: the label");
+                s.page().setReadOnlyWhileRecording (true);    // a metadata save holds the lock
+                pumpUntil ([] { return false; }, 120);
+                if (label != nullptr) expect (! label->isVisible(), "REC showed with no take running");
+                s.page().setReadOnlyWhileRecording (false);
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }
