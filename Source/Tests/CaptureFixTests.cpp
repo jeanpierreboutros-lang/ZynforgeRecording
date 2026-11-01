@@ -1674,11 +1674,16 @@ namespace zynforge
                 rec.setBackupDirectory (dirs.backup);
                 rec.copyDrainLimitMs = 400.0;
                 // Each chunk is progress, so this drive never trips the stall
-                // limit, however long the ring takes to come out.
+                // limit, however long the ring takes to come out. The copy is
+                // held until STOP, so the backlog is there on any machine.
                 auto slow = std::make_shared<std::atomic<bool>> (false);
-                rec.beforeCopyWriteForTests = [slow] (Copy& copy)
+                auto stopping = std::make_shared<juce::WaitableEvent> (true);
+                const juce::ScopeGuard letGo { [stopping] { stopping->signal(); } };
+                rec.beforeCopyWriteForTests = [slow, stopping] (Copy& copy)
                 {
-                    if (copy.copyIndex == 1 && slow->load()) juce::Thread::sleep (100);
+                    if (copy.copyIndex != 1 || ! slow->load()) return;
+                    stopping->wait (-1);
+                    juce::Thread::sleep (100);
                 };
                 expect (rec.startRecording (dirs.session));
                 Feeder feeder { rec, 1 };
@@ -1687,6 +1692,7 @@ namespace zynforge
                 feeder.blocks ((Copy::kChunkFrames * 40) / kBlock, { 0 });
 
                 const auto started = juce::Time::getMillisecondCounterHiRes();
+                stopping->signal();
                 rec.stopRecording();
                 expectLessThan (juce::Time::getMillisecondCounterHiRes() - started, 3000.0,
                                 "STOP sat through the whole drain");
