@@ -65,15 +65,6 @@ namespace zynforge
                    .getChildFile ("Zynforge Sessions");
     }
 
-    void AudioEngine::clearRecentSessions()
-    {
-        if (appProps == nullptr) return;
-        reloadAppPropsBeforeWrite();
-        for (int i = 0; i < kMaxRecent; ++i)
-            appProps->setValue ("recentSession_" + juce::String (i), juce::String());
-        appProps->saveIfNeeded();
-    }
-
     void AudioEngine::resetAllStripState()
     {
         // A live take records from inputRouting and captures stereo pairs by
@@ -1672,11 +1663,6 @@ namespace zynforge
             for (const auto& dropped : markers.getAll())
                 if (dropped.runtimeId == markers.lastDroppedId) { onMarkerDropped (dropped.name); break; }
         return markers.getCount();
-    }
-
-    int AudioEngine::getStripCount() const
-    {
-        return appProps ? juce::jlimit (0, 256, appProps->getIntValue ("stripCount", 0)) : 0;
     }
 
     void AudioEngine::clearAllStripOverrides()

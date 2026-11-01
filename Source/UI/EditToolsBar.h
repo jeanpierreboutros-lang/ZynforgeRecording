@@ -161,8 +161,7 @@ namespace zynforge
 
                 // Tool selection uses brand::toolActive() (cool-teal /
                 // featureEngaged) -- picked deliberately so it doesn't
-                // collide with any signalRecord / signalMute / signalSolo
-                // claim. Replaces a previous hardcoded blue literal.
+                // collide with the record, mute or solo colours. Replaces a previous hardcoded blue literal.
                 const auto accent = brand::toolActive();
                 if (active)
                 {

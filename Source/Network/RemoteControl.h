@@ -100,7 +100,6 @@ namespace zynforge
         // is collected (1-based index -> name) AND applied to a matching track.
         // Used by "Create session from console". Enabling clears the buffer.
         void setConsoleNameCapture (bool on);
-        bool isConsoleNameCapture() const noexcept { return consoleCapture.load (std::memory_order_relaxed); }
         // Called by OscRemote for every incoming console channel name.
         void onConsoleChannelName (int oneBasedIndex, const juce::String& name);
         // Take + clear the captured names (message thread).

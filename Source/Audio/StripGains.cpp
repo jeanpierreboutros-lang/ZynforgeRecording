@@ -89,14 +89,6 @@ namespace zynforge
         return props ? (float) props->getDoubleValue (gainKey (ch), 0.0) : 0.0f;
     }
     void  StripGains::setGainDb (int ch, float dB) { write (gainKey (ch), (double) dB); }
-    void  StripGains::clearGain (int ch)
-    {
-        if (! props) return;
-        const juce::ScopedLock sl (lock);
-        reloadKeepingPending();
-        props->removeValue (gainKey (ch));
-        props->saveIfNeeded();
-    }
 
     bool  StripGains::hasPan (int ch) const
     {
@@ -110,14 +102,6 @@ namespace zynforge
         return props ? (float) props->getDoubleValue (panKey (ch), 0.0) : 0.0f;
     }
     void  StripGains::setPan (int ch, float pan) { write (panKey (ch), (double) pan); }
-    void  StripGains::clearPan (int ch)
-    {
-        if (! props) return;
-        const juce::ScopedLock sl (lock);
-        reloadKeepingPending();
-        props->removeValue (panKey (ch));
-        props->saveIfNeeded();
-    }
     void StripGains::resetRange (int firstIndex, int lastIndexExclusive)
     {
         if (! props || firstIndex >= lastIndexExclusive) return;

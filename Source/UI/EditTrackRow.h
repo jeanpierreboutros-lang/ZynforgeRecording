@@ -2137,22 +2137,6 @@ namespace zynforge
         bool inNameZone (int ex) const noexcept
         { const int hx = headerOriginX(); return ex >= hx + swatchW && ex < hx + headerW; }
 
-        // Y of a clip's gain line within its inner band: 0 dB = centre,
-        // +12 dB near the top, -12 dB near the bottom. Shared by paint + the
-        // drag hit-test so they never disagree.
-        static int clipGainLineY (float gainDb, juce::Rectangle<int> gArea) noexcept
-        {
-            const float g12 = juce::jlimit (-12.0f, 12.0f, gainDb);
-            return gArea.getCentreY()
-                 - (int) (g12 / 12.0f * ((float) gArea.getHeight() * 0.5f * 0.85f));
-        }
-        // Inverse: a y within gArea -> the gain dB it represents (clamped).
-        static float clipGainFromY (int y, juce::Rectangle<int> gArea) noexcept
-        {
-            const float denom = juce::jmax (1.0f, (float) gArea.getHeight() * 0.5f * 0.85f);
-            return juce::jlimit (-12.0f, 12.0f,
-                                 (float) (gArea.getCentreY() - y) / denom * 12.0f);
-        }
         // Pro Tools-style clip-gain handle at the bottom-LEFT corner of the
         // clip block (a small fader glyph + the dB readout). This is the grab
         // target; dragging it vertically rides the clip gain.

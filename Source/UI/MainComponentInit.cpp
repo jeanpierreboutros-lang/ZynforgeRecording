@@ -180,9 +180,8 @@ MainComponent::MainComponent()
         openPatchWindow();
     };
 
-    // VSC chip uses the dedicated brand::signalVsc() colour so the
-    // 'virtual soundcheck' role has a unique visual identity (was
-    // sharing engagedAmber, now ties to accentVS).
+    // VSC chip uses accentVS so the 'virtual soundcheck' role has a unique
+    // visual identity (was sharing engagedAmber).
     // Mock parity: neutral pill, amber glyph/label keeps the VSC dot identity.
     vscButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
     vscButton.setColour (juce::TextButton::textColourOffId, brand::accentVS);
@@ -1136,11 +1135,9 @@ void MainComponent::rebuildStrips()
             if (i + 1 < engine.getRecorder().getNumTracks())
                 setStereoLink (i, ! engine.getRecorder().getTrack (i).isStereo.load());
         };
-        auto linkOtherCb  = [this, i] (int other) { juce::ignoreUnused (i, other); };
         s->setMenuCallbacks (std::move (deleteCb),
                              std::move (addCb),
-                             std::move (linkStereoCb),
-                             std::move (linkOtherCb));
+                             std::move (linkStereoCb));
 
         // VCA assignment from the strip's right-click menu -- the
         // ChannelStrip sets state.vcaGroup directly for immediate

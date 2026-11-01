@@ -267,18 +267,6 @@ namespace zynforge
         rebuildShards();
     }
 
-    void MultitrackRecorder::removeTrackAt (int index)
-    {
-        if (isRecording() || isFinalizing()) return;
-        const juce::ScopedLock sl (structureLock);
-        if (index < 0 || index >= (int) tracks.size()) return;
-        tracks.erase (tracks.begin() + index);
-        fifos.erase  (fifos.begin()  + index);
-        preRoll.erase(preRoll.begin()+ index);
-        trackGen.fetch_add (1, std::memory_order_relaxed);
-        rebuildShards();
-    }
-
     void MultitrackRecorder::setTrackCount (int n)
     {
         if (isRecording() || isFinalizing()) return;

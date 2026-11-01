@@ -820,19 +820,6 @@ juce::var MainComponent::captureUILayoutJson() const
     return juce::var (ui.get());
 }
 
-bool MainComponent::saveUILayoutToActiveSession()
-{
-    if (pendingMetadataSaves != 0) return false;
-    zynforge::SessionMetadataSnapshot snapshot;
-    snapshot.directory = engine.getActiveSessionDir();
-    juce::DynamicObject::Ptr patch (new juce::DynamicObject());
-    patch->setProperty ("ui", captureUILayoutJson());
-    patch->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
-    snapshot.projectPatchJson = juce::JSON::toString (juce::var (patch.get()));
-    snapshot.backup = false;
-    return zynforge::writeSessionMetadata (snapshot).ok;
-}
-
 void MainComponent::startExportTracksTo (const juce::File& destDir,
                                          const std::vector<int>& channelIndices,
                                          const zynforge::ExportOptions& opts)

@@ -13,7 +13,6 @@
 #include <array>
 #include <functional>
 #include <map>
-#include "ITransport.h"
 #include "ClipModel.h"
 #include "EngineStatus.h"
 #include "MultitrackRecorder.h"
@@ -41,8 +40,7 @@ namespace zynforge
     class AudioCallbackTests;
 
     class AudioEngine final : public juce::AudioIODeviceCallback,
-                              public juce::MidiInputCallback,
-                              public ITransport
+                              public juce::MidiInputCallback
     {
         friend class SettingsBatchAuditTests;
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
@@ -180,13 +178,12 @@ namespace zynforge
 
         // ── Master loudness (ITU-R BS.1770-style) ─────────────────────
         // Measured on the post-fader stereo master. Momentary/short-term
-        // are live; integrated is gated program loudness since the last
-        // resetLoudness(). True-peak is a 4x-oversampled estimate (dBTP).
+        // are live; integrated is gated program loudness since the device
+        // started. True-peak is a 4x-oversampled estimate (dBTP).
         float getMomentaryLufs()  const noexcept { return loudness.getMomentaryLufs(); }
         float getShortTermLufs()  const noexcept { return loudness.getShortTermLufs(); }
         float getIntegratedLufs() const noexcept { return loudness.getIntegratedLufs(); }
         float getTruePeakDb()     const noexcept { return loudness.getTruePeakDb(); }
-        void  resetLoudness()           noexcept { loudness.reset(); }
         float getMasterGainDb() const noexcept { return masterState.gainDb.load(); }
         bool  getMasterMuted()  const noexcept { return masterState.muted.load(); }
         void  setMasterGainDb (float dB);
@@ -219,15 +216,15 @@ namespace zynforge
         bool  getMasterStereo() const noexcept { return masterStereo.load(); }
         void  setMasterStereo (bool stereo);
 
-        bool startRecording (const juce::File& sessionDir) override;
-        void stopRecording() override;
+        bool startRecording (const juce::File& sessionDir);
+        void stopRecording();
         // UI entry: accepted once, completion on UI after media/player readiness
         // and reader retirement. A false return never invokes completion.
         bool stopRecordingAsync (std::function<void (bool)> completion);
         bool isCaptureFinalizing() const noexcept { return asyncCaptureFinalizing.load(); }
         // Excludes generated reference beds whose length is unrelated to a take.
         juce::int64 getCaptureLengthSamples();
-        bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
+        bool isRecording() const noexcept { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept;
         bool isExternalRecording() const noexcept { return externalRecording.load (std::memory_order_acquire); }
         // A daemon take is rolling into sessionDir: from here on it is this
@@ -284,7 +281,7 @@ namespace zynforge
         // another session.  Keeping this in AudioEngine makes non-UI entry
         // points obey the same boundary as File > Open/New.
         void clearSessionState();
-        void startPlayback() override
+        void startPlayback()
         {
             if (isCaptureFinalizing()) return;
             // Never play back on top of a live take. This is a recorder, not
@@ -304,7 +301,7 @@ namespace zynforge
             else if (pos <= 0) midiClockOut.sendStart();
             else               midiClockOut.sendContinueFrom (midiBeatsAt (pos));
         }
-        void stopPlayback() override
+        void stopPlayback()
         {
             player.stop();
             midiClockOut.sendStop();
@@ -369,10 +366,9 @@ namespace zynforge
         // so sends survive a relaunch.
         void  setTrackSend (int channelIndex, int sendSlot,
                             int targetBus, float levelDb, bool postFader);
-        bool isPlaying() const noexcept override           { return player.isPlaying(); }
+        bool isPlaying() const noexcept                    { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }
-        StripColours&   getStripColours() noexcept         { return stripColours; }
 
         // Updates TrackState colour (atomic) AND persists via StripColours.
         // Pass an empty colour (alpha == 0) to revert to the default.
@@ -421,7 +417,6 @@ namespace zynforge
         // first launch. setStripCount safely detaches the audio callback,
         // mutates the track vector, reapplies persisted per-strip state,
         // and re-attaches.
-        int  getStripCount() const;
         void setStripCount (int n);
 
         // Add / remove a single strip without disturbing the others.
@@ -503,11 +498,6 @@ namespace zynforge
             std::lock_guard<std::mutex> lock (externalStatusLock);
             return externalStatus.positionSamples;
         }
-        // True if `channel`'s existing take in `sessionDir` is auto-split into
-        // parts -- punch-in must refuse those (the single-file splice can't
-        // represent a multi-part base).
-        static bool punchTakeMultiPart (const juce::File& sessionDir, int channel)
-        { return MultitrackRecorder::takeIsMultiPart (sessionDir, channel); }
         // The loop region from SessionPlayer doubles as the punch window
         // -- there's only ever one 'do this between A and B' selection.
 
@@ -1162,7 +1152,6 @@ namespace zynforge
         static constexpr int kMaxRecent = 10;
         void rememberRecentSession (const juce::File& dir);
         juce::Array<juce::File> getRecentSessions() const;
-        void clearRecentSessions();
 
         // Where new sessions are created. Honours the engineer's "Local
         // Storage" override (appProps "sessionsRoot", set from the New Session

@@ -12,7 +12,6 @@
 #include "../Audio/AtomicFile.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/SpectralClassifier.h"
-#include "../Audio/SessionBackup.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -241,11 +240,6 @@ bool MainComponent::saveSetlistToActiveSession (bool writeBackup) const
     snapshot.mixerOwner = engine.getMixerSession();
     snapshot.backup = writeBackup;
     return zynforge::writeSessionMetadata (snapshot).ok;
-}
-
-bool MainComponent::writeSessionBackupSnapshot() const
-{
-    return zynforge::sessionbackup::writeSnapshot (engine.getActiveSessionDir()).isDirectory();
 }
 
 void MainComponent::jumpToCue (int index)

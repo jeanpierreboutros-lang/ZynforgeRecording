@@ -39,8 +39,7 @@ namespace zynforge
 
         void setMenuCallbacks (VoidCallback onDelete,
                                VoidCallback onAdd,
-                               VoidCallback onLinkStereo,
-                               IntCallback  onLinkToOther);
+                               VoidCallback onLinkStereo);
 
         // Populate routing combo boxes -- call after device topology changes.
         void setAvailableInputs  (int n);
@@ -176,7 +175,6 @@ namespace zynforge
         VoidCallback   deleteCb;
         VoidCallback   addCb;
         VoidCallback   linkStereoCb;
-        IntCallback    linkOtherCb;
 
         class DbRuler;
         std::unique_ptr<DbRuler> dbRuler;

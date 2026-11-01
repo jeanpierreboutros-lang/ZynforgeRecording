@@ -496,13 +496,11 @@ namespace zynforge
 
     void ChannelStrip::setMenuCallbacks (VoidCallback onDelete,
                                          VoidCallback onAdd,
-                                         VoidCallback onLinkStereo,
-                                         IntCallback  onLinkToOther)
+                                         VoidCallback onLinkStereo)
     {
         deleteCb     = std::move (onDelete);
         addCb        = std::move (onAdd);
         linkStereoCb = std::move (onLinkStereo);
-        linkOtherCb  = std::move (onLinkToOther);
     }
 
     void ChannelStrip::showContextMenu()

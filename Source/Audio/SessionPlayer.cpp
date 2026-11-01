@@ -230,10 +230,10 @@ namespace zynforge
             if (p.stereo)
             {
                 if (p.index + 1 >= (int) prepared->tracks.size()) continue;
-                prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, false };
-                prepared->tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, false, true };
+                prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, false };
+                prepared->tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, true };
             }
-            else prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, true };
+            else prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, true };
         }
         prepared->sampleRate = sr;
         prepared->length = maxLen;

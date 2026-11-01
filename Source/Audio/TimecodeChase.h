@@ -45,15 +45,12 @@ namespace zynforge
         void reset() noexcept
         {
             running       .store (false, std::memory_order_relaxed);
-            crossingsPerS .store (0.0f,  std::memory_order_relaxed);
             label         .store (0, std::memory_order_relaxed);
             ltcFps        .store (0.0f, std::memory_order_relaxed);
             ltcDropFrame  .store (false, std::memory_order_relaxed);
             lastMtcTickMs .store (0, std::memory_order_relaxed);
             ltcLocked     .store (false, std::memory_order_relaxed);
             lastLtcFrameMs.store (0, std::memory_order_relaxed);
-            crossings   = 0;
-            samplesAcc  = 0;
             ltcHigh     = false;
             ltcEnvelope = 0.0f;
             samplesSinceLastCrossing = 0;
@@ -76,7 +73,7 @@ namespace zynforge
         // Race-free subset of reset() that is safe to call from the message
         // thread WHILE the audio (feedLtc) / MIDI (feedMtc*) threads keep
         // feeding. It clears only the atomics that gate isRunning()/freewheel;
-        // the non-atomic decoder scratch (mtcAcc, crossings, frameBits, ...) is
+        // the non-atomic decoder scratch (mtcAcc, frameBits, ...) is
         // self-healing and must NOT be written from another thread. Use this,
         // not reset(), for a live mode switch.
         void clearFreewheel() noexcept
@@ -109,23 +106,11 @@ namespace zynforge
                 if (ltcHigh ? (s < -hysteresis) : (s > hysteresis))
                 {
                     ltcHigh = ! ltcHigh;
-                    ++crossings;
                     onInterval (samplesSinceLastCrossing, sampleClock + i, cells);
                     samplesSinceLastCrossing = 0;
                 }
             }
             sampleClock += n;
-
-            samplesAcc += n;
-            if ((double) samplesAcc >= sampleRate)
-            {
-                // Diagnostic only. It no longer decides anything: a tone or
-                // program audio crosses zero at LTC-like rates too.
-                crossingsPerS.store ((float) crossings * (float) (sampleRate / (double) samplesAcc),
-                                     std::memory_order_relaxed);
-                crossings  = 0;
-                samplesAcc = 0;
-            }
 
             // Valid frames stopped arriving on a strip that is still fed.
             if (locked && sampleClock - lastValidSample > (juce::int64) (sampleRate * kLtcDropSeconds))
@@ -218,10 +203,6 @@ namespace zynforge
         juce::uint8 getMinutes() const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 16); }
         juce::uint8 getSeconds() const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 8); }
         juce::uint8 getFrames()  const noexcept { return (juce::uint8)  label.load (std::memory_order_relaxed); }
-        float getCrossingsPerSecond() const noexcept
-        {
-            return crossingsPerS.load (std::memory_order_relaxed);
-        }
         // Detected frame rate (24, 25, 29.97, 30) -- 0 until a frame decodes.
         float getFps() const noexcept { return ltcFps.load (std::memory_order_relaxed); }
         bool  isDropFrame() const noexcept { return ltcDropFrame.load (std::memory_order_relaxed); }
@@ -424,8 +405,6 @@ namespace zynforge
         }
 
         // LTC state (audio thread).
-        int   crossings  { 0 };
-        int   samplesAcc { 0 };
         bool  ltcHigh    { false };    // Schmitt-trigger output
         float ltcEnvelope { 0.0f };    // slow peak follower for the hysteresis
         int   samplesSinceLastCrossing { 0 };
@@ -448,7 +427,6 @@ namespace zynforge
         // Cross-thread atomics.
         std::atomic<bool>  running       { false };   // MTC only
         std::atomic<bool>  ltcLocked     { false };
-        std::atomic<float> crossingsPerS { 0.0f };
         std::atomic<juce::uint32> label     { 0 };   // hh mm ss ff, one byte each
         std::atomic<float>       ltcFps     { 0.0f };
         std::atomic<bool>        ltcDropFrame { false };

@@ -283,7 +283,6 @@ private:
     // when refused.
     bool setStereoLink (int leftIndex, bool link);
     void showBatchColourDialog();
-    void showSelectionMenu();
     void deleteSelectedStrips();
     // Stop every live strip's timers before a recorder-vector shrink frees the
     // TrackStates they reference (New Session / close / smaller open / console
@@ -420,7 +419,6 @@ private:
     int  rippleTimeline (const juce::String& label, const std::vector<int>& tracks,
                          juce::int64 start, juce::int64 end);
     int  rippleSpans (const juce::String& label, const std::vector<zynforge::clipedit::RippleSpan>&);
-    void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
@@ -490,9 +488,7 @@ private:
     // Pro Tools-style marker drop + naming. dropMarkerAndPromptName
     // places the marker, picks the next default name ("Marker N+1"),
     // then opens the rename dialog. Cancel keeps the default name.
-    // showMarkersDialog opens the standalone Memory Locations table.
     void dropMarkerAndPromptName();
-    void showMarkersDialog();
 
     // The ONE gate for timeline mutations (clips, ranges, markers,
     // automation, undo/redo). Refuses -- with the reason on the status
@@ -565,12 +561,6 @@ private:
     // strip count / names / colours / routings. Empty File = no default.
     juce::File  getDefaultTemplate() const;
     void        setDefaultTemplate (const juce::File& templateFile);
-
-    // Push UI layout (view / strip width / VCA panel / EDIT zoom) into
-    // the active session's .zfproj. No-op when no session is active.
-    // Called on every layout change so reopening the show restores the
-    // exact workspace the engineer left.
-    bool  saveUILayoutToActiveSession();
 
     // Setlist printing -- writes setlist.html into the active session
     // dir and opens it in the default browser (engineer prints from
@@ -744,13 +734,6 @@ private:
 
     void loadSetlistFromActiveSession();
     bool saveSetlistToActiveSession (bool writeBackup = true) const;
-    // Snapshot the WHOLE session definition (mix + setlist/cues/automation/
-    // layout + settings + markers) into a timestamped sub-folder of the
-    // session's own "Session File Backups/" -- a restorable backup session.
-    // The immutable multi-GB audio is NOT copied (it lives once in Audio
-    // Files/); to restore, copy the snapshot's files back over the session
-    // root. Keeps the 10 most recent. Const: file ops only, no member writes.
-    bool writeSessionBackupSnapshot() const;
     void jumpToCue (int index);
     void addCueAtTransport();
     void updateCueAtTransport();

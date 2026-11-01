@@ -840,11 +840,6 @@ void MainComponent::dropMarkerAndPromptName()
         false);
 }
 
-void MainComponent::showMarkersDialog()
-{
-    zynforge::MarkerListDialog::launch (engine);
-}
-
 bool MainComponent::canMutateTimeline (const juce::String& action)
 {
     if (engine.isRecording())
