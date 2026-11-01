@@ -68,14 +68,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // is metadata-only but gated too for a consistent "not mid-take" rule.
         const bool hasActive = engine.hasSessionFolder();
         const bool canExport = hasActive && sessionEditable;   // also blocked while LOCKED
-        exportMenu.addItem (10, "Export All Tracks...", canExport);
-
         const int n = engine.getRecorder().getNumTracks();
-        // Opens a tick-box picker of the session's tracks → format → folder.
-        exportMenu.addItem (11, "Export Individual Tracks...", canExport && n > 0);
-        exportMenu.addSeparator();
-        exportMenu.addItem (12, "Bounce Edited Tracks (Stems)...", canExport && n > 0);
-        exportMenu.addItem (13, "Bounce Stereo Mix...",            canExport && n > 0);
+        exportMenu.addItem (970, "Export Audio...", canExport && n > 0);
         exportMenu.addSeparator();
         exportMenu.addItem (14, "Export Timeline (markers/cues/tracks) as CSV...", canExport && n > 0);
         exportMenu.addItem (966, "Export Reaper Project...", canExport && n > 0);
@@ -430,10 +424,7 @@ void MainComponent::registerMenuCommands()
     m.add (5,   replaceSession ([this] { launchNewSessionDialog(); }));
     m.add (6,   [this] { closeSession(); });
     m.add (7,   replaceSession ([this] { createSessionFromCsv(); }));
-    m.add (10,  [this] { onExportAllTracks(); });
-    m.add (11,  [this] { onExportIndividualTracks(); });
-    m.add (12,  [this] { onBounceStems(); });
-    m.add (13,  [this] { onBounceStereoMix(); });
+    m.add (970, [this] { onExportAudio(); });
     m.add (14,  [this] { exportTimelineCsv(); });
     m.add (962, [this] { exportShowHandoff(); });
     m.add (965, [this] { exportDawProject (projectexport::Format::DawProject); });

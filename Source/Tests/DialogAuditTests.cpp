@@ -9,6 +9,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Theme/BrandColors.h"
+#include "../UI/ExportDialog.h"
 #include "../UI/BackupMirrorDialog.h"
 
 namespace zynforge
@@ -230,6 +231,35 @@ namespace zynforge
                 expect (engine.setBackupFormat (CaptureFormat::Wav24));
                 expect (engine.setMirrors ({}));
                 forgetBackupFormat (engine);
+            }
+
+            beginTest ("Export Audio starts on raw takes with every strip ticked");
+            {
+                std::optional<ExportAudioContent::Result> chosen;
+                ExportAudioContent dialog (44100.0, { "01  Kick", "02  Snare", "03  OH  (stereo)" },
+                                           [&] (std::optional<ExportAudioContent::Result> r) { chosen = std::move (r); });
+                expect (dialog.getSource() == ExportAudioContent::Source::rawTakes);
+                expect (dialog.formatApplies() && dialog.tracksApply() && dialog.canExport());
+                const auto result = dialog.getResult();
+                expect (result.rows == std::vector<int> ({ 0, 1, 2 }), "the strips did not all start ticked");
+                expectWithinAbsoluteError (result.options.sampleRate, 44100.0, 0.1);
+            }
+
+            beginTest ("Export Audio says what edited tracks and the mix are, and offers no format for them");
+            {
+                ExportAudioContent dialog (48000.0, { "01  Kick", "02  Snare" }, {});
+                dialog.chooseSource (ExportAudioContent::Source::editedTracks);
+                expect (! dialog.formatApplies(), "the format controls look live for a fixed-format render");
+                expect (dialog.tracksApply());
+                expect (dialog.getNote().contains ("24-bit WAV"), dialog.getNote());
+
+                dialog.setAllTicked (false);
+                expect (! dialog.canExport(), "Export is live with nothing ticked");
+                dialog.chooseSource (ExportAudioContent::Source::stereoMix);
+                expect (! dialog.formatApplies() && ! dialog.tracksApply());
+                expect (dialog.canExport(), "the mix needs no ticks");
+                expect (dialog.getNote().contains ("24-bit WAV"), dialog.getNote());
+                expect (dialog.getResult().rows.empty());
             }
 
             beginTest ("onSignal keeps every accent's label legible (no hardcoded white)");

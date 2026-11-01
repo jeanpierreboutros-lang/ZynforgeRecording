@@ -3,7 +3,7 @@
 // 2026-05-24 god-class split.
 //
 // Includes: saveSessionStateTo, exportTracksTo, onSaveSessionState,
-// onImportAudioFiles, onSaveSessionAs, onExportAllTracks,
+// onImportAudioFiles, onSaveSessionAs, onExportAudio,
 // warnIfSampleRateMismatch, onLoadSessionClicked, getSessionsRoot, templatesDir,
 // promptSaveSessionTemplate, applySessionTemplate,
 // loadUILayoutFromActiveSession, promptDeleteSessionTemplate,
@@ -25,7 +25,6 @@
 #include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
 #include "ExportDialog.h"
-#include "TrackSelectDialog.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -1023,7 +1022,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     });
 }
 
-void MainComponent::onBounceStems()
+void MainComponent::onBounceStems (std::vector<int> tracks)
 {
     if (sessionIoBusy.load()) { showStatus ("Another session operation is already running"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before bouncing stems"); return; }
@@ -1036,14 +1035,14 @@ void MainComponent::onBounceStems()
     juce::Component::SafePointer<MainComponent> chooserSelf (this);
     chooser->launchAsync (juce::FileBrowserComponent::saveMode
                           | juce::FileBrowserComponent::canSelectDirectories,
-        [chooserSelf, this] (const juce::FileChooser& fc)
+        [chooserSelf, this, tracks] (const juce::FileChooser& fc)
     {
         if (chooserSelf == nullptr) return;
-        completeBounceStems (fc.getResult());
+        completeBounceStems (fc.getResult(), tracks);
     });
 }
 
-void MainComponent::completeBounceStems (juce::File dest)
+void MainComponent::completeBounceStems (juce::File dest, const std::vector<int>& tracks)
 {
     if (dest.getFullPathName().isEmpty()) return;
     // The asynchronous picker may have been opened before a remote RECORD.
@@ -1056,11 +1055,19 @@ void MainComponent::completeBounceStems (juce::File dest)
     const double sr      = engine.getPlayer().getSampleRate() > 0.0
                              ? engine.getPlayer().getSampleRate() : 48000.0;
     if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
+    // The strips were ticked before the folder dialog; a session open or a
+    // remote can change the list meanwhile.
+    for (int t : tracks)
+        if (t < 0 || t >= nTracks)
+        {
+            showStatus ("The channel list changed while the export was set up -- choose the channels again");
+            return;
+        }
     if (! sessionJobs.reserve()) { showStatus ("Another session operation is already running"); return; }
     engine.setSessionTransitionActive (true);
     if (editPage != nullptr) editPage->setEnabled (false);
 
-    showStatus ("Bouncing " + juce::String (nTracks) + " edited stems...");
+    showStatus ("Bouncing " + juce::String ((int) tracks.size()) + " edited stems...");
     // Resolve every stem's name and layout HERE, on the message thread, and
     // hand the worker plain values. The worker used to read TrackStates under
     // the recorder's structure lock for the WHOLE bounce -- and the 10 Hz UI
@@ -1071,7 +1078,7 @@ void MainComponent::completeBounceStems (juce::File dest)
     std::vector<Stem> stems;
     {
         auto& rec = engine.getRecorder();
-        for (int t = 0; t < nTracks; ++t)
+        for (int t : tracks)
         {
             // A stereo pair bounces as ONE interleaved stereo stem from its
             // L half; skip the R half.
@@ -1599,48 +1606,7 @@ static double sessionAudioRateFor (zynforge::AudioEngine& engine)
     return engine.getSessionAudioRate();
 }
 
-void MainComponent::onExportAllTracks()
-{
-    const auto source = engine.getActiveSessionDir();
-    if (! source.isDirectory()) { showStatus ("No active session"); return; }
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    zynforge::ExportDialog::launch ("Export all tracks", sessionAudioRateFor (engine),
-        [self, this] (std::optional<zynforge::ExportOptions> opts)
-    {
-        if (self == nullptr || ! opts.has_value()) return;
-        const auto chosenOpts = *opts;
-
-        const auto activeSession = engine.getActiveSessionDir();
-        const auto exportDir    = activeSession.isDirectory()
-                                       ? activeSession.getChildFile ("Export Files")
-                                       : getSessionsRoot();
-        exportDir.createDirectory();
-        chooser = std::make_unique<juce::FileChooser> (
-            "Export all tracks to...", exportDir, "");
-
-        const auto flags = juce::FileBrowserComponent::saveMode
-                         | juce::FileBrowserComponent::canSelectDirectories;
-
-        chooser->launchAsync (flags,
-            [self, this, chosenOpts] (const juce::FileChooser& fc)
-        {
-            if (self == nullptr) return;
-            auto dest = fc.getResult();
-            if (dest.getFullPathName().isEmpty()) return;
-            if (! dest.exists()) dest.createDirectory();
-
-            std::vector<int> all;
-            for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i) all.push_back (i);
-
-            // Async: reports its own progress + completion (or the INCOMPLETE
-            // / failed warning) when the worker finishes.
-            startExportTracksTo (dest, all, chosenOpts);
-        });
-    });
-}
-
-void MainComponent::onExportIndividualTracks()
+void MainComponent::onExportAudio()
 {
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory()) { showStatus ("No active session"); return; }
@@ -1648,10 +1614,9 @@ void MainComponent::onExportIndividualTracks()
     const int n = engine.getRecorder().getNumTracks();
     if (n <= 0) { showStatus ("No tracks to export"); return; }
 
-    // Step 1: tick-box picker. ONE row per logical strip -- a stereo pair
-    // shows as a single "(stereo)" entry, not two mono rows. Each row maps
-    // back to its physical channel index(es) so the export collapses the
-    // pair into one stereo file.
+    // ONE row per logical strip -- a stereo pair shows as a single "(stereo)"
+    // entry, not two mono rows. Each row maps back to its physical channel
+    // index(es) so the export collapses the pair into one stereo file.
     std::vector<juce::String> names;
     std::vector<std::vector<int>> rowChannels;   // dialog row -> physical channels
     for (int i = 0; i < n; )
@@ -1666,50 +1631,50 @@ void MainComponent::onExportIndividualTracks()
     }
 
     juce::Component::SafePointer<MainComponent> self (this);
-    zynforge::TrackSelectDialog::launch ("Export individual tracks", names,
-        [self, this, rowChannels] (std::optional<std::vector<int>> picked)
+    zynforge::ExportAudioDialog::launch (sessionAudioRateFor (engine), names,
+        [self, rowChannels] (std::optional<zynforge::ExportAudioContent::Result> choice)
     {
-        if (self == nullptr || ! picked.has_value() || picked->empty()) return;
+        if (self == nullptr || ! choice.has_value()) return;
 
-        // Map picked dialog rows back to physical channel indices (a stereo
-        // row expands to both halves; exportTracksTo writes them as one file).
-        std::vector<int> chosenTracks;
-        for (int row : *picked)
+        // Map ticked rows back to physical channel indices (a stereo row
+        // expands to both halves; the export writes them as one file).
+        std::vector<int> tracks;
+        for (int row : choice->rows)
             if (row >= 0 && row < (int) rowChannels.size())
                 for (int ch : rowChannels[(size_t) row])
-                    chosenTracks.push_back (ch);
-        if (chosenTracks.empty()) return;
+                    tracks.push_back (ch);
 
-        // Step 2: format / sample-rate / bit-depth.
-        zynforge::ExportDialog::launch ("Export format", sessionAudioRateFor (engine),
-            [self, this, chosenTracks] (std::optional<zynforge::ExportOptions> opts)
-        {
-            if (self == nullptr || ! opts.has_value()) return;
-            const auto chosenOpts = *opts;
+        using Source = zynforge::ExportAudioContent::Source;
+        if (choice->source == Source::stereoMix)         self->onBounceStereoMix();
+        else if (tracks.empty())                         return;
+        else if (choice->source == Source::editedTracks) self->onBounceStems (tracks);
+        else                                             self->chooseRawTakesFolder (tracks, choice->options);
+    });
+}
 
-            // Step 3: choose the destination folder, then export.
-            const auto activeSession = engine.getActiveSessionDir();
-            const auto exportDir = activeSession.isDirectory()
-                                       ? activeSession.getChildFile ("Export Files")
-                                       : getSessionsRoot();
-            exportDir.createDirectory();
-            chooser = std::make_unique<juce::FileChooser> (
-                "Export tracks to...", exportDir, "");
+void MainComponent::chooseRawTakesFolder (std::vector<int> tracks, const zynforge::ExportOptions& options)
+{
+    const auto activeSession = engine.getActiveSessionDir();
+    const auto exportDir = activeSession.isDirectory()
+                               ? activeSession.getChildFile ("Export Files")
+                               : getSessionsRoot();
+    exportDir.createDirectory();
+    chooser = std::make_unique<juce::FileChooser> ("Export tracks to...", exportDir, "");
 
-            const auto flags = juce::FileBrowserComponent::saveMode
-                             | juce::FileBrowserComponent::canSelectDirectories;
+    const auto flags = juce::FileBrowserComponent::saveMode
+                     | juce::FileBrowserComponent::canSelectDirectories;
 
-            chooser->launchAsync (flags,
-                [self, this, chosenTracks, chosenOpts] (const juce::FileChooser& fc)
-            {
-                if (self == nullptr) return;
-                auto dest = fc.getResult();
-                if (dest.getFullPathName().isEmpty()) return;
-                if (! dest.exists()) dest.createDirectory();
+    juce::Component::SafePointer<MainComponent> self (this);
+    chooser->launchAsync (flags, [self, this, tracks, options] (const juce::FileChooser& fc)
+    {
+        if (self == nullptr) return;
+        auto dest = fc.getResult();
+        if (dest.getFullPathName().isEmpty()) return;
+        if (! dest.exists()) dest.createDirectory();
 
-                startExportTracksTo (dest, chosenTracks, chosenOpts);
-            });
-        });
+        // Async: reports its own progress + completion (or the INCOMPLETE /
+        // failed warning) when the worker finishes.
+        startExportTracksTo (dest, tracks, options);
     });
 }
 

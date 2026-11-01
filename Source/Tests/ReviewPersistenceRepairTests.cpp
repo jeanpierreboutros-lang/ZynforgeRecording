@@ -234,6 +234,27 @@ public:
             host.engine.clearAllStripOverrides();
         }
 
+        beginTest ("Edited tracks render the ticked strips, and a stale tick refuses");
+        {
+            Folder f, output;
+            expect (writeAudio (f.track()));
+            expect (writeAudio (f.track (2)));
+            MainComponent host; prepare (host, f, 2);
+            host.completeBounceStems (output.dir, { 1 });
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }));
+            const auto stems = output.dir.findChildFiles (juce::File::findFiles, false, "*.wav");
+            expectEquals (stems.size(), 1);
+            if (stems.size() == 1)
+                expect (stems[0].getFileName().startsWith ("Track_02"), stems[0].getFileName());
+
+            host.completeBounceStems (output.dir, { 0, 7 });
+            expect (host.statusLabel.getText().containsIgnoreCase ("channel list changed"),
+                    host.statusLabel.getText());
+            expectEquals (output.dir.findChildFiles (juce::File::findFiles, false, "*.wav").size(), 1,
+                          "a stale tick still rendered");
+            host.engine.clearAllStripOverrides();
+        }
+
         for (int operation = 0; operation < 3; ++operation)
         {
             beginTest (juce::String ("Deferred picker refuses newly active recording: ")
@@ -246,7 +267,7 @@ public:
             recorder.getTrack (0).armed.store (true);
             expect (recorder.startRecording (capture.dir), "isolated no-device capture did not start");
             if (operation == 0) host.completeAudioImport ({ input.track() });
-            else if (operation == 1) host.completeBounceStems (output.dir);
+            else if (operation == 1) host.completeBounceStems (output.dir, { 0 });
             else host.completeBounceStereoMix (output.dir.getChildFile ("mix.wav"));
             expect (! host.sessionIoBusy.load(), "late callback admitted disk work during recording");
             expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }));

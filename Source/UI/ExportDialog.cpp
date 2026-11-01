@@ -151,90 +151,194 @@ namespace zynforge
         return opts;
     }
 
-    namespace
+    ExportAudioContent::ExportAudioContent (double sessionRate, const std::vector<juce::String>& names,
+                                            ResultCallback onResult)
+        : callback (std::move (onResult)), format (sessionRate)
     {
-        class ExportDialogContent final : public juce::Component
+        for (auto* radio : { &rawButton, &editedButton, &mixButton })
         {
-        public:
-            ExportDialogContent (ExportDialog::ResultCallback cb, double sessionRate)
-                : callback (std::move (cb)), format (sessionRate)
-            {
-                addAndMakeVisible (format);
+            radio->setRadioGroupId (1);
+            radio->setColour (juce::ToggleButton::textColourId, brand::textPrimary);
+            radio->setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+            radio->setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
+            radio->onClick = [this] { refresh(); };
+            addAndMakeVisible (*radio);
+        }
+        rawButton.setToggleState (true, juce::dontSendNotification);
 
-                // Buttons
-                dialog::stylePrimary (okButton);
-                okButton.setButtonText ("Export");
-                okButton.onClick = [this] { onAccept(); };
-                addAndMakeVisible (okButton);
+        note.setFont (brand::type::caption());
+        note.setColour (juce::Label::textColourId, brand::textSecondary);
+        note.setJustificationType (juce::Justification::centredLeft);
+        addAndMakeVisible (note);
 
-                dialog::styleSecondary (cancelButton);
-                cancelButton.setButtonText ("Cancel");
-                cancelButton.onClick = [this] { onCancel(); };
-                addAndMakeVisible (cancelButton);
+        // One tick per strip, all on: the common case is the whole session, and
+        // un-ticking a few is quicker than ticking many.
+        for (const auto& name : names)
+        {
+            auto tick = std::make_unique<juce::ToggleButton> (name);
+            tick->setToggleState (true, juce::dontSendNotification);
+            tick->setColour (juce::ToggleButton::textColourId, brand::textPrimary);
+            tick->setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+            tick->setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
+            tick->onClick = [this] { refresh(); };
+            listHolder.addAndMakeVisible (*tick);
+            ticks.push_back (std::move (tick));
+        }
+        viewport.setViewedComponent (&listHolder, false);
+        viewport.setScrollBarsShown (true, false);
+        addAndMakeVisible (viewport);
 
-                // Return = Export, Escape = Cancel, matching every other prompt
-                // in the app (result code 1 for the primary action).
-                okButton.setWantsKeyboardFocus (true);
-                juce::MessageManager::callAsync (
-                    [safe = juce::Component::SafePointer<ExportDialogContent> (this)]
-                    { if (safe != nullptr) safe->okButton.grabKeyboardFocus(); });
+        dialog::styleSecondary (selectAllButton);
+        selectAllButton.setButtonText ("Select all");
+        selectAllButton.onClick = [this] { setAllTicked (true); };
+        addAndMakeVisible (selectAllButton);
 
-                setSize (380, 232);
-            }
+        dialog::styleSecondary (clearButton);
+        clearButton.setButtonText ("Clear");
+        clearButton.onClick = [this] { setAllTicked (false); };
+        addAndMakeVisible (clearButton);
 
-            void resized() override
-            {
-                auto r = getLocalBounds().reduced (16);
-                format.setBounds (r.removeFromTop (ExportFormatControls::kPreferredHeight));
-                r.removeFromTop (brand::space::sm);
-                auto btnRow = r.removeFromBottom (32);
-                okButton    .setBounds (btnRow.removeFromRight (110));
-                btnRow.removeFromRight (brand::space::md);
-                cancelButton.setBounds (btnRow.removeFromRight (110));
-            }
+        addAndMakeVisible (format);
 
-            void paint (juce::Graphics& g) override
-            {
-                dialog::paintChrome (g, *this, "EXPORT");
-            }
+        dialog::stylePrimary (exportButton);
+        exportButton.setButtonText ("Export");
+        exportButton.onClick = [this] { finish (true); };
+        addAndMakeVisible (exportButton);
 
-        private:
-            void onAccept()
-            {
-                if (callback) callback (format.getOptions());
-                if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->exitModalState (1);
-            }
+        dialog::styleSecondary (cancelButton);
+        cancelButton.setButtonText ("Cancel");
+        cancelButton.onClick = [this] { finish (false); };
+        addAndMakeVisible (cancelButton);
 
-            void onCancel()
-            {
-                if (callback) callback (std::nullopt);
-                if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->exitModalState (0);
-            }
+        refresh();
 
-            ExportDialog::ResultCallback callback;
-            ExportFormatControls format;
-            juce::TextButton okButton, cancelButton;
-        };
+        // Return = Export, Escape = Cancel, matching every other prompt in the
+        // app (result code 1 for the primary action).
+        exportButton.setWantsKeyboardFocus (true);
+        juce::MessageManager::callAsync (
+            [safe = juce::Component::SafePointer<ExportAudioContent> (this)]
+            { if (safe != nullptr) safe->exportButton.grabKeyboardFocus(); });
+
+        const int listH = juce::jlimit (kRowH, kRowH * kVisibleRows, (int) ticks.size() * kRowH);
+        setSize (kWidth, dialog::titleH + 3 * kRowH + 20 + 28 + listH + ExportFormatControls::kPreferredHeight + 32
+                             + 5 * brand::space::md + 2 * brand::space::lg);
     }
 
-    void ExportDialog::launch (const juce::String& title,
-                               double sessionSampleRate,
-                               ResultCallback cb)
+    void ExportAudioContent::resized()
+    {
+        auto r = getLocalBounds().reduced (brand::space::lg);
+        r.removeFromTop (dialog::titleH - brand::space::lg);
+
+        rawButton   .setBounds (r.removeFromTop (kRowH));
+        editedButton.setBounds (r.removeFromTop (kRowH));
+        mixButton   .setBounds (r.removeFromTop (kRowH));
+        note.setBounds (r.removeFromTop (20));
+        r.removeFromTop (brand::space::md);
+
+        auto top = r.removeFromTop (28);
+        selectAllButton.setBounds (top.removeFromLeft (100));
+        top.removeFromLeft (brand::space::sm);
+        clearButton.setBounds (top.removeFromLeft (80));
+        r.removeFromTop (brand::space::md);
+
+        auto buttons = r.removeFromBottom (32);
+        exportButton.setBounds (buttons.removeFromRight (110));
+        buttons.removeFromRight (brand::space::md);
+        cancelButton.setBounds (buttons.removeFromRight (110));
+        r.removeFromBottom (brand::space::md);
+
+        format.setBounds (r.removeFromBottom (ExportFormatControls::kPreferredHeight));
+        r.removeFromBottom (brand::space::md);
+
+        viewport.setBounds (r);
+        listHolder.setSize (juce::jmax (0, r.getWidth() - 10), (int) ticks.size() * kRowH);
+        int y = 0;
+        for (auto& tick : ticks)
+        {
+            tick->setBounds (4, y, listHolder.getWidth() - 8, kRowH);
+            y += kRowH;
+        }
+    }
+
+    void ExportAudioContent::paint (juce::Graphics& g)
+    {
+        dialog::paintChrome (g, *this, "EXPORT AUDIO");
+    }
+
+    void ExportAudioContent::chooseSource (Source source)
+    {
+        auto& radio = source == Source::rawTakes ? rawButton
+                    : source == Source::editedTracks ? editedButton : mixButton;
+        radio.setToggleState (true, juce::dontSendNotification);
+        refresh();
+    }
+
+    ExportAudioContent::Source ExportAudioContent::getSource() const
+    {
+        return editedButton.getToggleState() ? Source::editedTracks
+             : mixButton.getToggleState()    ? Source::stereoMix
+                                             : Source::rawTakes;
+    }
+
+    void ExportAudioContent::setAllTicked (bool on)
+    {
+        for (auto& tick : ticks)
+            tick->setToggleState (on, juce::dontSendNotification);
+        refresh();
+    }
+
+    void ExportAudioContent::refresh()
+    {
+        const auto source = getSource();
+        note.setText (source == Source::rawTakes     ? "The recorded takes, without clip edits, in the format below."
+                    : source == Source::editedTracks ? "Each ticked strip with its clip edits. Always 24-bit WAV."
+                                                     : "The edited session through the mix, one file. Always 24-bit WAV.",
+                      juce::dontSendNotification);
+        format.setEnabled (source == Source::rawTakes);
+
+        const bool usesTicks = source != Source::stereoMix;
+        viewport       .setEnabled (usesTicks);
+        selectAllButton.setEnabled (usesTicks);
+        clearButton    .setEnabled (usesTicks);
+
+        bool any = false;
+        for (auto& tick : ticks) any = any || tick->getToggleState();
+        exportButton.setEnabled (any || ! usesTicks);
+    }
+
+    ExportAudioContent::Result ExportAudioContent::getResult() const
+    {
+        Result result;
+        result.source  = getSource();
+        result.options = format.getOptions();
+        if (result.source != Source::stereoMix)
+            for (int i = 0; i < (int) ticks.size(); ++i)
+                if (ticks[(size_t) i]->getToggleState())
+                    result.rows.push_back (i);
+        return result;
+    }
+
+    void ExportAudioContent::finish (bool accepted)
+    {
+        if (callback) callback (accepted ? std::optional<Result> (getResult()) : std::nullopt);
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+            dw->exitModalState (accepted ? 1 : 0);
+    }
+
+    void ExportAudioDialog::launch (double sessionSampleRate,
+                                    const std::vector<juce::String>& trackNames,
+                                    ExportAudioContent::ResultCallback onResult)
     {
         // We wrap the callback so the dialog can only fire it once.
-        auto shared = std::make_shared<ResultCallback> (std::move (cb));
-        auto fireOnce = [shared] (std::optional<ExportOptions> result)
+        auto shared = std::make_shared<ExportAudioContent::ResultCallback> (std::move (onResult));
+        auto fireOnce = [shared] (std::optional<ExportAudioContent::Result> result)
         {
-            if (shared && *shared) { (*shared)(result); *shared = nullptr; }
+            if (shared && *shared) { (*shared) (std::move (result)); *shared = nullptr; }
         };
 
-        auto content = std::make_unique<ExportDialogContent> (fireOnce, sessionSampleRate);
-
         juce::DialogWindow::LaunchOptions opts;
-        opts.content.setOwned (content.release());
-        opts.dialogTitle                  = title;
+        opts.content.setOwned (new ExportAudioContent (sessionSampleRate, trackNames, fireOnce));
+        opts.dialogTitle                  = "Export Audio";
         opts.dialogBackgroundColour       = brand::bgPanel;
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;

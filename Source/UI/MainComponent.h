@@ -128,13 +128,13 @@ private:
     void updateTwinStatusLabel();
     void onSaveSessionState();
     void onSaveSessionAs();
-    void onExportAllTracks();
-    void onBounceStems();      // render the edited clip arrangement to flat stems
+    void onExportAudio();      // File > Export > Export Audio...
+    void chooseRawTakesFolder (std::vector<int> tracks, const zynforge::ExportOptions&);
+    void onBounceStems (std::vector<int> tracks);  // render the edited clip arrangement to flat stems
     void onBounceStereoMix();  // render the edited arrangement summed to stereo
-    void completeBounceStems (juce::File);
+    void completeBounceStems (juce::File, const std::vector<int>& tracks);
     void completeBounceStereoMix (juce::File);
     void completeAudioImport (const juce::Array<juce::File>&);
-    void onExportIndividualTracks();   // tick-box picker → format → destination → export
     void exportShowHandoff();
     void exportDawProject (zynforge::projectexport::Format);
     void exportSongs();
