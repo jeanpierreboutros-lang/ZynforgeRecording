@@ -55,7 +55,7 @@ namespace zynforge
             juce::AudioThumbnailCache cache { 8 };
             std::vector<std::function<void()>> prompts;   // delete prompts awaiting an answer
 
-            Show (int strips, std::vector<int> lengths)
+            Show (int strips, std::vector<int> lengths, float level = 0.8f)
             {
                 formats.registerBasicFormats();
                 engine.clearAllStripOverrides();
@@ -1098,18 +1098,18 @@ namespace zynforge
                 Show s (2, { 0, 48000 });
                 s.engine.setTrackArmed (0, true);
                 expect (s.engine.startRecording (s.dir), "setup: the take rolls");
-                pumpUntil ([] { return false; }, 150);    // the page sees the take roll
+                expect (pumpUntil ([&] { return s.page().isTimelineReadOnly(); }, 5000), "the page never saw the take");
                 auto& recorder = s.engine.getRecorder();
                 std::vector<float> audio (256, 0.5f);
                 const float* input[] { audio.data(), audio.data() };
                 for (int b = 0; b < 20; ++b) recorder.processBlock (input, 2, 256);
                 s.engine.stopRecording();
-                pumpUntil ([] { return false; }, 150);
                 auto rows = rowsOf (s.page());
                 expect (rows.size() == 2, "setup: two rows");
                 if (rows.size() == 2)
                 {
-                    expect (rows[0]->getWaveformReloadsForTests() > 0, "the captured row must rescan");
+                    expect (pumpUntil ([&] { return rows[0]->getWaveformReloadsForTests() > 0; }, 5000),
+                            "the captured row must rescan");
                     expectEquals (rows[1]->getWaveformReloadsForTests(), 0, "an un-armed row blanked and rescanned");
                 }
             }
@@ -1167,8 +1167,10 @@ namespace zynforge
                 s.page().setBounds (0, 0, 1400, 500);
                 s.page().refresh();
                 s.page().setZoom (64.0f);
+                expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000),
+                        "setup: the zoom's layout save holds RECORD until it lands");
                 s.engine.setTrackArmed (0, true);
-                expect (s.engine.startRecording (s.dir), "setup: the take rolls");
+                expect (s.engine.startRecording (s.dir), "setup: the take rolls: " + s.engine.getRecorder().getStartError());
                 expect (pumpUntil ([&] { return s.page().getZoom() <= kMaxRecordingTimelineZoom; }, 2000), "zoom clamp");
                 juce::Component* content = nullptr;
                 for (auto* child : s.page().getChildren())
