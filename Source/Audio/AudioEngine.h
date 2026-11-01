@@ -1091,24 +1091,6 @@ namespace zynforge
         bool setClipLocked   (int track, int clipIndex, bool locked);
         bool setClipName     (int track, int clipIndex, const juce::String& name);
         bool setClipGainDb   (int track, int clipIndex, float dB);
-        // Offline (read-only) normalize: scan the clip's audio for its peak and
-        // set the clip gain so that peak lands at targetDbFS. Non-destructive
-        // (the file is untouched); the clip-gain +12 dB ceiling caps the boost.
-        bool normalizeClip   (int track, int clipIndex, float targetDbFS = -0.3f);
-        // The gain (dB) normalizeClip WOULD apply, computed but not applied --
-        // so a caller can normalise a collapsed stereo pair with ONE shared
-        // gain (the min across both halves: the loudest channel lands exactly
-        // at target, the image is preserved) instead of two independent gains
-        // that would skew it. Returns NaN if the clip has no scannable audio.
-        float clipNormalizeGainDb (int track, int clipIndex, float targetDbFS = -0.3f);
-        // Peak-scan a mono/stereo edit group off the message thread, then apply
-        // one conservative gain to every unchanged peer clip. `targets` holds
-        // each peer's OWN (track, clipIndex): clip indices are per-track, so one
-        // index for every track scanned whichever clip sat there on a peer with
-        // a different arrangement.
-        void normalizeClipGroupAsync (std::vector<std::pair<int, int>> targets,
-                                      float targetDbFS,
-                                      std::function<void (bool)> completion);
         // Offline (read-only) nearest-zero-crossing search around a timeline
         // sample on a track, within ±windowSamples. Returns the adjusted
         // timeline sample (or the original if no crossing / no audio). Used to

@@ -3457,22 +3457,6 @@ namespace zynforge
                     else               withUndo ("Delete clip",    [&]{ for (auto [p, pi] : targets) self->engine.deleteClip    (p, pi); });
                     return;
                 }
-                case 414:
-                {
-                    if (auto* page = self->findParentComponentOfClass<EditPage>(); page != nullptr && page->normalizeClips)
-                    {
-                        page->normalizeClips (targets);
-                        return;
-                    }
-                    self->setEnabled (false);
-                    self->engine.normalizeClipGroupAsync (targets, -0.3f, [self] (bool)
-                    {
-                        if (self == nullptr) return;
-                        self->setEnabled (true);
-                        self->repaint();
-                    });
-                    return;
-                }
                 case 413:
                 {
                     auto* clips = self->engine.tryClipsFor (self->index);
@@ -3650,7 +3634,6 @@ namespace zynforge
             menu.addItem (410, "Duplicate clip",    ! locked);
             menu.addItem (411, "Delete clip",       ! locked);
             menu.addItem (413, "Consolidate clip",  ! locked);
-            menu.addItem (414, "Normalize clip",    ! locked);
             menu.addSeparator();
             menu.addSubMenu ("Clip gain",  gain);
             menu.addSubMenu ("Fade in",    fadeIn,  ! locked);

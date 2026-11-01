@@ -480,7 +480,7 @@ namespace zynforge
             }
 
             // ── 4757: menu items resolve each group peer's OWN clip ──────────
-            beginTest ("Clip menu delete, lock and normalize act on each group peer's own clip");
+            beginTest ("Clip menu delete and lock act on each group peer's own clip");
             {
                 Session s (2, { 48000, 48000 });
                 s.engine.setTrackEditGroup (0, 0);
@@ -502,14 +502,6 @@ namespace zynforge
                 for (int t : { 0, 1 })
                     for (int i = 0; i < (int) s.clips (t).size(); ++i)
                         s.engine.setClipLocked (t, i, false);
-
-                // Normalize A's second clip [24k,48k): B's clip under it is #2.
-                row.applyClipMenuChoice (1, 414);
-                expect (pumpUntil ([&] { return row.isEnabled(); }, 5000), "normalize never completed");
-                expect (s.clips (0)[1].gainDb > 1.0f, "source clip normalized");
-                expectWithinAbsoluteError (s.clips (1)[1].gainDb, 0.0f, 0.001f,
-                                           "Normalize changed B's clip #1 by raw index");
-                expect (s.clips (1)[2].gainDb > 1.0f, "Normalize missed the peer clip under the source");
 
                 // Delete A's second clip [24k,48k): B must lose #2 [12k,48k), not #1.
                 row.applyClipMenuChoice (1, 411);

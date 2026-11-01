@@ -151,7 +151,6 @@ public:
             expect (! e.forEachArrangementWindow (0, 0, 1000, [&] (const float* p, juce::int64, int n)
             { for (int i = 0; i < n; ++i) peak = juce::jmax (peak, std::abs (p[i])); return true; }));
             expectWithinAbsoluteError (peak, 0.0f, 0.0001f);
-            expect (! e.normalizeClip (0, 0, -1));
         }
         beginTest ("Locked clips cannot split or ripple");
         {
