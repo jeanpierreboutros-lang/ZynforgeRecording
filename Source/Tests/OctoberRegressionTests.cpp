@@ -385,6 +385,11 @@ public:
             MainComponent::s_testConstruct = true;
             {
                 MainComponent main; auto& link = main.consoleLink;
+                const auto session = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                         .getChildFile ("zf-october-" + juce::Uuid().toString());
+                session.createDirectory();
+                const juce::ScopeGuard removeSession { [&] { session.deleteRecursively(); } };
+                main.engine.setActiveSessionDir (session);
                 std::vector<juce::OSCMessage> sent;
                 link.setSendHook ([&] (const auto& m) { sent.push_back (m); });
                 main.consoleToggleSoundcheck();
@@ -535,6 +540,7 @@ public:
             auto process = [&] { e.audioDeviceIOCallbackWithContext (in, 2, out.getArrayOfWritePointers(), 2, 256, {}); };
             process(); expect (out.getMagnitude (0, 256) > 0.1f);
             const float liveLevel = out.getMagnitude (0, 256);
+            e.getRecorder().getTrack (0).captureInputGainKnown = true;   // the offset is real
             e.setTrackLiveInputGain (0, 12); e.setTrimFollowEnabled (true); process();
             expectWithinAbsoluteError (out.getMagnitude (0, 256), liveLevel, 0.0001f);
             e.setTrimFollowEnabled (false);

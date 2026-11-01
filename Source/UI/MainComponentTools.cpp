@@ -82,12 +82,8 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
             recorder.getTrack (clickTrackIndex).referenceMedia.store (true);
     }
 
-    const double sr = juce::jmax (8000.0, [this]
-    {
-        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
-            return d->getCurrentSampleRate();
-        return 48000.0;
-    }());
+    const double sr = juce::jmax (8000.0, engine.getSessionAudioRate() > 0.0
+                                              ? engine.getSessionAudioRate() : 48000.0);
     // Match the session's playback length. An empty new session has no media
     // length yet, so provide three hours: enough for the stated two-hour show
     // plus setup/overtime headroom.
@@ -437,6 +433,8 @@ bool MainComponent::refuseAnalysisNow()
     { showStatus ("Analysis runs after recording stops -- it reads every take file"); return true; }
     if (sessionIoBusy.load())
     { showStatus ("Wait for the session operation to finish"); return true; }
+    if (analysisBusy.load())
+    { showStatus ("An analysis is already running"); return true; }
     return false;
 }
 
@@ -479,7 +477,8 @@ void MainComponent::runNoiseAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, sessionDir, names]
+    analysisJobs.start ([self, sessionDir, names] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
         const auto findings = zynforge::NoiseAnalyzer::analyseSession (
             sessionDir,
@@ -488,11 +487,13 @@ void MainComponent::runNoiseAnalysis()
                 return (idx >= 0 && idx < names.size())
                     ? names[idx]
                     : juce::String ("Track ") + juce::String (idx + 1);
-            });
+            }, &cancel);
+        if (cancel.load (std::memory_order_relaxed))
+            return [self] { if (self != nullptr) self->showStatus ("Noise analysis stopped: a take started"); };
 
         const auto summary = noiseAnalysisSummary (findings);
 
-        juce::MessageManager::callAsync ([self, summary, findings]
+        return [self, summary, findings]
         {
             if (self == nullptr) return;
             self->showStatus (summary);
@@ -500,7 +501,7 @@ void MainComponent::runNoiseAnalysis()
             // column headers to sort by worst hum / most bumps /
             // highest noise floor.
             zynforge::NoiseReportDialog::launch (findings);
-        });
+        };
     });
 }
 
@@ -533,8 +534,12 @@ void MainComponent::runQcAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, sessionDir, audioDir, files, names]
+    analysisJobs.start ([self, sessionDir, audioDir, files, names] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
+        const auto stopped = [self]
+        { if (self != nullptr) self->showStatus ("QC stopped: a take started. No report was written."); };
+
         std::vector<zynforge::qc::TrackQc> results;
         for (const auto& f : files)
         {
@@ -547,7 +552,8 @@ void MainComponent::runQcAnalysis()
             // Also skips punch sidecars and Track_NN_consolidated_K renders.
             const int idx = zynforge::mainTakeTrackNumber (f) - 1;
             if (idx < 0) continue;
-            auto q = zynforge::qc::analyzeFile (f);
+            auto q = zynforge::qc::analyzeFile (f, &cancel);
+            if (cancel.load (std::memory_order_relaxed)) return stopped;
             q.trackIndex = idx;
             q.name = (idx < names.size() && names[idx].isNotEmpty()) ? names[idx] : stem;
             results.push_back (std::move (q));
@@ -563,6 +569,8 @@ void MainComponent::runQcAnalysis()
                 missed = (juce::int64) v.getProperty ("missedSamples", -1);
         }
 
+        if (cancel.load (std::memory_order_relaxed)) return stopped;
+
         // Write the morning-after text report next to the exports.
         const auto exportDir = sessionDir.getChildFile ("Export Files");
         exportDir.createDirectory();
@@ -571,25 +579,16 @@ void MainComponent::runQcAnalysis()
         const bool reportSaved = zynforge::atomicfile::writeText (
             reportTxt, zynforge::qc::reportText (sessionDir.getFileName(), results, missed));
 
-        int clipped = 0, totalEvents = 0;
-        for (const auto& q : results)
-            if (q.clipEventCount > 0) { ++clipped; totalEvents += q.clipEventCount; }
-        juce::String summary = juce::String ((int) results.size()) + " track"
-            + (results.size() == 1 ? juce::String() : juce::String ("s")) + " QC'd -- "
-            + (clipped == 0 ? juce::String ("no clipping")
-                            : juce::String (clipped) + " with clipping ("
-                              + juce::String (totalEvents) + " events)")
-            + (missed > 0 ? juce::String (", DROPOUTS: ") + juce::String (missed) + " samples"
-                          : juce::String())
+        juce::String summary = zynforge::qc::statusSummary (results, missed)
             + (reportSaved ? ". Saved " + reportTxt.getFileName() + "."
                            : ". WARNING: report file could not be saved.");
 
-        juce::MessageManager::callAsync ([self, summary, results]() mutable
+        return [self, summary, results] () mutable
         {
             if (self == nullptr) return;
             self->showStatus (summary);
             zynforge::QcReportDialog::launch (std::move (results));
-        });
+        };
     });
 }
 
@@ -645,7 +644,9 @@ void MainComponent::promptConsoleConnect()
 
             if (! self->consoleLink.connect (host))
             {
-                self->showStatus ("Console link failed -- check the IP and the network");
+                self->showStatus (zynforge::oscwire::normaliseSourceIp (host).isEmpty()
+                    ? "Enter the console's IP address as numbers, like 192.168.1.50"
+                    : "Console link failed -- check the IP and the network");
                 return;
             }
             if (auto* p = self->engine.getAppProps())
@@ -671,6 +672,7 @@ void MainComponent::promptConsoleConnect()
             // Show-night state saved with the session (stage patch +
             // gains) comes back automatically on VSC day.
             const auto sess = self->engine.getActiveSessionDir();
+            self->consoleLink.setSessionDir (sess);
             if (sess.isDirectory() && self->consoleLink.loadFrom (sess))
                 self->showStatus ("Console link up: " + host
                             + " -- loaded saved patch + gains from session");
@@ -709,9 +711,13 @@ void MainComponent::wireConsoleLink()
 void MainComponent::consoleToggleSoundcheck()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    const auto sess = engine.getActiveSessionDir();
+    consoleLink.setSessionDir (sess);
     if (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
         || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
         consoleLink.exitSoundcheck();
+    else if (! sess.isDirectory())
+        showStatus ("Open a session first -- the show patch is saved with it before the console moves");
     else
         consoleLink.enterSoundcheck();
 }
@@ -719,6 +725,7 @@ void MainComponent::consoleToggleSoundcheck()
 void MainComponent::consoleCaptureGains()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
     // jlimit(1, ...) turned an empty session into a 1-channel poll, which then
     // "captured" a single head-amp and saved it as the show's gains.
     const int tracks = engine.getRecorder().getNumTracks();
@@ -764,14 +771,11 @@ void MainComponent::consoleCaptureGains()
 void MainComponent::consoleRestoreGains()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
     if (consoleLink.getCapturedGains().empty())
     {
-        const auto sess = engine.getActiveSessionDir();
-        if (! (sess.isDirectory() && consoleLink.loadFrom (sess)))
-        {
-            showStatus ("No captured gains -- capture them on show night first");
-            return;
-        }
+        showStatus ("No captured gains in this session -- capture them on show night first");
+        return;
     }
     consoleLink.restoreGains();
 }
@@ -1063,43 +1067,28 @@ void MainComponent::detectSongsToMarkers()
         return;
     }
 
-    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
-                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
-    auto files = audioDir.findChildFiles (juce::File::findFiles, false,
-                                          "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac");
-    if (files.isEmpty())
+    const auto voices = engine.songScanVoices();
+    if (voices.empty())
     {
         showStatus ("No recorded audio to scan -- record a take first.");
         return;
     }
-    files.sort();
+    const auto arrangement = juce::JSON::toString (engine.playlistsToJson());
 
     showStatus ("Detecting songs (multi-track quorum scan)...");
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, files, sessionDir]
+    analysisJobs.start ([self, voices, sessionDir, arrangement] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
         const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
-        std::vector<std::vector<char>> flags;
         double sr = 48000.0;
-        for (const auto& f : files)
-        {
-            // Skip continuation parts: envelopeFlags treats every file as
-            // starting at t=0, so a Track_NN_partXX would fold set-2 audio onto
-            // the timeline START and add a phantom voice to the quorum, landing
-            // song markers all over the session. Scan main files only (a
-            // consolidate render or punch sidecar is the same phantom voice).
-            if (zynforge::mainTakeTrackNumber (f) <= 0)
-                continue;
-            double fileSr = 0.0;
-            auto fl = zynforge::songs::envelopeFlags (f, params.thresholdDb,
-                                                      params.windowSec, fileSr);
-            if (fileSr > 0.0) sr = fileSr;
-            if (! fl.empty()) flags.push_back (std::move (fl));
-        }
+        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel);
+        if (cancel.load (std::memory_order_relaxed))
+            return [self] { if (self != nullptr) self->showStatus ("Song detection stopped: a take started"); };
         const auto found = zynforge::songs::detect (flags, sr, params);
 
-        juce::MessageManager::callAsync ([self, found, sessionDir]
+        return [self, found, sessionDir, arrangement]
         {
             if (self == nullptr) return;
             if (self->engine.getActiveSessionDir() != sessionDir)
@@ -1114,13 +1103,18 @@ void MainComponent::detectSongsToMarkers()
             }
             // Markers are a timeline edit: a take may have started during the scan.
             if (! self->canMutateTimeline ("adding song markers")) return;
+            if (juce::JSON::toString (self->engine.playlistsToJson()) != arrangement)
+            {
+                self->showStatus ("The arrangement changed during the scan; no markers were added");
+                return;
+            }
             auto& markers = self->engine.getMarkers();
             int n = 0;
             for (const auto& s : found)
-                markers.drop (s.startSample, "Song " + juce::String (++n));
+                markers.drop (s.startSample, "Song " + juce::String (++n), "song");
             self->showStatus (juce::String (n) + " song marker" + (n == 1 ? "" : "s")
                               + " dropped -- rename them in the Marker List.");
-        });
+        };
     });
 }
 
@@ -1269,4 +1263,36 @@ void MainComponent::showSessionProperties()
                         self->showStatus ("Saved session properties -- " + sessionDir.getFileName());
                 });
         });
+}
+
+void MainComponent::promptStreamOutputs()
+{
+    auto* aw = new juce::AlertWindow ("Stream Bus Output",
+                                      "The stream bus sums every strip with a STREAM send. Pick the "
+                                      "output pair it feeds. Off leaves it for StereoMix.wav alone.",
+                                      juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);
+
+    juce::StringArray pairs ("Off");
+    const int outputs = engine.getCurrentDeviceOutputCount();
+    for (int left = 0; left + 1 < outputs; left += 2)
+        pairs.add ("Out " + juce::String (left + 1) + "-" + juce::String (left + 2));
+    aw->addComboBox ("pair", pairs, "Output:");
+    if (auto* box = aw->getComboBoxComponent ("pair"))
+        box->setSelectedItemIndex (juce::jlimit (0, pairs.size() - 1, (engine.getStreamOutputL() + 2) / 2),
+                                   juce::dontSendNotification);
+    aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int result)
+    {
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (self == nullptr || result != 1) return;
+        const int index = aw->getComboBoxComponent ("pair")->getSelectedItemIndex();
+        const int left  = index > 0 ? (index - 1) * 2 : -1;
+        self->engine.setStreamOutputs (left, left >= 0 ? left + 1 : -1);
+        self->showStatus (left >= 0 ? "Stream bus -> Out " + juce::String (left + 1) + "-" + juce::String (left + 2)
+                                    : juce::String ("Stream bus has no output"));
+    }));
 }

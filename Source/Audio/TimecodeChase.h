@@ -34,9 +34,11 @@ namespace zynforge
     // '1' bits a frame carries (about 100-110 crossings per frame, not 160).
     //
     // MTC quarter-frame: 8 F1-status messages, each carrying one nibble
-    // of hr/mn/sc/fr plus the frame-rate code. After all 8 arrive a
-    // full timecode is assembled. Out-of-order nibbles reset the
-    // accumulator so a partial transmit doesn't corrupt the readout.
+    // of hr/mn/sc/fr plus the frame-rate code. They only make one time as a
+    // complete run, 0 to 7 (7 to 0 when the master shuttles backwards), so a
+    // run is collected from its first message and a message out of sequence
+    // drops it. Starting anywhere else would mix nibbles from two groups and
+    // read a time up to an hour wrong at every boundary they straddle.
     class TimecodeChase
     {
     public:
@@ -44,10 +46,7 @@ namespace zynforge
         {
             running       .store (false, std::memory_order_relaxed);
             crossingsPerS .store (0.0f,  std::memory_order_relaxed);
-            ltcHours      .store (0, std::memory_order_relaxed);
-            ltcMinutes    .store (0, std::memory_order_relaxed);
-            ltcSeconds    .store (0, std::memory_order_relaxed);
-            ltcFrames     .store (0, std::memory_order_relaxed);
+            label         .store (0, std::memory_order_relaxed);
             ltcFps        .store (0.0f, std::memory_order_relaxed);
             ltcDropFrame  .store (false, std::memory_order_relaxed);
             lastMtcTickMs .store (0, std::memory_order_relaxed);
@@ -148,41 +147,25 @@ namespace zynforge
         //   5: minute MS nibble
         //   6: hour   LS nibble
         //   7: hour   MS nibble + bits 1-2 of fps code
-        // We accept the message regardless of arrival order, but only
-        // publish hr:mn:sc:fr when all 8 nibbles have been seen since
-        // the last reset.
         void feedMtcQuarterFrame (juce::uint8 data) noexcept
         {
-            const juce::uint8 type   = (data >> 4) & 0x07;
-            const juce::uint8 nibble = data & 0x0F;
-            mtcAcc.nibbles[type] = nibble;
-            mtcAcc.seen |= juce::uint8 (1 << type);
-
-            if (mtcAcc.seen == 0xFF)   // all 8 received
+            const int type = (data >> 4) & 0x07;
+            const int expected = mtcAcc.received > 0 ? mtcAcc.lastType + mtcAcc.direction : -1;
+            if (type != expected) mtcAcc = MtcAcc{};
+            if (mtcAcc.received == 0)
             {
-                const auto fr = static_cast<juce::uint8> (mtcAcc.nibbles[0]
-                              | ((mtcAcc.nibbles[1] & 0x01) << 4));
-                const auto sc = static_cast<juce::uint8> (mtcAcc.nibbles[2]
-                              |  (mtcAcc.nibbles[3] << 4));
-                const auto mn = static_cast<juce::uint8> (mtcAcc.nibbles[4]
-                              |  (mtcAcc.nibbles[5] << 4));
-                const auto hr = static_cast<juce::uint8> (mtcAcc.nibbles[6]
-                              | ((mtcAcc.nibbles[7] & 0x01) << 4));
-
-                ltcFrames .store (fr, std::memory_order_relaxed);
-                ltcSeconds.store (sc, std::memory_order_relaxed);
-                ltcMinutes.store (mn, std::memory_order_relaxed);
-                ltcHours  .store (hr, std::memory_order_relaxed);
-                running   .store (true, std::memory_order_relaxed);
-
-                // Frame-rate lives in the hour-MS nibble (type 7): bits 1-2.
-                // 0=24, 1=25, 2=29.97-drop, 3=30. Publish it so the chaser
-                // maps frames→samples correctly (LTC derives fps differently).
-                const int rateCode = (mtcAcc.nibbles[7] >> 1) & 0x3;
-                ltcFps.store (rateCode == 0 ? 24.0f : rateCode == 1 ? 25.0f
-                            : rateCode == 2 ? 29.97f : 30.0f, std::memory_order_relaxed);
-                ltcDropFrame.store (rateCode == 2, std::memory_order_relaxed);
-                mtcAcc.seen = 0;
+                if (type == 0)      mtcAcc.direction = 1;
+                else if (type == 7) mtcAcc.direction = -1;
+            }
+            if (mtcAcc.direction != 0)
+            {
+                mtcAcc.nibbles[type] = data & 0x0F;
+                mtcAcc.lastType = type;
+                if (++mtcAcc.received == 8)
+                {
+                    publishMtcRun();
+                    mtcAcc = MtcAcc{};
+                }
             }
             lastMtcTickMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
         }
@@ -202,11 +185,8 @@ namespace zynforge
                 ltcFps.store (fps, std::memory_order_relaxed);
                 ltcDropFrame.store (dropFrame, std::memory_order_relaxed);
             }
-            ltcHours  .store (hr, std::memory_order_relaxed);
-            ltcMinutes.store (mn, std::memory_order_relaxed);
-            ltcSeconds.store (sc, std::memory_order_relaxed);
-            ltcFrames .store (fr, std::memory_order_relaxed);
-            running   .store (true, std::memory_order_relaxed);
+            publishLabel (hr, mn, sc, fr);
+            running.store (true, std::memory_order_relaxed);
             mtcAcc = MtcAcc{};   // restart the QF accumulator
             lastMtcTickMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
         }
@@ -234,10 +214,10 @@ namespace zynforge
             return (juce::uint32) (juce::Time::getMillisecondCounter() - last) <= kLtcTimeoutMs;
         }
         bool isRunning() const noexcept { return isMtcRunning() || isLtcLocked(); }
-        juce::uint8 getHours()   const noexcept { return ltcHours  .load (std::memory_order_relaxed); }
-        juce::uint8 getMinutes() const noexcept { return ltcMinutes.load (std::memory_order_relaxed); }
-        juce::uint8 getSeconds() const noexcept { return ltcSeconds.load (std::memory_order_relaxed); }
-        juce::uint8 getFrames()  const noexcept { return ltcFrames .load (std::memory_order_relaxed); }
+        juce::uint8 getHours()   const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 24); }
+        juce::uint8 getMinutes() const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 16); }
+        juce::uint8 getSeconds() const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 8); }
+        juce::uint8 getFrames()  const noexcept { return (juce::uint8)  label.load (std::memory_order_relaxed); }
         float getCrossingsPerSecond() const noexcept
         {
             return crossingsPerS.load (std::memory_order_relaxed);
@@ -249,27 +229,49 @@ namespace zynforge
         // The time of day the timecode stands for now, in seconds. A label is
         // only known once its frame has passed: framesLate is that age (1 for
         // LTC, whose sync word ends the frame; 2 for MTC, whose eight
-        // quarter-frames span two). The fields are separate atomics, so read
-        // until two passes agree: a tear at a minute boundary is a minute out.
+        // quarter-frames span two).
         double timeOfDaySeconds (int framesLate) const noexcept
         {
-            int hh = 0, mm = 0, ss = 0, ff = 0;
-            for (int attempt = 0; attempt < 4; ++attempt)
-            {
-                hh = getHours(); mm = getMinutes(); ss = getSeconds(); ff = getFrames();
-                if (hh == getHours() && mm == getMinutes() && ss == getSeconds() && ff == getFrames())
-                    break;
-            }
+            const auto now = label.load (std::memory_order_relaxed);
             const double rate = getFps() > 0.0f ? (double) getFps() : 30.0;
-            return hh * 3600.0 + mm * 60.0 + ss + (ff + framesLate) / rate;
+            return (int) (now >> 24) * 3600.0 + (int) ((now >> 16) & 0xFF) * 60.0
+                 + (int) ((now >> 8) & 0xFF) + ((int) (now & 0xFF) + framesLate) / rate;
         }
 
     private:
         struct MtcAcc
         {
             juce::uint8 nibbles[8] {};
-            juce::uint8 seen { 0 };   // bitmask of which types have arrived
+            int received  { 0 };   // messages of this run so far
+            int lastType  { 0 };
+            int direction { 0 };   // +1 forwards, -1 backwards, 0 no run yet
         };
+
+        // One atomic word: a reader between stores of four separate fields
+        // could take the hour from one frame and the minute from the next.
+        void publishLabel (juce::uint8 hr, juce::uint8 mn, juce::uint8 sc, juce::uint8 fr) noexcept
+        {
+            label.store (((juce::uint32) hr << 24) | ((juce::uint32) mn << 16)
+                             | ((juce::uint32) sc << 8) | (juce::uint32) fr,
+                         std::memory_order_relaxed);
+        }
+
+        void publishMtcRun() noexcept
+        {
+            publishLabel ((juce::uint8) (mtcAcc.nibbles[6] | ((mtcAcc.nibbles[7] & 0x01) << 4)),
+                          (juce::uint8) (mtcAcc.nibbles[4] |  (mtcAcc.nibbles[5] << 4)),
+                          (juce::uint8) (mtcAcc.nibbles[2] |  (mtcAcc.nibbles[3] << 4)),
+                          (juce::uint8) (mtcAcc.nibbles[0] | ((mtcAcc.nibbles[1] & 0x01) << 4)));
+            running.store (true, std::memory_order_relaxed);
+
+            // Frame-rate lives in the hour-MS nibble (type 7): bits 1-2.
+            // 0=24, 1=25, 2=29.97-drop, 3=30. Publish it so the chaser
+            // maps frames→samples correctly (LTC derives fps differently).
+            const int rateCode = (mtcAcc.nibbles[7] >> 1) & 0x3;
+            ltcFps.store (rateCode == 0 ? 24.0f : rateCode == 1 ? 25.0f
+                        : rateCode == 2 ? 29.97f : 30.0f, std::memory_order_relaxed);
+            ltcDropFrame.store (rateCode == 2, std::memory_order_relaxed);
+        }
 
         // Bit-cell limits for one sample rate. A half cell runs sr/4800 (30
         // fps) .. sr/3840 (24 fps), a full cell sr/2400 .. sr/1920; `split`
@@ -409,10 +411,7 @@ namespace zynforge
             prevFrameCount  = count;
             lastValidSample = at;
 
-            ltcHours    .store (hr, std::memory_order_relaxed);
-            ltcMinutes  .store (mn, std::memory_order_relaxed);
-            ltcSeconds  .store (sc, std::memory_order_relaxed);
-            ltcFrames   .store (fr, std::memory_order_relaxed);
+            publishLabel (hr, mn, sc, fr);
             ltcDropFrame.store (drop, std::memory_order_relaxed);
             ltcFps      .store (fps, std::memory_order_relaxed);
 
@@ -450,10 +449,7 @@ namespace zynforge
         std::atomic<bool>  running       { false };   // MTC only
         std::atomic<bool>  ltcLocked     { false };
         std::atomic<float> crossingsPerS { 0.0f };
-        std::atomic<juce::uint8> ltcHours   { 0 };
-        std::atomic<juce::uint8> ltcMinutes { 0 };
-        std::atomic<juce::uint8> ltcSeconds { 0 };
-        std::atomic<juce::uint8> ltcFrames  { 0 };
+        std::atomic<juce::uint32> label     { 0 };   // hh mm ss ff, one byte each
         std::atomic<float>       ltcFps     { 0.0f };
         std::atomic<bool>        ltcDropFrame { false };
         // Wall-clock ms of the last MTC tick (0 = never). Read on the

@@ -14,6 +14,9 @@ namespace zynforge::capture
         using linesocket::writeAll;
         using Clock = linesocket::Clock;
         constexpr auto kWriteLockWait = linesocket::kDefaultWriteBudget;
+        // A Hello is a few hundred bytes. Nobody has proved anything yet, so
+        // nobody gets a full-size line parsed on the accept thread.
+        constexpr size_t kMaxHandshakeLineBytes = 16 * 1024;
         thread_local const CaptureServer* currentCaptureReader = nullptr;
 
         struct FrameSerializationAborted {};
@@ -166,7 +169,7 @@ namespace zynforge::capture
                 {
                     if (accepted || rejected) return;
                     bool parsed = false;
-                    const auto candidate = Command::fromJson (juce::JSON::parse (line), parsed);
+                    const auto candidate = Command::fromJson (linesocket::parseJson (line), parsed);
                     if (! parsed) { rejected = true; return; }
                     Reply refusal; refusal.id = candidate.id;
                     if (candidate.action != Action::Hello)
@@ -195,7 +198,7 @@ namespace zynforge::capture
                         rejected = true;
                     }
                     if (! writeAll (*sock, frame (refusal.toJson()), handshakeDeadline)) rejected = true;
-                })) break;
+                }, 200, kMaxHandshakeLineBytes)) break;
             }
             if (! accepted || ! running.load()) continue;
             // One GUI at a time: a NEW connection supersedes the old one.
@@ -252,7 +255,7 @@ namespace zynforge::capture
             const bool keep = pumpLines (*shared, scratch,
                 [this] (const juce::String& line)
             {
-                const auto v = juce::JSON::parse (line);
+                const auto v = linesocket::parseJson (line);
                 if (messageType (v) != "cmd") return;
                 bool ok = false;
                 const auto cmd = Command::fromJson (v, ok);
@@ -351,7 +354,7 @@ namespace zynforge::capture
         {
             const bool keep = pumpLines (*socket, scratch, [this] (const juce::String& line)
             {
-                const auto v = juce::JSON::parse (line);
+                const auto v = linesocket::parseJson (line);
                 const auto type = messageType (v);
                 if (type == "status")
                 {

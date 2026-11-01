@@ -52,6 +52,8 @@ MainComponent::MainComponent()
                 cue.automation = juce::var (remapped);
             }
         clipClipboard = juce::var(); // any copied implicit track index is now stale
+        if (clickTrackIndex >= 0 && clickTrackIndex < (int) destination.size())
+            clickTrackIndex = destination[(size_t) clickTrackIndex];
         undoManager.clearUndoHistory(); // old per-index snapshots must not undo onto different audio
         rebaselineMixerUndo();
         // reorderTracks bumps the track generation, so the strips rebuild on
@@ -499,11 +501,6 @@ MainComponent::MainComponent()
             editPage->repaint();
         }
     };
-    automationToolbar->onClearAll = [this]
-    {
-        showStatus ("Automation clear is recognised -- point storage lands in the next pass");
-    };
-
     // editPage doesn't exist yet here -- the real wiring happens below
     // after `editPage = std::make_unique<EditPage>(...)`.
 
@@ -512,11 +509,15 @@ MainComponent::MainComponent()
     {
         if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
         { showStatus ("Stop recording or unlock the session before clearing automation"); return; }
+        using Param = zynforge::AutomationToolbar::Param;
         const auto p = automationToolbar->getParam();
-        const auto engineParam =
-            p == zynforge::AutomationToolbar::Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
-          : p == zynforge::AutomationToolbar::Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
-                                                            : zynforge::AudioEngine::AutomationParam::Mute;
+        // Click and Tempo hold no automation points. Falling through to Mute
+        // here erased every Mute lane while the row showed something else.
+        if (p != Param::Volume && p != Param::Pan && p != Param::Mute)
+        { showStatus ("Clear works on the Volume, Pan and Mute lanes -- pick one first"); return; }
+        const auto engineParam = p == Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
+                               : p == Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
+                                                    : zynforge::AudioEngine::AutomationParam::Mute;
         // Wrap in an undoable transaction so a stray click can be
         // recovered with Cmd+Z. AutomationSnapshotAction captures
         // before/after, undo restores the full automation table.
@@ -676,9 +677,18 @@ MainComponent::MainComponent()
         {
             runAutomationEdit (label, std::move (fn));
         });
-    editPage->automationDragBegin = [this] { beginAutomationTransaction(); };
-    editPage->automationDragEnd   = [this] (const juce::String& label)
-                                    { endAutomationTransaction (label); };
+    editPage->canMutateTimeline = [this] { return canMutateTimeline(); };
+    editPage->normalizeClips = [this] (std::vector<zynforge::EditPage::ClipRef> targets)
+    {
+        normalizeClips (std::move (targets));
+    };
+    editPage->tempoEditWrapper = [this] (const juce::String& label, std::function<void()> fn)
+    {
+        runTempoEdit (label, std::move (fn));
+    };
+    editPage->setAutomationDragHooks (
+        [this] { beginAutomationTransaction(); },
+        [this] (const juce::String& label) { endAutomationTransaction (label); });
     // Save per-session zoom into .zfproj on every idle change.
     // A zoom click during capture changes only the view. The normal stop-save
     // persists its final value without writing to the active take volume.
@@ -723,6 +733,8 @@ MainComponent::MainComponent()
         if (editPage != nullptr) editPage->repaint();
     };
     editPage->onStatus = [this] (const juce::String& message) { showStatus (message); };
+    editPage->consolidateRange = [this] (const std::vector<int>& targets, juce::int64 start, juce::int64 end)
+    { consolidateTracks (targets, start, end); };
     // Right-click ▸ Delete Channel from the EDIT row header. Select just
     // this channel (so the highlight matches what's about to go), then run
     // the shared confirm + delete path used by the Track menu + Delete key.
@@ -956,9 +968,27 @@ void MainComponent::switchView (View v)
     resized();
 }
 
+// Every session swap and layout change comes through rebuildStrips. The strip
+// selection and the click row are positions in ONE layout of ONE session: left
+// alone, a range edit, Delete or a paste hits whatever now sits at the old index.
+void MainComponent::syncStripSelectionScope()
+{
+    const int layout = engine.getRecorder().getTrackGeneration();
+    const auto session = engine.getActiveSessionDir();
+    if (layout != selectionLayoutGen || session != selectionSession)
+    {
+        selectedLogical.clear();
+        selectionLayoutGen = layout;
+        selectionSession   = session;
+    }
+    if (editPage != nullptr)
+        editPage->setClickTrackPresent (clickTrackIndex >= 0, clickTrackIndex);
+}
+
 void MainComponent::rebuildStrips()
 {
     const juce::ScopedValueSetter<bool> guard (rebuildingStrips, true);
+    syncStripSelectionScope();
     auto& recorder = engine.getRecorder();
     const int n = recorder.getNumTracks();
 
@@ -1224,6 +1254,13 @@ void MainComponent::rebuildStrips()
         s->onSendTargetChanged = [this, i] (int target)
         {
             engine.setTrackSend (i, 0, target, 0.0f /* dB */, true /* post */);
+        };
+        s->onStreamSendChanged = [this, i] (bool on)
+        {
+            engine.setTrackStream (i, on);
+            if (on && engine.getStreamOutputL() < 0 && ! engine.getRecordStereoMix())
+                showStatus ("STREAM send is on, but the stream bus has no output: pick one in "
+                            "Session > Recording & Sync > Stream Bus Output, or record StereoMix");
         };
 
         // Per-track Automation Safe lock. When on, the engine

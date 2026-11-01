@@ -29,12 +29,15 @@ namespace zynforge
     private:
         friend class OctoberRegressionTests;
         friend class EngineReviewRepairTests;
+        friend class NetworkFixTests;
         void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
         void timerCallback() override;   // push fader / name / LED state to the surface
+        void send (const juce::MidiMessage&);
 
         AudioEngine& engine;
         std::unique_ptr<juce::MidiInput>  input;
         std::unique_ptr<juce::MidiOutput> output;
+        std::function<void (const juce::MidiMessage&)> sendHookForTests;
 
         static constexpr int kStrips = 8;
         std::atomic<int>  bankOffset   { 0 };       // first engine channel on fader 0

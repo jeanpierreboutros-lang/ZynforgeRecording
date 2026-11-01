@@ -45,6 +45,124 @@ namespace zynforge
                    [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
     }
 
+    // The point the curve passes through at samplePos: its value, and the shape
+    // of the segment that carries it. samplePos must not be before the first
+    // point; past the last point the lane holds that point's value.
+    static AudioEngine::AutomationPoint curveValueAt (const std::vector<AudioEngine::AutomationPoint>& lane,
+                                                      juce::int64 samplePos) noexcept
+    {
+        using Curve = AudioEngine::AutomationCurve;
+        const auto& last = lane.back();
+        if (samplePos >= last.samplePos) return { samplePos, last.value, last.curve, last.tension };
+
+        // Walk to the segment that contains samplePos. The points
+        // are kept sorted by samplePos in addAutomationPoint, so a
+        // single linear scan is correct.
+        const AudioEngine::AutomationPoint* prev = &lane.front();
+        const AudioEngine::AutomationPoint* next = nullptr;
+        for (size_t i = 1; i < lane.size(); ++i)
+        {
+            if (samplePos < lane[i].samplePos)
+            {
+                next = &lane[i];
+                prev = &lane[i - 1];
+                break;
+            }
+        }
+        if (next == nullptr) return { samplePos, last.value, last.curve, last.tension };
+        AudioEngine::AutomationPoint at { samplePos, prev->value, prev->curve, prev->tension };
+
+        // Normalised time within this segment.
+        const double span = (double) (next->samplePos - prev->samplePos);
+        if (span <= 0.0) return at;
+        const double t = (double) (samplePos - prev->samplePos) / span;
+
+        // Apply the curve type pinned on the PREV point. That field
+        // controls how value evolves FROM prev TO next. For Linear,
+        // the per-point `tension` warps the ramp into ease-in (<0)
+        // or ease-out (>0) via t^exp where exp = 2^(-tension*4).
+        double shaped = t; // Invalid in-memory enums also fall back to a linear ramp.
+        switch (prev->curve)
+        {
+            case Curve::Hold:
+                return at;                              // step
+            case Curve::Linear:
+            {
+                const float tn = juce::jlimit (-1.0f, 1.0f, prev->tension);
+                if (std::abs (tn) < 1.0e-4f) { shaped = t; break; }
+                const double exp = std::pow (2.0, (double) (-tn) * 4.0);
+                shaped = std::pow (t, exp);
+                break;
+            }
+            case Curve::SCurve:
+                shaped = t * t * (3.0 - 2.0 * t);       // smoothstep
+                break;
+            case Curve::ExpUp:
+                shaped = t * t;                          // legacy ease-in preset
+                break;
+            case Curve::ExpDown:
+                shaped = 1.0 - (1.0 - t) * (1.0 - t);    // legacy ease-out preset
+                break;
+        }
+        at.value = (float) (prev->value + shaped * (next->value - prev->value));
+        return at;
+    }
+
+    // A lane after a Crop or Ripple Delete. Each side of the removed span keeps
+    // the value it had at its edge, so the audio that stays hears the same curve
+    // and the join is a step, like the audio's own cut. Before the first point a
+    // lane reads the fader, so there is no edge to keep there.
+    static std::vector<AudioEngine::AutomationPoint> cutLane (const std::vector<AudioEngine::AutomationPoint>& lane,
+                                                              const timelinecut::Cut& cut)
+    {
+        if (lane.empty()) return {};
+        const auto first = lane.front().samplePos;
+        const auto last  = lane.back().samplePos;
+        const auto hasPointAt = [&lane] (juce::int64 pos)
+        {
+            return std::any_of (lane.begin(), lane.end(),
+                                [pos] (const auto& pt) { return pt.samplePos == pos; });
+        };
+        const auto edge = [&lane] (juce::int64 readAt, juce::int64 placeAt)
+        {
+            auto pt = curveValueAt (lane, readAt);
+            pt.samplePos = placeAt;
+            return pt;
+        };
+
+        std::vector<AudioEngine::AutomationPoint> out;
+        out.reserve (lane.size() + 2);
+        if (cut.crop)
+        {
+            if (cut.start > first && ! hasPointAt (cut.start)) out.push_back (edge (cut.start, 0));
+            for (auto pt : lane)
+                if (pt.samplePos >= cut.start && pt.samplePos < cut.end)
+                {
+                    pt.samplePos -= cut.start;
+                    out.push_back (pt);
+                }
+            const auto tail = cut.end - 1;
+            if (last >= cut.end && tail >= first && ! hasPointAt (tail))
+                out.push_back (edge (tail, tail - cut.start));
+            return out;
+        }
+
+        if (last < cut.start) return lane;   // everything sits before the cut
+        for (const auto& pt : lane)
+            if (pt.samplePos < cut.start) out.push_back (pt);
+        const auto beforeCut = cut.start - 1;
+        if (beforeCut >= first && ! hasPointAt (beforeCut)) out.push_back (edge (beforeCut, beforeCut));
+        if (cut.end > first && ! hasPointAt (cut.end)) out.push_back (edge (cut.end, cut.start));
+        const auto shift = cut.end - cut.start;
+        for (auto pt : lane)
+            if (pt.samplePos >= cut.end)
+            {
+                pt.samplePos -= shift;
+                out.push_back (pt);
+            }
+        return out;
+    }
+
     std::vector<AudioEngine::AutomationPoint>
     AudioEngine::copyAutomationRange (int track, AutomationParam p,
                                       juce::int64 startSample, juce::int64 endSample) const
@@ -198,6 +316,66 @@ namespace zynforge
         }
     }
 
+    static juce::var laneToVar (const std::vector<AudioEngine::AutomationPoint>& lane)
+    {
+        juce::Array<juce::var> arr;
+        for (const auto& pt : lane)
+        {
+            juce::DynamicObject::Ptr o (new juce::DynamicObject());
+            o->setProperty ("s", (juce::int64) pt.samplePos);
+            o->setProperty ("v", (double) pt.value);
+            o->setProperty ("c", (int) pt.curve);
+            if (std::abs (pt.tension) > 1.0e-4f)
+                o->setProperty ("t", (double) pt.tension);
+            arr.add (juce::var (o.get()));
+        }
+        return juce::var (arr);
+    }
+
+    static void varToLane (const juce::var& laneVar, std::vector<AudioEngine::AutomationPoint>& out)
+    {
+        using AutomationCurve = AudioEngine::AutomationCurve;
+        out.clear();
+        auto* pa = laneVar.getArray();
+        if (pa == nullptr) return;
+        for (const auto& ptVar : *pa)
+        {
+            auto* obj = ptVar.getDynamicObject();
+            if (obj == nullptr) continue;
+            AudioEngine::AutomationPoint pt;
+            pt.samplePos = (juce::int64) obj->getProperty ("s");
+            pt.value     = (float) (double) obj->getProperty ("v");
+            const auto curve = obj->getProperty ("c");
+            const double curveValue = (double) curve;
+            pt.curve = (curve.isInt() || curve.isInt64() || curve.isDouble())
+                           && std::isfinite (curveValue)
+                           && curveValue >= (int) AutomationCurve::Hold
+                           && curveValue <= (int) AutomationCurve::ExpDown
+                           && std::floor (curveValue) == curveValue
+                     ? (AutomationCurve) (int) curveValue
+                     : AutomationCurve::Linear;
+            if (obj->hasProperty ("t"))
+                pt.tension = (float) (double) obj->getProperty ("t");
+            // Legacy preset migration -- old .zfproj files only
+            // had the discrete shape enum. Map the two power-curve
+            // presets onto an equivalent tension on a Linear
+            // segment so the drag handle finds them in the right
+            // place and the new interpolator produces the same
+            // shape the old switch produced.
+            if (pt.curve == AutomationCurve::ExpUp)
+            {
+                pt.curve   = AutomationCurve::Linear;
+                pt.tension = -0.5f;             // ease-in (t^2-ish)
+            }
+            else if (pt.curve == AutomationCurve::ExpDown)
+            {
+                pt.curve   = AutomationCurve::Linear;
+                pt.tension = +0.5f;             // ease-out
+            }
+            out.push_back (pt);
+        }
+    }
+
     juce::var AudioEngine::automationToJson() const
     {
         // Snapshot every track's three lanes (volume / pan / mute)
@@ -205,22 +383,6 @@ namespace zynforge
         // lanes so the load path can match by index without gaps.
         const juce::ScopedLock sl (automationLock);
         juce::Array<juce::var> tracks;
-
-        auto laneToVar = [] (const std::vector<AutomationPoint>& lane)
-        {
-            juce::Array<juce::var> arr;
-            for (const auto& pt : lane)
-            {
-                juce::DynamicObject::Ptr o (new juce::DynamicObject());
-                o->setProperty ("s", (juce::int64) pt.samplePos);
-                o->setProperty ("v", (double) pt.value);
-                o->setProperty ("c", (int) pt.curve);
-                if (std::abs (pt.tension) > 1.0e-4f)
-                    o->setProperty ("t", (double) pt.tension);
-                arr.add (juce::var (o.get()));
-            }
-            return juce::var (arr);
-        };
 
         for (size_t t = 0; t < automationData.size(); ++t)
         {
@@ -245,50 +407,6 @@ namespace zynforge
 
         const juce::ScopedLock sl (automationLock);
 
-        auto varToLane = [] (const juce::var& laneVar,
-                             std::vector<AutomationPoint>& out)
-        {
-            out.clear();
-            auto* pa = laneVar.getArray();
-            if (pa == nullptr) return;
-            for (const auto& ptVar : *pa)
-            {
-                auto* obj = ptVar.getDynamicObject();
-                if (obj == nullptr) continue;
-                AutomationPoint pt;
-                pt.samplePos = (juce::int64) obj->getProperty ("s");
-                pt.value     = (float) (double) obj->getProperty ("v");
-                const auto curve = obj->getProperty ("c");
-                const double curveValue = (double) curve;
-                pt.curve = (curve.isInt() || curve.isInt64() || curve.isDouble())
-                               && std::isfinite (curveValue)
-                               && curveValue >= (int) AutomationCurve::Hold
-                               && curveValue <= (int) AutomationCurve::ExpDown
-                               && std::floor (curveValue) == curveValue
-                         ? (AutomationCurve) (int) curveValue
-                         : AutomationCurve::Linear;
-                if (obj->hasProperty ("t"))
-                    pt.tension = (float) (double) obj->getProperty ("t");
-                // Legacy preset migration -- old .zfproj files only
-                // had the discrete shape enum. Map the two power-curve
-                // presets onto an equivalent tension on a Linear
-                // segment so the drag handle finds them in the right
-                // place and the new interpolator produces the same
-                // shape the old switch produced.
-                if (pt.curve == AutomationCurve::ExpUp)
-                {
-                    pt.curve   = AutomationCurve::Linear;
-                    pt.tension = -0.5f;             // ease-in (t^2-ish)
-                }
-                else if (pt.curve == AutomationCurve::ExpDown)
-                {
-                    pt.curve   = AutomationCurve::Linear;
-                    pt.tension = +0.5f;             // ease-out
-                }
-                out.push_back (pt);
-            }
-        };
-
         // Loading is snapshot replacement (including undo), not a merge.
         automationData.clear();
         for (const auto& item : *arr)
@@ -310,6 +428,60 @@ namespace zynforge
             if (trk->hasProperty ("pTrim"))
                 a.panTrim.store ((float) (double) trk->getProperty ("pTrim"), std::memory_order_release);
         }
+    }
+
+    void AudioEngine::cutAutomationLanes (const timelinecut::Cut& cut, const std::vector<int>& tracks)
+    {
+        const juce::ScopedLock sl (automationLock);
+        for (const int t : tracks)
+        {
+            if (t < 0 || t >= (int) automationData.size()) continue;
+            auto& a = automationData[(size_t) t];
+            a.volume = cutLane (a.volume, cut);
+            a.pan    = cutLane (a.pan,    cut);
+            a.mute   = cutLane (a.mute,   cut);
+        }
+    }
+
+    juce::var AudioEngine::cutAutomationSnapshot (const juce::var& snapshot, const timelinecut::Cut& cut,
+                                                  const std::vector<int>& tracks)
+    {
+        auto* arr = snapshot.getArray();
+        if (arr == nullptr) return snapshot;
+        juce::Array<juce::var> out;
+        for (const auto& item : *arr)
+        {
+            auto* trk = item.getDynamicObject();
+            if (trk == nullptr
+                || std::find (tracks.begin(), tracks.end(), (int) trk->getProperty ("track")) == tracks.end())
+            {
+                out.add (item);
+                continue;
+            }
+            juce::DynamicObject::Ptr moved (new juce::DynamicObject (*trk));
+            for (const char* key : { "volume", "pan", "mute" })
+            {
+                std::vector<AutomationPoint> lane;
+                varToLane (trk->getProperty (key), lane);
+                moved->setProperty (key, laneToVar (cutLane (lane, cut)));
+            }
+            out.add (juce::var (moved.get()));
+        }
+        return juce::var (out);
+    }
+
+    bool AudioEngine::automationBlocksCut (const std::vector<int>& tracks) const
+    {
+        const juce::ScopedLock sl (automationLock);
+        for (const int t : tracks)
+        {
+            if (t < 0 || t >= (int) automationData.size()) continue;
+            const auto& a = automationData[(size_t) t];
+            if (a.safe.load (std::memory_order_acquire)
+                && ! (a.volume.empty() && a.pan.empty() && a.mute.empty()))
+                return true;
+        }
+        return false;
     }
 
     std::vector<AudioEngine::AutomationPoint>* AudioEngine::findLane (int track, AutomationParam p)
@@ -365,6 +537,22 @@ namespace zynforge
         auto* lane = findLane (track, p);
         if (lane == nullptr) return;
         addPointLocked (*lane, p, samplePos, value);
+    }
+
+    void AudioEngine::setAutomationPointValue (int track, AutomationParam p,
+                                               juce::int64 samplePos, float value)
+    {
+        const juce::ScopedLock sl (automationLock);
+        if (track < 0 || track >= (int) automationData.size()) return;
+        if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
+        auto* lane = findLane (track, p);
+        if (lane == nullptr) return;
+        for (auto& pt : *lane)
+            if (pt.samplePos == samplePos)
+            {
+                pt.value = p == AutomationParam::Mute ? (value >= 0.5f ? 1.0f : 0.0f) : value;
+                return;
+            }
     }
 
     void AudioEngine::setAutomationCurveAt (int track, AutomationParam p,
@@ -467,66 +655,13 @@ namespace zynforge
         // after the LAST point we hold its value so the final move sticks.
         if (samplePos <  v0.samplePos) return withTrim (fallback);
         if (samplePos == v0.samplePos) return withTrim (v0.value);
-        const auto& vN = lane->back();
-        if (samplePos >= vN.samplePos) return withTrim (vN.value);
-
-        // Walk to the segment that contains samplePos. The points
-        // are kept sorted by samplePos in addAutomationPoint, so a
-        // single linear scan is correct.
-        const AutomationPoint* prev = &v0;
-        const AutomationPoint* next = nullptr;
-        for (size_t i = 1; i < lane->size(); ++i)
-        {
-            const auto& pt = (*lane)[i];
-            if (samplePos < pt.samplePos)
-            {
-                next = &pt;
-                prev = &(*lane)[i - 1];
-                break;
-            }
-        }
-        if (next == nullptr) return withTrim (vN.value);
-
-        // Normalised time within this segment.
-        const double span = (double) (next->samplePos - prev->samplePos);
-        if (span <= 0.0) return withTrim (prev->value);
-        const double t = (double) (samplePos - prev->samplePos) / span;
-
-        // Apply the curve type pinned on the PREV point. That field
-        // controls how value evolves FROM prev TO next. For Linear,
-        // the per-point `tension` warps the ramp into ease-in (<0)
-        // or ease-out (>0) via t^exp where exp = 2^(-tension*4).
-        double shaped = t; // Invalid in-memory enums also fall back to a linear ramp.
-        switch (prev->curve)
-        {
-            case AutomationCurve::Hold:
-                return withTrim (prev->value);          // step
-            case AutomationCurve::Linear:
-            {
-                const float tn = juce::jlimit (-1.0f, 1.0f, prev->tension);
-                if (std::abs (tn) < 1.0e-4f) { shaped = t; break; }
-                const double exp = std::pow (2.0, (double) (-tn) * 4.0);
-                shaped = std::pow (t, exp);
-                break;
-            }
-            case AutomationCurve::SCurve:
-                shaped = t * t * (3.0 - 2.0 * t);       // smoothstep
-                break;
-            case AutomationCurve::ExpUp:
-                shaped = t * t;                          // legacy ease-in preset
-                break;
-            case AutomationCurve::ExpDown:
-                shaped = 1.0 - (1.0 - t) * (1.0 - t);    // legacy ease-out preset
-                break;
-        }
-        return withTrim ((float) (prev->value + shaped * (next->value - prev->value)));
+        return withTrim (curveValueAt (*lane, samplePos).value);
     }
 
     mix::StripLanes AudioEngine::resolveStripLanesLocked (int track, int autoCh, float faderDb, float pan,
-                                                          bool staticMute, juce::int64 pos,
-                                                          bool rolling, bool readLanes) const noexcept
+                                                          juce::int64 pos, bool readLanes) const noexcept
     {
-        return mix::resolveLanes (track, autoCh, faderDb, pan, staticMute, rolling, readLanes,
+        return mix::resolveLanes (track, autoCh, faderDb, pan, readLanes,
             [this, pos] (int channel, mix::Lane lane, float fallback) noexcept
             {
                 return automationValueAtLocked (channel, (AutomationParam) lane, pos, fallback);

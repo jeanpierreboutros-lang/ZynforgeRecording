@@ -21,6 +21,14 @@ namespace zynforge::showhandoff
         bool captureReportWarning { false };
     };
 
+    // macOS writes these by itself, and Finder can do so into a destination
+    // that is open while the copy runs. They are no part of the session.
+    inline bool isFinderFile (const juce::File& file)
+    {
+        const auto name = file.getFileName();
+        return name == ".DS_Store" || name.startsWith ("._");
+    }
+
     inline bool collectFiles (const juce::File& root, const juce::File& dir,
                               std::map<juce::String, juce::File>& files,
                               const std::atomic<bool>& cancel)
@@ -29,6 +37,7 @@ namespace zynforge::showhandoff
         for (const auto& child : dir.findChildFiles (juce::File::findFilesAndDirectories, false))
         {
             if (cancel.load (std::memory_order_relaxed) || child.isSymbolicLink()) return false;
+            if (isFinderFile (child)) continue;
             if (child.isDirectory())
             {
                 if (! collectFiles (root, child, files, cancel)) return false;

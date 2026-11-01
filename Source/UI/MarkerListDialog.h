@@ -116,9 +116,12 @@ namespace zynforge
                 // afterwards is a use-after-free. Every other dialog in the app
                 // already uses this pattern; this was the one that didn't.
                 juce::Component::SafePointer<MarkerListDialog> safeSelf (this);
-                m.showMenuAsync (juce::PopupMenu::Options(), [safeSelf, row] (int chosen)
+                const auto markerId = engine.getMarkers().getMarker (row).runtimeId;
+                m.showMenuAsync (juce::PopupMenu::Options(), [safeSelf, markerId] (int chosen)
                 {
                     if (safeSelf == nullptr) return;
+                    const int row = safeSelf->engine.getMarkers().indexOfId (markerId);
+                    if (row < 0) return;
                     if (chosen == 1)
                     {
                         auto* aw = new juce::AlertWindow ("Rename marker",
@@ -136,14 +139,16 @@ namespace zynforge
                         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
                         aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                            [aw, safeSelf, row] (int r)
+                            [aw, safeSelf, markerId] (int r)
                         {
                             std::unique_ptr<juce::AlertWindow> own (aw);
                             // The dialog can be closed while the rename box is
                             // open -- re-check before touching any member.
                             if (r != 1 || safeSelf == nullptr) return;
+                            const int target = safeSelf->engine.getMarkers().indexOfId (markerId);
+                            if (target < 0) return;
                             safeSelf->engine.getMarkers().renameMarker (
-                                row, own->getTextEditorContents ("n").trim());
+                                target, own->getTextEditorContents ("n").trim());
                             safeSelf->engine.getMarkers().save();
                             safeSelf->table.updateContent();
                         }));

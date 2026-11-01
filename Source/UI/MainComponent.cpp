@@ -417,6 +417,7 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
                                          captureSupervisor.lastStatusAtMs());
         lastCaptureFinalizationError.clear();
         engine.beginExternalTake (dir, rate);
+        engine.snapshotCaptureInputGains();
         daemonTakeAdopted = true;
         statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"
                              + juce::String (numTracks) + " tracks -> " + dir.getFileName()
@@ -431,6 +432,7 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         dir.createDirectory();
         lastCaptureFinalizationError.clear();
         engine.beginExternalTake (dir, rate);
+        engine.snapshotCaptureInputGains();
         daemonStartUnansweredMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
         recordButton.setButtonText ("REC ?");
         showStatus ("Daemon has not answered RECORD yet -- the take may be rolling");

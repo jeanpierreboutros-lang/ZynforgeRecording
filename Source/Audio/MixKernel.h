@@ -61,13 +61,20 @@ namespace zynforge::mix
         return anySolo ? soloed : ! muted;
     }
 
+    // The stream bus and StereoMix.wav are a record of the mix, and solo is a
+    // monitoring tool: it must not strip the show out of the file because the
+    // engineer checked a mic. Only a mute removes a strip here.
+    constexpr bool streamAudible (bool muted, VcaGate vca, bool muteLane) noexcept
+    {
+        return ! muteLane && audible (muted, false, vca, false, false);
+    }
+
     // One strip's lane-driven mix inputs at one timeline position.
     struct StripLanes
     {
         float volDb        { 0.0f };   // fader, or the Volume lane (+ trim)
         float pan          { 0.0f };   // static pan, or the Pan lane (+ trim)
         bool  muteLane     { false };  // the Mute lane is on (false without a lane)
-        bool  monitorMuted { false };  // monitor rule: the lane if present, else the static mute
     };
 
     // A Mute lane holds 0..1, so a negative fallback means "no lane here".
@@ -76,24 +83,20 @@ namespace zynforge::mix
     // Resolve one strip's lanes. `readLane (channel, Lane, fallback)` returns
     // the lane value or the fallback; the caller already holds the automation
     // lock. `readLanes` is false when the transport is stopped, the lock was
-    // lost or automation is suspended -- then the static values stand.
-    // `rolling` gates the static monitor mute: while stopped, the monitor
-    // follows the solo / mute gate alone (unchanged live behaviour).
+    // lost or automation is suspended -- then the static values stand. The
+    // strip's static mute is not here: audible() owns it, with solo over it.
     template <typename LaneReader>
     StripLanes resolveLanes (int track, int autoCh, float faderDb, float staticPan,
-                             bool staticMute, bool rolling, bool readLanes,
-                             LaneReader&& readLane) noexcept
+                             bool readLanes, LaneReader&& readLane) noexcept
     {
         StripLanes m;
-        m.volDb        = faderDb;
-        m.pan          = staticPan;
-        m.monitorMuted = rolling && staticMute;
+        m.volDb = faderDb;
+        m.pan   = staticPan;
         if (readLanes)
         {
             m.volDb = readLane (autoCh, Lane::Volume, m.volDb);
             m.pan   = readLane (track,  Lane::Pan,    m.pan);
-            const float lane = readLane (autoCh, Lane::Mute, kNoMuteLane);
-            if (lane >= 0.0f) { m.muteLane = lane > 0.5f; m.monitorMuted = m.muteLane; }
+            m.muteLane = readLane (autoCh, Lane::Mute, kNoMuteLane) > 0.5f;
         }
         return m;
     }
@@ -124,6 +127,29 @@ namespace zynforge::mix
         return juce::Decibels::decibelsToGain (sendDb, -60.0f) * (postFader ? postFaderGain : 1.0f);
     }
 
+    // A stereo strip is one send. On a mono bus its two halves land together,
+    // so each brings half, and a centred source arrives at the level the send
+    // shows rather than 6 dB over it.
+    constexpr float sendFoldGain (bool sourceIsStereoHalf, bool busIsStereoHalf) noexcept
+    {
+        return sourceIsStereoHalf && ! busIsStereoHalf ? 0.5f : 1.0f;
+    }
+
+    // Trim-Follow: the desk's preamp move since the take was captured, added
+    // to recorded playback. With no capture reference there is no "move" to
+    // follow, only the preamp's absolute value, so the offset is 0 dB. The
+    // limits are a PA backstop against a wrong reference or a spoofed reading:
+    // louder is the dangerous side, so it gets the tighter limit.
+    inline constexpr float kTrimFollowMaxUpDb   =  12.0f;
+    inline constexpr float kTrimFollowMaxDownDb = -30.0f;
+    constexpr float trimFollowDb (bool referenceKnown, float liveDb, float captureDb) noexcept
+    {
+        if (! referenceKnown) return 0.0f;
+        const float move = liveDb - captureDb;
+        return move > kTrimFollowMaxUpDb ? kTrimFollowMaxUpDb
+             : move < kTrimFollowMaxDownDb ? kTrimFollowMaxDownDb : move;
+    }
+
     struct PanGains { double left { 0.0 }, right { 0.0 }; };
 
     // Constant-power pan law (-3 dB at centre). Pan is clamped to [-1, 1].
@@ -132,6 +158,28 @@ namespace zynforge::mix
         const double p = ((double) juce::jlimit (-1.0f, 1.0f, pan) + 1.0) * 0.5;
         return { gain * std::cos (p * juce::MathConstants<double>::halfPi),
                  gain * std::sin (p * juce::MathConstants<double>::halfPi) };
+    }
+
+    struct OutputPair { int left { -1 }, right { -1 }; };
+
+    // The device outputs the master bus uses. A negative left means no master
+    // output was chosen. A device smaller than the saved pair gets its last
+    // pair, two channels still: clamping each side on its own put both on the
+    // last output, and the right half of the mix was dropped.
+    constexpr OutputPair masterOutputs (int left, int right, int numOutputs) noexcept
+    {
+        if (left < 0 || numOutputs <= 0) return {};
+        if (left < numOutputs && right >= 0 && right < numOutputs) return { left, right };
+        return numOutputs >= 2 ? OutputPair { numOutputs - 2, numOutputs - 1 } : OutputPair { 0, 0 };
+    }
+
+    // A mix bus stays off an output a strip is patched to. 1:1 strips on a rig
+    // whose outputs are all console returns would otherwise put the whole mix
+    // on the console channels of the first pair, on top of their own tracks.
+    // A two-output device has nowhere else, and there it is the monitor pair.
+    constexpr bool busHeldOffOutputs (bool sharesStripOutput, int numOutputs, bool sharingAllowed) noexcept
+    {
+        return sharesStripOutput && numOutputs > 2 && ! sharingAllowed;
     }
 
     // Master fader + mute on the summed bus.

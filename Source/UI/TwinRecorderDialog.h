@@ -142,12 +142,15 @@ namespace zynforge
                 const bool follower = enabled ? snapshot.role == twin::Role::Follower : role.getSelectedId() == 2;
 
                 // A role or a new code must not change under a take: the code
-                // is what a lost link needs to come back.
+                // is what a lost link needs to come back. A leader with no link
+                // has nothing to protect, though. The code isn't kept across a
+                // restart, so with a daemon take still rolling, these two fields
+                // are the only way back to the follower.
                 const bool editable = ! enabled && ! rolling;
                 role.setEnabled (editable);
                 port.setReadOnly (! editable);
-                address.setReadOnly (! editable || follower);
-                code.setReadOnly (! editable || follower);
+                address.setReadOnly (enabled || follower);
+                code.setReadOnly (enabled || follower);
                 regenerate.setVisible (follower);
                 regenerate.setEnabled (follower && ! rolling && snapshot.state != twin::LinkState::Linked);
 
@@ -179,6 +182,7 @@ namespace zynforge
             void setCode (const juce::String& c) { code.setText (c, false); }
             juce::String getCode() const      { return code.getText(); }
             bool roleEditable() const         { return role.isEnabled(); }
+            bool codeEditable() const         { return ! code.isReadOnly(); }
             bool canRegenerate() const        { return regenerate.isEnabled(); }
             juce::String getStateLine() const { return stateLine.getText(); }
             juce::String getDetails() const   { return details.getText(); }

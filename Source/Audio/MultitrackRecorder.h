@@ -726,6 +726,8 @@ namespace zynforge
         // other than `twin` are replaced by the next report this session writes.
         static bool editSessionReport (const juce::File& sessionDir,
                                        const std::function<void (juce::DynamicObject&)>& edit);
+        // The lock file shared with the other process that writes this report.
+        static constexpr const char* kReportLockName = "session-report.lock";
 
     private:
 

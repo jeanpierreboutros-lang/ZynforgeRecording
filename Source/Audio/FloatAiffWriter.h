@@ -14,6 +14,9 @@ namespace zynforge
     class FloatAiffWriter final : public juce::AudioFormatWriter
     {
     public:
+        // Stays inside the recorder's existing conservative AIFF split limit.
+        static constexpr juce::uint64 kMaxDataBytes = 0x7ff00000u;
+
         // Matches JUCE's ownership contract: ownership transfers only on success.
         static juce::AudioFormatWriter* create (juce::OutputStream* stream,
                                                double rate, unsigned int channels)
@@ -40,8 +43,7 @@ namespace zynforge
         {
             if (! healthy || count < 0 || samples == nullptr) return false;
             const auto bytes = (juce::uint64) count * numChannels * 4u;
-            // Stay inside the recorder's existing conservative AIFF split limit.
-            if (dataBytes + bytes > 0x7ff00000u) return false;
+            if (dataBytes + bytes > kMaxDataBytes) return false;
             for (unsigned int channel = 0; channel < numChannels; ++channel)
                 if (samples[channel] == nullptr) return false;
             encoded.resize ((size_t) bytes);
