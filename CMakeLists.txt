@@ -271,6 +271,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/PreflightTests.cpp
     Source/Tests/PunchRecordTests.cpp
     Source/Tests/PunchSessionGuardTests.cpp
+    Source/Tests/MainWindowGuardTests.cpp
     Source/Tests/PunchSpliceTests.cpp
     Source/Tests/QcAnalyzerTests.cpp
     Source/Tests/RecorderPlayerTests.cpp

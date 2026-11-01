@@ -146,7 +146,8 @@ namespace zynforge
         }
 
         // ── OSC-family settings ──────────────────────────────────────────
-        class OscSettings final : public juce::Component
+        class OscSettings final : public juce::Component,
+                                  private juce::Timer
         {
         public:
             OscSettings (AudioEngine& e, ProtoInfo pi, std::function<void()> createFromConsole)
@@ -169,6 +170,19 @@ namespace zynforge
                 addAndMakeVisible (portEd);
 
                 digico = (info.dialect >= 1);   // any real console (not the generic OSC schema)
+                if (! digico)   // the Generic schema refuses a command without this token
+                {
+                    lab (tokenKey, "Access token", brand::textSecondary);
+                    lab (tokenVal, {}, brand::textPrimary, true);
+                    tokenVal.setTitle ("OSC access token");
+                    copyTokenB.setButtonText ("Copy");
+                    dialog::styleSecondary (copyTokenB);
+                    copyTokenB.onClick = [this]
+                    { juce::SystemClipboard::copyTextToClipboard (engine.getRemotes().getOscAccessToken()); };
+                    addAndMakeVisible (copyTokenB);
+                    refreshToken();
+                    startTimerHz (2);   // the token changes with each start of the listener
+                }
                 if (digico)   // bidirectional console link
                 {
                     auto* ap = e.getAppProps();
@@ -221,7 +235,17 @@ namespace zynforge
                 closeB.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
                 addAndMakeVisible (applyB); addAndMakeVisible (closeB);
 
-                setSize (520, digico ? 470 : 250);
+                setSize (520, digico ? 470 : 284);
+            }
+
+            void timerCallback() override { refreshToken(); }
+
+            void refreshToken()
+            {
+                const auto token = engine.getRemotes().getOscAccessToken();
+                tokenVal.setText (token.isNotEmpty() ? token : juce::String ("Shown once OSC is listening"),
+                                  juce::dontSendNotification);
+                copyTokenB.setEnabled (token.isNotEmpty());
             }
 
             void paint (juce::Graphics& g) override { dialog::paintChrome (g, *this, info.name.toUpperCase() + " -- OSC"); }
@@ -233,6 +257,14 @@ namespace zynforge
                 { auto r = b.removeFromTop (h); k.setBounds (r.removeFromLeft (170)); v.setBounds (r); b.removeFromTop (10); };
                 row (connKey, connVal);
                 row (portKey, portEd, 30);
+                if (! digico)
+                {
+                    auto tr = b.removeFromTop (24);
+                    tokenKey.setBounds (tr.removeFromLeft (170));
+                    copyTokenB.setBounds (tr.removeFromRight (64));
+                    tokenVal.setBounds (tr);
+                    b.removeFromTop (10);
+                }
                 if (digico)
                 {
                     row (ipKey, ipEd, 30);
@@ -297,7 +329,8 @@ namespace zynforge
             ProtoInfo info;
             std::function<void()> onCreateFromConsole;
             bool digico { false };
-            juce::Label connKey, connVal, portKey, addrKey, addrVal, ipKey, rxKey, statusL;
+            juce::Label connKey, connVal, portKey, addrKey, addrVal, ipKey, rxKey, statusL, tokenKey, tokenVal;
+            juce::TextButton copyTokenB;
             juce::TextEditor portEd, ipEd, rxEd;
             juce::TextButton applyB, closeB, reqB, createB, logB;
             juce::ToggleButton debugToggle;

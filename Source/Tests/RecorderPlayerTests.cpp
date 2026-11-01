@@ -163,18 +163,6 @@ namespace zynforge
         {
             AudioEngine::setTestModeSkipAudioInit (true);
 
-            beginTest ("Per-track punch-arm toggle");
-            {
-                AudioEngine eng;
-                eng.setStripCount (3);
-                expect (! eng.isTrackPunchArmed (0));
-                eng.setTrackPunchArmed (0, true);
-                expect (eng.isTrackPunchArmed (0));
-                expect (! eng.isTrackPunchArmed (1));
-                eng.setTrackPunchArmed (0, false);
-                expect (! eng.isTrackPunchArmed (0));
-            }
-
             beginTest ("Automation punch range round-trip");
             {
                 AudioEngine eng;

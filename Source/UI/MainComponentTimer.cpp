@@ -4,6 +4,7 @@
 // scrolling past 5000 lines of menu / layout / setup code.
 
 #include "MainComponent.h"
+#include "RecordPosition.h"
 
 using namespace zynforge;
 
@@ -36,6 +37,7 @@ void MainComponent::timerCallback()
     syncFloatingPanelButtons();
     rebuildStripsIfLayoutChanged();
     updateStatusPills();
+    updatePunchPill();
     updateNextCueCountdown();
 
     if (clickRefreshPending && clickTrackIndex >= 0 && ! engine.isRecording()
@@ -46,11 +48,11 @@ void MainComponent::timerCallback()
     }
 
     if (uiLayoutSavePending && ! sessionIoBusy.load()) requestUILayoutSave();
-    // A scan reads every take file; it gives way to a take, not the other way round.
-    if (analysisBusy.load() && engine.isRecording()) analysisJobs.cancel();
 
     if (cueRamp.active) updateCueRamp();
-    if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())
+    cancelAnalysisForTake();
+    if (! engine.isRecording()) punchWindowTakeActive = false;
+    if (engine.isPunchModeOn())
         servicePunch();
     if (punchSessionActive)
         servicePunchSession();
@@ -178,6 +180,37 @@ void MainComponent::updateStatusPills()
         { danteLabel.setText (txt, juce::dontSendNotification); resized(); }
         danteLabel.setTooltip (txt);
     }
+}
+
+// PUNCH mode must read from across the room, and a menu tick does not. The
+// quieter state is the same warning about the next RECORD: it will replace
+// audio, not add to it. The answer comes from the rules RECORD itself uses.
+void MainComponent::updatePunchPill()
+{
+    auto& player = engine.getPlayer();
+    juce::String text;
+    if (engine.isPunchModeOn() && ! punchSessionActive)
+        text = "PUNCH MODE";
+    else if (! engine.isRecording() && player.isLoaded() && ! daemonModeActive())
+    {
+        const bool rolling = player.isPlaying();
+        const auto cursor  = engine.getEditCursorSample();
+        const auto pos     = manualRecordPosition (rolling, player.getPositionSamples(), cursor);
+        if (player.isRangeArmed())
+            text = "RECORD PUNCHES RANGE";
+        else if (manualRecordPunches (rolling, cursor, pos, engine.getCaptureLengthSamples(),
+                                      player.getTotalLengthSamples()))
+            text = rolling ? "RECORD PUNCHES HERE" : "RECORD PUNCHES AT CURSOR";
+    }
+    if (punchPill.getText() == text) return;
+    punchPill.setText (text, juce::dontSendNotification);
+    punchPill.setVisible (text.isNotEmpty());
+    const bool mode = text == "PUNCH MODE";
+    punchPill.setColour (juce::Label::backgroundColourId,
+                         mode ? brand::alertAmber : juce::Colours::transparentBlack);
+    punchPill.setColour (juce::Label::textColourId,
+                         mode ? brand::onSignal (brand::alertAmber) : brand::alertAmber);
+    resized();
 }
 
 void MainComponent::updateNextCueCountdown()
@@ -317,7 +350,8 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     // own the entire editor; metadata persistence only locks its mutations.
     if (editPage != nullptr)
     {
-        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0 || captureMetadataPending);
+        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0
+                                             || captureMetadataPending || sessionLocked);
         const bool enableEditor = (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending) && ! sessionLocked;
         if (editPage->isEnabled() != enableEditor)
             editPage->setEnabled (enableEditor);
@@ -440,6 +474,36 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             statusLabel.setText ("Idle", juce::dontSendNotification);
         activeCaptureWarning.clear();
     }
+    refreshAlarmBanner();
+}
+
+void MainComponent::refreshAlarmBanner()
+{
+    constexpr juce::uint32 kRefusalShownMs = 8000;
+    if (recordRefusal.isNotEmpty()
+        && (engine.isRecording()
+            || juce::Time::getMillisecondCounter() - recordRefusalShownMs > kRefusalShownMs))
+        recordRefusal.clear();
+
+    // What threatens the take outranks a refused press. A failed finalization
+    // stays up after STOP, until the next take or another session.
+    auto text = activeCaptureWarning;
+    if (text.isEmpty()) text = lastCaptureFinalizationError;
+    if (text.isEmpty() && engine.isRecording()) text = srWarnLabel.getText();
+    if (text.isEmpty()) text = recordRefusal;
+
+    // Everything is danger but the quiet "no signal yet" notice, which has no '!'.
+    const auto level = activeCaptureWarning.isNotEmpty() && ! activeCaptureWarning.containsChar ('!')
+                           ? AlarmBanner::Level::Notice : AlarmBanner::Level::Danger;
+    if (alarmBanner.show (text, level)) resized();
+}
+
+void MainComponent::showRecordRefusal (const juce::String& reason)
+{
+    recordRefusal = reason;
+    recordRefusalShownMs = juce::Time::getMillisecondCounter();
+    showStatus (reason);
+    refreshAlarmBanner();
 }
 
 // Query SMART health for the session + backup volumes on a BACKGROUND thread.
@@ -520,6 +584,18 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
         }
     };
     if (deviceSampleRate <= 0.0) { setWarning ({}); return; }
+
+    // With no session there is no rate to disagree with: 48 kHz here is only a
+    // launch default, so the next session starts from what the device runs at.
+    if (! engine.getActiveSessionDir().isDirectory() && ! engine.getPlayer().isLoaded()
+        && ! engine.isRecording())
+    {
+        pendingSampleRate = deviceSampleRate;
+        engine.setSessionSampleRate (deviceSampleRate);
+        srMismatchWarned = 0.0;
+        setWarning ({});
+        return;
+    }
 
     // The session's authoritative rate: once a take is loaded that's the
     // recorded files' rate; otherwise it's the rate the session was created

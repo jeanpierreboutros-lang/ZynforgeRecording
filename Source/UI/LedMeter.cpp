@@ -77,7 +77,7 @@ namespace zynforge
 
     void LedMeter::mouseDown (const juce::MouseEvent&)
     {
-        if (detached) return;   // owning strip condemned -- state is freed
+        if (detached || ! isEnabled()) return;   // condemned (state is freed), or LOCK
         showClip = false;
         state.clipped  .store (false, std::memory_order_relaxed);
         state.clipCount.store (0,     std::memory_order_relaxed);

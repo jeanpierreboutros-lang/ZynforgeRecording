@@ -2259,7 +2259,7 @@ namespace zynforge
             header.removeFromLeft (4);
 
             const bool isClickRow =
-                engine.getRecorder().getTrack (index).name == "Click";
+                engine.getRecorder().getTrack (index).referenceMedia.load (std::memory_order_relaxed);
 
             // -------------- LEFT (name + buttons) --------------
             constexpr int leftBlockW = 140;
@@ -3140,7 +3140,7 @@ namespace zynforge
                     {
                         const juce::int64 a = juce::jmin (lastDragSamples, sx);
                         const juce::int64 b = juce::jmax (lastDragSamples, sx);
-                        if (b > a) player.setLoopRegion (a, b);
+                        if (b > a) player.selectRange (a, b);
                     }
                     repaint();
                 }

@@ -87,16 +87,28 @@ namespace zynforge
 
         // Loop region. When both ends are valid (start < end), playback
         // wraps from end → start each pass. clearLoopRegion() disables.
+        // The region is also the EDIT selection and RECORD's punch range, and
+        // only the punch can destroy a take, so a region arms a punch only
+        // when it came from the engineer's hand this run (selectRange). One
+        // that merely exists, such as a range restored from a saved session,
+        // goes through setLoopRegion: it loops and edits, and RECORD ignores it.
         void setLoopRegion   (juce::int64 startSample, juce::int64 endSample) noexcept;
+        void selectRange     (juce::int64 startSample, juce::int64 endSample) noexcept;
         void clearLoopRegion()                                                noexcept;
         bool hasLoopRegion() const noexcept;
+        bool isRangeArmed() const noexcept;
+        // One selection, one punch: the range stays for Loop and edits, and a
+        // later RECORD appends until the engineer selects again.
+        void disarmRange() noexcept { rangeArmed.store (false, std::memory_order_release); }
         juce::int64 getLoopStart() const noexcept { return loopStart.load(std::memory_order_relaxed); }
         juce::int64 getLoopEnd()   const noexcept { return loopEnd  .load(std::memory_order_relaxed); }
 
         // Loop-PLAY toggle, independent of the loop REGION. The region (set by
         // the Selector / , / .) is also the edit selection, so merely having a
-        // region shouldn't force playback to loop. Playback wraps within the
-        // region only when loop-play is enabled (the transport ⟲ button).
+        // region shouldn't force playback to loop. With loop-play on (the
+        // transport ⟲ button) playback wraps within the region, or within the
+        // whole session when there is none. That case makes no region: an
+        // implicit one would read as a selection to everything else.
         void setLoopEnabled (bool on) noexcept
         {
             if (on && isSeekLocked()) return;
@@ -128,6 +140,16 @@ namespace zynforge
         void clearAllClips();
 
     private:
+        // Where playback wraps right now. A punch take is never looped: its
+        // timeline is the punch clock, so an already-enabled loop stays inert
+        // until the seek lock lifts.
+        struct LoopSpan
+        {
+            juce::int64 begin { 0 }, end { 0 };
+            bool active() const noexcept { return end > begin; }
+        };
+        LoopSpan activeLoopSpan (juce::int64 total) const noexcept;
+
         void renderBlock (float* const*, int, int) noexcept;
         // Bounded handshake used by loadSession/unload after clearing
         // `playing`: waits until two full audio callbacks have completed
@@ -207,6 +229,7 @@ namespace zynforge
         std::atomic<juce::int64> loopStart   { -1 };
         std::atomic<juce::int64> loopEnd     { -1 };
         std::atomic<bool>        loopEnabled { false };
+        std::atomic<bool>        rangeArmed  { false };
         std::atomic<bool>        seekLocked  { false };
         std::atomic<juce::uint32> jumpCount  { 0 };
 

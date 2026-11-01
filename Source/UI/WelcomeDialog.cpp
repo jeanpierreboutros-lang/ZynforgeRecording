@@ -226,10 +226,8 @@ namespace zynforge
                 };
                 fileTypeCombo.onChange();
 
-                addAndMakeVisible (ioLabel);
                 ioLabel.setText ("I/O Settings", juce::dontSendNotification);
                 styleFieldLabel (ioLabel);
-                addAndMakeVisible (ioCombo);
                 dialog::styleCombo (ioCombo);
                 ioCombo.addItem ("Last Used",  1);
                 ioCombo.addItem ("Stereo Mix", 2);
@@ -261,24 +259,20 @@ namespace zynforge
                     outputDevCombo.setSelectedId (juce::jmax (1, idx + 1), juce::dontSendNotification);
                 }
 
-                addAndMakeVisible (interleaved);
                 interleaved.setButtonText ("Interleaved");
                 interleaved.setToggleState (true, juce::dontSendNotification);
                 interleaved.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
                 interleaved.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
 
-                addAndMakeVisible (fromTemplate);
                 fromTemplate.setButtonText ("Create From Template");
                 fromTemplate.setToggleState (false, juce::dontSendNotification);
                 fromTemplate.setColour (juce::ToggleButton::textColourId, brand::textSecondary);
                 fromTemplate.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
 
-                addAndMakeVisible (templatesHeader);
                 templatesHeader.setText ("Templates", juce::dontSendNotification);
                 templatesHeader.setFont (brand::type::ui (14.0f, true));
                 templatesHeader.setColour (juce::Label::textColourId, brand::textMuted);
 
-                addAndMakeVisible (templatesHint);
                 templatesHint.setText ("(no templates -- save one via Session > Save Current as Template)",
                                        juce::dontSendNotification);
                 templatesHint.setFont (brand::type::caption());

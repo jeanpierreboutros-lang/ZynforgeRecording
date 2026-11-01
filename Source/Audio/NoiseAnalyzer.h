@@ -231,6 +231,7 @@ namespace zynforge
     public:
         // Scan the session, write noise_report.json, return findings
         // for the UI to also display.
+        // A cancelled scan stops at its next read and writes no report.
         static std::vector<NoiseFinding> analyseSession (const juce::File& sessionDir,
                                                           std::function<juce::String (int)> trackNameOf,
                                                           const std::atomic<bool>* cancel = nullptr)

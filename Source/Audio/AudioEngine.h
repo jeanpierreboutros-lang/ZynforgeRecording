@@ -451,9 +451,9 @@ namespace zynforge
         // thread by MainComponent's timer polling getPunch* and
         // toggling startRecording / stopRecording / track.armed.
         bool isPunchModeOn()      const noexcept { return punchEnabled.load (std::memory_order_relaxed); }
-        void setPunchModeOn (bool en) noexcept   { punchEnabled.store (en, std::memory_order_relaxed); }
-        bool isTrackPunchArmed (int channel) const noexcept;
-        void setTrackPunchArmed (int channel, bool armed);
+        // Turning it on holds loop-play off so a pass crosses the punch-out;
+        // turning it off puts loop-play back. clearSessionState ends the mode.
+        void setPunchModeOn (bool on) noexcept;
         // Arm the next startRecording as a punch-in at `punchInSample` -- the
         // freshly-recorded audio is spliced into the existing take there (audio
         // before the punch-in and after the punch-out is preserved). Forwarded
@@ -1141,7 +1141,7 @@ namespace zynforge
         void resetAllStripState();
 
         // Forwards to MultitrackRecorder.
-        void setBackupDirectory (const juce::File& dir);
+        bool setBackupDirectory (const juce::File& dir);   // persists only what the recorder took
 
         // N-way mirror destinations. Wraps recorder.setMirrors and
         // persists via appProps so the engineer's mirror setup
@@ -1312,12 +1312,11 @@ namespace zynforge
         std::atomic<int>  masterOutR    { 1 };
         std::atomic<bool> masterStereo  { true };
 
-        // Punch mode flags. punchEnabled gates the whole feature;
-        // per-track armed bits are kept as a separate vector keyed by
-        // physical track index. UI mutates from the message thread,
-        // MainComponent's timer reads and drives startRecording.
-        std::atomic<bool>           punchEnabled { false };
-        std::vector<std::atomic<bool>> punchArmed;
+        // PUNCH mode. The punched tracks are simply the armed tracks at the
+        // moment of punch-in, so there is no per-track punch state to go
+        // stale. MainComponent's timer reads this and drives startRecording.
+        std::atomic<bool> punchEnabled { false };
+        bool              punchLoopWasEnabled { false };
 
         ClickEngine        click;
         MidiClockOut       midiClockOut;
