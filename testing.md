@@ -2,13 +2,15 @@
 
 ## Market moves — 2026-11-01
 
-Current source: the `ZynforgeRecordingTests` app passes **938 groups / 0 failures** in Release, under ASan/UBSan (once in the standard setup, once from a fresh home) and under TSan, with no sanitizer reports. That is 689 before this work, plus 249 new groups: *Console VSC* 75, *Twin recorder link* 50, *Capture metadata* 40, *Dead-channel alarm* 30, *Session interchange* 23, *Twin recorder host* 18 and *Song export* 13. Both static gates pass. `tools/test_notarize.py` passes 16 tests. `tools/test_auto_stop.py` passes.
+Current source: the `ZynforgeRecordingTests` app passes **938 groups / 0 failures** in Release, under ASan/UBSan (once in the standard setup, once from a fresh home) and under TSan, with no sanitizer reports, and in CI on `d69acee` (Debug and Release). That is 689 before this work, plus 249 new groups: *Console VSC* 75, *Twin recorder link* 50, *Capture metadata* 40, *Dead-channel alarm* 30, *Session interchange* 23, *Twin recorder host* 18 and *Song export* 13. Both static gates pass. `tools/test_notarize.py` passes 16 tests. `tools/test_auto_stop.py` passes.
 
 The merged Release app launched with `--isolated-settings`, passed the microphone prompt and quit through the normal path with `--smoke-quit-after`, with no crash report. Nobody looked at its windows. None of the new dialogs, panels or native menu ticks were operated by hand, and nothing here has run on a console or between two Macs: see *Market-moves acceptance* in [FIELD-TEST.md](FIELD-TEST.md).
 
 **A hang found by this suite.** Stereo pairs inside a stream fault spun `channelalarm::Monitor::live` forever: a short-circuited `||` skipped the loop's own increment. In the app that froze the status timer on the message thread, on exactly the fault the alarm exists for. *Dead-channel alarm* now pins it twice, through the Monitor and through the callback. A hang fails no assertion, so run a suite under a time limit when it can loop; this one spun for almost three hours before anyone looked.
 
 **Run the final pass through `open`.** A directly launched test app is never frontmost, so it has no real keyboard focus. A host's Welcome window takes focus in its name field when the app is frontmost, and a focused text field keeps Cmd keys, so one test failed only through `open`. A filtered run or a direct launch cannot show this kind of failure. Run sanitizers with a fresh home as well: CI starts from one, so the first-run tour and Welcome appear there.
+
+**Wait for a result, not a time.** A test that needs a status-loop tick gave it a fixed 400 ms and failed in CI on both jobs while passing here, because the runners are slower than this Mac. It now waits for what the loop latched, and still fails when the loop's path is disabled.
 
 **Capture rules were broken on purpose.** Five were reverted in one build and each failed in its own test: the stamp's compare-and-swap, stamping before hashing, removing spliced files from the stamp list, a stale clock reading, and watching the right side of a pair. The hang above was red before its fix.
 

@@ -6,7 +6,7 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status — 2026-11-01
 
-`main` now adds Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging. It passes **938 test groups** in Release and under ASan/UBSan and TSan. **This work is not installed on either Mac yet**, and none of it has run on a real console, a real stream loss or two real Macs: see [FIELD-TEST.md](FIELD-TEST.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
+`main` now adds Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging. It passes **938 test groups** in Release, under ASan/UBSan and TSan, and in CI. **This work is not installed on either Mac yet**, and none of it has run on a real console, a real stream loss or two real Macs: see [FIELD-TEST.md](FIELD-TEST.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
 Installed build (2026-10-29):
 
