@@ -548,6 +548,59 @@ namespace zynforge
                 }
             }
 
+            beginTest ("A clip with its own file draws that file, not the strip's take");
+            {
+                Show s (2, { 96000 }, 0.0f);    // the take itself is silent
+                const auto loud  = s.dir.getChildFile ("Audio Files/Track_01_consolidated_1.wav");
+                const auto quiet = s.dir.getChildFile ("Audio Files/Track_01_consolidated_2.wav");
+                expect (writeWav (loud, 96000, 1, 0.8f) && writeWav (quiet, 96000, 1, 0.0f));
+                expect (s.engine.deleteClip (0, 0), "setup: empty the take");
+
+                auto render = [&] (EditPage::TrackRow& row)
+                {
+                    const auto draw = [&row]
+                    {
+                        juce::Image img (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                        juce::Graphics g (img);
+                        row.paint (g);
+                        return img;
+                    };
+                    draw();    // the first paint opens the clip's file
+                    expect (pumpUntil ([&] { return row.waveformsLoaded(); }, 5000), "thumbnail scan");
+                    return draw();
+                };
+                auto differs = [] (const juce::Image& a, const juce::Image& b, int x0, int x1)
+                {
+                    int count = 0;
+                    for (int x = x0; x < x1; ++x)
+                        for (int y = 20; y < a.getHeight() - 8; ++y)
+                            if (a.getPixelAt (x, y) != b.getPixelAt (x, y)) ++count;
+                    return count;
+                };
+
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                row.setWaveformFiles (s.take (1), {});
+                expect (s.engine.pasteClip (0, 0, 0, 96000, 0, 0, 0.0f, "c", quiet, -1, 0) == 0);
+                const auto silent = render (row);
+                expect (s.engine.deleteClip (0, 0));
+                expect (s.engine.pasteClip (0, 0, 0, 96000, 0, 0, 0.0f, "c", loud, -1, 0) == 0);
+                const auto drawn = render (row);
+                expect (differs (drawn, silent, laneX (row, 0.2), laneX (row, 0.8)) > 1000,
+                        "the block drew the silent take instead of the clip's file");
+
+                // A clip pasted onto a strip with no take of its own still draws.
+                EditPage::TrackRow empty (1, false, s.engine, s.formats, s.cache);
+                sizeRow (empty);
+                expect (s.engine.pasteClip (1, 0, 0, 96000, 0, 0, 0.0f, "c", quiet, -1, 0) == 0);
+                const auto emptySilent = render (empty);
+                expect (s.engine.deleteClip (1, 0));
+                expect (s.engine.pasteClip (1, 0, 0, 96000, 0, 0, 0.0f, "c", loud, -1, 0) == 0);
+                const auto emptyDrawn = render (empty);
+                expect (differs (emptyDrawn, emptySilent, laneX (empty, 0.2), laneX (empty, 0.8)) > 1000,
+                        "a strip with no take drew nothing for a pasted clip");
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

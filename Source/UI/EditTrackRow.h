@@ -532,8 +532,9 @@ namespace zynforge
             box.addItem (label, id);
         }
 
-        void setWaveformFiles (const juce::File& fL, const juce::File& fRin)
+        void setWaveformFiles (const juce::File& fL, const juce::File& fRin, int monoChannel = 0)
         {
+            monoFileChannel = monoChannel;
             // Native interleaved stereo: the pair is ONE 2-channel file with
             // no separate R file. Point BOTH lanes at it (each draws its own
             // channel) so the stereo image still shows two lanes. Legacy
@@ -542,7 +543,10 @@ namespace zynforge
             const juce::File fR = stereoOneFile ? fL : fRin;
 
             if (fL != currentFileL || fR != currentFileR)
+            {
                 overviewCache.clear();
+                ownThumbs.clear();
+            }
 
             if (fL != currentFileL)
             {
@@ -583,6 +587,49 @@ namespace zynforge
                 thumb.setSource (new juce::FileInputSource (main));
         }
 
+        // What one lane of one clip draws. Row thumbnails hold the strip's own
+        // take, so a clip that plays another file (a consolidate render, a clip
+        // pasted from another strip) needs that file's thumbnail: applying its
+        // offsets to the take drew audio it does not play.
+        struct LaneWave
+        {
+            juce::AudioThumbnail* thumb { nullptr };
+            bool wholeFile { false };   // draw every channel of a one-channel-per-lane file
+            int  channel   { 0 };
+            bool hasAudio() const { return thumb != nullptr && thumb->getTotalLength() > 0.0; }
+        };
+
+        juce::AudioThumbnail* thumbnailForFile (const juce::File& file)
+        {
+            for (auto& own : ownThumbs)
+                if (own.file == file) return own.thumb.get();
+            auto thumb = std::make_unique<juce::AudioThumbnail> (kThumbResolution, formats, thumbCache);
+            applyThumbSource (*thumb, file, false);
+            ownThumbs.push_back ({ file, std::move (thumb) });
+            return ownThumbs.back().thumb.get();
+        }
+
+        LaneWave laneWaveFor (const Clip& c, bool rightLane)
+        {
+            const auto& take = rightLane ? currentFileR : currentFileL;
+            if (c.audioFile != juce::File() && c.audioFile != take)
+                return { thumbnailForFile (c.audioFile), false,
+                         c.sourceChannel >= 0 ? juce::jlimit (0, 1, c.sourceChannel) : 0 };
+            if (rightLane) return { &thumbnailR, ! stereoOneFile, stereoOneFile ? 1 : 0 };
+            if (stereo)    return { &thumbnailL, ! stereoOneFile, 0 };
+            return { &thumbnailL, false, monoFileChannel };
+        }
+
+        // The R lane of L's clip clipIdx: R's own clip, which can play its own file.
+        LaneWave rightLaneWaveFor (int clipIdx)
+        {
+            if (! stereo) return {};
+            const auto* list = engine.tryClipsFor (index + 1);
+            const int i = clipedit::peerClipIndex (engine, index, clipIdx, index + 1);
+            if (list == nullptr || i < 0 || i >= (int) list->size()) return {};
+            return laneWaveFor ((*list)[(size_t) i], true);
+        }
+
         // Every waveform the row draws through JUCE's AudioThumbnail goes
         // through here. channel < 0 draws all channels (a whole mono file).
         // JUCE refills its per-pixel cache across the WHOLE area it is given,
@@ -609,20 +656,6 @@ namespace zynforge
             }
             if (channel < 0) thumb.drawChannels (g, area, t0, t1, zoom);
             else             thumb.drawChannel  (g, area, t0, t1, channel, zoom);
-        }
-
-        // Draw one stereo lane. When the pair is a single interleaved file
-        // (stereoOneFile) the L lane is file channel 0 and the R lane channel
-        // 1; otherwise each thumbnail is a whole mono file -> drawChannels.
-        void drawLaneL (juce::Graphics& g, juce::Rectangle<int> area,
-                        double t0, double t1, float zoom)
-        {
-            drawThumbnailVisible (g, thumbnailL, area, t0, t1, stereoOneFile ? 0 : -1, zoom);
-        }
-        void drawLaneR (juce::Graphics& g, juce::Rectangle<int> area,
-                        double t0, double t1, float zoom)
-        {
-            drawThumbnailVisible (g, thumbnailR, area, t0, t1, stereoOneFile ? 1 : -1, zoom);
         }
 
         // Use a short-window median for the body of a zoomed-out take while
@@ -712,6 +745,7 @@ namespace zynforge
             // thumb first so the now-complete file is re-scanned at full length.
             if (currentFileL.existsAsFile()) applyThumbSource (thumbnailL, currentFileL, true);
             if (currentFileR.existsAsFile()) applyThumbSource (thumbnailR, currentFileR, true);
+            for (auto& own : ownThumbs) applyThumbSource (*own.thumb, own.file, true);
             repaint();
         }
 
@@ -988,7 +1022,8 @@ namespace zynforge
                 const double srB = engine.getPlayer().getSampleRate() > 0.0
                                      ? engine.getPlayer().getSampleRate() : 48000.0;
                 const auto backdrop = TimelineMapper::forLane (inner, laneTimelineSamples());
-                auto drawSpan = [&] (juce::int64 timelineStart, juce::int64 fileStart, juce::int64 length)
+                auto drawSpan = [&] (juce::int64 timelineStart, juce::int64 fileStart, juce::int64 length,
+                                     const LaneWave& left, const LaneWave& right)
                 {
                     const int xL = backdrop.toX (timelineStart);
                     const int xR = backdrop.toX (timelineStart + length);
@@ -997,30 +1032,39 @@ namespace zynforge
                     const double t0 = (double) fileStart / srB;
                     const double t1 = (double) (fileStart + length) / srB;
                     g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
+                    auto draw = [&] (const LaneWave& w, juce::Rectangle<int> area)
+                    {
+                        if (w.hasAudio())
+                            drawThumbnailVisible (g, *w.thumb, area, t0, t1,
+                                                  w.wholeFile ? -1 : w.channel, waveZoom (*w.thumb));
+                    };
                     if (stereo)
                     {
                         const int laneH = span.getHeight() / 2;
-                        if (thumbnailL.getTotalLength() > 0.0)
-                            drawLaneL (g, span.withHeight (laneH), t0, t1, waveZoom (thumbnailL));
-                        if (thumbnailR.getTotalLength() > 0.0)
-                            drawLaneR (g, span.withTrimmedTop (laneH), t0, t1, waveZoom (thumbnailR));
+                        draw (left,  span.withHeight (laneH));
+                        draw (right, span.withTrimmedTop (laneH));
                     }
-                    else if (thumbnailL.getTotalLength() > 0.0)
+                    else
                     {
-                        drawThumbnailVisible (g, thumbnailL, span, t0, t1, -1, waveZoom (thumbnailL));
+                        draw (left, span);
                     }
                 };
                 if (const auto* backdropClips = engine.tryClipsFor (index);
                     backdropClips != nullptr && ! backdropClips->empty())
                 {
-                    for (const auto& c : *backdropClips)
-                        drawSpan (c.timelineStartSamples, c.fileStartSamples, c.fileLengthSamples);
+                    for (int i = 0; i < (int) backdropClips->size(); ++i)
+                    {
+                        const auto& c = (*backdropClips)[(size_t) i];
+                        drawSpan (c.timelineStartSamples, c.fileStartSamples, c.fileLengthSamples,
+                                  laneWaveFor (c, false), rightLaneWaveFor (i));
+                    }
                 }
                 else
                 {
                     const double fileSec = juce::jmax (thumbnailL.getTotalLength(),
                                                        stereo ? thumbnailR.getTotalLength() : 0.0);
-                    drawSpan (0, 0, (juce::int64) (fileSec * srB));
+                    drawSpan (0, 0, (juce::int64) (fileSec * srB), laneWaveFor ({}, false),
+                              stereo ? laneWaveFor ({}, true) : LaneWave {});
                 }
             }
 
@@ -1503,7 +1547,7 @@ namespace zynforge
                 const auto& player = engine.getPlayer();
                 const auto totalS = player.isLoaded() ? player.getTotalLengthSamples() : 0;
                 const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-                if (totalS > 0 && thumbnailL.getTotalLength() > 0.0)
+                if (totalS > 0)
                 {
                     const int activeTk = engine.getActiveTakeIdx (index);
                     const int laneH = juce::jmax (10, inner.getHeight() / takeCountNow);
@@ -1526,9 +1570,11 @@ namespace zynforge
                             const int xR = mapper.toX (c.timelineStartSamples + c.fileLengthSamples);
                             juce::Rectangle<int> cr (xL, laneR.getY() + 1,
                                                      juce::jmax (1, xR - xL), laneR.getHeight() - 2);
-                            drawThumbnailVisible (g, thumbnailL, cr,
-                                (double) c.fileStartSamples / sr,
-                                (double) (c.fileStartSamples + c.fileLengthSamples) / sr, -1, 1.0f);
+                            if (const auto wave = laneWaveFor (c, false); wave.hasAudio())
+                                drawThumbnailVisible (g, *wave.thumb, cr,
+                                    (double) c.fileStartSamples / sr,
+                                    (double) (c.fileStartSamples + c.fileLengthSamples) / sr,
+                                    wave.wholeFile ? -1 : wave.channel, 1.0f);
                         }
                         if (isHot)
                         {
@@ -1652,7 +1698,7 @@ namespace zynforge
                 // thumbnail, or the lane shows blocky garbage instead of the
                 // growing capture. After stop it dims to ember and holds until
                 // the real thumbnail finishes scanning (no blank gap).
-                drawContinueExisting (g, inner, thumbnailL, true, 0, waveZoom (thumbnailL), existingFrac);
+                drawContinueExisting (g, inner, thumbnailL, false, monoFileChannel, waveZoom (thumbnailL), existingFrac);
                 // Live capture glows hot (recording NOW); the post-stop hold dims
                 // to the channel colour so it matches the clean thumbnail that
                 // replaces it (no flash of orange barcode on stop).
@@ -1660,7 +1706,7 @@ namespace zynforge
                 drawRecEnvelope (g, confineLive (inner), recPeakL, vz);
             }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
-                drawWaveOutlined (thumbnailL, inner, true, 0,
+                drawWaveOutlined (thumbnailL, inner, false, monoFileChannel,
                                   0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
             }   // end "! haveClipBlocks" continuous-waveform fallback
 
@@ -1721,7 +1767,9 @@ namespace zynforge
                         // not whatever a continuous full-lane thumbnail would.
                         {
                             auto waveArea = block.withTrimmedTop (headH).reduced (1, 1);
-                            if (waveArea.getHeight() > 2 && thumbnailL.getTotalLength() > 0.0)
+                            const auto waveL = laneWaveFor (c, false);
+                            const auto waveR = rightLaneWaveFor (clipIdx_);
+                            if (waveArea.getHeight() > 2 && waveL.hasAudio())
                             {
                                 juce::Graphics::ScopedSaveState ss (g);
                                 g.reduceClipRegion (waveArea);
@@ -1731,49 +1779,35 @@ namespace zynforge
                                 // the shape visibly grows when boosted and
                                 // shrinks when cut -- matching what you'll hear.
                                 const float gz = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
-                                // Non-muted clips glow with the forge-heat fill
-                                // (loud = hot); a muted clip stays a dim, cool
-                                // tint so it visibly drops below the rest.
                                 // A muted clip draws a single dim, cool tint so it
                                 // drops below the rest; a live clip gets the same
                                 // solid-body + lighter-outline look as the main
                                 // waveform (drawWaveOutlined) so it reads cleanly.
                                 const auto mutedCol = brand::lift (clipTint, 0.20f).withAlpha (zynforge::brand::alpha::muted);
-                                if (stereo && thumbnailR.getTotalLength() > 0.0)
+                                auto drawClipLane = [&] (const LaneWave& w, juce::Rectangle<int> area)
+                                {
+                                    const float z = waveZoom (*w.thumb) * gz;
+                                    if (! c.muted)
+                                    {
+                                        drawWaveOutlined (*w.thumb, area, w.wholeFile, w.channel, t0, t1, z);
+                                        return;
+                                    }
+                                    g.setColour (mutedCol);
+                                    if (! ((! w.wholeFile || w.thumb->getNumChannels() == 1)
+                                           && drawOverviewWave (g, *w.thumb, area, w.channel, t0, t1, z, mutedCol,
+                                                                mutedCol.withAlpha (brand::alpha::subtle))))
+                                        drawThumbnailVisible (g, *w.thumb, area, t0, t1,
+                                                              w.wholeFile ? -1 : w.channel, z);
+                                };
+                                if (waveR.hasAudio())
                                 {
                                     const int half = waveArea.getHeight() / 2;
-                                    auto la = waveArea.withHeight (half);
-                                    auto ra = waveArea.withTrimmedTop (half);
-                                    if (c.muted)
-                                    {
-                                        g.setColour (mutedCol);
-                                        if (! drawOverviewWave (g, thumbnailL, la, 0, t0, t1,
-                                                                waveZoom (thumbnailL) * gz, mutedCol,
-                                                                mutedCol.withAlpha (brand::alpha::subtle)))
-                                            drawLaneL (g, la, t0, t1, waveZoom (thumbnailL) * gz);
-                                        if (! drawOverviewWave (g, thumbnailR, ra, stereoOneFile ? 1 : 0,
-                                                                t0, t1, waveZoom (thumbnailR) * gz, mutedCol,
-                                                                mutedCol.withAlpha (brand::alpha::subtle)))
-                                            drawLaneR (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
-                                    }
-                                    else
-                                    {
-                                        drawWaveOutlined (thumbnailL, la, ! stereoOneFile, 0, t0, t1, waveZoom (thumbnailL) * gz);
-                                        drawWaveOutlined (thumbnailR, ra, ! stereoOneFile, 1, t0, t1, waveZoom (thumbnailR) * gz);
-                                    }
-                                }
-                                else if (c.muted)
-                                {
-                                    g.setColour (mutedCol);
-                                    if (! (thumbnailL.getNumChannels() == 1
-                                           && drawOverviewWave (g, thumbnailL, waveArea, 0, t0, t1,
-                                                            waveZoom (thumbnailL) * gz, mutedCol,
-                                                            mutedCol.withAlpha (brand::alpha::subtle))))
-                                        drawThumbnailVisible (g, thumbnailL, waveArea, t0, t1, -1, waveZoom (thumbnailL) * gz);
+                                    drawClipLane (waveL, waveArea.withHeight (half));
+                                    drawClipLane (waveR, waveArea.withTrimmedTop (half));
                                 }
                                 else
                                 {
-                                    drawWaveOutlined (thumbnailL, waveArea, true, 0, t0, t1, waveZoom (thumbnailL) * gz);
+                                    drawClipLane (waveL, waveArea);
                                 }
                             }
                         }
@@ -3470,7 +3504,9 @@ namespace zynforge
         // page persist WaveCache.wfm the moment the whole session is scanned.
         bool waveformsLoaded() const noexcept
         {
-            return thumbnailL.isFullyLoaded() && (! stereo || thumbnailR.isFullyLoaded());
+            return thumbnailL.isFullyLoaded() && (! stereo || thumbnailR.isFullyLoaded())
+                && std::all_of (ownThumbs.begin(), ownThumbs.end(),
+                                [] (const OwnThumb& own) { return own.thumb->isFullyLoaded(); });
         }
 
         Size getRowSize() const noexcept { return rowSize; }
@@ -4358,6 +4394,11 @@ namespace zynforge
             WaveformOverview levels;
         };
         std::vector<CachedOverview> overviewCache;
+        struct OwnThumb { juce::File file; std::unique_ptr<juce::AudioThumbnail> thumb; };
+        std::vector<OwnThumb>     ownThumbs;      // files clips play instead of this strip's take
+        // A mono row draws one channel of its file: the left of a stereo file
+        // it kept, or the right of the file it shared before an unlink.
+        int                       monoFileChannel { 0 };
         juce::File                currentFileL;
         juce::File                currentFileR;
         bool                      stereo;

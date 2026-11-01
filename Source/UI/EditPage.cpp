@@ -255,9 +255,16 @@ namespace zynforge
                     continue;
                 }
                 const int trackIdx = r->getTrackIndex();
-                const auto fL = findTrackFile (trackIdx);
-                const auto fR = r->isStereoPair() ? findTrackFile (trackIdx + 1) : juce::File();
-                r->setWaveformFiles (fL, fR);
+                if (r->isStereoPair())
+                {
+                    r->setWaveformFiles (findTrackFile (trackIdx), findTrackFile (trackIdx + 1));
+                    continue;
+                }
+                // Resolved the way playback resolves it: after an unlink, a
+                // mono row can be the right channel of the file on its left.
+                int channel = 0;
+                const auto file = engine.getTrackAudioFile (trackIdx, &channel);
+                r->setWaveformFiles (file.existsAsFile() ? file : findTrackFile (trackIdx), {}, channel);
             }
         }
 
