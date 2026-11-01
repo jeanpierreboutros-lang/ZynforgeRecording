@@ -3055,8 +3055,7 @@ namespace zynforge
                     i, autoCh,
                     t.gainDb.load (std::memory_order_relaxed),
                     t.pan.load (std::memory_order_relaxed),
-                    t.muted.load (std::memory_order_relaxed),
-                    autoPlayPos, rolling, readLanes);
+                    autoPlayPos, readLanes);
             }
             if (! holdLanes)
             {
@@ -3423,7 +3422,6 @@ namespace zynforge
             const bool resolved = ch < kMaxResolvedStrips;
             float dBVal  = resolved ? resolvedMix[(size_t) ch].volDb : t.gainDb.load (std::memory_order_relaxed);
             float panVal = resolved ? resolvedMix[(size_t) ch].pan   : t.pan   .load (std::memory_order_relaxed);
-            if (resolved && resolvedMix[(size_t) ch].monitorMuted) continue;
 
             // VCA group gain. The monitor sum was applying ONLY the strip's
             // own fader, so pulling a VCA master down did nothing here even

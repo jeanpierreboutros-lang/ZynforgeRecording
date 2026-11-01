@@ -1117,7 +1117,7 @@ namespace zynforge
                     for (auto& cp : live)
                         if (cp->needed)
                             cp->lanes = resolveStripLanesLocked (cp->track, cp->autoCh, cp->baseDb, cp->basePan,
-                                                                 cp->muted, pos, true, readLanes);
+                                                                 pos, readLanes);
                 }
 
                 // Sends precede solo filtering, as in live playback: a soloed
@@ -1140,7 +1140,7 @@ namespace zynforge
 
                 for (auto& cp : live)
                 {
-                    if (! cp->audible || cp->lanes.monitorMuted) continue;
+                    if (! cp->audible || cp->lanes.muteLane) continue;
                     const double gain = juce::Decibels::decibelsToGain ((double) mix::stripDb (cp->lanes.volDb, cp->vcaDb), -60.0);
                     const auto [gL, gR] = mix::constantPowerPan (gain, cp->lanes.pan);
                     const auto* s = raw.getReadPointer (cp->track);

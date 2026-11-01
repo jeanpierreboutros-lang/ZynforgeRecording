@@ -523,10 +523,9 @@ namespace zynforge
     }
 
     mix::StripLanes AudioEngine::resolveStripLanesLocked (int track, int autoCh, float faderDb, float pan,
-                                                          bool staticMute, juce::int64 pos,
-                                                          bool rolling, bool readLanes) const noexcept
+                                                          juce::int64 pos, bool readLanes) const noexcept
     {
-        return mix::resolveLanes (track, autoCh, faderDb, pan, staticMute, rolling, readLanes,
+        return mix::resolveLanes (track, autoCh, faderDb, pan, readLanes,
             [this, pos] (int channel, mix::Lane lane, float fallback) noexcept
             {
                 return automationValueAtLocked (channel, (AutomationParam) lane, pos, fallback);

@@ -564,6 +564,41 @@ namespace zynforge
                 e.stopRecording();
             }
 
+            beginTest ("A muted strip that is soloed is heard on the master, rolling and in a bounce");
+            {
+                TempFolder f;
+                {
+                    Rig r (1, 1, 2);
+                    r.engine.setTrackArmed (0, true);
+                    expect (r.engine.startRecording (f.dir));
+                    r.input (0, 0.25f);
+                    for (int b = 0; b < 64; ++b) r.process();
+                    r.engine.stopRecording();
+                }
+                Rig r (1, 1, 2);
+                auto& e = r.engine;
+                expectEquals (e.loadSession (f.dir), 1);
+                e.setTrackMuted (0, true);
+                e.setTrackSoloed (0, true);
+                e.startPlayback();
+                float heard = 0.0f;
+                for (int attempt = 0; attempt < 80 && heard < 0.1f; ++attempt)
+                {
+                    e.getPlayer().setPositionSamples (0);
+                    r.process();
+                    heard = r.peak (0);
+                    if (heard < 0.1f) juce::Thread::sleep (15);
+                }
+                e.stopPlayback();
+                expect (heard > 0.1f, "solo stopped working on a muted strip once the transport rolled");
+
+                juce::AudioBuffer<float> bounce;
+                expect (e.renderStereoMix (bounce, 4800));
+                expect (bounce.getMagnitude (0, 0, 4800) > 0.1f, "the bounce dropped what the monitor plays");
+                e.setTrackMuted (0, false);
+                e.setTrackSoloed (0, false);
+            }
+
             beginTest ("A new session clears Trim-Follow references");
             {
                 Rig r (1, 1, 2);

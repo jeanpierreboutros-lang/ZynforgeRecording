@@ -75,7 +75,6 @@ namespace zynforge::mix
         float volDb        { 0.0f };   // fader, or the Volume lane (+ trim)
         float pan          { 0.0f };   // static pan, or the Pan lane (+ trim)
         bool  muteLane     { false };  // the Mute lane is on (false without a lane)
-        bool  monitorMuted { false };  // monitor rule: the lane if present, else the static mute
     };
 
     // A Mute lane holds 0..1, so a negative fallback means "no lane here".
@@ -84,24 +83,20 @@ namespace zynforge::mix
     // Resolve one strip's lanes. `readLane (channel, Lane, fallback)` returns
     // the lane value or the fallback; the caller already holds the automation
     // lock. `readLanes` is false when the transport is stopped, the lock was
-    // lost or automation is suspended -- then the static values stand.
-    // `rolling` gates the static monitor mute: while stopped, the monitor
-    // follows the solo / mute gate alone (unchanged live behaviour).
+    // lost or automation is suspended -- then the static values stand. The
+    // strip's static mute is not here: audible() owns it, with solo over it.
     template <typename LaneReader>
     StripLanes resolveLanes (int track, int autoCh, float faderDb, float staticPan,
-                             bool staticMute, bool rolling, bool readLanes,
-                             LaneReader&& readLane) noexcept
+                             bool readLanes, LaneReader&& readLane) noexcept
     {
         StripLanes m;
-        m.volDb        = faderDb;
-        m.pan          = staticPan;
-        m.monitorMuted = rolling && staticMute;
+        m.volDb = faderDb;
+        m.pan   = staticPan;
         if (readLanes)
         {
             m.volDb = readLane (autoCh, Lane::Volume, m.volDb);
             m.pan   = readLane (track,  Lane::Pan,    m.pan);
-            const float lane = readLane (autoCh, Lane::Mute, kNoMuteLane);
-            if (lane >= 0.0f) { m.muteLane = lane > 0.5f; m.monitorMuted = m.muteLane; }
+            m.muteLane = readLane (autoCh, Lane::Mute, kNoMuteLane) > 0.5f;
         }
         return m;
     }

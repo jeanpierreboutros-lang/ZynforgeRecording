@@ -1409,8 +1409,7 @@ namespace zynforge
         // automationLock -- the callback via its one try-lock per block, the
         // bounce via one blocking lock per automation step.
         mix::StripLanes resolveStripLanesLocked (int track, int autoCh, float faderDb, float pan,
-                                                 bool staticMute, juce::int64 pos,
-                                                 bool rolling, bool readLanes) const noexcept;
+                                                 juce::int64 pos, bool readLanes) const noexcept;
         std::atomic<int>              automationWriteMode { 0 };   // AutomationWriteMode::Off
         std::atomic<bool>             automationTrimMode  { false };
         // SUSPEND: temporarily ignore every lane's stored points at
