@@ -128,6 +128,10 @@ def render_and_compare(project, reference, res, work):
 
     rate, ours = read_wav(output)
     _, theirs = read_wav(reference)
+    return compare_renders(rate, ours, theirs)
+
+
+def compare_renders(rate, ours, theirs):
     n = min(len(ours[0]), len(theirs[0]))
     print("render: %d Hz, %d frames (engine mix %d frames)" % (rate, len(ours[0]), len(theirs[0])))
     worst, at = 0.0, 0
@@ -143,7 +147,12 @@ def render_and_compare(project, reference, res, work):
     print("per second: " + " ".join("%d:%.5f" % (s, e) for s, e in sorted(per_second.items())))
     level = max(max(abs(x) for x in theirs[0]), max(abs(x) for x in theirs[1]))
     print("mix peak: %.4f, residual %.1f dB below it" % (level, 20.0 * math.log10(max(worst, 1e-12) / level)))
-    ok = worst < TOLERANCE and len(ours[0]) >= n
+    # Only the shared length was compared above, so a short render needs its
+    # own check. A tail past the engine mix is fine: REAPER may render one.
+    long_enough = len(ours[0]) >= len(theirs[0])
+    if not long_enough:
+        print("render is %d frames short of the engine mix" % (len(theirs[0]) - len(ours[0])))
+    ok = worst < TOLERANCE and long_enough
     print("PASS" if ok else "FAIL")
     return ok
 

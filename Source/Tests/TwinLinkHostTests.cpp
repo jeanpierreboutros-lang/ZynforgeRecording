@@ -188,6 +188,7 @@ namespace zynforge
             recorder.prepare (48000.0, 256, 1);
             recorder.getTrack (0).armed.store (true, std::memory_order_relaxed);
             main.engine.setActiveSessionDir (session);
+            main.engine.claimMixerFor (session);
             expect (recorder.startRecording (session), "synthetic capture did not start");
             std::vector<float> audio (256, 0.2f);
             const float* input = audio.data();
@@ -304,6 +305,7 @@ namespace zynforge
                     recorder.prepare (48000.0, 256, 1);
                     recorder.getTrack (0).armed.store (true, std::memory_order_relaxed);
                     main.engine.setActiveSessionDir (session);
+                    main.engine.claimMixerFor (session);
                     MainComponent::RecordStartPlan plan;
                     plan.dir = session;
                     plan.numTracks = 1;

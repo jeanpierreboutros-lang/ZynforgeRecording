@@ -723,14 +723,20 @@ void MainComponent::runCloudUpload()
         showStatus ("No upload command configured -- pick \"Configure cloud upload command...\" first");
         return;
     }
-    if (zynforge::cloud::launchUpload (tmpl, sessionDir))
+    if (cloudUpload.isActive()) { showStatus ("A cloud upload is already running"); return; }
+    juce::Component::SafePointer<MainComponent> self (this);
+    const auto name = sessionDir.getFileName();
+    const bool started = cloudUpload.start (tmpl, sessionDir, [self, name] (zynforge::cloud::UploadOutcome outcome)
     {
-        showStatus ("Cloud upload started: " + sessionDir.getFileName());
-    }
-    else
-    {
-        showStatus ("Cloud upload failed to launch -- check the configured command");
-    }
+        juce::MessageManager::callAsync ([self, name, outcome]
+        {
+            if (self != nullptr)
+                self->showStatus (outcome.ok ? "Cloud upload finished: " + name
+                                             : "! Cloud upload FAILED for " + name + ": " + outcome.problem);
+        });
+    });
+    showStatus (started ? "Cloud upload started: " + sessionDir.getFileName()
+                        : juce::String ("Cloud upload failed to launch -- check the configured command"));
 }
 
 void MainComponent::toggleCompanionServer()
@@ -789,8 +795,8 @@ void MainComponent::editCloudUploadCommand()
                 if (result == 1 && self != nullptr && self->engine.getAppProps() != nullptr)
                 {
                     const auto v = aw->getTextEditorContents ("cmd").trim();
-                    self->engine.getAppProps()->setValue ("cloudUploadCommand", v);
-                    self->engine.getAppProps()->saveIfNeeded();
+                    zynforge::updateSettings (self->engine.getAppProps(), [&v] (juce::PropertiesFile& p)
+                                              { p.setValue ("cloudUploadCommand", v); });
                     self->showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
                                             : juce::String ("Cloud upload command saved"));
                 }

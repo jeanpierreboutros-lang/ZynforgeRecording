@@ -49,6 +49,13 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
         refuse ("Open or create a session before generating a click");
         return;
     }
+    // Pinned but not loaded means no strips, so a new click would be Track_01:
+    // that session's first take.
+    if (! engine.mixerBelongsTo (sessionDir))
+    {
+        refuse (sessionDir.getFileName() + " is not loaded; open it before generating a click");
+        return;
+    }
 
     if (! sessionJobs.reserve())
     {
@@ -67,6 +74,20 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
     auto& recorder = engine.getRecorder();
     const bool addedClickStrip = clickTrackIndex < 0;
     const int previousTrackCount = recorder.getNumTracks();
+    // A new strip's number can already have audio when the mix lists fewer
+    // strips than the session has tracks, and the render replaces its target.
+    if (addedClickStrip)
+    {
+        const auto stem = juce::String::formatted ("Track_%02d", previousTrackCount + 1);
+        const auto holdsTake = [&stem] (const juce::File& folder)
+        { return ! folder.findChildFiles (juce::File::findFiles, false, stem + ".*;" + stem + "_part*").isEmpty(); };
+        if (holdsTake (audioFiles) || holdsTake (sessionDir))
+        {
+            sessionJobs.release();
+            refuse (stem + " already holds audio; a click there would replace it");
+            return;
+        }
+    }
     if (clickTrackIndex < 0)
     {
         // First press in this session -- append a fresh track at the end.
@@ -632,12 +653,11 @@ void MainComponent::promptConsoleConnect()
                     : "Console link failed -- check the IP and the network");
                 return;
             }
-            if (auto* p = self->engine.getAppProps())
+            zynforge::updateSettings (self->engine.getAppProps(), [&] (juce::PropertiesFile& p)
             {
-                p->setValue ("consoleHost", host);
-                p->setValue ("consoleProfile", profileIdx);
-                p->saveIfNeeded();
-            }
+                p.setValue ("consoleHost", host);
+                p.setValue ("consoleProfile", profileIdx);
+            });
             // Pull the channel names straight away so the session labels
             // itself the moment the desk is reachable.
             if (self->consoleLink.getProfile().canReadNames)
@@ -774,6 +794,23 @@ void MainComponent::consoleRestoreGains()
     consoleLink.restoreGains();
 }
 
+// Order matters: strips cannot be resized once the engine reports a take, so the
+// session has to be adopted first.
+void MainComponent::adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs)
+{
+    daemonStartUnansweredMs = 0;
+    daemonTakeAdopted = true;
+    engine.setExternalCaptureStatus (status, receivedAtMs);
+    // Before the take is marked as rolling: the session swap refuses under one,
+    // which is also what makes a reattach in the same window leave the mixer be.
+    adoptDaemonTakeSession (status);
+    if (status.sessionPath.isNotEmpty())
+        engine.beginExternalTake (juce::File (status.sessionPath), status.sampleRate);
+    else
+        engine.setExternalRecording (true);
+    recordButton.setButtonText ("STOP");
+}
+
 void MainComponent::connectCaptureDaemon (bool announceReattach)
 {
     captureSupervisor.onDaemonDied = [this] (bool wasRecording)
@@ -817,14 +854,7 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
 
 void MainComponent::adoptDaemonTake (const zynforge::EngineStatus& status, bool announce)
 {
-    daemonStartUnansweredMs = 0;
-    engine.setExternalCaptureStatus (status, captureSupervisor.lastStatusAtMs());
-    daemonTakeAdopted = true;
-    if (status.sessionPath.isNotEmpty())
-        engine.beginExternalTake (juce::File (status.sessionPath), status.sampleRate);
-    else
-        engine.setExternalRecording (true);
-    recordButton.setButtonText ("STOP");
+    adoptRollingDaemonTake (status, captureSupervisor.lastStatusAtMs());
     if (announce)
         showStatus ("REATTACHED to a rolling capture-daemon take -- STOP closes it normally.");
 }
@@ -914,11 +944,8 @@ void MainComponent::disableCaptureDaemon()
 {
     captureSupervisor.shutdown();
     useCaptureDaemon = false;
-    if (auto* p = engine.getAppProps())
-    {
-        p->setValue ("useCaptureDaemon", false);
-        p->saveIfNeeded();
-    }
+    zynforge::updateSettings (engine.getAppProps(), [] (juce::PropertiesFile& p)
+                              { p.setValue ("useCaptureDaemon", false); });
 }
 
 void MainComponent::toggleCaptureDaemon()
@@ -965,11 +992,8 @@ void MainComponent::toggleCaptureDaemon()
 
     useCaptureDaemon = true;
     connectCaptureDaemon (true);
-    if (auto* p = engine.getAppProps())
-    {
-        p->setValue ("useCaptureDaemon", useCaptureDaemon);
-        p->saveIfNeeded();
-    }
+    zynforge::updateSettings (engine.getAppProps(), [this] (juce::PropertiesFile& p)
+                              { p.setValue ("useCaptureDaemon", useCaptureDaemon); });
 }
 
 bool MainComponent::configureCaptureDaemon()
@@ -1011,9 +1035,8 @@ void MainComponent::scanForCrashReports()
     // First-ever run: don't dump historic reports on a fresh install --
     // just set the baseline and start watching from here.
     const double lastMs = props->getDoubleValue ("lastCrashScanMs", 0.0);
-    props->setValue ("lastCrashScanMs",
-                     (double) juce::Time::getCurrentTime().toMilliseconds());
-    props->saveIfNeeded();
+    zynforge::updateSettings (props, [] (juce::PropertiesFile& p)
+                              { p.setValue ("lastCrashScanMs", (double) juce::Time::getCurrentTime().toMilliseconds()); });
     if (lastMs <= 0.0) return;
 
     const auto reports = zynforge::crashscan::findNewReports (

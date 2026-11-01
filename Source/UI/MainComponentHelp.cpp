@@ -393,11 +393,8 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
     // Whether or not the device has to move, this is now the session's rate.
     pendingSampleRate = r.sampleRate;
 
-    if (auto* p = engine.getAppProps())
-    {
-        p->setValue ("sessionsRoot", r.location.getFullPathName());
-        p->saveIfNeeded();
-    }
+    zynforge::updateSettings (engine.getAppProps(), [&r] (juce::PropertiesFile& p)
+                              { p.setValue ("sessionsRoot", r.location.getFullPathName()); });
     engine.getRecorder().setCaptureFormat (r.captureFormat);
     engine.setActiveSessionDir (sessionFolder);
 
@@ -494,6 +491,10 @@ void MainComponent::showStartupWelcome()
             if (openSessionFolder (last) >= 0)
                 return;   // reopened -- no welcome dialog
         }
+        // A pinned folder with nothing to open stays unloaded for good, and
+        // would refuse every save of whatever is built here. Release it.
+        else if (last.isDirectory() && ! engine.isRecording() && ! engine.mixerBelongsTo (last))
+            engine.setActiveSessionDir ({});
     }
 
     // Pro Tools-style two-pane welcome: side rail with New / Open,
@@ -564,14 +565,13 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
         // Persist the new sessions root (used by makeNewSessionDir +
         // every future file dialog) and remember the chosen format
         // so the dB readout / capture matches.
-        if (auto* props = self->engine.getAppProps())
+        zynforge::updateSettings (self->engine.getAppProps(), [&r] (juce::PropertiesFile& props)
         {
-            props->setValue ("sessionsRoot",      r.location.getFullPathName());
-            props->setValue ("sessionName",       r.name);
-            props->setValue ("interleavedFlag",   r.interleaved);
-            props->setValue ("ioPreset",          r.ioSettings);
-            props->saveIfNeeded();
-        }
+            props.setValue ("sessionsRoot",      r.location.getFullPathName());
+            props.setValue ("sessionName",       r.name);
+            props.setValue ("interleavedFlag",   r.interleaved);
+            props.setValue ("ioPreset",          r.ioSettings);
+        });
 
         // Pin this folder as the active session so Save / Save As light
         // up immediately (engine.getActiveSessionDir() now reports it
@@ -661,7 +661,7 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
             // Clear the crash marker only once the session really opened: a
             // failed open (interrupted punch, incomplete move) keeps it listed
             // so the engineer can try again, and keeps its own error status.
-            if (self->openSessionFolder (dir) < 0) return;
+            if (self->openSessionFolder (dir, true) < 0) return;
             // The marker is what told an older project to rebuild its clips,
             // so they are saved before it goes.
             if (! self->saveSessionStateTo (dir))

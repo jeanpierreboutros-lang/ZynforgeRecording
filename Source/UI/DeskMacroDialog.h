@@ -168,13 +168,11 @@ namespace zynforge
             void persist (const juce::String& ip)
             {
                 ipEd.setText (ip, juce::dontSendNotification);
-                if (auto* props = engine.getAppProps())
+                updateSettings (engine.getAppProps(), [&] (juce::PropertiesFile& props)
                 {
-                    reloadSettingsReplacing (*props);
-                    props->setValue ("deskMacroPort", port());
-                    props->setValue ("deskMacroIp", ip);
-                    props->saveIfNeeded();
-                }
+                    props.setValue ("deskMacroPort", port());
+                    props.setValue ("deskMacroIp", ip);
+                });
             }
 
             // Always from the engine: LOCK can engage, and the listener can

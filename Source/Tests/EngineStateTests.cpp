@@ -30,6 +30,8 @@ namespace zynforge
                     // Persisting a session dir must stay inside the throwaway file.
                     eng.setActiveSessionDir (tempRoot);
                     expect (p->getFile().isAChildOf (tempRoot));
+                    // Later engines restore this pin from the shared settings.
+                    eng.setActiveSessionDir ({});
                 }
             }
 
@@ -224,6 +226,7 @@ namespace zynforge
                 eng.setSessionTempoBpm (142.0f);
                 eng.setTimeSignature (6, 8);
                 eng.setTempoMap ({ { 0, 120.0f }, { 480000, 140.0f } });
+                eng.claimMixerFor (tmp);
                 eng.saveSessionMixTo (tmp);
 
                 // Trash the live state as if a different session had loaded.

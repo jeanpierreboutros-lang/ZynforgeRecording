@@ -29,6 +29,8 @@
 #include "MenuCommandTable.h"
 #include "SessionJobRunner.h"
 #include "SessionMetadataWriter.h"
+#include "../Audio/SettingsFile.h"
+#include "../Network/CloudUpload.h"
 #include "TempoBar.h"
 #include "TimelineStrip.h"
 #include "Toast.h"
@@ -41,7 +43,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -111,6 +113,7 @@ private:
     void startLocalTake (const RecordStartPlan&);
     void onDeviceClicked();
     void onLoadSessionClicked();
+    void completeOpenFolder (const juce::File& dir);
     void onPlayClicked();
     void onStopClicked();
     // Immediate capture stop shared by the confirmed UI STOP, remote
@@ -180,7 +183,32 @@ private:
     // restore setlist + UI layout, load the audio, restore the full mixer
     // state, force a strip rebuild. Returns the track count loaded. Used by
     // File > Open, the Welcome dialog, and the launch auto-reopen.
-    int  openSessionFolder (const juce::File& dir);
+    // `reload` re-reads the session that is already open: a recovered take or a
+    // restored backup changed its files. Nothing else may, because a reload
+    // replaces every unsaved edit.
+    int  openSessionFolder (const juce::File& dir, bool reload = false);
+    bool isSessionOpen (const juce::File& dir) const;
+    void reportDamagedFiles (const juce::File& dir, const std::vector<zynforge::sessionrepair::DamagedFile>& files);
+    bool restoreDamagedFiles (const juce::File& dir, const std::vector<zynforge::sessionrepair::DamagedFile>& files);
+    // Stands in for the dialog, which a headless test cannot answer.
+    std::function<void (const std::vector<zynforge::sessionrepair::DamagedFile>&)> damagedFilesPromptForTests;
+    void restoreSessionDocuments (const juce::File& dir);
+    void adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs);
+    void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
+    void releaseHeldRecordPress();
+    bool sessionFolderIsMissing() const;
+    void completeSaveAs (const juce::File& source, const juce::File& dest);
+    void completeRelocate (const juce::File& oldDir, const juce::File& newParent);
+    void completeShowHandoff (const juce::File& source, const juce::File& dest);
+    bool carryMixerInto (const juce::File& copy);
+    void startHandoffCopy (const juce::File& source, const juce::File& dest);
+    // When a job's save of the source fails, whether to go on from what is on
+    // disk. The tests stand in for the dialog through continueFromDiskPromptForTests.
+    void offerContinueFromDisk (const juce::String& action, const juce::String& carried,
+                                std::function<void()> proceed, std::function<void()> cancel);
+    std::function<bool (const juce::String& text)> continueFromDiskPromptForTests;
+    juce::uint32 nextAutosaveRetryMs (juce::uint32 intervalMs);
+    bool saveMixerToTakeFolder (const juce::File& dir);
     bool saveSessionStateTo (const juce::File& dir);
     zynforge::SessionMetadataSnapshot captureMetadataSnapshot (const juce::File& dir, bool backup = true);
     juce::String captureProjectPatchJson() const;
@@ -192,6 +220,7 @@ private:
                                   std::function<void (bool)> completion = {}, bool automatic = false);
     void requestUILayoutSave();
     void saveCueChanges (const juce::String& success);
+    zynforge::cloud::UploadRun cloudUpload;
     zynforge::SessionMetadataWriter metadataWriter;
     int pendingMetadataSaves = 0;
     juce::uint64 metadataRevision = 0;
@@ -237,6 +266,9 @@ private:
     // editSplitAtPlayhead / editStartRange / editFinishRange).
     void removeLastCapture();
     bool deleteCaptureSession (const juce::File& target);
+    static juce::String lastCapturePrompt (const juce::File& target);
+    // A test process has no business in the owner's Trash.
+    static juce::File testTrashFolder();
     void showBatchRenameDialog();
     // Import channel names from a console/spreadsheet CSV onto existing tracks.
     void importChannelNamesFromCsv();
@@ -318,7 +350,8 @@ private:
     void adoptDaemonTake (const zynforge::EngineStatus&, bool announce);
     void leaveLostDaemon();
     void disableCaptureDaemon();
-    void requestDaemonTake (const juce::File& dir, int numTracks, const juce::BigInteger& arms, int armed);
+    void requestDaemonTake (const juce::File& dir, int numTracks, const juce::BigInteger& arms,
+                            int armed, bool mixerInTakeFolder);
     void stopDaemonCapture (bool rewind, std::function<void (bool)> completion);
     void endDaemonTake (juce::String error, bool rewind, std::function<void (bool)> completion);
     void localTakeInterrupted();
@@ -363,7 +396,11 @@ private:
 
     // Auto-save bookkeeping (see serviceAutosave / showAutosaveSettings).
     juce::uint32 lastAutosaveMs    { 0 };   // 0 = clock not started yet
+    juce::uint32 recordPressHeldAtMs { 0 }; // a RECORD press waiting out an idle save; 0 = none
+    int          autosaveFailures  { 0 };   // in a row; spaces out the retries
     int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
+    juce::String lastMetadataSaveError;     // why the last save failed, for the STOP message
+    juce::String lastMetadataSaveNotice;    // what the last good save had to set aside
     juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
     juce::File        clipClipboardSession;   // the session those clips belong to
     int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
@@ -603,6 +640,7 @@ private:
     friend class zynforge::ConsoleVscTests;
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
+    friend class zynforge::SessionSafetyTests;
     friend class zynforge::MainWindowGuardTests;
     friend class zynforge::EditIntegrityTests;
     friend struct zynforge::ConcurrencyAuditAccess;

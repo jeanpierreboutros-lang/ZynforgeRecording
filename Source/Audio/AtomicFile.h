@@ -31,17 +31,23 @@ namespace zynforge::atomicfile
         // explicitly so an ordinary I/O failure is reported to the caller
         // instead of terminating the application.
         bool wrote = false;
+        juce::int64 accepted = -1;
         {
             juce::FileOutputStream output (temporary);
             if (output.openedOk())
             {
                 wrote = fill (output);
+                accepted = output.getPosition();
                 output.flush();
                 wrote = wrote && output.getStatus().wasOk();
             }
         }
 
-        return wrote && temporary.existsAsFile() && temporary.replaceFileIn (target);
+        // The stream buffers small files and flush() drops the result of that
+        // last write, so a disk that fills up here leaves a short file and a
+        // clean status. Only the file's real size can tell.
+        return wrote && temporary.existsAsFile() && temporary.getSize() == accepted
+            && temporary.replaceFileIn (target);
     }
 
     inline bool writeText (const juce::File& target, const juce::String& text)

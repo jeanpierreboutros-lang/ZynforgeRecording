@@ -24,6 +24,19 @@ namespace zynforge
         }
     }
 
+    // The one shape of a settings write. Several PropertiesFile objects share a
+    // single .settings file and each saves its whole in-memory copy, so a writer
+    // that skips the reload puts back whatever another writer has changed since,
+    // such as a strip's patch. `change` receives the freshly reloaded file.
+    template <typename Change>
+    void updateSettings (juce::PropertiesFile* properties, Change&& change)
+    {
+        if (properties == nullptr) return;
+        reloadSettingsReplacing (*properties);
+        change (*properties);
+        properties->saveIfNeeded();
+    }
+
     inline std::unique_ptr<juce::PropertiesFile> makeSettingsFile (const juce::PropertiesFile::Options& options)
     {
         if (isolatedSettings.load())

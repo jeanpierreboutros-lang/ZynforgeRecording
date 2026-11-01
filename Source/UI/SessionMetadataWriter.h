@@ -2,6 +2,8 @@
 
 #include "../Audio/AtomicFile.h"
 #include "../Audio/SessionBackup.h"
+#include "../Audio/SessionMixFile.h"
+#include "../Audio/SessionRepair.h"
 #include "SessionProjPath.h"
 #include <condition_variable>
 #include <deque>
@@ -13,6 +15,9 @@ namespace zynforge
     {
         juce::File directory;
         juce::String settingsJson, mixJson, projectPatchJson;
+        // The session the in-memory mixer belonged to when this was captured.
+        // Mixer-derived state is only ever written to that session.
+        juce::File mixerOwner;
         bool backup = true;
     };
 
@@ -21,6 +26,7 @@ namespace zynforge
         bool ok = false;
         juce::String error;
         bool superseded = false; // only an unstarted layout-only request can retire this way
+        juce::String notice;     // the save worked, and the engineer should hear this too
     };
 
     // The worker receives serialized values, never engine/UI objects or shared
@@ -32,6 +38,18 @@ namespace zynforge
         if (project == juce::File()) return { false, "Session project is unavailable" };
         const auto patch = juce::JSON::parse (snapshot.projectPatchJson);
         if (! patch.isObject()) return { false, "Invalid session metadata snapshot" };
+        // Cues, takes and automation come from the same in-memory session as
+        // the mixer: a session that was never loaded would lose them too.
+        const auto* fields = patch.getDynamicObject();
+        const bool carriesSessionState = snapshot.settingsJson.isNotEmpty() || snapshot.mixJson.isNotEmpty()
+            || fields->hasProperty ("setlist") || fields->hasProperty ("playlists")
+            || fields->hasProperty ("automation");
+        if (carriesSessionState && snapshot.mixerOwner != snapshot.directory)
+            return { false, sessionmix::notThisSessionsMixer (snapshot.directory) };
+        if (snapshot.mixJson.isNotEmpty())
+            if (const auto why = sessionmix::refusal (snapshot.directory, snapshot.mixerOwner, snapshot.mixJson);
+                why.isNotEmpty())
+                return { false, why };
         auto existing = juce::JSON::parse (project);
         // A failed read/parse is not a new session. Refuse before touching any
         // sibling metadata so the original project remains recoverable.
@@ -41,16 +59,29 @@ namespace zynforge
                                                             : new juce::DynamicObject();
         for (const auto& property : patch.getDynamicObject()->getProperties())
             merged->setProperty (property.name, property.value);
-        for (const auto& file : { std::make_pair ("session_settings.json", snapshot.settingsJson),
-                                 std::make_pair ("session_mix.json", snapshot.mixJson) })
-            if (file.second.isNotEmpty()
-                && ! atomicfile::writeText (snapshot.directory.getChildFile (file.first), file.second))
-                return { false, "Could not save " + juce::String (file.first) };
+        // A file damaged since the session opened: opening already moved aside
+        // anything damaged then. The replacement must not be its only trace.
+        juce::StringArray keptAside;
+        const auto keepDamaged = [&] (const juce::File& file, const juce::String& json)
+        {
+            if (json.isNotEmpty())
+                if (const auto kept = sessionrepair::keepIfUnreadable (file); kept != juce::File())
+                    keptAside.add (file.getFileName() + " was damaged and is kept as " + kept.getFileName());
+        };
+        keepDamaged (snapshot.directory.getChildFile ("session_settings.json"), snapshot.settingsJson);
+        keepDamaged (snapshot.directory.getChildFile (sessionmix::kFileName), snapshot.mixJson);
+        if (snapshot.settingsJson.isNotEmpty()
+            && ! atomicfile::writeText (snapshot.directory.getChildFile ("session_settings.json"), snapshot.settingsJson))
+            return { false, "Could not save session_settings.json" };
+        juce::String mixError;
+        if (snapshot.mixJson.isNotEmpty()
+            && ! sessionmix::write (snapshot.directory, snapshot.mixerOwner, snapshot.mixJson, &mixError))
+            return { false, mixError };
         if (! atomicfile::writeText (project, juce::JSON::toString (juce::var (merged.get()))))
             return { false, "Could not save session project" };
         if (snapshot.backup && ! sessionbackup::writeSnapshot (snapshot.directory).isDirectory())
             return { false, "Could not save session backup snapshot" };
-        return { true, {} };
+        return { true, {}, false, keptAside.joinIntoString ("; ") };
     }
 
     class SessionMetadataWriter

@@ -1019,7 +1019,7 @@ namespace zynforge
                 rig.daemon.beforeStartForTests = [&] { while (! releaseStart.load()) juce::Thread::sleep (5); };
                 main.captureSupervisor.startReplyTimeoutMs = 50;
                 juce::BigInteger arms; arms.setBit (0);
-                main.requestDaemonTake (rig.session, 1, arms, 1);
+                main.requestDaemonTake (rig.session, 1, arms, 1, true);
                 expect (main.engine.isRecording(), "no answer must not read as a failed RECORD");
                 expectEquals (main.recordButton.getButtonText(), juce::String ("REC ?"));
                 releaseStart.store (true);
@@ -1040,7 +1040,7 @@ namespace zynforge
                 auto& main = *rig.main;
                 rig.daemon.getRecorder().getTrack (0).armed.store (true);
                 juce::BigInteger arms; arms.setBit (0);
-                main.requestDaemonTake (juce::File(), 1, arms, 1);
+                main.requestDaemonTake (juce::File(), 1, arms, 1, true);
                 expect (main.statusLabel.getText().contains ("no sessionDir"), main.statusLabel.getText());
                 expect (! main.engine.isRecording());
             }

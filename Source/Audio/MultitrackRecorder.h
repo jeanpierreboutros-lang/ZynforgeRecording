@@ -720,6 +720,9 @@ namespace zynforge
         // Cancel obsolete report jobs and exclude their publication while a
         // caller removes an idle session. Caller must first guard active capture.
         static bool deleteSessionAfterCancellingReports (const juce::File& sessionDir);
+        // Runs `remove` once no report for this session can still be published.
+        static bool removeSessionAfterCancellingReports (const juce::File& sessionDir,
+                                                         const std::function<bool()>& remove);
 
         // Edit the session.report.json on disk under the lock every report
         // writer holds. False when there is no readable report to edit. Keys

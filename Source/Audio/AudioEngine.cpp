@@ -2,6 +2,7 @@
 #include "SettingsFile.h"
 #include "TrackFileTransaction.h"
 #include "AtomicFile.h"
+#include "SessionMixFile.h"
 #include "FastAccumulate.h"
 #include "TransientDetector.h"
 #include "MultiPartReader.h"
@@ -263,6 +264,10 @@ namespace zynforge
         recorder.setClockDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
 
         if (! recorder.startRecording (sessionDir)) return false;
+        // These strips are what this take was recorded with, so from here on
+        // they are this folder's mixer, whichever session they came from.
+        claimMixerFor (sessionDir);
+        noteLastCapture (sessionDir);
         invalidateExternalCaptureStatus();
         // A punch take's capture window and splice point are player positions:
         // hold the playhead (and loop) still until the take stops.
@@ -479,7 +484,8 @@ namespace zynforge
         job.retired = player.installPreparedSession (std::move (job.prepared), true);
         invalidateTransientCache();
         activeSession = job.directory;
-        if (appProps != nullptr) appProps->setValue ("activeSessionDir", activeSession.getFullPathName());
+        updateSettings (appProps.get(), [this] (juce::PropertiesFile& props)
+                        { props.setValue ("activeSessionDir", activeSession.getFullPathName()); });
         // A daemon RECORD opens a new folder: clips still in memory belong to
         // the session before it.
         seedDefaultClips (job.sameSession, job.sameSession);
@@ -1240,14 +1246,14 @@ namespace zynforge
 
     bool AudioEngine::saveSessionMixTo (const juce::File& sessionDir)
     {
-        return sessionDir.isDirectory() && atomicfile::writeText (
-            sessionDir.getChildFile ("session_mix.json"), captureSessionMixJson());
+        return sessionDir.isDirectory()
+            && sessionmix::write (sessionDir, mixerSession, captureSessionMixJson());
     }
 
     bool AudioEngine::loadSessionMixFrom (const juce::File& sessionDir)
     {
         if (isRecording() || isCaptureFinalizing()) return false;
-        const auto f = sessionDir.getChildFile ("session_mix.json");
+        const auto f = sessionDir.getChildFile (sessionmix::kFileName);
         if (! f.existsAsFile()) return false;
 
         const auto parsed = juce::JSON::parse (f);
@@ -1987,6 +1993,13 @@ namespace zynforge
     bool AudioEngine::reorderTracks (const std::vector<int>& order)
     {
         if (isRecording() || isSessionTransitionActive()) return false;
+        // Refused before any take file is renamed: the indices below describe
+        // the strips in memory, which only match this folder's takes if they
+        // are its mixer, and emptying a saved mixer is not a save we allow.
+        if (activeSession.isDirectory()
+            && (! mixerBelongsTo (activeSession)
+                || (order.empty() && sessionmix::stripCountIn (activeSession) > 0)))
+            return false;
         const int n = recorder.getNumTracks();
         std::vector<int> destination ((size_t) n, -1);
         for (int i = 0; i < (int) order.size(); ++i)
@@ -2119,16 +2132,12 @@ namespace zynforge
         bool saved = true;
         if (disk)
         {
-            saved = saveSessionMixTo (session);
-            if (saved)
-            {
-                auto mix = juce::JSON::parse (session.getChildFile ("session_mix.json"));
-                mix.getDynamicObject()->setProperty ("trackCount", (int) order.size());
-                if (auto* arr = mix["strips"].getArray())
-                    while (arr->size() > (int) order.size()) arr->removeLast();
-                saved = atomicfile::writeText (session.getChildFile ("session_mix.json"),
-                                               juce::JSON::toString (mix));
-            }
+            // The recorder still holds the removed strips until commit.
+            auto mix = juce::JSON::parse (captureSessionMixJson());
+            mix.getDynamicObject()->setProperty ("trackCount", (int) order.size());
+            if (auto* arr = mix["strips"].getArray())
+                while (arr->size() > (int) order.size()) arr->removeLast();
+            saved = sessionmix::write (session, mixerSession, juce::JSON::toString (mix));
             for (const auto& f : session.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
                                                           false, "*.zfproj"))
             {
@@ -2449,6 +2458,36 @@ namespace zynforge
         return {};
     }
 
+    void AudioEngine::noteLastCapture (const juce::File& dir)
+    {
+        updateSettings (appProps.get(), [&dir] (juce::PropertiesFile& props)
+        {
+            props.setValue ("lastCaptureDir", dir.getFullPathName());
+            props.setValue ("lastCaptureId", dir.getChildFile (".zynforge-capture-id").loadFileAsString().trim());
+        });
+    }
+
+    void AudioEngine::forgetLastCapture()
+    {
+        updateSettings (appProps.get(), [] (juce::PropertiesFile& props)
+        {
+            props.removeValue ("lastCaptureDir");
+            props.removeValue ("lastCaptureId");
+        });
+    }
+
+    juce::File AudioEngine::getLastCapture() const
+    {
+        if (appProps == nullptr) return {};
+        const auto path = appProps->getValue ("lastCaptureDir");
+        if (path.isEmpty()) return {};
+        const juce::File dir (path);
+        const auto id = appProps->getValue ("lastCaptureId");
+        const bool sameCapture = dir.isDirectory()
+            && (id.isEmpty() || dir.getChildFile (".zynforge-capture-id").loadFileAsString().trim() == id);
+        return sameCapture ? dir : juce::File();
+    }
+
     void AudioEngine::setActiveSessionDir (const juce::File& dir)
     {
         if (isCaptureFinalizing()) return;
@@ -2501,6 +2540,7 @@ namespace zynforge
         currentTempoBpm.store (120.0f, std::memory_order_relaxed);
         timeSigNumerator.store (4, std::memory_order_relaxed);
         timeSigDenominator.store (4, std::memory_order_relaxed);
+        claimMixerFor ({});
         setActiveSessionDir ({});
     }
 

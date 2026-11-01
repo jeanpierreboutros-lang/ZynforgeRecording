@@ -484,6 +484,7 @@ namespace zynforge
                     const auto active = tempDir ("active");
                     active.getChildFile ("Audio Files").createDirectory();
                     main.engine.setActiveSessionDir (active);
+                    main.engine.claimMixerFor (active);
                     main.sessionIoBusy.store (true);
                     main.statusLabel.setText ({}, juce::dontSendNotification);
                     main.requestUILayoutSave();

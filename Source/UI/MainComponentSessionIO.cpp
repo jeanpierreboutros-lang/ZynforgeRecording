@@ -29,8 +29,6 @@
 #include "TrackSelectDialog.h"
 #include "SessionProjPath.h"
 
-#include <array>
-
 using namespace zynforge;
 
 namespace
@@ -70,7 +68,10 @@ bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
             auto out = target.createOutputStream();
             if (in == nullptr || out == nullptr) return false;
             const auto expectedSize = child.getSize();
-            std::array<char, 1024 * 1024> buffer {};
+            // On the heap: this runs on a job thread, whose 512 KiB stack cannot
+            // hold it, and a frame that size faults the moment the function is
+            // entered.
+            std::vector<char> buffer (1024 * 1024);
             while (! in->isExhausted())
             {
                 if (cancel.load (std::memory_order_relaxed)) return false;
@@ -116,11 +117,29 @@ bool ensureSessionScaffold (const juce::File& dest)
 }
 }
 
-int MainComponent::openSessionFolder (const juce::File& dir)
+bool MainComponent::isSessionOpen (const juce::File& dir) const
+{
+    // Finder and a typed path can spell one folder differently (a link, say).
+    const auto current = engine.getActiveSessionDir();
+    return engine.mixerBelongsTo (current)
+        && pathsafety::isSameOrDescendant (current, dir)
+        && pathsafety::isSameOrDescendant (dir, current);
+}
+
+int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
 {
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before switching sessions"); return -1; }
+    // Every step below no-ops under finalization, so the old mixer would be
+    // left in place and claimed as this session's.
+    if (engine.isCaptureFinalizing())
+    { showStatus ("Wait for recording finalization before switching sessions"); return -1; }
     if (! dir.isDirectory()) return 0;
+    if (! reload && isSessionOpen (dir))
+    {
+        showStatus (dir.getFileName() + " is already open");
+        return engine.getPlayer().getNumTracks();
+    }
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
     int interruptedPunches = 0, repairedHeaders = 0, unrepairedHeaders = 0;
@@ -137,20 +156,107 @@ int MainComponent::openSessionFolder (const juce::File& dir)
 
     // Condemn the current strips before loading -- a smaller session shrinks
     // the recorder vector and frees TrackStates the live strips still point at.
+    // Before anything loads: a damaged file read as empty, and the next save
+    // would then replace the only copy of what was in it.
+    const auto damaged = zynforge::sessionrepair::quarantineDamagedFiles (dir);
+
     condemnAllStrips();
     engine.stopPlayback();
     engine.clearSessionState();
     forgetSessionUiState();
     engine.setActiveSessionDir (dir);        // pin so Save / Save As / Export stay lit
     const int n = engine.loadSession (dir);  // audio -> player + clips
+    if (n < 0)
+    {
+        showStatus ("Session could not be loaded; its files were left untouched");
+        return -1;
+    }
     const bool loadedMix = engine.loadSessionMixFrom (dir);
     // Recovery fallback: a session recorded but never explicitly Saved has no
     // session_mix.json, so loadSessionMixFrom can't size the mixer and the app
     // would show "No channels yet" with every Edit / Track / Export menu grey.
     // Size one strip per loaded audio track so the channels (and the menus)
-    // come back.
-    if (! loadedMix)
+    // come back. A mix saved with no strips over a session that has audio is
+    // the same case, not an authoritative empty mixer.
+    if (! loadedMix || (engine.getRecorder().getNumTracks() == 0 && n > 0))
         engine.setStripCount (n);
+    restoreSessionDocuments (dir);
+    engine.claimMixerFor (dir);
+    if (n > 0)
+    {
+        statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
+        warnIfSampleRateMismatch();
+    }
+    if (unrepairedHeaders > 0)
+        toast.show (juce::String (unrepairedHeaders) + " AIFF take file(s) from a crash could not be repaired;"
+                    " they read short until the drive is writable", Toast::Kind::Warning);
+    else if (repairedHeaders > 0)
+        toast.show ("Repaired " + juce::String (repairedHeaders) + " AIFF take file(s) a crash left unfinished",
+                    Toast::Kind::Warning);
+    if (interruptedPunches > 0)
+        toast.show ("Recovered " + juce::String (interruptedPunches)
+                    + " interrupted punch file(s); partial audio is in Session File Backups",
+                    Toast::Kind::Warning);
+    if (! damaged.empty()) reportDamagedFiles (dir, damaged);
+    return n;
+}
+
+void MainComponent::reportDamagedFiles (const juce::File& dir,
+                                        const std::vector<zynforge::sessionrepair::DamagedFile>& files)
+{
+    showStatus ("! " + dir.getFileName() + " has damaged session files; defaults are in use");
+    if (damagedFilesPromptForTests) { damagedFilesPromptForTests (files); return; }
+
+    juce::String text;
+    bool canRestore = false;
+    for (const auto& file : files)
+    {
+        text << file.name << " " << file.problem << ".\n"
+             << (file.keptAs != juce::File() ? "It was kept as " + file.keptAs.getFileName()
+                                             : juce::String ("It could not be moved aside (the session may be read-only)"))
+             << ".\n"
+             << (file.backup != juce::File() ? "Newest good backup: " + file.backup.getFileName()
+                                             : juce::String ("No backup holds a good copy"))
+             << ".\n\n";
+        canRestore = canRestore || file.backup != juce::File();
+    }
+    text << "Until then the session uses defaults for what is missing. Audio is not affected.";
+
+    auto* aw = new juce::AlertWindow ("Session files are damaged", text, juce::MessageBoxIconType::NoIcon, this);
+    aw->setLookAndFeel (&laf);
+    if (canRestore) aw->addButton ("Restore Backup", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton (canRestore ? "Keep Going" : "OK", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [self, aw, dir, files] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (self != nullptr && result == 1) self->restoreDamagedFiles (dir, files);
+        }), false);
+}
+
+bool MainComponent::restoreDamagedFiles (const juce::File& dir,
+                                         const std::vector<zynforge::sessionrepair::DamagedFile>& files)
+{
+    // The dialog can sit open across a remote RECORD or a session change.
+    if (engine.isRecording() || sessionIoBusy.load() || ! isSessionOpen (dir))
+    {
+        showStatus ("Restore cancelled -- a recording, a save or another session is active");
+        return false;
+    }
+    const auto failed = zynforge::sessionrepair::restoreFromBackups (dir, files);
+    if (! failed.isEmpty())
+    {
+        showStatus ("Could not restore " + failed.joinIntoString (", ") + " -- check the session volume");
+        return false;
+    }
+    if (openSessionFolder (dir, true) < 0) return false;
+    showStatus ("Restored from backup: " + dir.getFileName());
+    return true;
+}
+
+void MainComponent::restoreSessionDocuments (const juce::File& dir)
+{
     // Playlists/automation must be restored after loadSession seeds its default
     // clips; loading them first caused the seed to erase the restored edits.
     loadSetlistFromActiveSession();
@@ -158,12 +264,17 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     const auto projectSettings = juce::JSON::parse (findSessionProj (dir));
     if ((double) projectSettings["sampleRate"] > 0.0)
         pendingSampleRate = (double) projectSettings["sampleRate"];
+    const auto restoreFormat = [this] (const juce::var& format)
+    {
+        engine.getRecorder().setCaptureFormat ((CaptureFormat) juce::jlimit (0, (int) CaptureFormat::Flac24, (int) format));
+    };
+    // New Session records its format in the project. The settings file only
+    // exists after the first save, and wins from then on.
+    if (projectSettings.hasProperty ("captureFormat")) restoreFormat (projectSettings["captureFormat"]);
     const auto settings = juce::JSON::parse (dir.getChildFile ("session_settings.json"));
     if (auto* s = settings.getDynamicObject())
     {
-        if (s->hasProperty ("captureFormat"))
-            engine.getRecorder().setCaptureFormat ((CaptureFormat) juce::jlimit (0, (int) CaptureFormat::Flac24,
-                                                                                 (int) s->getProperty ("captureFormat")));
+        if (s->hasProperty ("captureFormat")) restoreFormat (s->getProperty ("captureFormat"));
         if (s->hasProperty ("preRollSeconds"))
             engine.getRecorder().setPreRollSeconds (juce::jlimit (0, 30, (int) s->getProperty ("preRollSeconds")));
         if (s->hasProperty ("loopStart") && s->hasProperty ("loopEnd"))
@@ -201,22 +312,49 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     lastTrackCount = -1;                      // force a strip rebuild on the next tick
     undoManager.clearUndoHistory();           // a fresh session starts with a clean undo stack
     rebaselineMixerUndo();                    // don't record the load itself as a mixer undo step
-    if (n > 0)
+}
+
+// A daemon take outlives the GUI that started it, so a relaunch finds the
+// session pinned by the daemon's status and no mixer in memory. This is the
+// session open without its media: the audio is still being written, its files
+// and punch sidecars belong to the daemon, and STOP loads them. Runs before
+// the engine reports a take, because strips cannot be resized under one.
+void MainComponent::adoptDaemonTakeSession (const zynforge::EngineStatus& status)
+{
+    const juce::File dir (status.sessionPath);
+    if (status.sessionPath.isEmpty() || engine.isRecording() || engine.mixerBelongsTo (dir))
+        return;
+
+    // A session opened before the daemon was found still holds unsaved work.
+    if (const auto held = engine.getMixerSession(); held.isDirectory())
+        saveSessionStateTo (held);
+
+    condemnAllStrips();
+    engine.stopPlayback();
+    engine.clearSessionState();
+    engine.setActiveSessionDir (dir);
+    if (! engine.loadSessionMixFrom (dir) || engine.getRecorder().getNumTracks() == 0)
     {
-        statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
-        warnIfSampleRateMismatch();
+        // Nothing saved to load (a take started by an older build): the daemon
+        // still knows the channels it is recording.
+        const int strips = (int) status.tracks.size();
+        engine.setStripCount (strips);
+        for (int i = 0; i < juce::jmin (strips, engine.getRecorder().getNumTracks()); ++i)
+        {
+            const auto& track = status.tracks[(size_t) i];
+            if (track.name.isNotEmpty()) engine.setTrackName (i, track.name);
+            engine.setTrackStereo (i, track.stereoLeft);
+            engine.setTrackArmed (i, track.armed);
+        }
     }
-    if (unrepairedHeaders > 0)
-        toast.show (juce::String (unrepairedHeaders) + " AIFF take file(s) from a crash could not be repaired;"
-                    " they read short until the drive is writable", Toast::Kind::Warning);
-    else if (repairedHeaders > 0)
-        toast.show ("Repaired " + juce::String (repairedHeaders) + " AIFF take file(s) a crash left unfinished",
-                    Toast::Kind::Warning);
-    if (interruptedPunches > 0)
-        toast.show ("Recovered " + juce::String (interruptedPunches)
-                    + " interrupted punch file(s); partial audio is in Session File Backups",
-                    Toast::Kind::Warning);
-    return n;
+    restoreSessionDocuments (dir);
+    if (status.sampleRate > 0.0)
+    {
+        pendingSampleRate = status.sampleRate;
+        engine.setSessionSampleRate (pendingSampleRate);
+    }
+    engine.getMarkers().setContext (dir, pendingSampleRate);
+    engine.claimMixerFor (dir);
 }
 
 bool MainComponent::openSessionDocument (const juce::File& document, bool confirmBeforeReplacing)
@@ -231,6 +369,12 @@ bool MainComponent::openSessionDocument (const juce::File& document, bool confir
     const auto dir = document.isDirectory() ? document : document.getParentDirectory();
     if (! dir.isDirectory() || (! document.isDirectory() && ! document.hasFileExtension ("zfproj")))
         return false;
+    if (isSessionOpen (dir))
+    {
+        explicitDocumentOpened = true;
+        showStatus (dir.getFileName() + " is already open");
+        return true;
+    }
     const auto current = engine.getActiveSessionDir();
     if (confirmBeforeReplacing && current.isDirectory() && current != dir)
     {
@@ -255,7 +399,8 @@ void MainComponent::confirmSessionReplacement (std::function<void()> continuatio
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before replacing the session"); return; }
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) { continuation(); return; }
+    // Pinned but never loaded means nothing in memory belongs to it.
+    if (! dir.isDirectory() || ! engine.mixerBelongsTo (dir)) { continuation(); return; }
 
     auto* aw = new juce::AlertWindow (
         "Replace current session?",
@@ -397,6 +542,7 @@ zynforge::SessionMetadataSnapshot MainComponent::captureMetadataSnapshot (const 
     snapshot.directory = dir;
     snapshot.settingsJson = juce::JSON::toString (juce::var (root.get()), true);
     snapshot.mixJson = engine.captureSessionMixJson();
+    snapshot.mixerOwner = engine.getMixerSession();
     auto patch = juce::JSON::parse (captureProjectPatchJson());
     patch.getDynamicObject()->setProperty ("ui", captureUILayoutJson());
     snapshot.projectPatchJson = juce::JSON::toString (patch);
@@ -408,8 +554,15 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
 {
     // Transactional callers must defer rather than wait on an interactive save
     // on the message thread. The immutable writer is shared by both paths.
-    if (pendingMetadataSaves != 0) return false;
+    if (pendingMetadataSaves != 0)
+    {
+        lastMetadataSaveError = "another save is still finishing";
+        return false;
+    }
     const auto result = zynforge::writeSessionMetadata (captureMetadataSnapshot (dir));
+    lastMetadataSaveError = result.error;
+    lastMetadataSaveNotice = result.notice;
+    if (result.notice.isNotEmpty()) toast.show (result.notice, Toast::Kind::Warning);
     if (result.ok) lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
     return result.ok;
 }
@@ -471,6 +624,9 @@ void MainComponent::enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot s
                 self->engine.setSessionTransitionActive (false);
             }
             if (result.superseded) return; // retired layout request; replacement still owns persistence
+            self->lastMetadataSaveError = result.error;
+            self->lastMetadataSaveNotice = result.notice;
+            if (result.notice.isNotEmpty()) self->toast.show (result.notice, Toast::Kind::Warning);
             const bool sameSession = self->engine.getActiveSessionDir() == dir;
             bool snapshotStillCurrent = true;
             if (sameSession && result.ok && fullSave)
@@ -499,6 +655,7 @@ void MainComponent::enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot s
             }
             if (completion) completion (result.ok && sameSession
                 && (! self->metadataContinuationReserved || snapshotStillCurrent));
+            self->releaseHeldRecordPress();
         };
         // Replaced layout requests retire synchronously during enqueue on the
         // message thread; worker completions are marshalled back normally.
@@ -511,7 +668,7 @@ void MainComponent::requestUILayoutSave()
 {
     if (restoringUILayout || engine.isRecording()) return;
     const auto dir = engine.getActiveSessionDir();
-    if (dir == juce::File()) return;
+    if (! engine.mixerBelongsTo (dir)) return; // never replace a layout that was not loaded
     // A session job (export, bounce, import, Save As...) owns the I/O. Layout
     // is cosmetic: save it when the job ends instead of failing loudly.
     if (sessionIoBusy.load() && pendingMetadataSaves == 0 && ! captureMetadataPending)
@@ -532,6 +689,22 @@ void MainComponent::saveCueChanges (const juce::String& success)
     enqueueMetadataSave (engine.getActiveSessionDir(), success);
 }
 
+// The session is open but its folder is gone, usually a drive pulled. The pin
+// stays so nothing silently retargets it; saving has to wait for the drive.
+bool MainComponent::sessionFolderIsMissing() const
+{
+    const auto dir = engine.getActiveSessionDir();
+    return dir != juce::File() && ! dir.isDirectory() && engine.mixerBelongsTo (dir);
+}
+
+// 15 s, then doubling up to the autosave interval. A dead drive must keep being
+// reported, but not with a toast every 15 seconds for the rest of the show.
+juce::uint32 MainComponent::nextAutosaveRetryMs (juce::uint32 intervalMs)
+{
+    const auto doublings = juce::jlimit (0, 10, autosaveFailures++);
+    return juce::jmin ((juce::uint32) 15000u << doublings, intervalMs);
+}
+
 void MainComponent::serviceAutosave()
 {
     if (sessionIoBusy.load()) return;
@@ -549,7 +722,7 @@ void MainComponent::serviceAutosave()
     if (mins <= 0) return;                                          // Off
 
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) return;                               // nothing to save into
+    if (! dir.isDirectory() && ! sessionFolderIsMissing()) return; // nothing to save into
 
     const auto now = juce::Time::getMillisecondCounter();
     if (lastAutosaveMs == 0)                                        // first tick -> start the clock
@@ -562,12 +735,29 @@ void MainComponent::serviceAutosave()
     // undo manager (recording, routing, cue recall, imports).  Saving on each
     // configured interval is the only reliable way not to miss those changes.
     lastAutosaveMs = now; // coalesce subsequent ticks while the worker owns I/O
+    // Pinned but not opened: the launch pin under a dialog, or a failed reopen.
+    // A retry can't help, so this waits for the next interval and says why.
+    if (! engine.mixerBelongsTo (dir))
+    {
+        showStatus ("Auto-save skipped -- " + dir.getFileName()
+                    + " is not loaded; open it to save it");
+        return;
+    }
+    const auto intervalMs = (juce::uint32) mins * 60000u;
+    if (sessionFolderIsMissing())
+    {
+        lastAutosaveMs = now - intervalMs + nextAutosaveRetryMs (intervalMs);
+        showStatus ("! AUTO-SAVE FAILED -- session folder is missing: " + dir.getFullPathName()
+                    + "; reconnect its drive");
+        return;
+    }
     juce::Component::SafePointer<MainComponent> self (this);
     enqueueMetadataSave (dir, "Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
-        [self, intervalMs = (juce::uint32) mins * 60000u] (bool ok)
+        [self, intervalMs] (bool ok)
         {
-            if (self == nullptr || ok) return;
-            const auto retryMs = juce::jmin ((juce::uint32) 15000u, intervalMs);
+            if (self == nullptr) return;
+            if (ok) { self->autosaveFailures = 0; return; }
+            const auto retryMs = self->nextAutosaveRetryMs (intervalMs);
             self->lastAutosaveMs = juce::Time::getMillisecondCounter() - intervalMs + retryMs;
             self->showStatus ("AUTO-SAVE FAILED -- check the session volume; retrying shortly");
         }, true);
@@ -608,8 +798,8 @@ void MainComponent::showAutosaveSettings()
         if (auto* cb = aw->getComboBoxComponent ("interval")) idx = cb->getSelectedItemIndex();
         const int mins = mapMins[juce::jlimit (0, 5, idx)];
 
-        if (auto* p = self->engine.getAppProps())
-        { p->setValue ("autosaveMinutes", mins); p->saveIfNeeded(); }
+        zynforge::updateSettings (self->engine.getAppProps(), [mins] (juce::PropertiesFile& p)
+                                  { p.setValue ("autosaveMinutes", mins); });
         self->lastAutosaveMs = 0;   // restart the clock against the new interval
         self->showStatus (mins > 0 ? ("Auto-save every " + juce::String (mins)
                                       + (mins == 1 ? " minute" : " minutes"))
@@ -1019,6 +1209,11 @@ void MainComponent::onSaveSessionState()
     if (captureMetadataPending) { showStatus ("Wait for capture finalization before saving again"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before saving session state"); return; }
     const auto dir = engine.getActiveSessionDir();
+    if (sessionFolderIsMissing())
+    {
+        showStatus ("! Session folder is missing: " + dir.getFullPathName() + "; reconnect its drive, then save");
+        return;
+    }
     if (dir.isDirectory())
     {
         enqueueMetadataSave (dir, "Saved session state -> " + dir.getFileName());
@@ -1064,6 +1259,12 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     // Initial command validation expires while the asynchronous picker is open.
     if (engine.isRecording() || captureSupervisor.isDaemonRecording() || engine.isCaptureFinalizing())
     { showStatus ("Stop recording and wait for finalization before importing"); return; }
+    if (sessionFolderIsMissing())
+    {
+        showStatus ("! Session folder is missing: " + engine.getActiveSessionDir().getFullPathName()
+                    + "; reconnect its drive before importing");
+        return;
+    }
 
     if (! sessionJobs.reserve())
     {
@@ -1076,6 +1277,14 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     // session-I/O worker below.
     const auto originalSession = engine.getActiveSessionDir();
     const bool newSession = ! originalSession.isDirectory();
+    // The new strips would land in a session whose own mixer was never loaded,
+    // and its state could not be saved afterwards.
+    if (! newSession && ! engine.mixerBelongsTo (originalSession))
+    {
+        sessionJobs.release();
+        showStatus ("Import refused -- " + originalSession.getFileName() + " is not loaded; open it first");
+        return;
+    }
     // makeNewSessionDir may reuse a persisted named folder even when the
     // engine has no active session. Import must start in its own unique
     // folder in that case, never write into an unrelated old take.
@@ -1193,6 +1402,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
             const auto savedEdits = newSession ? juce::var() : self->engine.playlistsToJson();
             const int loaded = self->engine.loadSession (sessionDir, ! newSession);
             if (! newSession) self->engine.loadPlaylistsFromJson (savedEdits);
+            else if (loaded > 0) self->engine.claimMixerFor (sessionDir);
             const bool saved = self->saveSessionStateTo (sessionDir);
             self->engine.setSessionTransitionActive (false);
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
@@ -1221,6 +1431,13 @@ void MainComponent::onSaveSessionAs()
 {
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before Save As"); return; }
+    // Its audio is on that drive: a copy made now would be a session with none.
+    if (sessionFolderIsMissing())
+    {
+        showStatus ("! Session folder is missing: " + engine.getActiveSessionDir().getFullPathName()
+                    + "; reconnect its drive before Save As");
+        return;
+    }
     if (! sessionJobs.reserve())
     {
         showStatus ("Another session file operation is already running");
@@ -1247,84 +1464,84 @@ void MainComponent::onSaveSessionAs()
     chooser->launchAsync (flags, [chooserSelf, this, source] (const juce::FileChooser& fc)
     {
         if (chooserSelf == nullptr) return;
-        auto dest = fc.getResult();
+        const auto dest = fc.getResult();
         if (dest.getFullPathName().isEmpty()) { sessionJobs.release(); return; }
+        completeSaveAs (source, dest);
+    });
+}
 
-        if (source == dest)
-        {
-            const bool ok = saveSessionStateTo (dest);
-            sessionJobs.release();
-            showStatus (ok ? "Session saved" : "Save failed -- check permissions / free space");
-            return;
-        }
+void MainComponent::completeSaveAs (const juce::File& source, const juce::File& dest)
+{
+    if (source == dest)
+    {
+        const bool ok = saveSessionStateTo (dest);
+        sessionJobs.release();
+        showStatus (ok ? "Session saved" : "Save failed -- check permissions / free space");
+        return;
+    }
 
-        const bool createdDestination = ! dest.exists();
-        if (createdDestination && dest.createDirectory().failed())
-        { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
-        if (! dest.isDirectory())
-        { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
+    const bool createdDestination = ! dest.exists();
+    if (createdDestination && dest.createDirectory().failed())
+    { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
+    if (! dest.isDirectory())
+    { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
 
-        // Refuse a destination INSIDE the source: copyDirectoryTo would copy
-        // the growing destination into itself.
-        if (source.isDirectory() && pathsafety::isSameOrDescendant (source, dest))
-        {
-            sessionJobs.release();
-            showStatus ("Save As failed -- pick a folder outside the current session");
-            return;
-        }
+    // Refuse a destination INSIDE the source: copyDirectoryTo would copy
+    // the growing destination into itself.
+    if (source.isDirectory() && pathsafety::isSameOrDescendant (source, dest))
+    {
+        sessionJobs.release();
+        showStatus ("Save As failed -- pick a folder outside the current session");
+        return;
+    }
 
-        // Save As is a clone, never a merge.  Refusing a non-empty folder
-        // prevents JUCE's copyFileTo from deleting same-named destination
-        // files and prevents an old session from becoming a hybrid.
-        if (! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty())
-        {
-            sessionJobs.release();
-            showStatus ("Save As needs a new or empty folder");
-            return;
-        }
+    // Save As is a clone, never a merge.  Refusing a non-empty folder
+    // prevents JUCE's copyFileTo from deleting same-named destination
+    // files and prevents an old session from becoming a hybrid.
+    if (! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty())
+    {
+        sessionJobs.release();
+        showStatus ("Save As needs a new or empty folder");
+        return;
+    }
 
-        const bool needsCopy = source.isDirectory() && source != dest;
-        if (! needsCopy)
-        {
-            if (! ensureSessionScaffold (dest))
-            {
-                removePartialCopy (dest, createdDestination);
-                sessionJobs.release();
-                showStatus ("Save As failed -- couldn't create the session files");
-                return;
-            }
-            engine.setActiveSessionDir (dest);
-            const bool ok = saveSessionStateTo (dest);
-            sessionJobs.release();
-            showStatus (ok ? "Saved As -> " + dest.getFileName()
-                           : "Save As failed -- check permissions / free space");
-            return;
-        }
-
-        // Freeze a complete source snapshot before the background copy begins.
-        if (! saveSessionStateTo (source))
+    const bool needsCopy = source.isDirectory() && source != dest;
+    if (! needsCopy)
+    {
+        if (! ensureSessionScaffold (dest))
         {
             removePartialCopy (dest, createdDestination);
             sessionJobs.release();
-            showStatus ("Save As failed -- couldn't save the current session");
+            showStatus ("Save As failed -- couldn't create the session files");
             return;
         }
+        engine.setActiveSessionDir (dest);
+        engine.claimMixerFor (dest);
+        const bool ok = saveSessionStateTo (dest);
+        sessionJobs.release();
+        showStatus (ok ? "Saved As -> " + dest.getFileName()
+                       : "Save As failed -- check permissions / free space");
+        return;
+    }
 
-        // The folder copy carries the AUDIO -- gigabytes on a real show -- so it
-        // runs on the owned export thread instead of freezing the message
-        // thread for the duration. The state files are written afterwards, back
-        // on the message thread, because saveSessionStateTo touches engine state.
-        engine.setSessionTransitionActive (true);
-        showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
-
-        juce::Component::SafePointer<MainComponent> self (this);
-        const bool watchReport = daemonModeActive();
-        sessionJobs.launch ([self, source, dest, createdDestination, watchReport] (const std::atomic<bool>& cancel)
-                            -> zynforge::SessionJobRunner::Completion
+    // The folder copy carries the AUDIO -- gigabytes on a real show -- so it
+    // runs on the owned export thread instead of freezing the message
+    // thread for the duration. The state files are written afterwards, back
+    // on the message thread, because saveSessionStateTo touches engine state.
+    juce::Component::SafePointer<MainComponent> self (this);
+    auto copySession = [self, source, dest, createdDestination] (bool carryEdits)
+    {
+        if (self == nullptr) return;
+        self->engine.setSessionTransitionActive (true);
+        self->showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
+        const bool watchReport = self->daemonModeActive();
+        self->sessionJobs.launch ([self, source, dest, createdDestination, carryEdits, watchReport]
+                                  (const std::atomic<bool>& cancel)
+                                  -> zynforge::SessionJobRunner::Completion
         {
             const bool ok = zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
                          && copyDirectoryCancellable (source, dest, cancel);
-            return [self, ok, dest, createdDestination]
+            return [self, ok, dest, createdDestination, carryEdits]
             {
                 if (self == nullptr) return;
                 self->engine.setSessionTransitionActive (false);
@@ -1334,11 +1551,58 @@ void MainComponent::onSaveSessionAs()
                     self->showStatus ("Save As cancelled or failed -- source session is unchanged");
                     return;
                 }
+                const bool carried = ! carryEdits || self->carryMixerInto (dest);
                 self->openSessionFolder (dest);
-                self->showStatus ("Saved As -> " + dest.getFileName());
+                self->showStatus (carried ? "Saved As -> " + dest.getFileName()
+                                          : "Saved As -> " + dest.getFileName() + "; unsaved changes could not be carried over");
             };
         });
-    });
+    };
+
+    // Freeze a complete source snapshot before the background copy begins.
+    if (saveSessionStateTo (source)) { copySession (false); return; }
+    // Nothing in memory is this session's, so there is nothing to lose.
+    if (! engine.mixerBelongsTo (source)) { copySession (false); return; }
+    offerContinueFromDisk ("Save As", "Your unsaved changes will be saved into the copy.",
+                           [copySession] { copySession (true); },
+                           [self, dest, createdDestination]
+                           {
+                               if (self == nullptr) return;
+                               removePartialCopy (dest, createdDestination);
+                               self->sessionJobs.release();
+                               self->showStatus ("Save As cancelled -- source session is unchanged");
+                           });
+}
+
+// A session on read-only media keeps its edits only in memory. The copy made
+// from it is the first place they can be saved, so they go there.
+bool MainComponent::carryMixerInto (const juce::File& copy)
+{
+    engine.claimMixerFor (copy);
+    return saveSessionStateTo (copy);
+}
+
+void MainComponent::offerContinueFromDisk (const juce::String& action, const juce::String& carried,
+                                           std::function<void()> proceed, std::function<void()> cancel)
+{
+    const auto text = action + " could not save the current state into the session first"
+        + (lastMetadataSaveError.isNotEmpty() ? " (" + lastMetadataSaveError + ")" : juce::String())
+        + ".\n\nContinue from the files as they are on disk? " + carried;
+    if (continueFromDiskPromptForTests)
+    {
+        if (continueFromDiskPromptForTests (text)) proceed(); else cancel();
+        return;
+    }
+    auto* aw = new juce::AlertWindow (action + " needs a decision", text, juce::MessageBoxIconType::NoIcon, this);
+    aw->setLookAndFeel (&laf);
+    aw->addButton ("Continue", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel",   0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw, proceed = std::move (proceed), cancel = std::move (cancel)] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result == 1) proceed(); else cancel();
+        }), false);
 }
 
 // The rate the session's audio is actually AT -- what the export dialog should
@@ -1764,94 +2028,113 @@ void MainComponent::exportShowHandoff()
         if (self == nullptr) return;
         const auto dest = fc.getResult();
         if (dest == juce::File()) { self->sessionJobs.release(); return; }
-        if (pathsafety::isSameOrDescendant (source, dest) || dest.isSymbolicLink())
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Choose a new handoff folder outside the source session");
-            return;
-        }
-        if (dest.exists() && (! dest.isDirectory()
-                              || ! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty()))
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Handoff needs a new or empty folder; nothing was overwritten");
-            return;
-        }
-        if (! dest.isDirectory() && dest.createDirectory().failed())
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Could not create the handoff folder");
-            return;
-        }
-        if (! self->saveSessionStateTo (source))
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Handoff cancelled: session metadata could not be saved");
-            return;
-        }
-        const auto timelineCsv = self->buildTimelineCsv();
-        if (timelineCsv.isEmpty())
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Handoff cancelled: session timeline is unavailable");
-            return;
-        }
-        const auto interchange = self->engine.captureInterchange();
-        if (const auto outside = projectexport::firstMediaOutsideSession (interchange);
-            outside != juce::File())
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Handoff cancelled: a clip reads " + outside.getFullPathName()
-                              + ", which is outside this session and would not be in the copy");
-            return;
-        }
-        const auto version = applicationVersion();
-        // A crash or quit mid-copy must leave a visible incomplete marker,
-        // not a plausible-looking folder with a few truncated recordings.
-        const auto incomplete = dest.getChildFile ("HANDOFF INCOMPLETE.txt");
-        if (! atomicfile::writeText (incomplete,
-             "This show handoff was interrupted or failed. Do not deliver it as verified.\n"))
-        {
-            self->sessionJobs.release();
-            self->showStatus ("Could not create the handoff safety marker");
-            return;
-        }
+        self->completeShowHandoff (source, dest);
+    });
+}
 
-        self->engine.setSessionTransitionActive (true);
-        self->showStatus ("Creating handoff in background: " + dest.getFileName());
-        const bool watchReport = self->daemonModeActive();
-        self->sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version, watchReport]
-                                  (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
+void MainComponent::completeShowHandoff (const juce::File& source, const juce::File& dest)
+{
+    if (pathsafety::isSameOrDescendant (source, dest) || dest.isSymbolicLink())
+    {
+        sessionJobs.release();
+        showStatus ("Choose a new handoff folder outside the source session");
+        return;
+    }
+    if (dest.exists() && (! dest.isDirectory()
+                          || ! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty()))
+    {
+        sessionJobs.release();
+        showStatus ("Handoff needs a new or empty folder; nothing was overwritten");
+        return;
+    }
+    if (! dest.isDirectory() && dest.createDirectory().failed())
+    {
+        sessionJobs.release();
+        showStatus ("Could not create the handoff folder");
+        return;
+    }
+    if (saveSessionStateTo (source) || ! engine.mixerBelongsTo (source))
+    {
+        startHandoffCopy (source, dest);
+        return;
+    }
+    juce::Component::SafePointer<MainComponent> self (this);
+    offerContinueFromDisk ("The handoff",
+                           "The handoff is verified against the source, so unsaved changes will not be in it.",
+                           [self, source, dest] { if (self != nullptr) self->startHandoffCopy (source, dest); },
+                           [self]
+                           {
+                               if (self == nullptr) return;
+                               self->sessionJobs.release();
+                               self->showStatus ("Handoff cancelled: session metadata could not be saved");
+                           });
+}
+
+void MainComponent::startHandoffCopy (const juce::File& source, const juce::File& dest)
+{
+    const auto timelineCsv = buildTimelineCsv();
+    if (timelineCsv.isEmpty())
+    {
+        sessionJobs.release();
+        showStatus ("Handoff cancelled: session timeline is unavailable");
+        return;
+    }
+    const auto interchange = engine.captureInterchange();
+    if (const auto outside = projectexport::firstMediaOutsideSession (interchange);
+        outside != juce::File())
+    {
+        sessionJobs.release();
+        showStatus ("Handoff cancelled: a clip reads " + outside.getFullPathName()
+                    + ", which is outside this session and would not be in the copy");
+        return;
+    }
+    const auto version = applicationVersion();
+    // A crash or quit mid-copy must leave a visible incomplete marker,
+    // not a plausible-looking folder with a few truncated recordings.
+    const auto incomplete = dest.getChildFile ("HANDOFF INCOMPLETE.txt");
+    if (! atomicfile::writeText (incomplete,
+         "This show handoff was interrupted or failed. Do not deliver it as verified.\n"))
+    {
+        sessionJobs.release();
+        showStatus ("Could not create the handoff safety marker");
+        return;
+    }
+
+    engine.setSessionTransitionActive (true);
+    showStatus ("Creating handoff in background: " + dest.getFileName());
+    juce::Component::SafePointer<MainComponent> self (this);
+    const bool watchReport = daemonModeActive();
+    sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version, watchReport]
+                        (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
+    {
+        showhandoff::Result result;
+        // The report changing during verification reads as a damaged copy.
+        if (zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
+            && copyDirectoryCancellable (source, dest, cancel))
+            result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel,
+                [&] (const juce::File& copy, juce::String& warning)
+                { return projectexport::writeForHandoff (interchange, copy, version, cancel, warning); });
+        else
+            result = { false, "Copy cancelled or failed" };
+
+        if (result.ok && ! incomplete.deleteFile())
+            result = { false, "Could not remove the incomplete marker" };
+
+        if (! result.ok)
+            atomicfile::writeText (incomplete,
+                "This show handoff is incomplete: " + result.message + "\nDo not deliver it as verified.\n");
+        return [self, dest, result]
         {
-            showhandoff::Result result;
-            // The report changing during verification reads as a damaged copy.
-            if (zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
-                && copyDirectoryCancellable (source, dest, cancel))
-                result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel,
-                    [&] (const juce::File& copy, juce::String& warning)
-                    { return projectexport::writeForHandoff (interchange, copy, version, cancel, warning); });
+            if (self == nullptr) return;
+            self->engine.setSessionTransitionActive (false);
+            if (result.ok)
+                self->showStatus ((result.captureReportWarning
+                    ? "! Handoff copy verified; CAPTURE REPORT NEEDS REVIEW: "
+                    : "Verified handoff ready: ") + dest.getFullPathName());
             else
-                result = { false, "Copy cancelled or failed" };
-
-            if (result.ok && ! incomplete.deleteFile())
-                result = { false, "Could not remove the incomplete marker" };
-
-            if (! result.ok)
-                atomicfile::writeText (incomplete,
-                    "This show handoff is incomplete: " + result.message + "\nDo not deliver it as verified.\n");
-            return [self, dest, result]
-            {
-                if (self == nullptr) return;
-                self->engine.setSessionTransitionActive (false);
-                if (result.ok)
-                    self->showStatus ((result.captureReportWarning
-                        ? "! Handoff copy verified; CAPTURE REPORT NEEDS REVIEW: "
-                        : "Verified handoff ready: ") + dest.getFullPathName());
-                else
-                    self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
-                                      + " -- " + result.message);
-            };
-        });
+                self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
+                                  + " -- " + result.message);
+        };
     });
 }
 
@@ -1888,44 +2171,45 @@ void MainComponent::relocateActiveSession()
             if (chooserSelf == nullptr) return;
             const auto newParent = fc.getResult();
             if (! newParent.isDirectory()) { sessionJobs.release(); return; }
+            completeRelocate (oldDir, newParent);
+        });
+}
 
-            const auto newDir = newParent.getChildFile (oldDir.getFileName());
-            if (newDir == oldDir)
-            { sessionJobs.release(); showStatus ("That's already the session's location."); return; }
-            if (pathsafety::isSameOrDescendant (oldDir, newParent)
-                || pathsafety::isSameOrDescendant (oldDir, newDir))
-            {
-                sessionJobs.release();
-                showStatus ("Move failed -- the destination cannot be inside the session");
-                return;
-            }
-            if (newDir.exists())
-            {
-                sessionJobs.release();
-                showStatus ("A folder named \"" + oldDir.getFileName()
-                            + "\" already exists there -- pick another location.");
-                return;
-            }
+void MainComponent::completeRelocate (const juce::File& oldDir, const juce::File& newParent)
+{
+    const auto newDir = newParent.getChildFile (oldDir.getFileName());
+    if (newDir == oldDir)
+    { sessionJobs.release(); showStatus ("That's already the session's location."); return; }
+    if (pathsafety::isSameOrDescendant (oldDir, newParent)
+        || pathsafety::isSameOrDescendant (oldDir, newDir))
+    {
+        sessionJobs.release();
+        showStatus ("Move failed -- the destination cannot be inside the session");
+        return;
+    }
+    if (newDir.exists())
+    {
+        sessionJobs.release();
+        showStatus ("A folder named \"" + oldDir.getFileName()
+                    + "\" already exists there -- pick another location.");
+        return;
+    }
 
-            if (! saveSessionStateTo (oldDir))
-            {
-                sessionJobs.release();
-                showStatus ("Move failed -- couldn't save the current session");
-                return;
-            }
+    juce::Component::SafePointer<MainComponent> self (this);
+    auto moveSession = [self, oldDir, newParent, newDir] (bool carryEdits)
+    {
+        if (self == nullptr) return;
+        // Drop any open playback handles so the files aren't busy while
+        // we move them, then do the (possibly cross-volume) move off the
+        // message thread so a big session can't freeze the UI.
+        self->engine.stopPlayback();
+        self->engine.setSessionTransitionActive (true);
+        self->showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
 
-            // Drop any open playback handles so the files aren't busy while
-            // we move them, then do the (possibly cross-volume) move off the
-            // message thread so a big session can't freeze the UI.
-            engine.stopPlayback();
-            engine.setSessionTransitionActive (true);
-            showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
-
-            juce::Component::SafePointer<MainComponent> self (this);
-            const bool watchReport = daemonModeActive();
-            sessionJobs.launch ([self, oldDir, newDir, watchReport] (const std::atomic<bool>& cancel)
-                                -> zynforge::SessionJobRunner::Completion
-            {
+        const bool watchReport = self->daemonModeActive();
+        self->sessionJobs.launch ([self, oldDir, newDir, carryEdits, watchReport] (const std::atomic<bool>& cancel)
+                                  -> zynforge::SessionJobRunner::Completion
+        {
                 // The hash thread holds absolute paths into the old folder.
                 const bool hashed = zynforge::MultitrackRecorder::waitForReportHashes (oldDir, cancel, watchReport);
                 bool relocated = hashed && oldDir.moveFileTo (newDir);   // instant within a volume
@@ -1942,7 +2226,7 @@ void MainComponent::relocateActiveSession()
                         newDir.deleteRecursively();
                 }
 
-                return [self, relocated, oldCopyRemains, oldDir, newDir]
+                return [self, relocated, oldCopyRemains, oldDir, newDir, carryEdits]
                 {
                     if (self == nullptr) return;
                     self->engine.setSessionTransitionActive (false);
@@ -1951,6 +2235,7 @@ void MainComponent::relocateActiveSession()
                         self->showStatus ("Move failed -- check permissions / free space. Session left in place.");
                         return;
                     }
+                    const bool carried = ! carryEdits || self->carryMixerInto (newDir);
                     // The default sessions folder stays where it was: moving one
                     // session to an archive drive must not send every New
                     // Session, import and crash-recovery scan there too.
@@ -1958,10 +2243,21 @@ void MainComponent::relocateActiveSession()
                     self->showStatus (oldCopyRemains
                         ? "Session moved, but the old folder could not be fully removed: "
                             + oldDir.getFullPathName()
-                        : "Session moved to " + newDir.getFullPathName());
+                        : (carried ? "Session moved to " : "Session moved, without its unsaved changes, to ")
+                            + newDir.getFullPathName());
                 };
-            });
         });
+    };
+
+    if (saveSessionStateTo (oldDir) || ! engine.mixerBelongsTo (oldDir)) { moveSession (false); return; }
+    offerContinueFromDisk ("Move", "Your unsaved changes will be saved in the new location.",
+                           [moveSession] { moveSession (true); },
+                           [self]
+                           {
+                               if (self == nullptr) return;
+                               self->sessionJobs.release();
+                               self->showStatus ("Move cancelled -- the session was not moved");
+                           });
 }
 
 void MainComponent::onLoadSessionClicked()
@@ -1980,26 +2276,32 @@ void MainComponent::onLoadSessionClicked()
     {
         if (self == nullptr) return;
         const auto dir = fc.getResult();
-        if (! dir.isDirectory()) return;
-
-        // Canonical full open (pins the active dir, restores setlist/UI/mixer,
-        // loads audio, sizes the mixer incl. the no-session_mix.json fallback).
-        const int n = openSessionFolder (dir);
-        if (n <= 0)
-        {
-            const auto audioDir = dir.getChildFile ("Audio Files");
-            const auto scanDir = audioDir.isDirectory() ? audioDir : dir;
-            const bool hasMedia = ! scanDir.findChildFiles (
-                juce::File::findFiles, false,
-                "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
-            statusLabel.setText (hasMedia
-                ? "Session audio is unreadable. Existing files are protected; Record will append safely."
-                : "No Track_* audio found in folder",
-                juce::dontSendNotification);
-        }
-        playButton.setButtonText ("PLAY");
-        updateTransportLabels();
+        if (dir.isDirectory()) completeOpenFolder (dir);
     });
+}
+
+void MainComponent::completeOpenFolder (const juce::File& dir)
+{
+    // Canonical full open (pins the active dir, restores setlist/UI/mixer,
+    // loads audio, sizes the mixer incl. the no-session_mix.json fallback).
+    // A negative result means it did not open and has said why. The session
+    // that was open is still open, so a line about this folder's audio would
+    // be false. Nor does it apply to reopening the session already open.
+    const bool alreadyOpen = isSessionOpen (dir);
+    if (openSessionFolder (dir) == 0 && ! alreadyOpen)
+    {
+        const auto audioDir = dir.getChildFile ("Audio Files");
+        const auto scanDir = audioDir.isDirectory() ? audioDir : dir;
+        const bool hasMedia = ! scanDir.findChildFiles (
+            juce::File::findFiles, false,
+            "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
+        statusLabel.setText (hasMedia
+            ? "Session audio is unreadable. Existing files are protected; Record will append safely."
+            : "No Track_* audio found in folder",
+            juce::dontSendNotification);
+    }
+    playButton.setButtonText ("PLAY");
+    updateTransportLabels();
 }
 
 juce::File MainComponent::getSessionsRoot() const
@@ -2184,11 +2486,8 @@ juce::File MainComponent::getDefaultTemplate() const
 
 void MainComponent::setDefaultTemplate (const juce::File& templateFile)
 {
-    if (auto* props = engine.getAppProps())
-    {
-        props->setValue ("defaultTemplateFile", templateFile.getFullPathName());
-        props->saveIfNeeded();
-    }
+    zynforge::updateSettings (engine.getAppProps(), [&templateFile] (juce::PropertiesFile& props)
+                              { props.setValue ("defaultTemplateFile", templateFile.getFullPathName()); });
     showStatus (templateFile == juce::File{}
                   ? juce::String ("Default template cleared")
                   : "Default template -> " + templateFile.getFileNameWithoutExtension());
@@ -2227,8 +2526,10 @@ juce::File MainComponent::makeNewSessionDir() const
         const auto saved = props->getValue ("activeSessionDir", {});
         if (saved.isNotEmpty())
         {
+            // A folder pinned but never loaded has its own mixer on disk, and
+            // this take must neither join those tracks nor replace that mixer.
             juce::File f (saved);
-            if (f.isDirectory() || f.createDirectory().wasOk())
+            if (engine.mixerBelongsTo (f) && (f.isDirectory() || f.createDirectory().wasOk()))
                 return f;
         }
     }
@@ -2309,6 +2610,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     engine.clearSessionState();
     forgetSessionUiState();
     engine.clearAllStripOverrides();
+    engine.claimMixerFor (sessionFolder);
     clickTrackIndex = -1;
     // The previous session's undo steps would apply to this one's files and
     // strips. Retake the mixer baseline on the next idle tick, after the

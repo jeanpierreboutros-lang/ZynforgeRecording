@@ -238,6 +238,7 @@ bool MainComponent::saveSetlistToActiveSession (bool writeBackup) const
     zynforge::SessionMetadataSnapshot snapshot;
     snapshot.directory = engine.getActiveSessionDir();
     snapshot.projectPatchJson = captureProjectPatchJson();
+    snapshot.mixerOwner = engine.getMixerSession();
     snapshot.backup = writeBackup;
     return zynforge::writeSessionMetadata (snapshot).ok;
 }

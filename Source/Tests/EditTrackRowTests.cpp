@@ -216,6 +216,7 @@ namespace zynforge
                     if (lengths[i] > 0)
                         writeWav (take ((int) i + 1), lengths[i]);
                 engine.setActiveSessionDir (dir);
+                engine.claimMixerFor (dir);
                 engine.loadSession (dir);
                 engine.setStripCount (strips);
             }
@@ -694,6 +695,7 @@ namespace zynforge
                     auto& recorder = engine.getRecorder();
                     recorder.getTrack (0).armed.store (true);
                     engine.setActiveSessionDir (dir);   // a session is open before the take, as in the app
+                    engine.claimMixerFor (dir);
 
                     EditPage page (engine);
                     page.setBounds (0, 0, 1400, 300);

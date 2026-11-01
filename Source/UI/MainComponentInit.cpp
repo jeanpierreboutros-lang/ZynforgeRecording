@@ -34,6 +34,8 @@ MainComponent::MainComponent()
     wireConsoleLink();
     engine.onTakeInterrupted = [this] (bool) { localTakeInterrupted(); };
     engine.onMarkerDropped = [this] (const juce::String& name) { twinLink.noteLocalMarker (name); };
+    engine.getMarkers().onDamagedFileKept = [this] (const juce::File& kept)
+    { toast.show ("markers.json was damaged and is kept as " + kept.getFileName(), Toast::Kind::Warning); };
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {
@@ -265,11 +267,8 @@ MainComponent::MainComponent()
     gridButton.onClick = [this]
     {
         mixerGridView = ! mixerGridView;
-        if (auto* props = engine.getAppProps())
-        {
-            props->setValue ("mixerGridView", mixerGridView);
-            props->saveIfNeeded();
-        }
+        zynforge::updateSettings (engine.getAppProps(), [this] (juce::PropertiesFile& props)
+                                  { props.setValue ("mixerGridView", mixerGridView); });
         lastTrackCount = -1;   // force a strip relayout on the next tick
         resized();
     };
@@ -850,11 +849,8 @@ MainComponent::MainComponent()
             if (self->explicitDocumentOpened) return;
             if (firstRun)
             {
-                if (auto* p = self->engine.getAppProps())
-                {
-                    p->setValue ("tutorialShown", true);
-                    p->saveIfNeeded();
-                }
+                zynforge::updateSettings (self->engine.getAppProps(), [] (juce::PropertiesFile& p)
+                                          { p.setValue ("tutorialShown", true); });
                 // Modal dialogs stack rather than queue, so Welcome waits for the tour.
                 self->showFirstRunTutorial ([self] { if (self != nullptr) self->showStartupWelcome(); });
             }
@@ -884,6 +880,7 @@ MainComponent::~MainComponent()
     engine.getRemotes().setHost ({});
     engine.onMarkerDropped = nullptr;
     engine.onTakeInterrupted = nullptr;
+    engine.getMarkers().onDamagedFileKept = nullptr;
     zynforge::AudioDeviceDialog::closeSelfOwned();
     delete twinDialog.getComponent();
     twinLink.stop();
@@ -910,14 +907,13 @@ void MainComponent::setStripWidthPreset (StripWidth p)
 {
     if (p == stripWidthPreset) return;
     stripWidthPreset = p;
-    if (auto* props = engine.getAppProps())
+    zynforge::updateSettings (engine.getAppProps(), [p] (juce::PropertiesFile& props)
     {
         const auto code = (p == StripWidth::XS) ? "XS"
                         : (p == StripWidth::S)  ? "S"
                         : (p == StripWidth::L)  ? "L" : "M";
-        props->setValue ("stripWidthPreset", code);
-        props->saveIfNeeded();
-    }
+        props.setValue ("stripWidthPreset", code);
+    });
     // Reflect the active preset in the button toggle visuals + relayout
     // the strip viewport so the engineer sees the new density right away.
     stripXsButton.setToggleState (p == StripWidth::XS, juce::dontSendNotification);
@@ -1210,7 +1206,9 @@ void MainComponent::rebuildStrips()
             condemnAllStrips();
             const bool ok = engine.reorderTracks (order);
             lastTrackCount = -1;
-            showStatus (ok ? "Strip removed; audio retained in Removed Tracks" : "Could not remove strip safely");
+            showStatus (ok ? "Strip removed; audio retained in Removed Tracks"
+                        : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
+                        : "Could not remove strip safely");
         };
         auto addCb        = [this] { if (! sessionLocked) engine.addOneStrip(); };
         auto linkStereoCb = [this, i]

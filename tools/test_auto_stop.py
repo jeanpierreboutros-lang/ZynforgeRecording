@@ -49,11 +49,18 @@ if "-X" in sys.argv:
         result = {"ok": True}
 else:
     counts["state"] += 1
-    result = {"recording": counts["stop"] < 2, "sessionPath": str(root / "session"),
+    recording = counts["stop"] < 2
+    # AudioEngine::captureStatus names the session only while a take rolls.
+    # A daemon's status keeps naming it after the take stops.
+    keeps_path = mode == "daemon_status"
+    result = {"recording": recording,
+              "sessionPath": str(root / "session") if recording or keeps_path else "",
               "sampleRate": 48000, "elapsedSamples": 48000000}
     if mode == "changed" and counts["stop"] > 0:
         result["sessionPath"] = str(root / "different-session")
         result["recording"] = True
+    if mode == "changed_idle" and counts["stop"] > 1:
+        result["sessionPath"] = str(root / "different-session")
 counter.write_text(json.dumps(counts))
 print(json.dumps(result))
 ''',
@@ -75,9 +82,26 @@ print(json.dumps(result))
             log = (root / "zynforge_autostop.log").read_text()
             return completed.returncode, counts, persisted_token, log
 
+    def test_a_normal_stop_is_confirmed(self):
+        status, counts, _, log = self.probe("success")
+        self.assertEqual(status, 0, log)
+        self.assertIn("confirmed stopped:", log)
+        self.assertEqual(counts["stop"], 2, "an idle status must not read as a changed session")
+
+    def test_a_daemon_status_that_keeps_the_session_is_confirmed(self):
+        status, _, _, log = self.probe("daemon_status")
+        self.assertEqual(status, 0, log)
+        self.assertIn("confirmed stopped:", log)
+
+    def test_an_idle_status_naming_another_session_is_not_confirmed(self):
+        status, _, _, log = self.probe("changed_idle")
+        self.assertNotEqual(status, 0, log)
+        self.assertNotIn("confirmed stopped:", log)
+
     def test_waits_for_successful_finalization_acknowledgement(self):
         status, counts, _, log = self.probe("late_success")
         self.assertEqual(status, 0, log)
+        self.assertIn("confirmed stopped:", log)
         self.assertGreaterEqual(counts["stop"], 7, "exited on recording:false while finalization was pending")
 
     def test_finalization_failure_cannot_exit_successfully(self):

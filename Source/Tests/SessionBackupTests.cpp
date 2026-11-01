@@ -62,11 +62,13 @@ namespace zynforge
                 expect (unrelated.createDirectory().wasOk());
 
                 for (int i = 0; i < 14; ++i)
+                {
+                    session.getChildFile ("session_mix.json").replaceWithText (juce::String (i));
                     sessionbackup::writeSnapshot (session, 10);   // keep 10
+                }
 
                 int snapshotCount = 0;
-                for (const auto& folder : backupsDir.findChildFiles (juce::File::findDirectories, false, "Show_2*"))
-                    ++snapshotCount;
+                snapshotCount = backupsDir.getNumberOfChildFiles (juce::File::findDirectories, "Show_2*");
                 expectEquals (snapshotCount, 10, "pruning did not cap snapshots at 10");
                 expectEquals (journal.getChildFile ("recovery.json").loadFileAsString(),
                               juce::String ("keep me"), "backup pruning deleted a reorder journal");

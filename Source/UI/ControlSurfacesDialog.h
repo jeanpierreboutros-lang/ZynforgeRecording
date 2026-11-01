@@ -206,8 +206,9 @@ namespace zynforge
                     createB.onClick = [this]
                     {
                         persist();
-                        if (auto* p = engine.getAppProps())   // tell the host which console to pull from
-                        { p->setValue ("cs_console_dialect", info.dialect); p->setValue ("cs_console_key", info.key); p->saveIfNeeded(); }
+                        // Tell the host which console to pull from.
+                        updateSettings (engine.getAppProps(), [&] (juce::PropertiesFile& p)
+                        { p.setValue ("cs_console_dialect", info.dialect); p.setValue ("cs_console_key", info.key); });
                         if (onCreateFromConsole) onCreateFromConsole();
                         if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0);
                     };
@@ -291,16 +292,15 @@ namespace zynforge
 
             void persist()
             {
-                if (auto* p = engine.getAppProps())
+                updateSettings (engine.getAppProps(), [&] (juce::PropertiesFile& p)
                 {
-                    p->setValue ("oscListenPort", juce::jlimit (1, 65535, portEd.getText().getIntValue()));
+                    p.setValue ("oscListenPort", juce::jlimit (1, 65535, portEd.getText().getIntValue()));
                     if (digico)
                     {
-                        p->setValue (ipPropKey(),   ipEd.getText().trim());
-                        p->setValue (portPropKey(), juce::jlimit (1, 65535, rxEd.getText().getIntValue()));
+                        p.setValue (ipPropKey(),   ipEd.getText().trim());
+                        p.setValue (portPropKey(), juce::jlimit (1, 65535, rxEd.getText().getIntValue()));
                     }
-                    p->saveIfNeeded();
-                }
+                });
             }
             void rebind()
             {
@@ -410,13 +410,12 @@ namespace zynforge
 
             void save()
             {
-                if (auto* p = engine.getAppProps())
+                updateSettings (engine.getAppProps(), [&] (juce::PropertiesFile& p)
                 {
-                    p->setValue (juce::String ("cs_") + info.key + "_type", typeBox.getSelectedId());
-                    p->setValue (juce::String ("cs_") + info.key + "_midiin",  inBox.getSelectedId()  > 1 ? inBox.getText()  : juce::String());
-                    p->setValue (juce::String ("cs_") + info.key + "_midiout", outBox.getSelectedId() > 1 ? outBox.getText() : juce::String());
-                    p->saveIfNeeded();
-                }
+                    p.setValue (juce::String ("cs_") + info.key + "_type", typeBox.getSelectedId());
+                    p.setValue (juce::String ("cs_") + info.key + "_midiin",  inBox.getSelectedId()  > 1 ? inBox.getText()  : juce::String());
+                    p.setValue (juce::String ("cs_") + info.key + "_midiout", outBox.getSelectedId() > 1 ? outBox.getText() : juce::String());
+                });
                 if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0);
             }
 
