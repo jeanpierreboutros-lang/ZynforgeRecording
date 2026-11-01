@@ -125,6 +125,37 @@ namespace
         bool      afterCaptured { false };
     };
 
+    // The tempo map before and after a lane edit. `changed` runs after every
+    // undo and redo, so a click track rendered from the map follows it.
+    struct TempoSnapshotAction final : public juce::UndoableAction
+    {
+        using Map = std::vector<zynforge::AudioEngine::TempoChange>;
+
+        TempoSnapshotAction (zynforge::AudioEngine& e, Map beforeIn, Map afterIn,
+                             std::function<void()> onChange)
+            : eng (e), before (std::move (beforeIn)), after (std::move (afterIn)),
+              changed (std::move (onChange)) {}
+
+        bool perform() override
+        {
+            if (firstRun) { firstRun = false; return true; }   // already applied
+            eng.setTempoMap (after);
+            changed();
+            return true;
+        }
+        bool undo() override
+        {
+            eng.setTempoMap (before);
+            changed();
+            return true;
+        }
+
+        zynforge::AudioEngine& eng;
+        Map before, after;
+        std::function<void()> changed;
+        bool firstRun { true };
+    };
+
     // Clip / playlist undo. The edit has ALREADY happened by the time we
     // push this (the caller captured 'before' first), so perform() is a
     // no-op on first run and re-applies 'after' on redo. undo() restores
@@ -658,6 +689,25 @@ void MainComponent::runAutomationEdit (const juce::String& label,
 
     undoManager.beginNewTransaction (label);
     undoManager.perform (new AutomationSnapshotAction (engine, before, after));
+    if (editPage != nullptr) editPage->repaint();
+}
+
+void MainComponent::runTempoEdit (const juce::String& label, std::function<void()> mutate)
+{
+    if (! canMutateTimeline()) return;
+    const auto before = engine.getTempoMap();
+    mutate();
+    const auto after = engine.getTempoMap();
+    const bool same = before.size() == after.size()
+        && std::equal (before.begin(), before.end(), after.begin(), [] (const auto& a, const auto& b)
+                       { return a.samplePos == b.samplePos && a.bpm == b.bpm; });
+    if (same) return;
+
+    // The timer renders it once nothing owns the session.
+    const auto refreshClick = [this] { if (clickTrackIndex >= 0) clickRefreshPending = true; };
+    refreshClick();
+    undoManager.beginNewTransaction (label);
+    undoManager.perform (new TempoSnapshotAction (engine, before, after, refreshClick));
     if (editPage != nullptr) editPage->repaint();
 }
 

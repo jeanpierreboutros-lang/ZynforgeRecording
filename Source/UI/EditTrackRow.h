@@ -266,25 +266,29 @@ namespace zynforge
             monButton .setTooltip ("I -- input monitor (green when on); meter reflects live input even when not recording");
             muteButton.setTooltip ("M -- mute the track's playback output (orange when on)");
             soloButton.setTooltip ("S -- solo the track; other unmuted tracks drop out (yellow when on)");
+            // Each toggle reaches the stereo partner and the edit group, as the
+            // same button does on the MIXER strip.
             armButton .onClick = [this]
             {
-                engine.setTrackArmed (index, armButton.getToggleState());
+                for (int t : editGroupPeers())
+                    engine.setTrackArmed (t, armButton.getToggleState());
                 armButton.setToggleState (engine.getRecorder().getTrack (index).armed.load(), juce::dontSendNotification);
             };
             monButton.onClick = [this]
             {
-                engine.getRecorder().getTrack (index).monitor.store (monButton.getToggleState());
-                if (stereo) engine.getRecorder().getTrack (index + 1).monitor.store (monButton.getToggleState());
+                for (int t : editGroupPeers())
+                    if (t < engine.getRecorder().getNumTracks())
+                        engine.getRecorder().getTrack (t).monitor.store (monButton.getToggleState());
             };
             muteButton.onClick = [this]
             {
-                engine.getRecorder().getTrack (index).muted.store (muteButton.getToggleState());
-                if (stereo) engine.getRecorder().getTrack (index + 1).muted.store (muteButton.getToggleState());
+                for (int t : editGroupPeers())
+                    engine.setTrackMuted (t, muteButton.getToggleState());
             };
             soloButton.onClick = [this]
             {
-                engine.getRecorder().getTrack (index).soloed.store (soloButton.getToggleState());
-                if (stereo) engine.getRecorder().getTrack (index + 1).soloed.store (soloButton.getToggleState());
+                for (int t : editGroupPeers())
+                    engine.setTrackSoloed (t, soloButton.getToggleState());
             };
             addAndMakeVisible (armButton);
             addAndMakeVisible (monButton);
@@ -2883,13 +2887,25 @@ namespace zynforge
                     const float bpm = juce::jlimit (40.0f, 240.0f,
                                                     40.0f + (1.0f - yProp) * 200.0f);
 
+                    // Through the host when there is one: undo, and a click
+                    // track rendered from this map follows it.
+                    auto tempoEdit = [this] (const char* label, std::function<void()> fn)
+                    {
+                        auto* page = findParentComponentOfClass<EditPage>();
+                        if (page != nullptr && page->tempoEditWrapper)
+                            page->tempoEditWrapper (label, std::move (fn));
+                        else
+                            fn();
+                    };
                     switch (toolbar->getTool())
                     {
                         case AutomationToolbar::Tool::AddPoint:
-                            engine.addTempoChange (coord.samplePos, bpm);
+                            tempoEdit ("Add tempo point",
+                                       [this, coord, bpm] { engine.addTempoChange (coord.samplePos, bpm); });
                             break;
                         case AutomationToolbar::Tool::DeletePoint:
-                            engine.removeTempoChangeNear (coord.samplePos, tol);
+                            tempoEdit ("Delete tempo point",
+                                       [this, coord, tol] { engine.removeTempoChangeNear (coord.samplePos, tol); });
                             break;
                         case AutomationToolbar::Tool::Select:
                             // Tempo drag isn't wired yet -- Select on
@@ -3507,6 +3523,7 @@ namespace zynforge
         // the menu actions without a popup (test seam).
         void applyClipMenuChoice (int clipIdx, int chosen)
         {
+            if (! timelineEditAllowed()) return;
             const auto* rowClips = engine.tryClipsFor (index);
             if (rowClips == nullptr || clipIdx < 0 || clipIdx >= (int) rowClips->size()) return;
             const auto& clip = (*rowClips)[(size_t) clipIdx];
@@ -3529,13 +3546,7 @@ namespace zynforge
             // guard in pushClipUndo drops no-ops (e.g. selecting the
             // gain the clip already has).
             auto withUndo = [self] (const juce::String& label, auto&& op)
-            {
-                auto* page = self->findParentComponentOfClass<EditPage>();
-                if (page != nullptr) page->beginClipEdit();
-                op();
-                if (page != nullptr) page->commitClipEdit (label);
-                self->repaint();
-            };
+            { self->clipUndoStep (label, op); };
 
             switch (chosen)
             {
@@ -3616,7 +3627,7 @@ namespace zynforge
                         [aw, rowSafe, clipIdx] (int r)
                     {
                         std::unique_ptr<juce::AlertWindow> own (aw);
-                        if (r != 1 || rowSafe == nullptr) return;
+                        if (r != 1 || rowSafe == nullptr || ! rowSafe->timelineEditAllowed()) return;
                         const auto nm = own->getTextEditorContents ("name").trim();
                         if (nm.isEmpty()) return;
                         auto* page = rowSafe->findParentComponentOfClass<EditPage>();
@@ -3652,7 +3663,7 @@ namespace zynforge
                         [aw, rowSafe, clipIdx] (int r)
                     {
                         std::unique_ptr<juce::AlertWindow> own (aw);
-                        if (r != 1 || rowSafe == nullptr) return;
+                        if (r != 1 || rowSafe == nullptr || ! rowSafe->timelineEditAllowed()) return;
                         const auto txt = own->getTextEditorContents ("dB");
                         const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
                         auto* page = rowSafe->findParentComponentOfClass<EditPage>();
@@ -4226,8 +4237,46 @@ namespace zynforge
                     return;
                 }
 
-                row->applyTakeMenuChoice (chosen);
+                if (chosen == 852) row->confirmDeleteActiveTake();
+                else               row->applyTakeMenuChoice (chosen);
             });
+        }
+
+        // A take can hold a whole comp, so losing one takes a second press.
+        void confirmDeleteActiveTake()
+        {
+            juce::Component::SafePointer<TrackRow> self (this);
+            juce::AlertWindow::showAsync (
+                juce::MessageBoxOptions()
+                    .withIconType (juce::MessageBoxIconType::WarningIcon)
+                    .withTitle ("Delete take?")
+                    .withMessage ("Delete \"" + engine.getTakeName (index, engine.getActiveTakeIdx (index))
+                                  + "\" and its edits?\n\nThe recorded files stay on disk, and Cmd+Z restores it.")
+                    .withButton ("Delete")
+                    .withButton ("Cancel"),
+                // The first of two buttons returns 1.
+                [self] (int result)
+                { if (result == 1 && self != nullptr) self->applyTakeMenuChoice (852); });
+        }
+
+        // One Cmd+Z step around an arrangement edit (no-op edits record none).
+        template <typename Op>
+        void clipUndoStep (const juce::String& label, Op&& op)
+        {
+            auto* page = findParentComponentOfClass<EditPage>();
+            if (page != nullptr) page->beginClipEdit();
+            op();
+            if (page != nullptr) page->commitClipEdit (label);
+            repaint();
+        }
+
+        // Asked again when a menu or dialog that was already open finally
+        // acts: the lock stops new gestures, not one a take caught open.
+        bool timelineEditAllowed() const
+        {
+            if (auto* page = findParentComponentOfClass<EditPage>())
+                return page->canEditTimeline();
+            return ! engine.isArrangementFrozen();
         }
 
     public:
@@ -4239,70 +4288,79 @@ namespace zynforge
         // arrangement.
         void applyTakeMenuChoice (int chosen)
         {
-            auto* row = this;
+            if (chosen == 860)   // toggle comp lanes (a view, not an edit)
+            {
+                showCompLanes = ! showCompLanes;
+                repaint();
+                return;
+            }
+            if (! timelineEditAllowed()) return;
+
             // Take pick -- 800..829.
             if (chosen >= 800 && chosen < 830)
             {
-                for (int t : row->stripTracks())
-                    row->engine.setActiveTake (t, chosen - 800);
-                row->repaint();
+                clipUndoStep ("Switch take", [&]
+                {
+                    for (int t : stripTracks())
+                        engine.setActiveTake (t, chosen - 800);
+                });
                 return;
             }
             // Comp selection from take -- 870..899.
             if (chosen >= 870 && chosen < 900)
             {
-                auto& player = row->engine.getPlayer();
+                auto& player = engine.getPlayer();
                 if (! player.hasLoopRegion()) return;
-                auto* page = row->findParentComponentOfClass<EditPage>();
-                if (page != nullptr) page->beginClipEdit();
-                for (int t : row->stripTracks())
-                    row->engine.compRangeFromTake (t, chosen - 870,
-                                                   player.getLoopStart(), player.getLoopEnd());
-                if (page != nullptr) page->commitClipEdit ("Comp selection from take");
-                row->repaint();
+                clipUndoStep ("Comp selection from take", [&]
+                {
+                    for (int t : stripTracks())
+                        engine.compRangeFromTake (t, chosen - 870,
+                                                  player.getLoopStart(), player.getLoopEnd());
+                });
                 return;
             }
             if (chosen == 850)   // new take from current
             {
-                for (int t : row->stripTracks())
-                    row->engine.newTakeFromCurrent (t, {});
-                row->repaint();
-                return;
-            }
-            if (chosen == 860)   // toggle comp lanes
-            {
-                row->showCompLanes = ! row->showCompLanes;
-                row->repaint();
+                clipUndoStep ("New take", [&]
+                {
+                    for (int t : stripTracks())
+                        engine.newTakeFromCurrent (t, {});
+                });
                 return;
             }
             if (chosen == 851)   // rename active take
             {
-                const int active = row->engine.getActiveTakeIdx (row->index);
-                const auto cur   = row->engine.getTakeName (row->index, active);
+                const int active = engine.getActiveTakeIdx (index);
+                const auto cur   = engine.getTakeName (index, active);
                 auto* aw = new juce::AlertWindow ("Rename take",
                     "Take name:", juce::MessageBoxIconType::NoIcon);
-                aw->setLookAndFeel (&row->getLookAndFeel());   // grey ZynForge chrome
+                aw->setLookAndFeel (&getLookAndFeel());   // grey ZynForge chrome
                 aw->addTextEditor ("n", cur, {});
                 dialog::primeNameEditor (*aw, "n");
                 aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                 aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                juce::Component::SafePointer<TrackRow> rs (row);
+                juce::Component::SafePointer<TrackRow> rs (this);
                 aw->enterModalState (true, juce::ModalCallbackFunction::create (
                     [aw, rs, active] (int r)
                 {
                     std::unique_ptr<juce::AlertWindow> own (aw);
-                    if (r != 1 || rs == nullptr) return;
-                    for (int t : rs->stripTracks())
-                        rs->engine.renameTake (t, active, own->getTextEditorContents ("n").trim());
-                    rs->repaint();
+                    if (r != 1 || rs == nullptr || ! rs->timelineEditAllowed()) return;
+                    const auto name = own->getTextEditorContents ("n").trim();
+                    rs->clipUndoStep ("Rename take", [&]
+                    {
+                        for (int t : rs->stripTracks())
+                            rs->engine.renameTake (t, active, name);
+                    });
                 }));
                 return;
             }
             if (chosen == 852)   // delete active take
             {
-                for (int t : row->stripTracks())
-                    row->engine.deleteTake (t, row->engine.getActiveTakeIdx (t));
-                row->repaint();
+                clipUndoStep ("Delete take", [&]
+                {
+                    for (int t : stripTracks())
+                        engine.deleteTake (t, engine.getActiveTakeIdx (t));
+                });
                 return;
             }
         }

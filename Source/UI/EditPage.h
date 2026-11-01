@@ -121,6 +121,17 @@ namespace zynforge
             clipUndoBefore = juce::var();
         }
 
+        // The host's timeline guard (capture, session jobs, LOCK), which says
+        // why on the status line. Anything that acts after a menu or dialog
+        // was already open asks here at that moment.
+        std::function<bool()> canMutateTimeline;
+        bool canEditTimeline() const
+        { return (! canMutateTimeline || canMutateTimeline()) && ! readOnlyWhileRecording; }
+
+        // Tempo-lane edits go through this so they join Cmd+Z and refresh a
+        // generated click track, as a change on the TempoBar does.
+        std::function<void (const juce::String&, std::function<void()>)> tempoEditWrapper;
+
         // Memory-Location recall hooks. setLogicalRowsVisible takes a
         // list of logical strip indices to show (empty = show all).
         // scrollToSample centres the horizontal viewport on a sample

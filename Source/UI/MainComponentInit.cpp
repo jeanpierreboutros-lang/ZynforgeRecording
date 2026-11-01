@@ -674,6 +674,11 @@ MainComponent::MainComponent()
         {
             runAutomationEdit (label, std::move (fn));
         });
+    editPage->canMutateTimeline = [this] { return canMutateTimeline(); };
+    editPage->tempoEditWrapper = [this] (const juce::String& label, std::function<void()> fn)
+    {
+        runTempoEdit (label, std::move (fn));
+    };
     editPage->setAutomationDragHooks (
         [this] { beginAutomationTransaction(); },
         [this] (const juce::String& label) { endAutomationTransaction (label); });

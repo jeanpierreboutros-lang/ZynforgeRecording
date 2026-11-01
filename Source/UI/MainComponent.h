@@ -335,6 +335,8 @@ private:
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
+    // One undo step around a tempo-map edit; a generated click follows it.
+    void runTempoEdit (const juce::String& label, std::function<void()> mutate);
     // Test seam: receives what either delete prompt would run on "Delete".
     std::function<void (std::function<void()>)> confirmForTests;
 

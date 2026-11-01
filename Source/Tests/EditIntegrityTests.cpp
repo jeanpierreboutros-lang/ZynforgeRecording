@@ -126,6 +126,13 @@ namespace zynforge
             c.mouseUp (mouseAt (c, to, from, true));
         }
 
+        static void pressButton (juce::Component& parent, const juce::String& text)
+        {
+            for (auto* child : parent.getChildren())
+                if (auto* b = dynamic_cast<juce::Button*> (child); b != nullptr && b->getButtonText() == text)
+                    if (b->onClick) b->onClick();
+        }
+
         static std::vector<EditPage::TrackRow*> rowsOf (EditPage& page)
         {
             std::vector<EditPage::TrackRow*> rows;
@@ -690,6 +697,148 @@ namespace zynforge
                 if (rows.size() == 1)
                     expect (pumpUntil ([&] { return rows[0]->getWaveformSecondsForTests() > 0.0; }, 5000),
                             "the row never picked up its waveform after the cache loaded");
+            }
+
+            beginTest ("Take actions are undo steps in the order they happened");
+            {
+                Show s (2, { 48000, 48000 });
+                s.engine.setTrackStereo (0, true);
+                s.page().refresh();
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 1, "setup: one stereo row");
+                if (rows.size() == 1)
+                {
+                    auto& row = *rows[0];
+                    const int takes = s.engine.getTakeCount (0);
+                    s.main.undoManager.clearUndoHistory();
+
+                    row.applyTakeMenuChoice (850);   // new take
+                    expectEquals (s.engine.getTakeCount (0), takes + 1);
+                    s.splitBoth (0, 1, 24000);
+
+                    row.applyTakeMenuChoice (800);   // back to the first
+                    expectEquals (s.engine.getActiveTakeIdx (0), 0);
+                    s.main.editUndo();
+                    expectEquals (s.engine.getActiveTakeIdx (0), takes, "undo must undo the switch");
+                    expectEquals (s.engine.getActiveTakeIdx (1), takes, "R must switch back too");
+
+                    row.applyTakeMenuChoice (852);   // delete the active take, a whole comp
+                    expectEquals (s.engine.getTakeCount (0), takes);
+                    s.main.editUndo();
+                    expectEquals (s.engine.getTakeCount (0), takes + 1, "Cmd+Z must bring a deleted take back");
+                    expectEquals ((int) s.clips (0).size(), 2, "and the edits on it");
+
+                    s.main.editUndo();               // the new take itself
+                    expectEquals (s.engine.getTakeCount (0), takes, "a new take is a step of its own");
+                }
+            }
+
+            beginTest ("Tempo lane edits are undoable and a generated click follows them");
+            {
+                Show s (2, { 48000, 48000 });
+                s.engine.clearTempoMap();
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 2, "setup: two rows");
+                if (rows.size() == 2)
+                {
+                    auto& row = *rows[0];
+                    row.laneMode = Lane::Tempo;
+                    pressButton (*s.main.automationToolbar, "+ Point");
+                    s.main.clickTrackIndex = 1;
+                    s.main.clickRefreshPending = false;
+                    s.main.undoManager.clearUndoHistory();
+
+                    click (row, { row.getHeaderWidth() + 200, 40 });
+                    expectEquals ((int) s.engine.getTempoMap().size(), 1, "setup: the point landed");
+                    expect (s.main.clickRefreshPending, "the click must follow a lane edit");
+
+                    s.main.clickRefreshPending = false;
+                    s.main.editUndo();
+                    expect (s.engine.getTempoMap().empty(), "the tempo edit never reached undo");
+                    expect (s.main.clickRefreshPending, "the click must follow the undo");
+                    s.main.editRedo();
+                    expectEquals ((int) s.engine.getTempoMap().size(), 1);
+
+                    s.main.clickTrackIndex = -1;
+                    s.main.clickRefreshPending = false;
+                    pressButton (*s.main.automationToolbar, "Select");
+                }
+                s.engine.clearTempoMap();
+            }
+
+            beginTest ("A clip or take action left open cannot change a rolling take's arrangement");
+            {
+                Show s (3, { 48000, 48000 });     // strip 3 has no take yet, so it can record
+                s.engine.setTrackStereo (0, true);
+                s.splitBoth (0, 1, 24000);
+                s.page().refresh();
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 2, "setup: a stereo row and a mono row");
+                if (rows.size() == 2)
+                {
+                    auto& row = *rows[0];
+                    const int takes = s.engine.getTakeCount (0);
+                    s.main.undoManager.clearUndoHistory();
+
+                    s.engine.setTrackArmed (2, true);
+                    expect (s.engine.startRecording (s.dir), "setup: the take rolls");
+                    for (int choice : { 400, 401, 410, 411, 105, 505 })
+                        row.applyClipMenuChoice (0, choice);
+                    row.applyTakeMenuChoice (850);
+                    row.applyTakeMenuChoice (852);
+                    expect (! s.engine.setClipMuted (0, 0, true), "the engine setters must refuse too");
+                    expect (! s.engine.deleteClip (0, 0));
+                    expect (! s.engine.setClipGainDb (0, 0, -6.0f));
+                    expect (! s.engine.setClipFades (0, 0, 100, 0));
+                    expect (! s.engine.editClip (0, 0, AudioEngine::ClipEdit::Move, 100));
+                    expectEquals (s.engine.pasteClip (0, 0, 0, 100, 0, 0, 0.0f, "p", {}, -1, 0), -1);
+                    s.engine.stopRecording();
+
+                    // The take grew the lists; the refused edits must not show.
+                    expect (! s.clips (0).empty() && ! s.clips (0)[0].muted && ! s.clips (0)[0].locked,
+                            "the open menu changed a clip during the take");
+                    expectEquals (s.engine.getTakeCount (0), takes, "the take menu changed the takes during the take");
+                    expect (! s.main.undoManager.canUndo(), "a step was pushed during the take");
+                }
+            }
+
+            beginTest ("EDIT R, I, M and S reach the edit group as they do on the MIXER");
+            {
+                Show s (4, { 48000, 48000, 48000 });
+                s.engine.setTrackStereo (0, true);
+                s.engine.setTrackEditGroup (0, 0);
+                s.engine.setTrackEditGroup (1, 0);
+                s.engine.setTrackEditGroup (2, 0);
+                s.page().refresh();
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 3, "setup: three rows");
+                if (rows.size() == 3)
+                {
+                    auto& row = *rows[0];
+                    auto press = [&row] (const juce::String& text, bool on)
+                    {
+                        for (auto* child : row.getChildren())
+                            if (auto* b = dynamic_cast<juce::ToggleButton*> (child);
+                                b != nullptr && b->getButtonText() == text)
+                                b->setToggleState (on, juce::sendNotificationSync);
+                    };
+                    auto& rec = s.engine.getRecorder();
+                    press ("M", true);
+                    for (int t : { 0, 1, 2 }) expect (rec.getTrack (t).muted.load(), "M missed track " + juce::String (t));
+                    expect (! rec.getTrack (3).muted.load(), "M reached a strip outside the group");
+                    press ("M", false);
+                    expect (! rec.getTrack (2).muted.load(), "the group must follow M off");
+
+                    press ("S", true);
+                    for (int t : { 0, 1, 2 }) expect (rec.getTrack (t).soloed.load(), "S missed track " + juce::String (t));
+                    press ("S", false);
+                    press ("I", true);
+                    for (int t : { 0, 1, 2 }) expect (rec.getTrack (t).monitor.load(), "I missed track " + juce::String (t));
+                    press ("I", false);
+                    press ("R", true);
+                    for (int t : { 0, 1, 2 }) expect (rec.getTrack (t).armed.load(), "R missed track " + juce::String (t));
+                    press ("R", false);
+                }
             }
 
             MainComponent::s_testConstruct = false;

@@ -195,6 +195,7 @@ namespace zynforge
 
     int AudioEngine::cropToRange (juce::int64 startSample, juce::int64 endSample)
     {
+        if (isArrangementFrozen()) return 0;
         const juce::int64 len = endSample - startSample;
         if (len <= 0) return 0;
 
@@ -275,6 +276,7 @@ namespace zynforge
 
     void AudioEngine::setActiveTake (int track, int takeIdx)
     {
+        if (isArrangementFrozen()) return;
         if (track < 0 || track >= (int) trackPlaylists.size()) return;
         auto& p = trackPlaylists[(size_t) track];
         if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
@@ -292,6 +294,7 @@ namespace zynforge
 
     int AudioEngine::newTakeFromCurrent (int track, const juce::String& name)
     {
+        if (isArrangementFrozen()) return -1;
         if (track < 0 || track >= (int) trackPlaylists.size()) return -1;
         auto& p = trackPlaylists[(size_t) track];
         Take t;
@@ -304,6 +307,7 @@ namespace zynforge
 
     void AudioEngine::deleteTake (int track, int takeIdx)
     {
+        if (isArrangementFrozen()) return;
         if (track < 0 || track >= (int) trackPlaylists.size()) return;
         auto& p = trackPlaylists[(size_t) track];
         if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
@@ -318,6 +322,7 @@ namespace zynforge
 
     void AudioEngine::renameTake (int track, int takeIdx, const juce::String& name)
     {
+        if (isArrangementFrozen()) return;
         if (track < 0 || track >= (int) trackPlaylists.size()) return;
         auto& p = trackPlaylists[(size_t) track];
         if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
@@ -1383,6 +1388,7 @@ namespace zynforge
 
     bool AudioEngine::healSeparationAt (int track, juce::int64 timelineSample)
     {
+        if (isArrangementFrozen()) return false;
         if (track < 0 || track >= (int) trackClips.size()) return false;
         auto& list = clipsFor (track);
         int    best = -1;
@@ -1404,6 +1410,7 @@ namespace zynforge
 
     int AudioEngine::healSeparationRange (int track, juce::int64 start, juce::int64 end)
     {
+        if (isArrangementFrozen()) return 0;
         if (track < 0 || track >= (int) trackClips.size()) return 0;
         auto& list = clipsFor (track);
         int healed = 0;
@@ -1714,7 +1721,7 @@ namespace zynforge
                 }
 
                 const bool current = engine->getActiveSessionDir() == sessionDir
-                                  && ! engine->isRecording();
+                                  && ! engine->isArrangementFrozen();
                 int completed = 0;
                 for (auto& job : jobs)
                 {
@@ -1771,6 +1778,7 @@ namespace zynforge
 
     bool AudioEngine::splitTrackAtSample (int track, juce::int64 timelineSample)
     {
+        if (isArrangementFrozen()) return false;
         // Bound against whichever subsystem currently knows about tracks:
         // the recorder (just-captured, not yet reloaded) OR the player (a
         // loaded / reopened session). The ensureClipList file check is the
@@ -1792,6 +1800,7 @@ namespace zynforge
 
     bool AudioEngine::clearTrackRange (int track, juce::int64 start, juce::int64 end)
     {
+        if (isArrangementFrozen()) return false;
         if (end <= start) return false;
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return false;
@@ -1825,6 +1834,7 @@ namespace zynforge
 
     bool AudioEngine::rippleDeleteRange (int track, juce::int64 start, juce::int64 end)
     {
+        if (isArrangementFrozen()) return false;
         if (end <= start) return false;
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return false;
@@ -1866,6 +1876,7 @@ namespace zynforge
     bool AudioEngine::compRangeFromTake (int track, int sourceTakeIdx,
                                          juce::int64 start, juce::int64 end)
     {
+        if (isArrangementFrozen()) return false;
         if (end <= start) return false;
         if (track < 0 || track >= (int) trackPlaylists.size()) return false;
         auto& p = trackPlaylists[(size_t) track];
@@ -1913,6 +1924,7 @@ namespace zynforge
                                 const juce::String& name, const juce::File& audioFile,
                                 int sourceChannel, int fadeCurve)
     {
+        if (isArrangementFrozen()) return -1;
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return -1;
         if (fileLength <= 0) return -1;
@@ -1968,6 +1980,7 @@ namespace zynforge
 
     bool AudioEngine::editClip (int track, int clipIndex, ClipEdit mode, juce::int64 deltaSamples)
     {
+        if (isArrangementFrozen()) return false;
         if (track < 0 || track >= (int) trackClips.size()) return false;
         auto& list = trackClips[(size_t) track];
         if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
@@ -2043,6 +2056,7 @@ namespace zynforge
     bool AudioEngine::setClipFades (int track, int clipIndex,
                                     juce::int64 fadeInSamples, juce::int64 fadeOutSamples)
     {
+        if (isArrangementFrozen()) return false;
         if (track < 0 || track >= (int) trackClips.size()) return false;
         auto& list = trackClips[(size_t) track];
         if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
@@ -2085,6 +2099,7 @@ namespace zynforge
 
     bool AudioEngine::setClipFadeCurve (int track, int clipIndex, int curve)
     {
+        if (isArrangementFrozen()) return false;
         if (track < 0 || track >= (int) trackClips.size()) return false;
         auto& list = trackClips[(size_t) track];
         if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
@@ -2111,6 +2126,7 @@ namespace zynforge
 
     bool AudioEngine::setClipMuted (int track, int clipIndex, bool muted)
     {
+        if (isArrangementFrozen()) return false;
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
         (*list)[(size_t) clipIndex].muted = muted;
@@ -2121,6 +2137,7 @@ namespace zynforge
 
     bool AudioEngine::setClipLocked (int track, int clipIndex, bool locked)
     {
+        if (isArrangementFrozen()) return false;
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
         (*list)[(size_t) clipIndex].locked = locked;
@@ -2131,6 +2148,7 @@ namespace zynforge
 
     bool AudioEngine::setClipName (int track, int clipIndex, const juce::String& name)
     {
+        if (isArrangementFrozen()) return false;
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
         (*list)[(size_t) clipIndex].name = name;
@@ -2141,6 +2159,7 @@ namespace zynforge
 
     bool AudioEngine::setClipGainDb (int track, int clipIndex, float dB)
     {
+        if (isArrangementFrozen()) return false;
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
         (*list)[(size_t) clipIndex].gainDb = juce::jlimit (-60.0f, 12.0f, dB);
@@ -2305,7 +2324,7 @@ namespace zynforge
                 auto* engine = handle->load (std::memory_order_acquire);
                 if (engine == nullptr) return;
                 bool applied = found && engine->getActiveSessionDir() == sessionDir
-                                    && ! engine->isRecording();
+                                    && ! engine->isArrangementFrozen();
                 if (applied)
                 {
                     // Do not apply a stale scan to a clip that was moved,
@@ -2397,6 +2416,7 @@ namespace zynforge
 
     bool AudioEngine::deleteClip (int track, int clipIndex)
     {
+        if (isArrangementFrozen()) return false;
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
         if ((*list)[(size_t) clipIndex].locked) return false;   // lock protects against delete
@@ -2408,6 +2428,7 @@ namespace zynforge
 
     bool AudioEngine::duplicateClip (int track, int clipIndex)
     {
+        if (isArrangementFrozen()) return false;
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
         if ((*list)[(size_t) clipIndex].locked) return false;   // lock protects against duplicate
