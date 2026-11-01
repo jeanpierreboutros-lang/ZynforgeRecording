@@ -1,4 +1,5 @@
 #include "MultitrackRecorder.h"
+#include "AiffRepair.h"
 #include "FloatAiffWriter.h"
 #include "AtomicFile.h"
 #include "FastHash.h"
@@ -679,6 +680,10 @@ namespace zynforge
     {
         if (recovered != nullptr) *recovered = 0;
         if (! audioDir.isDirectory()) return true;
+        // First, so anything below that opens or archives a take reads its
+        // real length. A failed repair loses nothing: the audio stays in the
+        // file and the next open tries again.
+        aiffrepair::repairTakeFolder (audioDir);
         // A take interrupted before STOP may still owe a copy its silent
         // lead-in (see PendingLeadIn); without it the new audio sits early.
         if (! recoverPendingLeadIns (audioDir)) return false;
@@ -2157,7 +2162,6 @@ namespace zynforge
         if (out == nullptr) return nullptr;
 
         juce::WavAudioFormat  wav;
-        juce::AiffAudioFormat aiff;
         juce::FlacAudioFormat flac;
 
         juce::StringPairArray meta;
@@ -2182,7 +2186,7 @@ namespace zynforge
         juce::AudioFormatWriter* w = nullptr;
         if      (containerCode == 2) w = flac.createWriterFor (out, sampleRate, chans, bits, meta, 5);
         else if (containerCode == 1) w = bits == 32 ? FloatAiffWriter::create (out, sampleRate, chans)
-                                                   : aiff.createWriterFor (out, sampleRate, chans, bits, meta, 0);
+                                                   : PcmAiffWriter::create (out, sampleRate, chans, bits);
         else                         w = wav .createWriterFor (out, sampleRate, chans, bits, meta, 0);
         if (w == nullptr) delete out;
         else if (containerCode == 0)
@@ -3340,8 +3344,9 @@ namespace zynforge
             const auto flush = [] (juce::AudioFormatWriter* writer)
             {
                 if (writer == nullptr) return true;
-                if (dynamic_cast<FloatAiffWriter*> (writer) != nullptr)
-                    return flushFloatAiffBeforeClose (writer);
+                if (dynamic_cast<FloatAiffWriter*> (writer) != nullptr
+                    || dynamic_cast<PcmAiffWriter*> (writer) != nullptr)
+                    return writer->flush();
                 writer->flush(); // Other JUCE codecs may report unsupported.
                 return true;
             };
