@@ -247,7 +247,8 @@ void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
                 ? "Delete the " + juce::String (n) + " selected channels?"
                 : "Delete the selected channel?")
                 + "\n\nRecorded files stay on disk -- this removes the "
-                  "channel(s) from the session.")
+                  "channel(s) from the session. It clears the undo history, "
+                  "so Cmd+Z cannot bring them back.")
             .withButton ("Delete")
             .withButton ("Cancel"),
         // First of two buttons gets commandID 1 -- "Delete" returns 1.
@@ -307,9 +308,14 @@ void MainComponent::editCutSelected (bool cut)
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("strips", juce::var (arr));
     stripClipboard = juce::var (obj);
-    showStatus (juce::String (cut ? "Cut " : "Copied ") + juce::String (arr.size())
-                + " strip setting(s)");
-    if (cut) deleteSelectedStrips();
+    if (! cut)
+    {
+        showStatus ("Copied " + juce::String (arr.size()) + " strip setting(s)");
+        return;
+    }
+    // Removing a channel takes its audio out of the session and clears undo,
+    // so a cut asks first like every other way of deleting one.
+    confirmDeleteChannels ([this] { deleteSelectedStrips(); });
 }
 
 void MainComponent::editPasteSelected()
@@ -1114,6 +1120,13 @@ void MainComponent::editClipboardCut (bool cut)
         clipClipboard = juce::var (root);
         if (cut) editDeleteSelectedClip();
         showStatus (juce::String (cut ? "Cut " : "Copied ") + juce::String (entries.size()) + " clips");
+        return;
+    }
+    // A Range drag selects the strip it ran along, so the range outranks that
+    // selection here, as it does for Delete: Cmd+X must not take the channel.
+    if (cut && currentView == View::Edit && engine.getPlayer().hasLoopRegion())
+    {
+        confirmDeleteRecording (false, [this] { editClearRange(); });
         return;
     }
     editCutSelected (cut);   // strip-settings fallback

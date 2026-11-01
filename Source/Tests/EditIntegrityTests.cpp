@@ -337,6 +337,31 @@ namespace zynforge
                 expectEquals (spans (s.clips (1)), juce::String ("0+48000"), "R lost the long clip");
             }
 
+            beginTest ("Cmd+X never removes a channel unasked, and a range outranks the strip");
+            {
+                Show s (3, { 48000, 48000, 48000 });
+                s.main.selectedLogical = { 1 };
+                s.main.editClipboardCut (true);
+                expectEquals (s.engine.getRecorder().getNumTracks(), 3, "the channel went with no prompt");
+                expectEquals ((int) s.prompts.size(), 1, "the cut must ask first");
+                s.prompts.clear();
+
+                s.engine.getPlayer().setLoopRegion (12000, 24000);
+                s.main.editClipboardCut (true);
+                expectEquals ((int) s.prompts.size(), 1);
+                if (! s.prompts.empty()) s.prompts.back()();
+                s.prompts.clear();
+                expectEquals (s.engine.getRecorder().getNumTracks(), 3, "the range cut took the channel");
+                expectEquals (spans (s.clips (1)), juce::String ("0+12000 24000+24000"), "the range was not cleared");
+                s.engine.getPlayer().clearLoopRegion();
+
+                s.main.editCutSelected (true);       // Track menu > Cut
+                expectEquals (s.engine.getRecorder().getNumTracks(), 3);
+                expectEquals ((int) s.prompts.size(), 1, "the menu cut must ask too");
+                if (! s.prompts.empty()) s.prompts.back()();
+                expectEquals (s.engine.getRecorder().getNumTracks(), 2, "a confirmed cut removes the channel");
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }
