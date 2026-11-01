@@ -940,7 +940,7 @@ namespace zynforge
                 expect (rig.session.getChildFile ("markers.json").loadFileAsString().contains ("After the crash"));
             }
 
-            beginTest ("Missed samples and copy problems reach the status line");
+            beginTest ("Missed samples and copy problems reach the banner");
             {
                 Rig rig;
                 if (! bringUp (rig)) return;
@@ -948,10 +948,22 @@ namespace zynforge
                 EngineStatus status;
                 status.recording = true;
                 status.missedSamples = 480;
-                status.copyProblems.add ("Mirror /Volumes/NAS lost 2.0 s of audio; the other copies have it");
                 main.updateCaptureWarnings (status);
                 expect (main.statusLabel.getText().contains ("480 SAMPLES MISSED"), main.statusLabel.getText());
+                expect (main.alarmBanner.isVisible(), "missed samples alone did not raise the banner");
+                expect (main.alarmBanner.getText().contains ("480 SAMPLES MISSED"), main.alarmBanner.getText());
+                expect (main.alarmBanner.getLevel() == AlarmBanner::Level::Danger, "missed samples are not a danger");
+
+                status.missedSamples = 0;
+                status.copyProblems.add ("Mirror /Volumes/NAS lost 2.0 s of audio; the other copies have it");
+                main.updateCaptureWarnings (status);
                 expect (main.statusLabel.getText().contains ("/Volumes/NAS"), main.statusLabel.getText());
+                expect (main.alarmBanner.getText().contains ("/Volumes/NAS"), main.alarmBanner.getText());
+                expect (main.alarmBanner.getLevel() == AlarmBanner::Level::Danger, "a copy losing audio is not a danger");
+
+                status.copyProblems.clear();
+                main.updateCaptureWarnings (status);
+                expect (! main.alarmBanner.isVisible(), "the banner outlived the condition");
             }
 
             beginTest ("A take the device ended resets the transport and saves the session");
@@ -1214,6 +1226,7 @@ namespace zynforge
             explicit Stall (int index) : copyIndex (index) {}
             ~Stall() { released.signal(); }
             int copyIndex;
+            std::atomic<bool> holding { true };
             juce::WaitableEvent entered, released { true };
         };
         using Copy = MultitrackRecorder::CaptureCopy;
@@ -1222,7 +1235,7 @@ namespace zynforge
         {
             rec.beforeCopyWriteForTests = [stall] (Copy& copy)
             {
-                if (copy.copyIndex != stall->copyIndex) return;
+                if (copy.copyIndex != stall->copyIndex || ! stall->holding.load()) return;
                 stall->entered.signal();
                 stall->released.wait (-1);
             };
@@ -1611,16 +1624,30 @@ namespace zynforge
             rec.getTrack (0).armed.store (true);
             rec.copyRingFramesForTests = Copy::kChunkFrames;
             auto stall = std::make_shared<Stall> (0);
+            stall->holding.store (false);
             hold (rec, stall);
             expect (rec.startRecording (dirs.session));
             Feeder feeder { rec, 1 };
+
+            // Healthy first: a reading that freezes must have something to hold.
+            const auto healthyBy = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+            while (rec.getDiskBytesPerSec() <= 0.0f && juce::Time::getMillisecondCounterHiRes() < healthyBy)
+            {
+                feeder.block();
+                rec.drainPendingForTests();
+                juce::Thread::sleep (5);
+            }
+            expectGreaterThan (rec.getDiskBytesPerSec(), 0.0f, "the take never showed any throughput");
+
+            stall->holding.store (true);
             feeder.block();
             rec.drainOnce();
             expect (stall->entered.wait (5000));
 
             const auto expected = rec.estimateBytesPerSecondForArmedTracks();
             const auto end = juce::Time::getMillisecondCounterHiRes() + 20000.0;
-            while (! rec.isDiskStruggling() && juce::Time::getMillisecondCounterHiRes() < end)
+            while ((! rec.isDiskStruggling() || rec.getDiskBytesPerSec() > 0.0f)
+                   && juce::Time::getMillisecondCounterHiRes() < end)
             {
                 feeder.block();
                 rec.drainOnce();
