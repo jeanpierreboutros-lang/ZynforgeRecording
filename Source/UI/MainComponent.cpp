@@ -196,7 +196,6 @@ bool MainComponent::handleRecordPressDuringTake()
         engine.stopPlayback();
         engine.setPunchModeOn (false);
         punchSessionActive = false;
-        recordButton.setButtonText ("RECORD");
         if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
         return true;
     }
@@ -241,10 +240,10 @@ bool MainComponent::handleRecordPressDuringTake()
     if (engine.isRecording())
     {
         // Two-tap "protect the take" guard -- same pattern onStopClicked uses.
-        // While recording the RECORD button reads "STOP"; a stray press must
-        // not end a live take. First tap arms (toast); a second tap within 2 s
-        // actually stops. Shares stopArmedAtMs with onStopClicked so the two
-        // stop surfaces stay consistent. Unlike onStopClicked this does NOT
+        // A stray press must not end a live take. First tap arms (toast); a
+        // second tap within 2 s actually stops. Shares stopArmedAtMs with
+        // onStopClicked so the two stop surfaces stay consistent. Unlike
+        // onStopClicked this does NOT
         // rewind -- it keeps the take parked at its end so a subsequent RECORD
         // continues/appends (the live-recorder convention).
         const auto now = juce::Time::getMillisecondCounter();
@@ -516,7 +515,6 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
                              + (mixerInTakeFolder ? "  (take survives a GUI crash)"
                                                   : "  (mixer not saved to the take folder)"),
                              juce::dontSendNotification);
-        recordButton.setButtonText ("STOP");
     }
     else if (unanswered)
     {
@@ -528,7 +526,6 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         engine.noteLastCapture (dir);
         engine.snapshotCaptureInputGains();
         daemonStartUnansweredMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
-        recordButton.setButtonText ("REC ?");
         showStatus ("Daemon has not answered RECORD yet -- the take may be rolling");
     }
     else
@@ -587,7 +584,6 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
             punchSessionActive = true;
             wasInsidePunch    = false;
             engine.startPlayback();
-            recordButton.setButtonText ("STOP");
             statusLabel.setText ("Punch-in armed -- in " + juce::String (in / sr, 1)
                                  + "s, out " + juce::String (out / sr, 1)
                                  + "s, pre-roll " + juce::String (preRollSec) + "s",
@@ -640,7 +636,6 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
         else if (mins > 0)
             msg << "  --  ~" << mins << " min remaining";
         statusLabel.setText (msg, juce::dontSendNotification);
-        recordButton.setButtonText ("STOP");
     }
     else
     {
@@ -677,7 +672,6 @@ void MainComponent::onPlayClicked()
     if (player.isPlaying())
     {
         engine.stopPlayback();
-        playButton.setButtonText ("PLAY");
         statusLabel.setText ("Paused", juce::dontSendNotification);
     }
     else
@@ -691,7 +685,6 @@ void MainComponent::onPlayClicked()
             player.setPositionSamples (cursor);
 
         engine.startPlayback();
-        playButton.setButtonText ("PAUSE");
         statusLabel.setText ("Playing -> " + player.getSessionName(), juce::dontSendNotification);
     }
 }
@@ -759,9 +752,7 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
     {
         engine.stopPlayback();
         engine.getPlayer().rewind();
-        playButton.setButtonText ("PLAY");
     }
-    recordButton.setButtonText ("RECORD");
     statusLabel.setText (stopPlaybackAndRewind && engine.getPlayer().isLoaded()
                             ? "Stopped" : "Idle",
                          juce::dontSendNotification);
@@ -782,7 +773,6 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
     {
         engine.getPlayer().setPositionSamples (resumeAt);
         engine.startPlayback();
-        playButton.setButtonText ("PAUSE");
     }
     return true;
 }
@@ -866,7 +856,6 @@ void MainComponent::endDaemonTake (juce::String error, bool rewind, std::functio
     engine.setExternalRecording (false);
     daemonTakeAdopted = false;
     daemonStartUnansweredMs = 0;
-    recordButton.setButtonText ("RECORD");
     const auto session = engine.getActiveSessionDir();
     if (! session.isDirectory())
     {
@@ -891,7 +880,6 @@ void MainComponent::endDaemonTake (juce::String error, bool rewind, std::functio
             {
                 self->engine.stopPlayback();
                 self->engine.getPlayer().rewind();
-                self->playButton.setButtonText ("PLAY");
             }
             const auto why = error.isNotEmpty() || loaded ? error
                 : juce::String ("Recording stopped, but media could not be reopened");
@@ -918,7 +906,6 @@ void MainComponent::localTakeInterrupted()
         engine.setPunchModeOn (false);
         punchSessionActive = false;
     }
-    recordButton.setButtonText ("RECORD");
     saveFinalizedCaptureMetadata (false, "Capture device stopped during the take; check the audio and the device", {});
 }
 
@@ -954,15 +941,12 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
                 {
                     self->engine.stopPlayback();
                     self->engine.getPlayer().rewind();
-                    self->playButton.setButtonText ("PLAY");
                 }
                 else if (resumeManualPlayback && mediaOk)
                 {
                     self->engine.getPlayer().setPositionSamples (resumeAt);
                     self->engine.startPlayback();
-                    self->playButton.setButtonText ("PAUSE");
                 }
-                self->recordButton.setButtonText ("RECORD");
                 self->saveFinalizedCaptureMetadata (mediaOk, std::move (mediaError), completion);
             });
         if (! accepted)
@@ -977,7 +961,6 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
             return;
         }
         manualPunchActive = false;
-        recordButton.setButtonText ("RECORD");
         showStatus ("Recording stopped; finalization pending");
         return;
     }
@@ -1077,58 +1060,6 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     return std::nullopt;
 }
 
-void MainComponent::onFormatClicked()
-{
-    if (engine.isRecording()) return;
-
-    auto& recorder = engine.getRecorder();
-    using F = zynforge::CaptureFormat;
-    const auto cur = recorder.getCaptureFormat();
-    const auto next = cur == F::Wav24      ? F::Wav32Float
-                    : cur == F::Wav32Float ? F::Flac24
-                                            : F::Wav24;
-    recorder.setCaptureFormat (next);
-    refreshFormatButton();
-}
-
-void MainComponent::onPreRollClicked()
-{
-    if (engine.isRecording()) return;
-
-    auto& recorder = engine.getRecorder();
-    const int cur = recorder.getPreRollSeconds();
-    const int next = cur == 0  ? 5
-                   : cur == 5  ? 10
-                   : cur == 10 ? 30
-                               : 0;
-    recorder.setPreRollSeconds (next);
-    refreshPreRollButton();
-}
-
-void MainComponent::refreshFormatButton()
-{
-    using F = zynforge::CaptureFormat;
-    juce::String label;
-    switch (engine.getRecorder().getCaptureFormat())
-    {
-        case F::Wav16:       label = "WAV 16";   break;
-        case F::Wav24:       label = "WAV 24";   break;
-        case F::Wav32Float:  label = "WAV 32F";  break;
-        case F::Aiff16:      label = "AIFF 16";  break;
-        case F::Aiff24:      label = "AIFF 24";  break;
-        case F::Aiff32Float: label = "AIFF 32F"; break;
-        case F::Flac16:      label = "FLAC 16";  break;
-        case F::Flac24:      label = "FLAC 24";  break;
-    }
-    formatButton.setButtonText (label);
-}
-
-void MainComponent::refreshPreRollButton()
-{
-    const int s = engine.getRecorder().getPreRollSeconds();
-    preRollButton.setButtonText ("PRE " + juce::String (s) + "s");
-}
-
 void MainComponent::onLockToggled()
 {
     sessionLocked = ! sessionLocked;
@@ -1140,18 +1071,11 @@ void MainComponent::applyLockState()
     engine.setControlsLocked (sessionLocked.load());
     const bool e = ! sessionLocked;
 
-    recordButton .setEnabled (e);
     deviceButton .setEnabled (e);
-    formatButton .setEnabled (e && ! engine.isRecording());
-    preRollButton.setEnabled (e && ! engine.isRecording());
-    loadButton   .setEnabled (e);
-    playButton   .setEnabled (e);
-    stopButton   .setEnabled (e);
     backupButton .setEnabled (e);
     vscButton    .setEnabled (e);
     patchButton  .setEnabled (e);
     metersButton .setEnabled (e);
-    oscButton    .setEnabled (e);
     addChannelButton.setEnabled (e && ! engine.isRecording());
     setlistBar.setEnabled (e);
     tempoBar.setEnabled (e);
@@ -1292,55 +1216,6 @@ void MainComponent::applyBackupFolder (const juce::File& dir)
     showStatus ("Backup folder -> " + dir.getFileName());
 }
 
-
-void MainComponent::onFileMenuClicked()
-{
-    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
-    const auto activeDir   = engine.getActiveSessionDir();
-    const bool hasActive   = engine.hasSessionFolder();
-
-    juce::PopupMenu menu;
-    menu.addItem (1, "Open Session...");
-    menu.addItem (4, "Import Audio Files...",   ! engine.isRecording());
-    menu.addSeparator();
-    menu.addItem (2, "Save Session State",      hasActive);
-    menu.addItem (3, "Save Session As...");
-    menu.addSeparator();
-
-    juce::PopupMenu exportMenu;
-    exportMenu.addItem (10, "Export All Tracks...", hasActive);
-
-    juce::PopupMenu individualMenu;
-    const int trackCount = engine.getRecorder().getNumTracks();
-    for (int i = 0; i < trackCount; ++i)
-    {
-        const auto& t   = engine.getRecorder().getTrack (i);
-        const auto name = t.name.isNotEmpty() ? t.name
-                                              : juce::String (i + 1);
-        individualMenu.addItem (100 + i, name, hasActive);
-    }
-    exportMenu.addSubMenu ("Export Individual Track", individualMenu, hasActive && trackCount > 0);
-    menu.addSubMenu ("Export", exportMenu);
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loadButton),
-                        [self] (int chosen)
-    {
-        if (chosen == 0 || self == nullptr) return;
-        if (chosen == 1)
-        {
-            auto again = self;
-            self->confirmSessionReplacement ([again]
-            { if (again != nullptr) again->onLoadSessionClicked(); });
-        }
-        else if (chosen == 2)      self->onSaveSessionState();
-        else if (chosen == 3)      self->onSaveSessionAs();
-        else if (chosen == 4)      self->onImportAudioFiles();
-        else if (chosen == 10)     self->onExportAllTracks();
-        else if (chosen >= 100)    self->onExportIndividualTrack (chosen - 100);
-    });
-}
-
 void MainComponent::showStatus (const juce::String& msg)
 {
     statusLabel.setText (msg, juce::dontSendNotification);
@@ -1458,32 +1333,6 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
     return true;
 }
 
-
-void MainComponent::applySessionSettings()
-{
-    if (engine.isRecording()) { showStatus ("Stop recording before applying settings"); return; }
-
-    using F = zynforge::CaptureFormat;
-    F fmt;
-    if (pendingContainer == 0)
-        fmt = pendingBitDepth == 16 ? F::Wav16  : pendingBitDepth == 24 ? F::Wav24  : F::Wav32Float;
-    else if (pendingContainer == 1)
-        fmt = pendingBitDepth == 16 ? F::Aiff16 : pendingBitDepth == 24 ? F::Aiff24 : F::Aiff32Float;
-    else
-        fmt = pendingBitDepth == 16 ? F::Flac16 : F::Flac24;   // FLAC has no 32-float
-
-    engine.getRecorder().setCaptureFormat (fmt);
-    refreshFormatButton();
-
-    auto setup = engine.getDeviceManager().getAudioDeviceSetup();
-    setup.sampleRate = pendingSampleRate;
-    const auto err = engine.getDeviceManager().setAudioDeviceSetup (setup, true);
-    if (err.isEmpty())
-        showStatus ("Session settings applied (" + formatButton.getButtonText()
-                     + " @ " + juce::String (pendingSampleRate / 1000.0, 1) + " kHz)");
-    else
-        showStatus ("Sample rate change failed: " + err);
-}
 
 void MainComponent::confirmAndQuit()
 {

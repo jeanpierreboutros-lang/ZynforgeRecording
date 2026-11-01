@@ -159,7 +159,6 @@ void MainComponent::resized()
     // Mock parity: reserve the slot for the PAINTED wordmark lockup (badge +
     // ZYNFORGE RECORDING). The text is drawn in paint(); this just keeps the
     // status labels clear of it.
-    recordButton .setBounds ({});
     deviceButton .setBounds (row1.removeFromRight (110).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
     addChannelButton.setBounds (row1.removeFromRight (70).reduced (0, 2));
@@ -193,8 +192,6 @@ void MainComponent::resized()
         : juce::Rectangle<int>());
     statusLabel.setBounds (row1);
 
-    formatButton .setBounds ({});
-    preRollButton.setBounds ({});
 
     // Row 2 -- Transport bar | transport label | session label | view toggles
     auto row2 = r.removeFromTop (52).reduced (brand::space::lg, brand::space::xs);
@@ -203,7 +200,6 @@ void MainComponent::resized()
         transportBar->setBounds (row2.removeFromLeft (340).reduced (0, 2));
     row2.removeFromLeft (brand::space::xl);
 
-    loadButton.setBounds ({});
 
     patchButton    .setBounds (row2.removeFromRight (90).reduced (0, 2));
     row2.removeFromRight (brand::space::md);
@@ -236,9 +232,6 @@ void MainComponent::resized()
     if (punchPill.isVisible()) row2.removeFromLeft (brand::space::sm);
     sessionLabel  .setBounds (row2);
 
-    oscButton    .setBounds ({});
-    playButton   .setBounds ({});
-    stopButton   .setBounds ({});
 
     alarmBanner.setBounds (alarmBanner.isVisible()
         ? r.removeFromTop (60).reduced (brand::space::lg, brand::space::xs)

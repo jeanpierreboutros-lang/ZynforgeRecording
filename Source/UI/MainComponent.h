@@ -134,7 +134,6 @@ private:
     void noteTwinStopIfEnded();
     void showTwinRecorderDialog();
     void updateTwinStatusLabel();
-    void onFileMenuClicked();
     void onSaveSessionState();
     void onSaveSessionAs();
     void onExportAllTracks();
@@ -144,7 +143,6 @@ private:
     void completeBounceStereoMix (juce::File);
     void completeAudioImport (const juce::Array<juce::File>&);
     static juce::String noiseAnalysisSummary (const std::vector<zynforge::NoiseFinding>&);
-    void onExportIndividualTrack (int channelIndex);
     void onExportIndividualTracks();   // tick-box picker → format → destination → export
     void exportShowHandoff();
     void exportDawProject (zynforge::projectexport::Format);
@@ -257,8 +255,6 @@ public:
     // Application/document hand-off for Finder-opened .zfproj files.
     bool openSessionDocument (const juce::File& document, bool confirmBeforeReplacing = false);
 private:
-    void applySessionSettings();
-
     // Edit menu actions.
     // Old Edit-menu stubs were renamed to edit*; declarations live in
     // the public-ish private section above (editUndo / editCutSelected
@@ -524,8 +520,6 @@ private:
     void beginAutomationTransaction();
     void endAutomationTransaction (const juce::String& label);
 
-    int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
-    int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)
     double pendingSampleRate { 48000.0 };
     // Last device sample rate we warned about (mismatch vs the session rate);
     // 0 = no outstanding warning, so we warn once per distinct device rate.
@@ -539,10 +533,6 @@ private:
     bool   chaseParked { false };   // timecode is outside the session; chase is not following
     juce::String lastTrimFollowNotice;
     juce::String lastBusRoutingNotice;
-    void onFormatClicked();
-    void onPreRollClicked();
-    void refreshFormatButton();
-    void refreshPreRollButton();
     void updateTransportLabels();
     juce::File makeNewSessionDir() const;
     juce::File getSessionsRoot() const;
@@ -669,19 +659,12 @@ private:
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome -- IconButton paints a glyph next to each label so
     // the chrome reads as icons + words instead of monospace SHOUTING.
-    zynforge::IconButton recordButton  { zynforge::icons::Glyph::Record, "RECORD" };
     zynforge::IconButton deviceButton  { zynforge::icons::Glyph::Device, "DEVICE" };
-    zynforge::IconButton loadButton    { zynforge::icons::Glyph::File,   "FILE" };
-    juce::TextButton     playButton    { "PLAY" };
-    juce::TextButton     stopButton    { "STOP" };
-    zynforge::IconButton formatButton  { zynforge::icons::Glyph::Disk,   "WAV 24" };
-    juce::TextButton     preRollButton { "PRE 0s" };
     zynforge::IconButton lockButton    { zynforge::icons::Glyph::Lock,   "LOCK" };
     zynforge::IconButton backupButton  { zynforge::icons::Glyph::Disk,   "BACKUP" };
     zynforge::IconButton patchButton   { zynforge::icons::Glyph::Patch,  "PATCH" };
     zynforge::IconButton vscButton     { zynforge::icons::Glyph::Vsc,    "VSC" };
     zynforge::IconButton metersButton  { zynforge::icons::Glyph::Meters, "METERS" };
-    zynforge::IconButton oscButton     { zynforge::icons::Glyph::Osc,    "OSC" };
     zynforge::IconButton addChannelButton { zynforge::icons::Glyph::Plus, "CH" };
     zynforge::IconButton mixViewButton    { zynforge::icons::Glyph::Mix,  "MIXER" };
     zynforge::IconButton editViewButton   { zynforge::icons::Glyph::Edit, "EDIT" };

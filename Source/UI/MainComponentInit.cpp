@@ -151,37 +151,10 @@ MainComponent::MainComponent()
     transportLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (transportLabel);
 
-    recordButton.setColour (juce::TextButton::buttonColourId, brand::sink (brand::accentRecord, 0.55f));
-    recordButton.setColour (juce::TextButton::textColourOffId, brand::lift (brand::accentRecord, 0.10f));
-    recordButton.onClick = [this] { onRecordClicked(); };
-    // The transport-bar red-circle button now owns the RECORD action;
-    // keep this button alive (status text updates still reference it)
-    // but don't paint it in the header.
-    recordButton.setVisible (false);
-
-    playButton.setColour (juce::TextButton::buttonColourId, brand::accentPlay.withAlpha (zynforge::brand::alpha::subtle));
-    playButton.setColour (juce::TextButton::textColourOffId, brand::accentPlay);
-    playButton.onClick = [this] { onPlayClicked(); };
-    addAndMakeVisible (playButton);
-
-    stopButton.onClick = [this] { onStopClicked(); };
-    addAndMakeVisible (stopButton);
-
-    loadButton.setColour (juce::TextButton::buttonColourId, brand::accentVS.withAlpha (zynforge::brand::alpha::subtle));
-    loadButton.setColour (juce::TextButton::textColourOffId, brand::accentVS);
-    loadButton.onClick = [this] { onFileMenuClicked(); };
-    addAndMakeVisible (loadButton);
-
     deviceButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
     deviceButton.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
     deviceButton.onClick = [this] { onDeviceClicked(); };
     addAndMakeVisible (deviceButton);
-
-    formatButton.onClick = [this] { onFormatClicked(); };
-    addAndMakeVisible (formatButton);
-
-    preRollButton.onClick = [this] { onPreRollClicked(); };
-    addAndMakeVisible (preRollButton);
 
     // Mock parity: neutral dark pill; keep a subtle red label as the danger cue.
     lockButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
@@ -390,58 +363,12 @@ MainComponent::MainComponent()
         b->setColour (juce::TextButton::textColourOnId,   brand::onSignal (brand::engagedAmber));
     }
 
-    oscButton.onClick = [this]
-    {
-        // Quick menu: pick a console dialect and start listening on 8000.
-        juce::PopupMenu menu;
-        menu.addSectionHeader (engine.getRemotes().isOscListening()
-                                ? "OSC listening on port " + juce::String (engine.getRemotes().getOscPort())
-                                : "OSC idle");
-        menu.addSeparator();
-        menu.addItem (1, "Listen -- Generic /zynforge");
-        menu.addItem (2, "Listen -- DiGiCo");
-        menu.addItem (3, "Listen -- Allen & Heath (SQ / Avantis)");
-        menu.addItem (4, "Listen -- SSL Live");
-        menu.addItem (5, "Listen -- Yamaha (DM7 / RIVAGE)");
-        menu.addSeparator();
-        menu.addItem (10, "Stop", engine.getRemotes().isOscListening());
-
-        juce::Component::SafePointer<MainComponent> self (this);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&oscButton),
-                            [self] (int chosen)
-        {
-            if (chosen <= 0 || self == nullptr) return;
-            if (chosen == 10) { self->engine.getRemotes().stopOsc(); self->oscButton.setButtonText ("OSC"); self->showStatus ("OSC stopped"); return; }
-            const int dialect = chosen - 1;
-            const int port = self->oscListenPort();
-            if (self->engine.getRemotes().startOsc (port, dialect))
-            {
-                self->oscButton.setButtonText ("OSC *");
-                self->showStatus ("OSC listening on " + juce::String (port) + " (" +
-                            juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")"
-                            + (dialect == 0 ? " -- token " + self->engine.getRemotes().getOscAccessToken() : juce::String()));
-            }
-            else self->showStatus ("OSC failed to bind port " + juce::String (port));
-        });
-    };
-    oscButton.setTooltip ("OSC remote: receive transport / scene / marker / channel-name messages from DiGiCo / A&H / SSL / Yamaha consoles or any OSC app.");
-    addAndMakeVisible (oscButton);
-
     // Tooltips on header controls.
-    recordButton .setTooltip ("Start / stop multitrack recording.");
     deviceButton .setTooltip ("Choose the audio device, sample rate and buffer size.");
-    formatButton .setTooltip ("Capture format: WAV 24, WAV 32-float, or FLAC 24.");
-    preRollButton.setTooltip ("Pre-roll: 0 / 5 / 10 / 30 seconds. When RECORD is pressed, this much already-buffered audio is dumped to disk first.");
     lockButton   .setTooltip ("System Lock: disables every other control so a stray click can't kill a take.");
-    loadButton   .setTooltip ("FILE menu: Open / Save / Save As / Export.");
-    playButton   .setTooltip ("Play the loaded session through the matching output of each strip (virtual soundcheck).");
-    stopButton   .setTooltip ("Stop playback and rewind to the start.");
     backupButton .setTooltip ("Pick a second drive -- every track is mirrored there as you record.");
     patchButton  .setTooltip ("Open the patch matrix: route hardware inputs / outputs to channel strips.");
     titleLabel   .setTooltip ("Zynforge Recording -- JUCE 8 multitrack recorder + virtual soundcheck.");
-
-    refreshFormatButton();
-    refreshPreRollButton();
 
     addAndMakeVisible (bigClock);
     addAndMakeVisible (perfDashboard);

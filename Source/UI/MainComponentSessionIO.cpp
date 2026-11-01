@@ -4,8 +4,7 @@
 //
 // Includes: saveSessionStateTo, exportTracksTo, onSaveSessionState,
 // onImportAudioFiles, onSaveSessionAs, onExportAllTracks,
-// onExportIndividualTrack, warnIfSampleRateMismatch,
-// onLoadSessionClicked, getSessionsRoot, templatesDir,
+// warnIfSampleRateMismatch, onLoadSessionClicked, getSessionsRoot, templatesDir,
 // promptSaveSessionTemplate, applySessionTemplate,
 // loadUILayoutFromActiveSession, promptDeleteSessionTemplate,
 // makeNewSessionDir, createSessionFolderStructure.
@@ -1654,42 +1653,6 @@ void MainComponent::onExportAllTracks()
     });
 }
 
-void MainComponent::onExportIndividualTrack (int channelIndex)
-{
-    const auto source = engine.getActiveSessionDir();
-    if (! source.isDirectory()) { showStatus ("No active session"); return; }
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    zynforge::ExportDialog::launch ("Export track", sessionAudioRateFor (engine),
-        [self, this, channelIndex] (std::optional<zynforge::ExportOptions> opts)
-    {
-        if (self == nullptr || ! opts.has_value()) return;
-        const auto chosenOpts = *opts;
-
-        const auto activeSession = engine.getActiveSessionDir();
-        const auto exportDir    = activeSession.isDirectory()
-                                       ? activeSession.getChildFile ("Export Files")
-                                       : getSessionsRoot();
-        exportDir.createDirectory();
-        chooser = std::make_unique<juce::FileChooser> (
-            "Export track to...", exportDir, "");
-
-        const auto flags = juce::FileBrowserComponent::saveMode
-                         | juce::FileBrowserComponent::canSelectDirectories;
-
-        chooser->launchAsync (flags,
-            [self, this, channelIndex, chosenOpts] (const juce::FileChooser& fc)
-        {
-            if (self == nullptr) return;
-            auto dest = fc.getResult();
-            if (dest.getFullPathName().isEmpty()) return;
-            if (! dest.exists()) dest.createDirectory();
-
-            startExportTracksTo (dest, { channelIndex }, chosenOpts);
-        });
-    });
-}
-
 void MainComponent::onExportIndividualTracks()
 {
     const auto source = engine.getActiveSessionDir();
@@ -1811,8 +1774,6 @@ void MainComponent::applySessionSampleRate (double sr)
         setup.sampleRate = sr;
         engine.getDeviceManager().setAudioDeviceSetup (setup, true);
     }
-
-    refreshFormatButton();
 
     const double dev = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
                          ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
@@ -2300,7 +2261,6 @@ void MainComponent::completeOpenFolder (const juce::File& dir)
             : "No Track_* audio found in folder",
             juce::dontSendNotification);
     }
-    playButton.setButtonText ("PLAY");
     updateTransportLabels();
 }
 

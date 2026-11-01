@@ -847,7 +847,7 @@ namespace zynforge
                     return main.statusLabel.getText().contains ("REATTACHED");
                 }, 8000), "the window did not come back to the rolling take");
                 expect (rig.daemon.getRecorder().isRecording(), "the take must not have stopped");
-                expectEquals (main.recordButton.getButtonText(), juce::String ("STOP"));
+                expect (main.daemonTakeAdopted && main.engine.isRecording(), "the window lost the rolling take");
 
                 bool done = false;
                 main.stopActiveCaptureAsync (false, [&] (bool) { done = true; });
@@ -861,7 +861,7 @@ namespace zynforge
                 }, 30000), "the take never came back");
                 expect (! rig.daemon.getRecorder().isRecording(), "the daemon is still rolling");
                 expect (! main.engine.isRecording());
-                expectEquals (main.recordButton.getButtonText(), juce::String ("RECORD"));
+                expect (! main.daemonTakeAdopted, "the window still holds the ended take");
             }
 
             beginTest ("A daemon that is gone ends the take, says so, and can be turned off");
@@ -876,7 +876,7 @@ namespace zynforge
                     return ! main.engine.isRecording() && ! main.captureMetadataPending;
                 }, 8000), "the window still calls a dead daemon's take rolling");
                 expect (main.lastCaptureFinalizationError.contains ("GONE"), main.lastCaptureFinalizationError);
-                expectEquals (main.recordButton.getButtonText(), juce::String ("RECORD"));
+                expect (! main.daemonTakeAdopted, "the window still holds the ended take");
                 expect (! main.captureSupervisor.isDaemonRecording(), "the stale status survived");
 
                 main.toggleCaptureDaemon();
@@ -901,7 +901,7 @@ namespace zynforge
                 main.serviceCaptureDaemonLink();
                 expect (main.lostDaemonTakeUnknown());
                 expect (main.engine.isRecording(), "an unanswered daemon's take was called over");
-                expectEquals (main.recordButton.getButtonText(), juce::String ("REC ?"));
+                expect (main.daemonLinkLost, "an unanswered take must stay unconfirmed");
 
                 bool done = false, ok = true;
                 main.stopActiveCaptureAsync (false, [&] (bool saved) { done = true; ok = saved; });
@@ -1078,7 +1078,6 @@ namespace zynforge
                 auto& rec = main.engine.getRecorder();
                 rec.getTrack (0).armed.store (true);
                 expect (main.engine.startRecording (rig.session));
-                main.recordButton.setButtonText ("STOP");
                 std::vector<float> samples ((size_t) kBlock, 0.25f);
                 const float* inputs[] { samples.data() };
                 for (int b = 0; b < 20; ++b) rec.processBlock (inputs, 1, kBlock);
@@ -1091,7 +1090,7 @@ namespace zynforge
 
                 expect (pumpUntil ([&] { return ! main.engine.isCaptureFinalizing() && ! main.captureMetadataPending; }, 15000),
                         "the interrupted take never finished");
-                expectEquals (main.recordButton.getButtonText(), juce::String ("RECORD"));
+                expect (! main.engine.isRecording(), "the interrupted take still reads as rolling");
                 expect (main.engine.getPlayer().isLoaded(), "the take was not loaded");
                 expect (rig.session.getChildFile ("session_mix.json").existsAsFile(), "the session was not saved");
                 expect (main.lastCaptureFinalizationError.contains ("device"), main.lastCaptureFinalizationError);
@@ -1135,14 +1134,15 @@ namespace zynforge
                 juce::BigInteger arms; arms.setBit (0);
                 main.requestDaemonTake (rig.session, 1, arms, 1, true);
                 expect (main.engine.isRecording(), "no answer must not read as a failed RECORD");
-                expectEquals (main.recordButton.getButtonText(), juce::String ("REC ?"));
+                expect (main.daemonStartUnansweredMs != 0 && ! main.daemonTakeAdopted, "the unanswered take was called settled");
                 releaseStart.store (true);
                 expect (pumpUntil ([&]
                 {
                     main.serviceCaptureDaemonLink();
-                    return main.recordButton.getButtonText() == "STOP";
+                    return main.daemonTakeAdopted;
                 }, 10000), "the take that did start was never adopted");
                 expect (rig.daemon.getRecorder().isRecording());
+                expectEquals ((int) main.daemonStartUnansweredMs, 0, "the adopted take still reads as unanswered");
                 expectEquals (main.engine.getActiveSessionDir().getFullPathName(), rig.session.getFullPathName(),
                               "the window lost the session the daemon is writing");
             }
@@ -1304,7 +1304,7 @@ namespace zynforge
                     main.serviceCaptureDaemonLink();
                     return ! main.engine.isRecording() && ! main.captureMetadataPending;
                 }, 8000), "the window never noticed the take had ended");
-                expectEquals (main.recordButton.getButtonText(), juce::String ("RECORD"));
+                expect (! main.daemonTakeAdopted, "the window still holds the ended take");
                 expect (main.lastCaptureFinalizationError.contains ("device"), main.lastCaptureFinalizationError);
                 expect (main.engine.getPlayer().isLoaded(), "the ended take was not loaded");
             }

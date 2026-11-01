@@ -380,7 +380,6 @@ void MainComponent::servicePunchSession()
     engine.stopPlayback();
     engine.setPunchModeOn (false);
     punchSessionActive = false;
-    recordButton.setButtonText ("RECORD");
     if (! hadCapture && lastCaptureFinalizationError.isEmpty()) showStatus ("Punch complete");
 }
 
@@ -814,7 +813,6 @@ void MainComponent::adoptRollingDaemonTake (const zynforge::EngineStatus& status
         engine.beginExternalTake (juce::File (status.sessionPath), status.sampleRate);
     else
         engine.setExternalRecording (true);
-    recordButton.setButtonText ("STOP");
 }
 
 void MainComponent::connectCaptureDaemon (bool announceReattach)
@@ -831,7 +829,6 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
         showStatus (wasRecording
             ? "!! CAPTURE DAEMON UNAVAILABLE MID-TAKE -- may still be recording. Reconnect and verify before touching storage."
             : "Capture daemon connection lost or process exited.");
-        recordButton.setButtonText (wasRecording ? "REC ?" : "RECORD");
     };
 
     if (! captureSupervisor.connectOrLaunch (captureDaemonPort))
@@ -943,7 +940,6 @@ void MainComponent::leaveLostDaemon()
     engine.setExternalRecording (false);
     daemonTakeAdopted = false;
     daemonLinkLost = false;
-    recordButton.setButtonText ("RECORD");
 }
 
 void MainComponent::disableCaptureDaemon()

@@ -443,7 +443,6 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
     // inherits them on a freshly-added channel (see launchNewSessionDialog).
     engine.getPlayer().unload();
 
-    refreshFormatButton();
     const auto defaultTemplate = getDefaultTemplate();
     if (defaultTemplate.existsAsFile())
     {
@@ -583,7 +582,6 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
 
         self->engine.getRecorder().setCaptureFormat (r.captureFormat);
         self->pendingSampleRate = r.sampleRate;
-        self->refreshFormatButton();
 
         // Apply the chosen sample rate to the device immediately -- but never
         // while recording: the restart would stop the take.
