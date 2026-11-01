@@ -1217,6 +1217,7 @@ void MainComponent::editClipboardCut (bool cut)
         root->setProperty ("track", editPage->getSelectedClipTrack());
         root->setProperty ("clips", entries);
         clipClipboard = juce::var (root);
+        clipClipboardSession = engine.getActiveSessionDir();
         if (cut) editDeleteSelectedClip();
         showStatus (juce::String (cut ? "Cut " : "Copied ") + juce::String (entries.size()) + " clips");
         return;
@@ -1229,6 +1230,8 @@ void MainComponent::editClipboardCut (bool cut)
 void MainComponent::editClipboardPaste()
 {
     if (! canMutateTimeline()) return;
+    if (clipClipboard.isObject() && clipClipboardSession != engine.getActiveSessionDir())
+        clipClipboard = juce::var();   // those clips read another session's files
     if (currentView == View::Edit && clipClipboard.isObject())
     {
         auto* entries = clipClipboard["clips"].getArray();

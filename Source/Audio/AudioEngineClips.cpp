@@ -2137,6 +2137,9 @@ namespace zynforge
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return -1;
         if (fileLength <= 0) return -1;
+        // A session reads only its own media: a file elsewhere has no place in
+        // a Save As, a handoff or a DAW project, and may not be there tomorrow.
+        if (audioFile != juce::File() && ! audioFile.isAChildOf (getActiveSessionDir())) return -1;
         ensureClipList (track);
         auto& list = clipsFor (track);
 

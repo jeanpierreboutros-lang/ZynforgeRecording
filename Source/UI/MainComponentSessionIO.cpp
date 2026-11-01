@@ -1770,6 +1770,14 @@ void MainComponent::exportShowHandoff()
             return;
         }
         const auto interchange = self->engine.captureInterchange();
+        if (const auto outside = projectexport::firstMediaOutsideSession (interchange);
+            outside != juce::File())
+        {
+            self->sessionJobs.release();
+            self->showStatus ("Handoff cancelled: a clip reads " + outside.getFullPathName()
+                              + ", which is outside this session and would not be in the copy");
+            return;
+        }
         const auto version = applicationVersion();
         // A crash or quit mid-copy must leave a visible incomplete marker,
         // not a plausible-looking folder with a few truncated recordings.
