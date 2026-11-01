@@ -6,6 +6,7 @@
 #include "../Audio/AiffRepair.h"
 #include "../Audio/AudioEngine.h"
 #include "../Audio/CaptureCopy.h"
+#include "../Audio/FlacRepair.h"
 #include "../Audio/FloatAiffWriter.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/MultitrackRecorder.h"
@@ -110,6 +111,7 @@ namespace zynforge
             aiffCrashSurvival();
             punchPastATracksEnd();
             punchAcrossTheRollCeiling();
+            flacCrashSurvivor();
             continuedTakeSurvivesACrash();
         }
 
@@ -389,6 +391,86 @@ namespace zynforge
                 writeAiff (audio.getChildFile ("Track_01_part02.aif"), 16, 1, 300);
                 expect (MultitrackRecorder::recoverInterruptedPunches (audio));
                 expectEquals (lengthOf (audio.getChildFile ("Track_01_part02.aif")), (juce::int64) 300);
+                dir.deleteRecursively();
+            }
+        }
+
+        void flacCrashSurvivor()
+        {
+            const auto totalIn = [] (const juce::File& file)
+            {
+                juce::MemoryBlock head;
+                file.loadFileAsData (head);
+                const auto* b = static_cast<const juce::uint8*> (head.getData());
+                return ((juce::int64) (b[21] & 0x0f) << 32) | ((juce::int64) b[22] << 24)
+                     | ((juce::int64) b[23] << 16) | ((juce::int64) b[24] << 8) | (juce::int64) b[25];
+            };
+            beginTest ("A FLAC take a crash left opens without being decoded");
+            {
+                const auto dir = tempDir ("flac");
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.setCaptureFormat (CaptureFormat::Flac24);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.startRecording (dir));
+                feedRamp (rec, 0, 400);
+
+                const auto survivor = dir.getChildFile ("Track_01.flac");
+                expect (dir.getChildFile ("Audio Files").getChildFile ("Track_01.flac").copyFileTo (survivor));
+                rec.stopRecording();
+                expectEquals (totalIn (survivor), (juce::int64) 0, "the fixture already has a length");
+
+                const auto scanned = lengthOf (survivor);   // JUCE's own whole-file scan
+                expectGreaterThan (scanned, (juce::int64) 0);
+                expect (MultitrackRecorder::recoverInterruptedPunches (dir), "the open failed");
+                expectEquals (totalIn (survivor), scanned, "the open did not store the length");
+                const auto audio = samplesOf (survivor);
+                expectEquals ((juce::int64) audio.size(), scanned);
+                int wrong = 0;
+                for (int i = 0; i < (int) audio.size(); ++i)
+                    if (std::abs (audio[(size_t) i] - rampAt (i)) > 0.0002f) ++wrong;
+                expectEquals (wrong, 0, "the repaired file reads differently");
+
+                const auto before = bytesOf (survivor);
+                expect (flacrepair::repairStaleLength (survivor) == flacrepair::Result::untouched);
+                expect (bytesOf (survivor) == before, "a finished length was rewritten");
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+            }
+
+            beginTest ("A torn last FLAC frame is left out of the length");
+            {
+                const auto dir = tempDir ("flac-torn");
+                const auto file = dir.getChildFile ("Track_01.flac");
+                {
+                    auto stream = file.createOutputStream();
+                    std::unique_ptr<juce::AudioFormatWriter> writer (
+                        juce::FlacAudioFormat().createWriterFor (stream.get(), kRate, 2, 24, {}, 5));
+                    stream.release();
+                    writeRamp (*writer, 2, 40000);
+                }
+                const auto whole = bytesOf (file);
+                juce::MemoryBlock cut (whole.getData(), whole.getSize() - 100);
+                for (int b : { 21, 22, 23, 24, 25 })
+                    static_cast<juce::uint8*> (cut.getData())[b] = b == 21 ? (juce::uint8) (static_cast<const juce::uint8*> (whole.getData())[21] & 0xf0) : (juce::uint8) 0;
+                file.replaceWithData (cut.getData(), cut.getSize());
+
+                expect (flacrepair::repairStaleLength (file) == flacrepair::Result::repaired);
+                const auto repaired = lengthOf (file);
+                expectGreaterThan (repaired, (juce::int64) 30000);
+                expectLessThan (repaired, (juce::int64) 40000);
+                expectEquals (repaired % 4096, (juce::int64) 0, "the length is not a whole number of frames");
+                expectEquals ((int) samplesOf (file).size(), (int) repaired);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("FLAC repair leaves other files alone");
+            {
+                const auto dir = tempDir ("flac-none");
+                const auto file = dir.getChildFile ("Track_01.flac");
+                file.replaceWithText ("fLaC, but not really a FLAC file at all, and long enough to read a header from");
+                const auto before = bytesOf (file);
+                expect (flacrepair::repairStaleLength (file) == flacrepair::Result::untouched);
+                expect (bytesOf (file) == before);
                 dir.deleteRecursively();
             }
         }

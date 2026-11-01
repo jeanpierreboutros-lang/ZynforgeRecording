@@ -4,6 +4,7 @@
 #include "FloatAiffWriter.h"
 #include "AtomicFile.h"
 #include "FastHash.h"
+#include "FlacRepair.h"
 #include "PunchSplice.h"
 #include "MultiPartReader.h"
 
@@ -569,6 +570,7 @@ namespace zynforge
         // real length. A failed repair loses nothing: the audio stays in the
         // file and the next open tries again.
         aiffrepair::repairTakeFolder (audioDir);
+        flacrepair::repairTakeFolder (audioDir);
         // A take interrupted before STOP may still owe a copy its silent
         // lead-in (see PendingLeadIn); without it the new audio sits early.
         if (! recoverPendingLeadIns (audioDir)) return false;
