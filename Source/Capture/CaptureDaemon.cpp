@@ -392,6 +392,9 @@ namespace zynforge::capture
 
     EngineStatus CaptureDaemon::buildStatus()
     {
+        // A device restart on the main thread clears the shards and can replace
+        // the tracks under everything read below.
+        const juce::ScopedLock structure (recorder.getStructureLock());
         releaseFinishedTake();
         const auto nowMs = juce::Time::getMillisecondCounterHiRes();
         if (! recorder.isRecording())

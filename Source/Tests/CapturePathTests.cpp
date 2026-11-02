@@ -1246,6 +1246,26 @@ namespace zynforge
         {
             using Copy = MultitrackRecorder::CaptureCopy;
 
+            beginTest ("A status never races a device restart");
+            {
+                capture::CaptureDaemon daemon;
+                daemon.setTestModeNoDevice (true);
+                daemon.prepareForTests (kRate, kBlock, 2);
+                std::atomic<bool> running { true };
+                std::thread restarts ([&]
+                {
+                    while (running.load())
+                    {
+                        daemon.getRecorder().prepare (kRate, kBlock, 3);
+                        daemon.getRecorder().prepare (kRate, kBlock, 2);
+                    }
+                });
+                for (int i = 0; i < 2000; ++i) daemon.buildStatus();
+                running.store (false);
+                restarts.join();
+                expectEquals (daemon.getRecorder().getNumTracks(), 2);
+            }
+
             beginTest ("A take file that closes short is a failed write, not a clean STOP");
             {
                 const auto root = tempDir ("short-close");
