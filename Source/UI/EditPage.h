@@ -75,6 +75,12 @@ namespace zynforge
         // session UI layout into .zfproj.
         std::function<void (float)> onZoomChanged;
 
+        // Each strip's row height and lane, kept in the session's UI layout.
+        // onRowViewChanged fires when a gesture that changed one has ended.
+        std::function<void()> onRowViewChanged;
+        juce::var captureRowViews() const;
+        void      restoreRowViews (const juce::var& saved);
+
         // Channel selection, shared with the MIXER. A header click on a
         // track row calls onRowSelect(physicalTrackIndex, additive) so the
         // host can fold it into the same selection set the MIXER uses
@@ -184,6 +190,9 @@ namespace zynforge
         void repaintLanes();        // force every track row to repaint
         void updatePlaceholder();   // show/hide the empty-state overlay by channel count
         void rescanWaveforms();     // drop cached peaks + re-scan every row (e.g. after a strip reorder renamed files)
+        // New audio joined the session, so WaveCache.wfm predates a file and the
+        // next open would throw the whole cache away. Writes a newer one.
+        void sessionMediaAdded() noexcept { waveCacheSaved = false; }
 
         // Strip reorder by swatch drag. While the pointer moves, the dragged
         // row asks for a preview: the list draws a drop line where the strip
@@ -265,6 +274,7 @@ namespace zynforge
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>> thumbnailCaches;
         ScrollViewport                     viewport;
         TimelineFollowState                followState;
+        ScanRepaint                        scanRepaint;
         bool                               programmaticViewportChange { false };
         bool                               readOnlyWhileRecording { false };
         bool                               hostReadOnly { false };   // last setReadOnlyWhileRecording
@@ -276,6 +286,7 @@ namespace zynforge
 
         int        lastTrackCount  { -1 };
         int        lastTrackGen    { -1 };   // rebuild on a stereo link/unlink (count unchanged, generation bumps)
+        bool       rowsCondemned   { false };   // condemnAllRows ran; only a rebuild revives the rows
         bool       lastLoaded      { false };
         bool       lastRecording   { false };
         bool       lastFinalizing  { false };   // async STOP still finalizing on the last tick

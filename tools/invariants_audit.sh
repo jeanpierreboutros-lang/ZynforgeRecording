@@ -481,14 +481,21 @@ report "session_mix.json is written only through the mixer guard" \
 # the thread STOP needs, and the daemon's status runs under the lock its STOP
 # needs, so a copy's hung NAS froze the window and held the take. Take readings
 # come from the recorder's volume probes (readDiskEstimate), which only load
-# atomics. The two lines allowed below are the between-takes free-space read,
-# behind isTakeOnDisk, and the SMART poll's own thread.
+# atomics. The lines allowed below are the between-takes free-space read,
+# behind isTakeOnDisk, and the SMART poll's own thread. hasSessionFolder is how a
+# tick asks whether there is a session.
 FS_CALLS='isDirectory\(\)|existsAsFile\(\)|\.exists\(\)|getBytesFreeOnVolume|getVolumeTotalSize|estimateMinutesRemaining'
 HITS=$(sed -n '/EngineStatus CaptureDaemon::buildStatus/,/^    }/p' Source/Capture/CaptureDaemon.cpp 2>/dev/null \
        | grep -E "$FS_CALLS" | sed 's,^,buildStatus: ,')
 TICK=$(grep -nE "$FS_CALLS" Source/UI/MainComponentTimer.cpp 2>/dev/null \
        | grep -vE 'active\.isDirectory\(\) \? active|sessRoot\.exists\(\)|getBytesFreeOnVolume\(\);|(sessionDir|backupDir)\.isDirectory\(\)$|^[0-9]+:[[:space:]]*//')
 [[ -n "$TICK" ]] && HITS+=$'\n'"Source/UI/MainComponentTimer.cpp:$TICK"
+# EDIT's own 24 Hz timer runs on that thread too, through finalization.
+grep -q 'void EditPage::timerCallback' Source/UI/EditPage.cpp \
+    || HITS+=$'\nSource/UI/EditPage.cpp: the EDIT timer moved; point this rule at it'
+EDIT_TICK=$(sed -n '/void EditPage::timerCallback/,/^    }/p' Source/UI/EditPage.cpp 2>/dev/null \
+            | sed 's,//.*,,' | grep -E "$FS_CALLS")
+[[ -n "$EDIT_TICK" ]] && HITS+=$'\n'"Source/UI/EditPage.cpp (timerCallback): $EDIT_TICK"
 report "a take's status path reads no disk" \
        "read recorder.readDiskEstimate(), or gate an idle-only read behind engine.isTakeOnDisk()" \
        "$(sed '/^$/d' <<<"$HITS")"
