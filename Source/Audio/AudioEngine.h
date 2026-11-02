@@ -407,6 +407,15 @@ namespace zynforge
         // thread by MainComponent's timer polling getPunch* and
         // toggling startRecording / stopRecording / track.armed.
         bool isPunchModeOn()      const noexcept { return punchEnabled.load (std::memory_order_relaxed); }
+        // Rolling across this range opens a punch, and a punch is the host's to
+        // start: no remote may start the roll, and landing inside it from outside
+        // counts as crossing in. Empty unless PUNCH mode has a chosen range.
+        juce::Range<juce::int64> getPunchRange() const noexcept
+        {
+            return isPunchModeOn() && player.isRangeArmed()
+                       ? juce::Range<juce::int64>::between (player.getLoopStart(), player.getLoopEnd())
+                       : juce::Range<juce::int64>();
+        }
         // Turning it on holds loop-play off so a pass crosses the punch-out;
         // turning it off puts loop-play back. clearSessionState ends the mode.
         void setPunchModeOn (bool on) noexcept;

@@ -43,6 +43,8 @@ namespace zynforge
         };
         void setHost (Host h) { host = std::move (h); }
         void showHostStatus (const juce::String& message) { if (host.showStatus) host.showStatus (message); }
+        // A wheel sends thirty of these a second; one notice a second says it.
+        void noteJogHeld();
         bool isSessionBusy() const;
 
         // ── OSC remote ──────────────────────────────────────────────────
@@ -117,6 +119,8 @@ namespace zynforge
         juce::int64  getDeskMacroDropped() const;
         juce::String getDeskMacroLastDropped() const;
         juce::String deskLocateRefusal() const;
+        // The same question once the target is known.
+        juce::String deskLocateRefusal (juce::int64 target) const;
 
         // ── MIDI control surface (Mackie Control / FaderPort) ───────────
         // Open a control surface on the given MIDI in/out device names. `key`
@@ -131,6 +135,7 @@ namespace zynforge
         scenefollow::MarkerBudget     markerBudget;
         juce::int64                   markersRefused { 0 };
         juce::uint32                  lastMarkerNoticeMs { 0 };
+        juce::uint32                  lastJogNoticeMs { 0 };
         scenefollow::Facts sceneFacts() const;
 
         AudioEngine& engine;

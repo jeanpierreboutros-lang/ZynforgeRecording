@@ -762,6 +762,7 @@ namespace zynforge
 
     juce::String AudioEngine::getChaseParkReason() const
     {
+        if (isPunchModeOn()) return "Chase is holding: PUNCH mode is on";
         const auto total  = player.getTotalLengthSamples();
         const auto target = getChaseTargetSamples();
         if (target >= 0 && target < total) return {};

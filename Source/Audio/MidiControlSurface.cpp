@@ -100,7 +100,13 @@ namespace zynforge
                 auto& player = eng->getPlayer();
                 const double sr = juce::jmax (1.0, player.getSampleRate());
                 const auto step = (juce::int64) std::lround (sr / 30.0) * (juce::int64) delta;
-                player.setPositionSamples (player.getPositionSamples() + step);
+                const auto target = player.getPositionSamples() + step;
+                if (eng->getPunchRange().contains (target))
+                {
+                    eng->getRemotes().noteJogHeld();
+                    return;
+                }
+                player.setPositionSamples (target);
             });
             return;
         }
@@ -177,8 +183,18 @@ namespace zynforge
                 {
                     auto* eng = engineHandle->load (std::memory_order_acquire);
                     if (eng == nullptr || eng->areControlsLocked()) return;
-                    if (a == mcu::Action::Play)  { if (eng->isPlaying()) eng->stopPlayback(); else eng->startPlayback(); }
-                    if (a == mcu::Action::Stop)  eng->stopPlayback();
+                    if (a == mcu::Action::Stop || (a == mcu::Action::Play && eng->isPlaying()))
+                    {
+                        eng->stopPlayback();
+                        return;
+                    }
+                    // The host's door, like every other remote: it refuses in
+                    // PUNCH mode, where rolling into the range opens a punch.
+                    juce::String refused;
+                    if (a == mcu::Action::Play
+                        && ! eng->performRemoteTransport (AudioEngine::RemoteTransportAction::StartPlay, refused)
+                        && refused.isNotEmpty())
+                        eng->getRemotes().showHostStatus ("Surface PLAY refused -- " + refused);
                     // Record over MCU intentionally not wired in v1 (avoids an
                     // accidental take from a stray surface press).
                 });

@@ -8,8 +8,10 @@
 #include "../UI/MainComponent.h"
 #include "../UI/PreflightDialog.h"
 #include "../Audio/AtomicFile.h"
+#include "../Audio/MidiControlSurface.h"
 #include "../Audio/VirtualSoundcheck.h"
 #include "../Network/ConsoleLink.h"
+#include "../Network/DeskMacro.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <functional>
@@ -202,6 +204,7 @@ namespace zynforge
             main.setSize (1320, 820);
 
             cuesKeepTheShowPatch (main);
+            aRemoteCannotStartOrLandInAPunch (main);
             deskWithNoSoundcheckState (main);
             restoreIsConfirmedByTheDesk();
             gainsAreConfirmedByTheDesk();
@@ -315,6 +318,133 @@ namespace zynforge
                 b.engine().setTrackOutputRouting (1, 2);
                 main.jumpToCue (0);
                 expectEquals (b.track (1).outputRouting.load(), 6);
+            }
+        }
+
+        // ── A remote and a punch ───────────────────────────────────────────
+
+        static constexpr juce::int64 kRangeIn = 20000, kRangeOut = 40000;
+
+        static void armPunch (Bench& b)
+        {
+            b.engine().setTrackArmed (0, true);
+            b.engine().setPunchModeOn (true);
+            b.engine().getPlayer().selectRange (kRangeIn, kRangeOut);
+            b.engine().getPlayer().setPositionSamples (1000);
+        }
+
+        void aRemoteCannotStartOrLandInAPunch (MainComponent& main)
+        {
+            const auto press = [] (MidiControlSurface& surface, int note)
+            { surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::noteOn (1, note, (juce::uint8) 127)); };
+
+            beginTest ("Surface PLAY obeys PUNCH mode like every other remote");
+            {
+                Bench b (main);
+                armPunch (b);
+                MidiControlSurface surface (b.engine());
+                press (surface, mcu::Play);
+                expect (! b.engine().isPlaying(), "the surface rolled toward a punch");
+                expect (main.statusLabel.getText().contains ("PUNCH"), main.statusLabel.getText());
+
+                b.engine().setPunchModeOn (false);
+                press (surface, mcu::Play);
+                expect (b.engine().isPlaying(), "the surface can't start playback at all");
+                press (surface, mcu::Play);
+                expect (! b.engine().isPlaying(), "PLAY on the surface stopped toggling");
+            }
+
+            beginTest ("Under PUNCH mode the surface can still stop what the host started");
+            {
+                Bench b (main);
+                armPunch (b);
+                b.engine().startPlayback();
+                MidiControlSurface surface (b.engine());
+                press (surface, mcu::Play);
+                expect (! b.engine().isPlaying());
+            }
+
+            beginTest ("The jog wheel can't land inside the PUNCH range");
+            {
+                Bench b (main);
+                armPunch (b);
+                auto& player = b.engine().getPlayer();
+                MidiControlSurface surface (b.engine());
+                const auto jog = [&]
+                { surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::controllerEvent (1, mcu::kJogCc, 1)); };
+
+                player.setPositionSamples (kRangeIn - 100);
+                jog();
+                expectEquals (player.getPositionSamples(), kRangeIn - 100, "the wheel landed in the range");
+                expect (main.statusLabel.getText().contains ("PUNCH"), main.statusLabel.getText());
+
+                player.setPositionSamples (1000);
+                jog();
+                expect (player.getPositionSamples() > 1000, "the wheel stopped working outside the range");
+            }
+
+            beginTest ("A desk macro marker jump can't land inside the PUNCH range");
+            {
+                Bench b (main);
+                armPunch (b);
+                auto& player = b.engine().getPlayer();
+                b.engine().getMarkers().drop (kRangeIn + 500, "in the range");
+                b.engine().getMarkers().drop (kRangeOut + 500, "after it");
+                DeskMacroListener macro (b.engine());
+                macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/marker/next"), 10000.0);
+                expectEquals (player.getPositionSamples(), (juce::int64) 1000, "a macro landed in the range");
+                expect (main.statusLabel.getText().contains ("PUNCH"), main.statusLabel.getText());
+
+                player.setPositionSamples (kRangeOut);
+                macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/marker/next"), 20000.0);
+                expectEquals (player.getPositionSamples(), kRangeOut + 500, "a jump outside the range was refused");
+            }
+
+            beginTest ("Scene Follow can't land inside the PUNCH range");
+            {
+                Bench b (main);
+                armPunch (b);
+                auto& player = b.engine().getPlayer();
+                b.engine().getMarkers().drop (kRangeIn + 500, "Verse");
+                b.engine().setSceneFollowEnabled (true);
+                const auto action = b.engine().getRemotes().onConsoleScene (1, "Verse", scenefollow::Path::ConsoleLink);
+                b.engine().setSceneFollowEnabled (false);
+                expect (action == scenefollow::Action::Refused);
+                expectEquals (player.getPositionSamples(), (juce::int64) 1000, "Follow landed in the range");
+            }
+
+            beginTest ("The rule itself: a range only counts in PUNCH mode, and a marker past it follows");
+            {
+                using namespace scenefollow;
+                Marker verse;
+                verse.sampleOffset = 500;
+                verse.name = "Verse";
+                std::vector<Marker> markers { verse };
+                Facts f;
+                f.followOn = true;
+                f.playerLoaded = true;
+                expect (decide (f, markers, "Verse", 0).action == Action::Locate);
+                f.punchRange = juce::Range<juce::int64> (400, 600);
+                expect (decide (f, markers, "Verse", 0).action == Action::Refused);
+                f.punchRange = juce::Range<juce::int64> (600, 800);
+                expect (decide (f, markers, "Verse", 0).action == Action::Locate);
+            }
+
+            beginTest ("Timecode chase holds in PUNCH mode, and says so");
+            {
+                Bench b (main);
+                armPunch (b);
+                auto& e = b.engine();
+                e.setChaseMode (AudioEngine::ChaseMode::Mtc);
+                e.setChaseStartTimecode ("00:00:00:00");
+                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 12, 25.0f);
+                expect (e.isChaseLive(), "fixture: chase is not live");
+                main.serviceTimecodeChase();
+                expect (! e.isPlaying(), "chase rolled toward a punch");
+                expectEquals (e.getPlayer().getPositionSamples(), (juce::int64) 1000, "chase moved the playhead");
+                expect (main.statusLabel.getText().contains ("PUNCH"), main.statusLabel.getText());
+                e.setChaseMode (AudioEngine::ChaseMode::Off);
+                main.serviceTimecodeChase();
             }
         }
 
