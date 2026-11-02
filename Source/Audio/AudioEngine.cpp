@@ -2077,7 +2077,7 @@ namespace zynforge
 
     bool AudioEngine::reopenChosenDevice (juce::String& error)
     {
-        if (isRecording() || isCaptureFinalizing()) { error = "a take is rolling"; return false; }
+        if (isRecording() || isSessionTransitionActive()) { error = "a take or a session change is running"; return false; }
         const auto state = getDeviceState();
         if (state.chosenNow.isEmpty()) { error = "it is not connected"; return false; }
 
