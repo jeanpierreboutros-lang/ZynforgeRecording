@@ -685,6 +685,7 @@ namespace zynforge
                     setup (host.engine, 1);
                     host.engine.loadSession (f.dir);
                     host.engine.setActiveSessionDir (f.dir);
+                    host.engine.claimMixerFor (f.dir);
                     expect (host.engine.exportRefusal().isEmpty());
 
                     host.engine.setExternalRecording (true);
@@ -718,6 +719,7 @@ namespace zynforge
                     MainComponent host;
                     setup (host.engine, 1);
                     host.engine.setActiveSessionDir (f.dir);
+                    host.engine.claimMixerFor (f.dir);
                     expect (host.sessionJobs.reserve());
                     host.exportDawProject (px::Format::Reaper);
                     expect (! f.exports().getChildFile (f.dir.getFileName() + ".RPP").exists());

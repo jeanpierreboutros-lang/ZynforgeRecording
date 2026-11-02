@@ -365,6 +365,7 @@ MainComponent::MainComponent()
     {
         if (! engine.isRecording()) requestUILayoutSave();
     };
+    editPage->onRowViewChanged = [this] { if (! engine.isRecording()) requestUILayoutSave(); };
 
     // EDIT-view channel selection feeds the SAME shared selection set the
     // MIXER uses, so a click in either view drives Option+R bulk arm and
@@ -732,6 +733,7 @@ void MainComponent::rebuildStrips()
         };
         auto outCb = [this, i, step] (int dev)
         {
+            if (dev < 0) { engine.sendStripToMaster (i, step == 2); return; }
             engine.setStripLinkedRouting (i, step == 2, dev, engine.getCurrentDeviceOutputCount());
         };
 
@@ -756,7 +758,7 @@ void MainComponent::rebuildStrips()
                 if (self != nullptr && self->stillInScope (scope)) self->removeStrip (i, step);
             });
         };
-        auto addCb        = [this] { if (! sessionLocked) engine.addOneStrip(); };
+        auto addCb        = [this] { if (canMutateTimeline ("adding a strip")) engine.addOneStrip(); };
         auto linkStereoCb = [this, i]
         {
             if (i + 1 < engine.getRecorder().getNumTracks())

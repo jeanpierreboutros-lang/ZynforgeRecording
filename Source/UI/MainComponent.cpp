@@ -1441,6 +1441,24 @@ void MainComponent::confirmAndQuit()
         return;
     }
 
+    if (sessionFolderIsMissing())
+    {
+        juce::Component::SafePointer<MainComponent> self (this);
+        offerLeaveMissingSession ("Quit Without Saving", [self]
+        {
+            if (self == nullptr) return;
+            // A remote RECORD may have started behind this dialog; that take
+            // gets the proper Stop & Quit, not a bare teardown.
+            if (self->engine.isRecording() || self->captureSupervisor.isDaemonRecording())
+            {
+                self->confirmAndQuit();
+                return;
+            }
+            if (auto* app = juce::JUCEApplication::getInstance()) app->quit();
+        });
+        return;
+    }
+
     // No active session -- nothing to save. Two buttons.
     if (! hasActiveSession)
     {

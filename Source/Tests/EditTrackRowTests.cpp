@@ -209,8 +209,11 @@ namespace zynforge
                     expectEquals (patch (2), juce::String ("5/5"), "the input combo left the output behind");
                     combos[1]->setSelectedId (8, juce::sendNotificationSync);    // Out 7
                     expectEquals (patch (2), juce::String ("6/6"), "the output combo left the input behind");
-                    combos[1]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
-                    expectEquals (patch (2), juce::String ("-1/-1"));
+                    combos[1]->setSelectedId (1, juce::sendNotificationSync);    // -> Master
+                    expectEquals (patch (2), juce::String ("6/-1"), "the master took the input with it");
+                    mono.refreshRoutingSelection();
+                    combos[0]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
+                    expectEquals (patch (2), juce::String ("-1/-1"), "an input cleared by hand clears both");
                 }
 
                 h.engine.setTrackStereo (0, true);
@@ -225,6 +228,9 @@ namespace zynforge
                     combos[1]->setSelectedId (8, juce::sendNotificationSync);    // Out 7-8
                     expectEquals (patch (0), juce::String ("6/6"));
                     expectEquals (patch (1), juce::String ("7/7"), "R missed the output combo");
+                    combos[1]->setSelectedId (1, juce::sendNotificationSync);    // -> Master
+                    expectEquals (patch (0), juce::String ("6/-1"), "the master took L's input with it");
+                    expectEquals (patch (1), juce::String ("7/-1"), "the master took R's input with it");
                     combos[0]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
                     expectEquals (patch (0), juce::String ("-1/-1"));
                     expectEquals (patch (1), juce::String ("-1/-1"));
@@ -647,6 +653,48 @@ namespace zynforge
                         expectWithinAbsoluteError (rows[0]->getWaveformSecondsForTests(), takeSec, 0.01,
                                                    "the lane kept the waveform scanned while the take was still open");
                     }
+                    engine.clearAllStripOverrides();
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A strip's routing holds through a take and its finalization");
+            {
+                const auto patch = [] (AudioEngine& e)
+                {
+                    const auto& state = e.getRecorder().getTrack (0);
+                    return juce::String (state.inputRouting.load()) + "/" + juce::String (state.outputRouting.load());
+                };
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-editaudit-routing-" + juce::Uuid().toString());
+                expect (dir.createDirectory().wasOk());
+                {
+                    AudioEngine engine;
+                    engine.clearAllStripOverrides();
+                    engine.setStripCount (1);
+                    engine.prepareForTests (48000, 256);
+                    engine.getRecorder().getTrack (0).armed.store (true);
+                    engine.setTrackLinkedRouting (0, 5);
+                    engine.setActiveSessionDir (dir);
+                    engine.claimMixerFor (dir);
+                    expect (engine.startRecording (dir));
+                    engine.sendStripToMaster (0, false);
+                    expectEquals (patch (engine), juce::String ("5/5"), "the output moved under a take");
+
+                    juce::WaitableEvent entered, release;
+                    std::atomic<bool> completed { false };
+                    engine.getRecorder().beforeFinalizationForTests = [&] { entered.signal(); release.wait (5000); };
+                    const juce::ScopeGuard releaseWorker { [&] { release.signal(); } };
+                    expect (engine.stopRecordingAsync ([&] (bool) { completed = true; }));
+                    expect (entered.wait (2000), "STOP never reached finalization");
+                    engine.sendStripToMaster (0, false);
+                    expectEquals (patch (engine), juce::String ("5/5"), "the output moved while the take finalized");
+                    engine.setTrackLinkedRouting (0, 2);
+                    expectEquals (patch (engine), juce::String ("5/5"),
+                                  "half a linked patch landed while the take finalized");
+                    release.signal();
+                    expect (pumpUntil ([&] { return completed.load(); }, 10000), "STOP did not complete");
                     engine.clearAllStripOverrides();
                 }
                 MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
