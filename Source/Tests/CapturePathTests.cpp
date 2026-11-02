@@ -1304,6 +1304,17 @@ namespace zynforge
                 expect (juce::JSON::toString (report["copyProblems"]).contains ("lead-in"), juce::JSON::toString (report));
             }
 
+            beginTest ("A status says which strips are stereo");
+            {
+                capture::CaptureDaemon daemon;
+                daemon.setTestModeNoDevice (true);
+                daemon.prepareForTests (kRate, kBlock, 3);
+                daemon.getRecorder().getTrack (1).isStereo.store (true);
+                const auto status = EngineStatus::fromJson (daemon.buildStatus().toJson());
+                expect (! status.tracks[0].stereoLeft);
+                expect (status.tracks[1].stereoLeft, "a pair came back as two mono strips");
+            }
+
             beginTest ("A take file that closes short is a failed write, not a clean STOP");
             {
                 const auto root = tempDir ("short-close");

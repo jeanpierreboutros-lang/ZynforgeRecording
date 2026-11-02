@@ -448,6 +448,7 @@ namespace zynforge::capture
             ts.peak  = t.peak .load (std::memory_order_relaxed);
             ts.rms   = t.rms  .load (std::memory_order_relaxed);
             ts.armed = t.armed.load (std::memory_order_relaxed);
+            ts.stereoLeft = t.isStereo.load (std::memory_order_relaxed);
             if (ts.armed) ++s.armedTracks;
             s.tracks.push_back (std::move (ts));
         }
