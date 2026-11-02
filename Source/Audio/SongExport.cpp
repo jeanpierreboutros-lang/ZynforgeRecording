@@ -194,9 +194,11 @@ namespace zynforge::songexport
                     ExportFileStream out (exporter, target.destStem, plan.format, plan.renderRate, channels);
                     ok = out.isOpen() && renderTarget (engine, target, song, out, cancel, peak);
                     if (cancel.load (std::memory_order_relaxed)) break;
-                    ok = ok ? out.commit (error) : false;
+                    ok = ok ? out.commit (error, &cancel) : false;
+                    if (cancel.load (std::memory_order_relaxed)) break;
                     if (! ok && error.isEmpty())
                         error = "Could not render " + target.destStem.getFileName();
+                    if (ok && out.hasClipped()) ++outcome.clippedFiles;
                 }
                 ++outcome.attempted;
                 if (ok)
@@ -221,9 +223,10 @@ namespace zynforge::songexport
         return outcome;
     }
 
-    juce::String mixRenderWarning (bool silent, bool soloActive)
+    juce::String mixRenderWarning (bool silent, bool soloActive, bool clipped)
     {
         if (silent)     return "the mix is SILENT -- check solo and strip mutes";
+        if (clipped)    return "the mix went over full scale and CLIPPED -- pull the master down and bounce again";
         if (soloActive) return "solo was on, so it holds only the soloed strips";
         return {};
     }
@@ -241,6 +244,8 @@ namespace zynforge::songexport
             return "Export INCOMPLETE: " + juce::String (outcome.attempted - outcome.written)
                  + " of " + juce::String (outcome.attempted) + " failed or missing" + why;
         const auto done = "Exported " + zynforge::counted (outcome.written, "file") + " -> " + destName;
+        if (outcome.clippedFiles > 0)
+            return done + " -- WARNING: " + juce::String (outcome.clippedFiles) + " of them went over full scale and CLIPPED";
         if (outcome.silentMixes > 0)
             return done + " -- WARNING: " + juce::String (outcome.silentMixes) + " of them: "
                  + mixRenderWarning (true, outcome.soloActive);

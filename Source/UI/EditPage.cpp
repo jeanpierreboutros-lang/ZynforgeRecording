@@ -380,7 +380,7 @@ namespace zynforge
             // counts on the record head but has no live bins: they start at
             // go-live.
             const auto base    = daemon ? remote.positionSamples - remote.elapsedSamples
-                                        : rec.getRecordBaseSamples() + rec.getPreRollHistorySamples();
+                                        : engine.getRecordBaseOnTimeline() + rec.getPreRollHistorySamples();
             const juce::int64 prefill = base > 0 ? base / TrackState::kLiveBinSamples : 0;
             for (auto& r : rows)
             {

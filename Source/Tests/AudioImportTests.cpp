@@ -8,7 +8,7 @@
 namespace zynforge::audioimport::detail
 {
     bool writeConverted (juce::AudioFormatReader&, const juce::File&, double,
-                         int, int, const std::atomic<bool>*);
+                         int, int, const std::atomic<bool>*, bool* clipped = nullptr);
 }
 
 namespace zynforge

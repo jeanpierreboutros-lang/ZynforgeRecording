@@ -74,7 +74,10 @@ void MainComponent::onRecordClicked()
             showStatus ("RECORD held -- starting as soon as this save finishes");
             return;
         }
-        showRecordRefusal ("Wait for recording finalization / session saving to finish");
+        const auto job = sessionJobs.runningJob();
+        showRecordRefusal (job.isNotEmpty()
+            ? "RECORD is waiting for the running " + job + " -- cancel it from the File menu"
+            : juce::String ("Wait for recording finalization / session saving to finish"));
         return;
     }
     recordRefusal.clear();
@@ -143,15 +146,18 @@ void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
     if (cursorPunchQuestion != nullptr) return;
     const auto& player = engine.getPlayer();
     const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+    const auto refusal = engine.punchRefusal (plan.punchAt, -1);
     auto* aw = new juce::AlertWindow (
-        "Replace audio?",
-        "The EDIT cursor is at " + juce::String (plan.punchAt / sr, 1) + " s, inside the take.\n\n"
-        "Replacing starts there on " + zynforge::counted (plan.armed, "armed track") + " and runs until you "
-        "stop. It can't be undone.\n\nRecording after the take leaves everything as it is.",
+        refusal.isEmpty() ? "Replace audio?" : "Can't replace audio here",
+        refusal.isEmpty()
+            ? "The EDIT cursor is at " + juce::String (plan.punchAt / sr, 1) + " s, inside the take.\n\n"
+              "Replacing starts there on " + zynforge::counted (plan.armed, "armed track") + " and runs until you "
+              "stop. It can't be undone.\n\nRecording after the take leaves everything as it is."
+            : refusal + ".\n\nRecording after the take leaves everything as it is.",
         juce::MessageBoxIconType::NoIcon, this);
     // Return is the safe answer: a hurried press must never replace audio.
     aw->addButton ("Record After Take", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("Replace From Cursor", 2);
+    if (refusal.isEmpty()) aw->addButton ("Replace From Cursor", 2);
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     cursorPunchQuestion = aw;
@@ -401,6 +407,22 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     plan.dir = plan.continueTake ? engine.getActiveSessionDir() : makeNewSessionDir();
     plan.numTracks = numTracks;
     plan.armed = armed;
+
+    // A press that may not punch stops here, before a selection punch moves the
+    // playhead. A remote press is refused for punching at all, further on, and
+    // a stopped cursor is answered in its question: only that question can
+    // clear the cursor, and RECORD must still be able to append.
+    if (recordPlanPunches (plan) && ! remoteStartInFlight && ! twinStartInFlight && ! cursorPunchNeedsAnswer (plan))
+    {
+        const auto refusal = recordPlanHasSelection (plan)
+            ? engine.punchRefusal (engine.getPlayer().getLoopStart(), engine.getPlayer().getLoopEnd())
+            : engine.punchRefusal (plan.punchAt, -1);
+        if (refusal.isNotEmpty())
+        {
+            showRecordRefusal (refusal);
+            return false;
+        }
+    }
 
     // Disk-space pre-flight -- abort if the drive can't hold at least
     // 30 minutes at current SR × armed-track count × bit depth (assume

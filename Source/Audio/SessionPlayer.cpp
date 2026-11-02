@@ -194,7 +194,7 @@ namespace zynforge
                 if (! f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
                 { mainFile = f; break; }
             if (! mainFile.existsAsFile()) continue;
-            auto reader = ConcatReader::create (formatManager, findTakeParts (mainFile));
+            auto reader = ConcatReader::createUnchecked (formatManager, findTakeParts (mainFile));
             if (reader == nullptr) { prepared->complete = false; continue; }
             const double fileSR = reader->sampleRate;
             const bool stereo = reader->numChannels >= 2;
@@ -244,7 +244,7 @@ namespace zynforge
         {
             const auto key = clip.audioFile.getFullPathName();
             if (prepared->explicitReaders.count (key) != 0) continue;
-            auto raw = ConcatReader::create (formatManager, findTakeParts (clip.audioFile));
+            auto raw = ConcatReader::createUnchecked (formatManager, findTakeParts (clip.audioFile));
             if (! raw)
             {
                 prepared->complete = false;
@@ -461,7 +461,7 @@ namespace zynforge
                 const juce::ScopedLock sl (clipsLock);
                 if (extraReaders.find (key) != extraReaders.end()) continue;
             }
-            if (auto raw = ConcatReader::create (formatManager, findTakeParts (c.audioFile)))
+            if (auto raw = ConcatReader::createUnchecked (formatManager, findTakeParts (c.audioFile)))
             {
                 const auto bufSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
                 auto br = std::make_unique<PlaybackReader> (raw.release(), readerThread, bufSamples);
@@ -492,13 +492,24 @@ namespace zynforge
             if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
             activeClips[(size_t) trackIdx]        = std::move (clips);
             clipsAuthoritative[(size_t) trackIdx] = 1;   // explicit list (even if empty)
-            juce::int64 extent = 0;
-            for (const auto& t : tracks) extent = juce::jmax (extent, t.length);
+            // A track with a clip list is as long as its clips say, however
+            // much file sits behind them: a cropped show must not keep the
+            // whole take's length.
+            juce::int64 extent = 0, media = 0;
+            for (size_t i = 0; i < tracks.size(); ++i)
+            {
+                media = juce::jmax (media, tracks[i].length);
+                if (i >= clipsAuthoritative.size() || clipsAuthoritative[i] == 0)
+                    extent = juce::jmax (extent, tracks[i].length);
+            }
             for (const auto& list : activeClips)
                 for (const auto& c : list)
                     extent = juce::jmax (extent, c.timelineStartSamples + c.fileLengthSamples);
+            if (extent <= 0) extent = media;   // nothing arranged: still a session
             totalLength.store (extent, std::memory_order_release);
             loaded.store (extent > 0, std::memory_order_release);
+            if (position.load (std::memory_order_acquire) > extent)
+                position.store (extent, std::memory_order_release);
             // Mirror into the lock-free flag the audio thread reads on
             // clipsLock contention (see processBlock).
             if (trackIdx < kMaxAuthoritativeTracks)

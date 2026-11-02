@@ -258,6 +258,20 @@ namespace zynforge
             return false;
         }
 
+        // Here and not on a button, because PUNCH mode, a rolling press and a
+        // selection all end up at this one door.
+        if (recorder.isPunchInArmed())
+        {
+            const auto refusal = punchRefusal (recorder.getRecordBaseSamples(),
+                                               isCaptureWindowActive()
+                                                   ? captureWindowEnd.load (std::memory_order_relaxed) : -1);
+            if (refusal.isNotEmpty())
+            {
+                recorder.refuseStart (refusal);
+                return false;
+            }
+        }
+
         bwf::TimeAnchor timecode;
         if (getTimecodeAnchor (timecode)) recorder.setTimeReferenceHint (timecode);
         else                              recorder.clearTimeReferenceHint();
@@ -289,6 +303,11 @@ namespace zynforge
             const juce::ScopedLock sl (stereoMixLock);
             stereoMixWriter = std::move (mix.writer);
         }
+
+        continueFileBase = recorder.isContinueArmed() ? recorder.getRecordBaseSamples() : 0;
+        continueShift.store (recorder.isContinueArmed() && player.isLoaded()
+                                 ? continueFileBase - continueLandsAt() : 0,
+                             std::memory_order_release);
 
         // These strips are what this take was recorded with, so from here on
         // they are this folder's mixer, whichever session they came from.
@@ -375,7 +394,7 @@ namespace zynforge
         // pass began) leave the transport parked at the END of what was just
         // captured, so the next RECORD continues the take from here instead
         // of looking like it starts over from the beginning.
-        const auto recordEnd = recorder.getRecordTimelineSamples();
+        const auto recordEnd = getRecordTimelineSamples();
         const bool sameSession = clipsBelongTo (sessionDir);
         recorder.stopRecording();
         clearCaptureWindow();
@@ -434,7 +453,7 @@ namespace zynforge
         auto job = std::make_unique<CaptureStopJob>();
         job->external = externalSession != juce::File();
         job->directory = job->external ? externalSession : recorder.getActiveSessionDir();
-        job->recordEnd = job->external ? externalEnd : recorder.getRecordTimelineSamples();
+        job->recordEnd = job->external ? externalEnd : getRecordTimelineSamples();
         job->sameSession = job->external ? player.getSessionDir() == externalSession
                                          : clipsBelongTo (job->directory);
         job->playbackRate = deviceSampleRate.load();

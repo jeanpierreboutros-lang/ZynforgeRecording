@@ -449,7 +449,7 @@ void MainComponent::editCutSelected (bool cut)
     for (int logical : selectedLogical)
     {
         const int phys = physicalFromLogical (engine, logical);
-        arr.add (snapshotStrip (engine, phys));
+        arr.add (zynforge::mixersnapshot::copyStrip (engine, phys));
     }
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("strips", juce::var (arr));
@@ -481,7 +481,7 @@ void MainComponent::editPasteSelected()
     for (int logical : selectedLogical)
     {
         const int phys = physicalFromLogical (engine, logical);
-        restoreStrip (engine, phys, (*arr)[i % arr->size()]);
+        zynforge::mixersnapshot::pasteStrip (engine, phys, (*arr)[i % arr->size()]);
         ++i;
     }
     commitMixerUndo ("Paste strip settings", before);
@@ -931,30 +931,44 @@ void MainComponent::consolidateTracks (const std::vector<int>& targets, juce::in
     if (! canMutateTimeline ("consolidating audio")) return;
     if (! sessionJobs.reserve())
     { showStatus ("Wait for the session operation to finish"); return; }
-    const auto before = engine.playlistsToJson();
+    const auto before = std::make_shared<juce::var> (engine.playlistsToJson());
+    auto run = engine.prepareConsolidate (targets, start, end);
+    if (run == nullptr)
+    {
+        sessionJobs.release();
+        showStatus ("Consolidation failed; the arrangement was not changed");
+        return;
+    }
     if (editPage != nullptr) editPage->setEnabled (false);
     showStatus ("Consolidating audio in the background...");
     juce::Component::SafePointer<MainComponent> self (this);
-    engine.consolidateRangeAsync (targets, start, end, [self, before] (int n, bool complete)
+    sessionJobs.launch ([self, run, before] (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
     {
-        if (self == nullptr) return;
-        self->sessionJobs.release();
-        if (self->editPage != nullptr)
+        AudioEngine::renderConsolidate (*run, cancel);
+        return [self, run, before, cancelled = cancel.load (std::memory_order_relaxed)]
         {
-            self->editPage->setReadOnlyWhileRecording (self->engine.isRecording());
-            self->editPage->setEnabled (! self->sessionLocked);
-            self->editPage->repaint();
-        }
-        if (n > 0)
-        {
-            self->pushClipUndo ("Consolidate", before);
-            if (self->editPage != nullptr) self->editPage->sessionMediaAdded();
-        }
-        self->showStatus (! complete
-            ? (n > 0 ? "Consolidation completed only part of the selection"
-                     : "Consolidation failed; the arrangement was not changed")
-            : "Consolidated " + zynforge::counted (n, "track"));
-    });
+            if (self == nullptr) return;
+            // A stop that came after the last window still means stop.
+            const auto [n, complete] = cancelled ? std::pair<int, bool> { 0, false }
+                                                 : self->engine.publishConsolidate (*run);
+            if (self->editPage != nullptr)
+            {
+                self->editPage->setReadOnlyWhileRecording (self->engine.isRecording());
+                self->editPage->setEnabled (! self->sessionLocked);
+                self->editPage->repaint();
+            }
+            if (n > 0)
+            {
+                self->pushClipUndo ("Consolidate", *before);
+                if (self->editPage != nullptr) self->editPage->sessionMediaAdded();
+            }
+            self->showStatus (cancelled ? juce::String ("Consolidate cancelled; the arrangement was not changed")
+                            : ! complete
+                                ? (n > 0 ? "Consolidation completed only part of the selection"
+                                         : "Consolidation failed; the arrangement was not changed")
+                                : "Consolidated " + zynforge::counted (n, "track"));
+        };
+    }, "Consolidate");
 }
 
 // Clear (Delete): remove the audio inside the selected range on every

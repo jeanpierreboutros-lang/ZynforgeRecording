@@ -117,11 +117,15 @@ namespace zynforge
         if ((int) trackPlaylists.size() < n) trackPlaylists.resize ((size_t) n);
         if ((int) sourceTrackLengths.size() < n) sourceTrackLengths.resize ((size_t) n);
 
+        // A take that landed away from its file position lands there on every
+        // strip, or a plain strip growing in place would drift from the others.
+        const auto shift = appendRecordedAudio ? continueShift.exchange (0, std::memory_order_acq_rel) : (juce::int64) 0;
+
         for (int i = 0; i < n; ++i)
         {
             const auto oldLength = sourceTrackLengths[(size_t) i];
             const auto newLength = player.getTrackLengthSamples (i);
-            if (preserveEdits && trackIsEdited (i))
+            if (preserveEdits && (trackIsEdited (i) || shift != 0))
             {
                 // A continuation adds source media after the prior end. Keep
                 // every existing split/trim verbatim and expose only the
@@ -130,7 +134,8 @@ namespace zynforge
                 // holds pasted clips gets its whole new take the same way --
                 // requiring oldLength > 0 left that recording out entirely.
                 if (appendRecordedAudio && newLength > oldLength)
-                    addRecordedSpan (i, oldLength, newLength);
+                    addRecordedSpan (i, shift != 0 ? juce::jmax (oldLength, continueFileBase) : oldLength,
+                                     newLength, shift);
                 // Keep the engineer's edits verbatim. player.loadSession
                 // cleared the player-side clip lists, so republish what we
                 // already hold rather than reseeding a default over them.
@@ -173,15 +178,35 @@ namespace zynforge
                     player.setTrackClips (i, trackClips[(size_t) i]);
     }
 
-    void AudioEngine::addRecordedSpan (int track, juce::int64 from, juce::int64 to)
+    void AudioEngine::addRecordedSpan (int track, juce::int64 from, juce::int64 to, juce::int64 shift)
     {
+        if (to <= from) return;
         Clip appended;
         appended.name = juce::String::formatted ("Track_%02d continued", track + 1);
-        appended.timelineStartSamples = from;
+        appended.timelineStartSamples = from - shift;
         appended.fileStartSamples = from;
         appended.fileLengthSamples = to - from;
         trackClips[(size_t) track].push_back (std::move (appended));
         syncActiveTake (track);
+    }
+
+    juce::int64 AudioEngine::continueLandsAt()
+    {
+        juce::int64 end = 0;
+        const int strips = juce::jmax (recorder.getNumTracks(), (int) trackClips.size());
+        for (int t = 0; t < strips; ++t)
+        {
+            if (t < recorder.getNumTracks() && recorder.getTrack (t).referenceMedia.load (std::memory_order_relaxed))
+                continue;
+            const bool arranged = t < (int) trackClips.size()
+                               && (! trackClips[(size_t) t].empty()
+                                   || (t < (int) trackPlaylists.size() && ! trackPlaylists[(size_t) t].takes.empty()));
+            if (! arranged) end = juce::jmax (end, player.getTrackLengthSamples (t));
+            else
+                for (const auto& c : trackClips[(size_t) t])
+                    end = juce::jmax (end, c.timelineStartSamples + c.fileLengthSamples);
+        }
+        return end;
     }
 
     void AudioEngine::syncActiveTake (int track)
@@ -634,6 +659,88 @@ namespace zynforge
         return v.empty() ? nullptr : &v;
     }
 
+    juce::String AudioEngine::punchRefusal (juce::int64 start, juce::int64 end)
+    {
+        const auto last = end >= 0 ? end : std::numeric_limits<juce::int64>::max();
+        const juce::ScopedLock structure (recorder.getStructureLock());
+        const int strips = recorder.getNumTracks();
+
+        const auto refused = [this] (int track, const juce::String& why)
+        {
+            return "Punch refused -- " + recorder.getTrack (track).getNameThreadSafe() + ": " + why;
+        };
+
+        for (int t = 0; t < strips; ++t)
+        {
+            // A stereo strip's punch rewrites one file, so its right half
+            // answers for that file too, armed or not.
+            const bool leftArmed = t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed)
+                                && recorder.getTrack (t - 1).armed.load (std::memory_order_relaxed);
+            if (! leftArmed && ! recorder.getTrack (t).armed.load (std::memory_order_relaxed)) continue;
+
+            static const std::vector<Clip> none;
+            const auto& clips = t < (int) trackClips.size() ? trackClips[(size_t) t] : none;
+            const auto media  = player.getTrackLengthSamples (t);
+            int channel = 0;
+            const auto take = getTrackAudioFile (t, &channel);
+            const auto playsTake = [&] (const Clip& c)
+            {
+                return (c.audioFile == juce::File() || c.audioFile == take)
+                    && (c.sourceChannel < 0 || c.sourceChannel == channel);
+            };
+
+            std::vector<std::pair<juce::int64, juce::int64>> spans;
+            juce::int64 clipsEnd = 0;
+            for (const auto& c : clips)
+            {
+                const auto from = c.timelineStartSamples, to = from + c.fileLengthSamples;
+                clipsEnd = juce::jmax (clipsEnd, to);
+                if (to <= start || from >= last) continue;
+                if (! playsTake (c))                 return refused (t, "the clip here plays another file");
+                if (from != c.fileStartSamples)      return refused (t, "the clip here has moved, so the timeline is not the take here");
+                spans.emplace_back (from, to);
+            }
+
+            // No clip list at all is not an edit: the file plays whole, from zero.
+            const bool cleared = clips.empty() && t < (int) trackPlaylists.size()
+                              && ! trackPlaylists[(size_t) t].takes.empty();
+            if (! clips.empty() || cleared)
+            {
+                std::sort (spans.begin(), spans.end());
+                auto reached = start;
+                for (const auto& [from, to] : spans)
+                {
+                    if (from > reached) break;
+                    reached = juce::jmax (reached, to);
+                }
+                // Past the strip's end there is nothing to lose. An unedited
+                // strip that simply ended early still takes the punch there.
+                const auto stripEnd = juce::jmax (media, clipsEnd);
+                const bool plain = clips.size() == 1 && clips[0].timelineStartSamples == 0
+                                && clips[0].fileStartSamples == 0 && playsTake (clips[0])
+                                && clips[0].fileLengthSamples >= media;
+                if (reached < juce::jmin (last, stripEnd) || (start >= stripEnd && ! plain))
+                    return refused (t, "no clip plays here, so the punch would go unheard into the take");
+            }
+
+            // The same file audio can also sound at another place on the
+            // timeline: a duplicate, or a clip pasted to another strip. A punch
+            // would change it there. One playing it right here hears the punch
+            // where it was played, on whichever strip.
+            for (size_t other = 0; other < trackClips.size(); ++other)
+                for (const auto& c : trackClips[other])
+                {
+                    const bool readsTake = c.audioFile == juce::File() ? (int) other == t
+                                                                       : take != juce::File() && c.audioFile == take;
+                    if (! readsTake || c.timelineStartSamples == c.fileStartSamples
+                        || c.fileStartSamples >= last || c.fileStartSamples + c.fileLengthSamples <= start)
+                        continue;
+                    return refused (t, "this audio also plays elsewhere on the timeline, which the punch would change");
+                }
+        }
+        return {};
+    }
+
     bool AudioEngine::isTrackArrangementEmpty (int track) const noexcept
     {
         // Present in trackClips (seedDefaultClips sized it / an edit created
@@ -871,17 +978,32 @@ namespace zynforge
             return true;
         }
 
-        std::unique_ptr<juce::AudioFormatWriter> createWav24Writer (const juce::File& f, double sr, int channels,
-                                                                    const CheckedFileStream::Failed& closeFailed)
+        std::unique_ptr<juce::AudioFormatWriter> createWavWriter (const juce::File& f, double sr, int channels, int bits,
+                                                                  const CheckedFileStream::Failed& closeFailed)
         {
             f.deleteFile();
             juce::WavAudioFormat wav;
             auto os = CheckedFileStream::open (f, closeFailed);
             if (os == nullptr) return nullptr;
             std::unique_ptr<juce::AudioFormatWriter> w (
-                wav.createWriterFor (os.get(), sr, (unsigned int) channels, 24, {}, 0));
+                wav.createWriterFor (os.get(), sr, (unsigned int) channels, bits, {}, 0));
             if (w != nullptr) os.release();
             return w;
+        }
+
+        std::unique_ptr<juce::AudioFormatWriter> createWav24Writer (const juce::File& f, double sr, int channels,
+                                                                    const CheckedFileStream::Failed& closeFailed)
+        {
+            return createWavWriter (f, sr, channels, 24, closeFailed);
+        }
+
+        // A consolidate replaces clips that play clean, and clip gain can take
+        // them past full scale while the fader sits low. In float the render
+        // holds every sample of that; in 24-bit it would play back distorted.
+        std::unique_ptr<juce::AudioFormatWriter> createConsolidateWriter (const juce::File& f, double sr,
+                                                                          const CheckedFileStream::Failed& closeFailed)
+        {
+            return createWavWriter (f, sr, 1, 32, closeFailed);
         }
 
         juce::File bounceTemporary (const juce::File& destination)
@@ -949,16 +1071,22 @@ namespace zynforge
 
     bool AudioEngine::bounceTrackArrangementToWav (int track, const juce::File& dest,
                                                    juce::int64 totalSamples, double sampleRate,
-                                                   const std::atomic<bool>* cancel)
+                                                   const std::atomic<bool>* cancel, float* peak)
     {
         const auto temporary = bounceTemporary (dest);
         const auto closeFailed = CheckedFileStream::makeFailedFlag();
         auto writer = createWav24Writer (temporary, sampleRate, 1, closeFailed);
         if (writer == nullptr) { temporary.deleteFile(); return false; }
+        if (peak != nullptr) *peak = 0.0f;
         const bool ok = forEachArrangementWindow (track, 0, totalSamples,
             [&] (const float* data, juce::int64, int winLen)
             {
                 if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return false;
+                if (peak != nullptr)
+                {
+                    const auto range = juce::FloatVectorOperations::findMinAndMax (data, winLen);
+                    *peak = juce::jmax (*peak, -range.getStart(), range.getEnd());
+                }
                 const float* chans[1] = { data };
                 return writer->writeFromFloatArrays (chans, 1, winLen);
             });
@@ -1164,16 +1292,18 @@ namespace zynforge
 
     bool AudioEngine::bounceStereoPairToWav (int trackL, const juce::File& dest,
                                              juce::int64 totalSamples, double sampleRate,
-                                             const std::atomic<bool>* cancel)
+                                             const std::atomic<bool>* cancel, float* peak)
     {
         const auto temporary = bounceTemporary (dest);
         const auto closeFailed = CheckedFileStream::makeFailedFlag();
         auto writer = createWav24Writer (temporary, sampleRate, 2, closeFailed);
         if (writer == nullptr) { temporary.deleteFile(); return false; }
+        if (peak != nullptr) *peak = 0.0f;
         const bool ok = forEachStereoPairWindow (trackL, 0, totalSamples,
             [&] (const juce::AudioBuffer<float>& stereo, juce::int64, int winLen)
             {
                 if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return false;
+                if (peak != nullptr) *peak = juce::jmax (*peak, stereo.getMagnitude (0, winLen));
                 return writer->writeFromAudioSampleBuffer (stereo, 0, winLen);
             });
         writer.reset();
@@ -1396,7 +1526,7 @@ namespace zynforge
         const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
         {
             const auto closeFailed = CheckedFileStream::makeFailedFlag();
-            auto w = createWav24Writer (dst, sr, 1, closeFailed);
+            auto w = createConsolidateWriter (dst, sr, closeFailed);
             if (w == nullptr) return false;
             // Stream the edited arrangement for just [a, b) straight to the
             // writer -- no whole-track buffer.
@@ -1427,26 +1557,8 @@ namespace zynforge
         return true;
     }
 
-    void AudioEngine::consolidateRangeAsync (std::vector<int> tracks,
-                                             juce::int64 start, juce::int64 end,
-                                             std::function<void (int, bool)> completion)
+    struct AudioEngine::ConsolidateRun
     {
-        if (isRecording() || end <= start)
-        {
-            if (completion) completion (0, false);
-            return;
-        }
-
-        for (int track : tracks)
-            if (const auto* clips = tryClipsFor (track))
-                for (const auto& clip : *clips)
-                    if (clip.locked && clip.timelineStartSamples < end
-                        && clip.timelineStartSamples + clip.fileLengthSamples > start)
-                    { if (completion) completion (0, false); return; }
-
-        std::sort (tracks.begin(), tracks.end());
-        tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
-
         struct Job
         {
             int track { -1 };
@@ -1455,149 +1567,153 @@ namespace zynforge
             bool rendered { false };
         };
 
-        const auto sessionDir = getActiveSessionDir();
-        if (! sessionDir.isDirectory())
+        ~ConsolidateRun()
         {
-            if (completion) completion (0, false);
-            return;
+            for (auto& job : jobs) job.temporary.deleteFile();
         }
-        auto audioDir = sessionDir.getChildFile ("Audio Files");
-        if (! audioDir.isDirectory() && ! audioDir.createDirectory().wasOk())
-        {
-            if (completion) completion (0, false);
-            return;
-        }
-        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
 
+        juce::File sessionDir, audioDir;
+        double sampleRate { 48000.0 };
+        juce::int64 start { 0 }, end { 0 };
+        int layout { 0 };
         std::vector<Job> jobs;
+        bool allRendered { true };
+    };
+
+    std::shared_ptr<AudioEngine::ConsolidateRun> AudioEngine::prepareConsolidate (std::vector<int> tracks,
+                                                                                  juce::int64 start, juce::int64 end)
+    {
+        if (isRecording() || end <= start) return nullptr;
+
+        for (int track : tracks)
+            if (const auto* clips = tryClipsFor (track))
+                for (const auto& clip : *clips)
+                    if (clip.locked && clip.timelineStartSamples < end
+                        && clip.timelineStartSamples + clip.fileLengthSamples > start)
+                        return nullptr;
+
+        std::sort (tracks.begin(), tracks.end());
+        tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
+
+        const auto sessionDir = getActiveSessionDir();
+        if (! sessionDir.isDirectory()) return nullptr;
+        auto audioDir = sessionDir.getChildFile ("Audio Files");
+        if (! audioDir.isDirectory() && ! audioDir.createDirectory().wasOk()) return nullptr;
+
+        auto run = std::make_shared<ConsolidateRun>();
+        run->sessionDir = sessionDir;
+        run->audioDir   = audioDir;
+        run->sampleRate = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+        run->start      = start;
+        run->end        = end;
+        run->layout     = recorder.getTrackGeneration();
+
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         for (const int track : tracks)
         {
             if (track < 0 || track >= maxTracks || ! ensureClipList (track)) continue;
-            Job job;
+            ConsolidateRun::Job job;
             job.track = track;
             job.original = clipsFor (track);
             job.temporary = audioDir.getChildFile ("." + juce::Uuid().toString()
                                                    + ".consolidating.wav");
-            jobs.push_back (std::move (job));
+            run->jobs.push_back (std::move (job));
         }
-        if (jobs.empty())
-        {
-            if (completion) completion (0, false);
-            return;
-        }
+        return run->jobs.empty() ? nullptr : run;
+    }
 
-        const auto handle = asyncHandle;
-        const auto layout = recorder.getTrackGeneration();
-        juce::Thread::launch (
-            [handle, sessionDir, audioDir, sr, start, end, layout,
-             jobs = std::move (jobs), completion = std::move (completion)] () mutable
+    void AudioEngine::renderConsolidate (ConsolidateRun& run, const std::atomic<bool>& cancel)
+    {
+        for (auto& job : run.jobs)
         {
-            bool allRendered = true;
-            for (auto& job : jobs)
+            ArrangementSource src;
+            if (! src.open (run.audioDir, job.track, &job.original))
             {
-                ArrangementSource src;
-                if (! src.open (audioDir, job.track, &job.original))
-                {
-                    allRendered = false;
-                    continue;
-                }
-                const auto closeFailed = CheckedFileStream::makeFailedFlag();
-                auto writer = createWav24Writer (job.temporary, sr, 1, closeFailed);
-                if (writer == nullptr)
-                {
-                    allRendered = false;
-                    continue;
-                }
-
-                juce::AudioBuffer<float> window (1, kRenderWindowSamples), tmp (1, 0);
-                job.rendered = true;
-                for (juce::int64 winStart = start; winStart < end; winStart += kRenderWindowSamples)
-                {
-                    const int winLen = (int) juce::jmin<juce::int64> (
-                        kRenderWindowSamples, end - winStart);
-                    window.clear (0, 0, winLen);
-                    if (! src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp))
-                    { job.rendered = false; break; }
-                    const float* channels[1] = { window.getReadPointer (0) };
-                    if (! writer->writeFromFloatArrays (channels, 1, winLen))
-                    {
-                        job.rendered = false;
-                        break;
-                    }
-                }
-                writer.reset();
-                job.rendered = job.rendered && ! closeFailed->load();
-                if (! job.rendered) job.temporary.deleteFile();
-                allRendered = allRendered && job.rendered;
+                run.allRendered = false;
+                continue;
+            }
+            const auto closeFailed = CheckedFileStream::makeFailedFlag();
+            auto writer = createConsolidateWriter (job.temporary, run.sampleRate, closeFailed);
+            if (writer == nullptr)
+            {
+                run.allRendered = false;
+                continue;
             }
 
-            juce::MessageManager::callAsync (
-                [handle, sessionDir, start, end, layout, jobs = std::move (jobs), allRendered,
-                 completion = std::move (completion)] () mutable
+            juce::AudioBuffer<float> window (1, kRenderWindowSamples), tmp (1, 0);
+            job.rendered = true;
+            for (juce::int64 winStart = run.start; winStart < run.end; winStart += kRenderWindowSamples)
             {
-                auto* engine = handle->load (std::memory_order_acquire);
-                if (engine == nullptr)
+                const int winLen = (int) juce::jmin<juce::int64> (kRenderWindowSamples, run.end - winStart);
+                window.clear (0, 0, winLen);
+                if (cancel.load (std::memory_order_relaxed)
+                    || ! src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp))
+                { job.rendered = false; break; }
+                const float* channels[1] = { window.getReadPointer (0) };
+                if (! writer->writeFromFloatArrays (channels, 1, winLen))
                 {
-                    for (auto& job : jobs) job.temporary.deleteFile();
-                    return;
+                    job.rendered = false;
+                    break;
                 }
+            }
+            writer.reset();
+            job.rendered = job.rendered && ! closeFailed->load();
+            if (! job.rendered) job.temporary.deleteFile();
+            run.allRendered = run.allRendered && job.rendered;
+        }
+    }
 
-                const bool current = engine->getActiveSessionDir() == sessionDir
-                                  && ! engine->isArrangementFrozen()
-                                  && engine->recorder.getTrackGeneration() == layout;
-                int completed = 0;
-                for (auto& job : jobs)
-                {
-                    if (! current || ! job.rendered)
-                    {
-                        job.temporary.deleteFile();
-                        continue;
-                    }
-                    if (job.track < 0 || job.track >= (int) engine->trackClips.size()
-                        || ! sameClipList (engine->trackClips[(size_t) job.track],
-                                          job.original))
-                    {
-                        job.temporary.deleteFile();
-                        continue;
-                    }
+    std::pair<int, bool> AudioEngine::publishConsolidate (ConsolidateRun& run)
+    {
+        const bool current = getActiveSessionDir() == run.sessionDir
+                          && ! isArrangementFrozen()
+                          && recorder.getTrackGeneration() == run.layout;
+        int completed = 0;
+        for (auto& job : run.jobs)
+        {
+            if (! current || ! job.rendered)
+            {
+                job.temporary.deleteFile();
+                continue;
+            }
+            if (job.track < 0 || job.track >= (int) trackClips.size()
+                || ! sameClipList (trackClips[(size_t) job.track], job.original))
+            {
+                job.temporary.deleteFile();
+                continue;
+            }
 
-                    const auto audioDirNow = sessionDir.getChildFile ("Audio Files");
-                    juce::File destination;
-                    for (int k = 1; ; ++k)
-                    {
-                        destination = audioDirNow.getChildFile (
-                            juce::String::formatted ("Track_%02d_consolidated_%d.wav",
-                                                     job.track + 1, k));
-                        if (! destination.existsAsFile()) break;
-                    }
-                    if (! job.temporary.moveFileTo (destination))
-                    {
-                        job.temporary.deleteFile();
-                        continue;
-                    }
+            const auto audioDirNow = run.sessionDir.getChildFile ("Audio Files");
+            juce::File destination;
+            for (int k = 1; ; ++k)
+            {
+                destination = audioDirNow.getChildFile (
+                    juce::String::formatted ("Track_%02d_consolidated_%d.wav", job.track + 1, k));
+                if (! destination.existsAsFile()) break;
+            }
+            if (! job.temporary.moveFileTo (destination))
+            {
+                job.temporary.deleteFile();
+                continue;
+            }
 
-                    engine->clearTrackRange (job.track, start, end);
-                    auto& list = engine->clipsFor (job.track);
-                    Clip clip;
-                    clip.name = destination.getFileNameWithoutExtension();
-                    clip.audioFile = destination;
-                    clip.timelineStartSamples = start;
-                    clip.fileStartSamples = 0;
-                    clip.fileLengthSamples = end - start;
-                    auto where = std::lower_bound (list.begin(), list.end(), start,
-                        [] (const Clip& c, juce::int64 pos)
-                        { return c.timelineStartSamples < pos; });
-                    list.insert (where, std::move (clip));
-                    engine->player.setTrackClips (job.track, list);
-                    engine->syncActiveTake (job.track);
-                    ++completed;
-                }
-                if (completion)
-                    completion (completed, current && allRendered
-                                             && completed == (int) jobs.size());
-            });
-        });
+            clearTrackRange (job.track, run.start, run.end);
+            auto& list = clipsFor (job.track);
+            Clip clip;
+            clip.name = destination.getFileNameWithoutExtension();
+            clip.audioFile = destination;
+            clip.timelineStartSamples = run.start;
+            clip.fileStartSamples = 0;
+            clip.fileLengthSamples = run.end - run.start;
+            auto where = std::lower_bound (list.begin(), list.end(), run.start,
+                [] (const Clip& c, juce::int64 pos)
+                { return c.timelineStartSamples < pos; });
+            list.insert (where, std::move (clip));
+            player.setTrackClips (job.track, list);
+            syncActiveTake (job.track);
+            ++completed;
+        }
+        return { completed, current && run.allRendered && completed == (int) run.jobs.size() };
     }
 
     bool AudioEngine::splitTrackAtSample (int track, juce::int64 timelineSample)

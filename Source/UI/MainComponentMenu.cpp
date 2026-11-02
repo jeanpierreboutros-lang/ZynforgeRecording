@@ -38,6 +38,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // menu bar still let a locked show New/Open/Close/Import/Export.
         const bool sessionEditable = ! engine.isRecording() && ! sessionLocked
                                   && ! sessionIoBusy.load();
+        // Song Export has its own cancel in the Export menu.
+        if (const auto job = sessionJobs.runningJob(); job.isNotEmpty() && ! songExportRunning)
+        {
+            menu.addItem (981, "Cancel " + job);
+            menu.addSeparator();
+        }
         menu.addItem (5, "New Session...",         sessionEditable);
         // Opening another session mid-take re-pins the active dir + applies the
         // new session's mixer/routing onto the strips being recorded, then STOP
@@ -378,6 +384,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) useCaptureDaemon
         << '|' << (int) captureSupervisor.isAttached()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording())
+        << '|' << sessionJobs.runningJob()
         << '|' << (int) songExportRunning;
 
     if (sig != lastMenuStateSig)
@@ -396,7 +403,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         const bool safeDuringMetadata = pendingMetadataSaves != 0
             && ((id == 2 && ! captureMetadataPending) || id == 334 || id == 335 || id == 303);
         const bool stopsSongExport = id == 967 && songExportRunning;
-        if (! safeDuringMetadata && ! stopsSongExport)
+        if (! safeDuringMetadata && ! stopsSongExport && id != 981)
         { showStatus ("Wait for the session operation to finish"); return; }
     }
     juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));
@@ -437,6 +444,13 @@ void MainComponent::registerMenuCommands()
     {
         if (songExportRunning) { sessionJobs.cancel(); showStatus ("Cancelling song export..."); }
         else                   exportSongs();
+    });
+    m.add (981, [this]
+    {
+        const auto job = sessionJobs.runningJob();
+        if (job.isEmpty()) return;
+        sessionJobs.cancel();
+        showStatus ("Cancelling " + job + "...");
     });
     m.add (70,  [this] { promptSaveSessionTemplate(); });
     m.add (71,  [this] { printSetlist(); });
