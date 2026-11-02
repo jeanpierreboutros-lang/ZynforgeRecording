@@ -2,7 +2,7 @@
 
 ## Current validation — 2026-11-02
 
-<<COUNTS>>
+Current source, after the cut to recorder and virtual soundcheck: **1217 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports and no forced thread stops. `tools/design_audit.sh`, `tools/invariants_audit.sh`, `test_notarize.py` and `test_verify_tools.py` pass. Nothing here has run on real hardware or been installed on either Mac.
 
 Nothing in this section has run on real hardware, and nothing from it is installed on either Mac. The hardware steps are under *2026-11-02 cut* in [FIELD-TEST.md](FIELD-TEST.md).
 
