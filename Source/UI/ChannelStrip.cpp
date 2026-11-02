@@ -4,82 +4,32 @@
 #include "../Theme/BrandTokens.h"
 #include "StripColourPicker.h"
 
-// ── Heated Steel: resting-identity paint helpers (self-contained) ─────────
-// Direction C drop-in. Inlined here so this single file needs no new header
-// and no other edits. Colours route through brand:: tokens; the steel greys
-// are raw hex for the trial -- promote them to BrandColors.h (steelHeaderHi/
-// Lo + debossInk + a structuralForge() accessor) once you keep this.
-// Textures/paths are built ONCE (function-local statics) so a 24-strip wall
-// repaints at today's cost.
+// Strip paint helpers. Flat: the channel colour lives in the header and the
+// spine, so the fader and meter sit on one calm body on every strip.
 namespace
 {
     namespace steel
     {
-        inline juce::Colour structuralForge() { return zynforge::brand::brandOrange; }
-
-        inline const juce::Image& hammeredTile()
-        {
-            static const juce::Image tile = []
-            {
-                const int W = 96, H = 96;
-                juce::Image img (juce::Image::ARGB, W, H, true);
-                juce::Graphics g (img);
-                for (int x = 0; x < W; x += 4)
-                {
-                    g.setColour (zynforge::brand::gloss (0.045f));
-                    g.fillRect (x, 0, 1, H);
-                }
-                juce::Graphics::ScopedSaveState ss (g);
-                g.addTransform (juce::AffineTransform::rotation (0.14f, W * 0.5f, H * 0.5f));
-                for (int y = -H; y < H * 2; y += 9)
-                {
-                    g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::faint));
-                    g.fillRect (-W, y, W * 3, 2);
-                }
-                return img;
-            }();
-            return tile;
-        }
-
-        inline void drawHammered (juce::Graphics& g, juce::Rectangle<float> r, float a = 0.42f)
-        {
-            juce::Graphics::ScopedSaveState ss (g);
-            g.setFillType (juce::FillType (hammeredTile(),
-                           juce::AffineTransform::translation (r.getX(), r.getY())));
-            g.setOpacity (a);
-            g.fillRect (r);
-        }
-
-        inline void drawSteelHeader (juce::Graphics& g, juce::Rectangle<float> r)
-        {
-            // Pixel target: near-pure-black plate so it reads as a distinct
-            // band even on an uncoloured (grey) strip; bright orange under-seam.
-            g.setColour (zynforge::brand::steelHeaderHi);   // FLAT: solid plate (no gradient)
-            g.fillRect (r);
-            g.setColour (zynforge::brand::gloss (0.18f));                 // top bevel highlight
-            g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));         // crisp dark divider
-            g.fillRect (r.removeFromBottom (1.0f));
-        }
-
         // A take rolling on this strip is the one thing that lights the spine.
-        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool rolling, float pulse)
+        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour colour,
+                               bool rolling, float pulse)
         {
-            const auto c = structuralForge();
             if (rolling)
             {
-                g.setColour (c.withAlpha ((0.34f + 0.30f * pulse)));
+                const auto hot = zynforge::brand::structuralForge();
+                g.setColour (hot.withAlpha ((0.34f + 0.30f * pulse)));
                 g.fillRect (r.getX(), r.getY(), 9.0f + 5.0f * pulse, r.getHeight());
+                colour = hot;
             }
-            g.setColour (rolling ? c : c.withAlpha (zynforge::brand::alpha::soft));
-            g.fillRect (r.getX(), r.getY(), 5.0f, r.getHeight());
+            g.setColour (colour);
+            g.fillRect (r.getX(), r.getY(), 4.0f, r.getHeight());
         }
 
         // Channel number: a small line above the name, which is what gets read.
         inline void drawNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based)
         {
             g.setFont (zynforge::brand::type::mono (10.0f, true));
-            g.setColour (zynforge::brand::debossFace);
+            g.setColour (zynforge::brand::gloss (zynforge::brand::alpha::strong));
             g.drawText (juce::String (channel1Based).paddedLeft ('0', 2), box,
                         juce::Justification::centredLeft, false);
         }
@@ -370,14 +320,8 @@ namespace zynforge
         if (resolved.getARGB() != lastAppliedColour)
         {
             lastAppliedColour = resolved.getARGB();
-            const auto knobCol = brand::lift (resolved, 0.30f);
             if (swatch != nullptr)
                 swatch->setDisplayColour (resolved);
-            gainFader.setColour (juce::Slider::thumbColourId, knobCol);
-            panSlider.setColour (juce::Slider::thumbColourId, knobCol);
-            panSlider.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
-            panSliderR.setColour (juce::Slider::thumbColourId, knobCol);
-            panSliderR.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
             dirty = true;
         }
 
@@ -807,11 +751,9 @@ namespace zynforge
             s.setRange (-1.0, 1.0, 0.01);
             s.setDoubleClickReturnValue (true, 0.0);
             s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-            s.setColour (juce::Slider::rotarySliderFillColourId,
-                         brand::lift (getResolvedColour(), 0.30f));
+            s.setColour (juce::Slider::rotarySliderFillColourId, brand::textSecondary);
             s.setColour (juce::Slider::rotarySliderOutlineColourId, brand::edge);
-            s.setColour (juce::Slider::thumbColourId,
-                         brand::lift (getResolvedColour(), 0.30f));
+            s.setColour (juce::Slider::thumbColourId, brand::textSecondary);
             s.setMouseDragSensitivity (160);
         };
 
@@ -881,7 +823,7 @@ namespace zynforge
         gainFader.setNumDecimalPlacesToDisplay (1);
         gainFader.setColour (juce::Slider::trackColourId,        brand::edge);
         gainFader.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
-        gainFader.setColour (juce::Slider::thumbColourId,        brand::lift (getResolvedColour(), 0.30f));
+        gainFader.setColour (juce::Slider::thumbColourId,        brand::faderFill);
         // Snap to mouse position so the cap STICKS to the pointer 1:1 while
         // dragging (standard DAW fader feel). The old "relative drag"
         // (snap=false + a 250 px sensitivity longer than the fader itself)
@@ -965,10 +907,17 @@ namespace zynforge
         faderValue.setText (gainFader.getTextFromValue (gainFader.getValue()), juce::dontSendNotification);
     }
 
+    // Clear of the spine on the left.
+    juce::Rectangle<int> ChannelStrip::contentArea() const
+    {
+        return getLocalBounds().withTrimmedLeft (brand::space::md + 1)
+                               .withTrimmedRight (brand::space::sm - 1)
+                               .reduced (0, brand::space::sm);
+    }
+
     juce::Rectangle<int> ChannelStrip::numberBounds() const
     {
-        return getLocalBounds().reduced (brand::space::sm, brand::space::sm)
-                               .removeFromTop (kIdRowH).withWidth (20);
+        return contentArea().removeFromTop (kIdRowH).withWidth (20);
     }
 
     void ChannelStrip::paint (juce::Graphics& g)
@@ -980,57 +929,43 @@ namespace zynforge
         // window. Just fill the body so it isn't a visual hole.
         if (! stripValid) { g.fillAll (brand::bgPanel); return; }
 
-        auto r = getLocalBounds().toFloat().reduced (4.0f);
-        auto stripColour = getResolvedColour();
+        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        const auto stripColour = getResolvedColour();
+        const auto body = hovered ? brand::lift (brand::bgStrip, brand::tint::hover) : brand::bgStrip;
 
-        // Hover lift -- mouse over the strip brightens the wash ~6% so
-        // the engineer reads 'this is the strip my pointer is on'
-        // without needing a focus ring or selection state.
-        if (hovered) stripColour = brand::lift (stripColour, 0.06f);
-
-        // Vertical gradient wash in the personality colour -- matches
-        // ZynForge Live's strip finish and gives every channel a sense
-        // of depth instead of a flat block.
-        g.setGradientFill (brand::verticalGradient (stripColour, r, 0.18f, 0.28f));
-        g.fillRoundedRectangle (r, brand::radius::xl);
-
-        // ── Heated Steel: forged resting identity (paint-only) ── FORGE_STEEL_V3
         {
-            const bool armedNow = state.armed.load (std::memory_order_relaxed);
             juce::Path bodyClip;
-            bodyClip.addRoundedRectangle (r, brand::radius::xl);
+            bodyClip.addRoundedRectangle (r, brand::radius::lg);
             juce::Graphics::ScopedSaveState clip (g);
             g.reduceClipRegion (bodyClip);
-            steel::drawHammered    (g, r, 0.38f);              // ③ hammered steel
-            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::edgeSoft));  // light forged scrim -- lets colour show
+            g.setColour (body);
             g.fillRect (r);
-            steel::drawSteelHeader (g, r.withHeight ((float) kHeaderH));
+            g.setColour (brand::stripHeaderFill (stripColour));
+            g.fillRect (r.withHeight ((float) kHeaderH));
+
             // The spine breathes at ~1 Hz while a take rolls here. Phase from
             // the wall clock so it animates whenever paint() runs (StripTimer
             // repaints the spine column at 10 Hz).
-            const bool rollingHere = armedNow && takeRolling;
+            const bool rollingHere = takeRolling && state.armed.load (std::memory_order_relaxed);
             float armPulse = 0.0f;
             if (rollingHere)
                 armPulse = zynforge::brand::reduceMotion()
                              ? 0.6f   // reduced-motion: static raised-glow end-state
                              : 0.5f + 0.5f * std::sin ((float) (juce::Time::getMillisecondCounter() % 1000)
                                                        / 1000.0f * juce::MathConstants<float>::twoPi);
-            steel::drawSpine       (g, r, rollingHere, armPulse);
+            steel::drawSpine (g, r, stripColour, rollingHere, armPulse);
             steel::drawNumber (g, numberBounds(), stripIndex + 1);
         }
 
-        // Hover border -- a touch brighter than the resting edge so the
-        // strip lifts subtly off the canvas.
-        const float edgeAlpha = hovered ? 0.55f : 0.30f;
-        g.setColour (brand::lift (stripColour, 0.40f).withAlpha (edgeAlpha));
-        g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
+        g.setColour (hovered ? brand::borderBright : brand::edge);
+        g.drawRoundedRectangle (r, brand::radius::lg, 1.0f);
 
         // Multi-select highlight -- a 2 px outline in the selection fill so
         // a group of selected strips is unambiguous from the side of the room.
         if (selected)
         {
             g.setColour (brand::selectFill);
-            g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::xl, 2.5f);
+            g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::lg, 2.5f);
         }
 
         // Edit Group badge. Pro Tools shows group names per strip
@@ -1072,7 +1007,7 @@ namespace zynforge
 
     void ChannelStrip::resized()
     {
-        auto r = getLocalBounds().reduced (brand::space::sm, brand::space::sm);
+        auto r = contentArea();
 
         // ── 1. Header ── a thin line for the number + colour chip, then the
         // NAME across the strip's whole width at every size: it is what gets

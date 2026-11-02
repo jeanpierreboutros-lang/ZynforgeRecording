@@ -3,6 +3,7 @@
 #include <juce_graphics/juce_graphics.h>
 #include <array>
 #include <atomic>
+#include <cmath>
 
 #include "ForgeTokens.h"
 
@@ -60,6 +61,10 @@ namespace zynforge::brand
     // is PLAY, meters and good status, red is RECORD. Recording-local until
     // the family token source gains it.
     inline const auto selectFill = juce::Colour (0xffb35a3e);
+
+    // Fader level fill: neutral steel, so channel colour stays in the header
+    // and spine and the fader reads the same on every strip.
+    inline const auto faderFill = juce::Colour (forge::faderThumbEdge);
 
     // ── Meter colours (deliberately duller than accents) ──────────────────
     inline const auto meterGreen = juce::Colour (forge::meterGreen);
@@ -246,6 +251,26 @@ namespace zynforge::brand
         return bg.getPerceivedBrightness() > 0.55f
                    ? juce::Colours::black
                    : textPrimary;
+    }
+
+    // WCAG relative luminance, 0..1. perceived brightness is a different scale.
+    inline float relativeLuminance (juce::Colour c) noexcept
+    {
+        auto linear = [] (float v)
+        { return v <= 0.03928f ? v / 12.92f : std::pow ((v + 0.055f) / 1.055f, 2.4f); };
+        return 0.2126f * linear (c.getFloatRed())
+             + 0.7152f * linear (c.getFloatGreen())
+             + 0.0722f * linear (c.getFloatBlue());
+    }
+
+    // A channel colour as a header plate: the same hue, sunk only as far as
+    // white text needs to reach 4.5:1. The engineer picks the colour, the name
+    // on it must read whatever they picked.
+    inline juce::Colour stripHeaderFill (juce::Colour strip) noexcept
+    {
+        for (int i = 0; i < 16 && 1.05f / (relativeLuminance (strip) + 0.05f) < 4.5f; ++i)
+            strip = strip.darker (0.1f);
+        return strip;
     }
 
     // ── Personality wash colours -- INS 1-8 ────────────────────────────────

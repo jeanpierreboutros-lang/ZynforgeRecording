@@ -118,6 +118,7 @@ namespace zynforge
         static constexpr int kHeaderH  = kIdRowH + kNameRowH + 8;
         static constexpr int kFaderValueH = 14;
 
+        juce::Rectangle<int> contentArea() const;
         juce::Rectangle<int> numberBounds() const;
         void showFaderValue();
         void ensureRoutingItem (juce::ComboBox&, int deviceChannel, int deviceChannels, const char* prefix);
