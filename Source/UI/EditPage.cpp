@@ -960,8 +960,10 @@ namespace zynforge
         // Scroll the row list when the pointer nears its top/bottom edge, so a
         // strip can travel the whole session in one drag. The row drives this
         // with beginDragAutoRepeat, so it keeps scrolling while held still.
+        // Top and bottom only: the swatch sits in the left border, and at this
+        // pointer's own x a zoomed timeline would slide back to its start.
         const auto inViewport = viewport.getLocalPoint (this, pointInPage);
-        viewport.autoScroll (inViewport.x, inViewport.y, 24, 16);
+        viewport.autoScroll (viewport.getWidth() / 2, inViewport.y, 24, 16);
         return list->updateReorderPreview (list->getLocalPoint (this, pointInPage),
                                            engine.getRecorder().getNumTracks());
     }

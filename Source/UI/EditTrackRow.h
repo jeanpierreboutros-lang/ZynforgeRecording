@@ -111,8 +111,9 @@ namespace zynforge
                 const int rowTop = getY(), rowBot = getBottom();
                 const int viewY  = vp->getViewPositionY();
                 const int visH   = vp->getMaximumVisibleHeight();
-                if (rowTop < viewY)            vp->setViewPosition (0, rowTop);
-                else if (rowBot > viewY + visH) vp->setViewPosition (0, rowBot - visH);
+                const int viewX  = vp->getViewPositionX();
+                if (rowTop < viewY)            vp->setViewPosition (viewX, rowTop);
+                else if (rowBot > viewY + visH) vp->setViewPosition (viewX, rowBot - visH);
             }
             nameLabel.showEditor();
         }

@@ -161,6 +161,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            verticalMovesKeepTheTimeline();
             resizingARowMovesNothing();
             noFirstLookDuringATake();
             newMediaKeepsTheCache (main);
@@ -653,6 +654,55 @@ namespace zynforge
                 expectEquals (s.engine.getPlayer().getPositionSamples(), (juce::int64) 1000, "the grab moved the playhead");
                 expect (row.getRowSize() == Row::Size::Custom, "the drag did not resize the row");
                 expectEquals (row.getCustomHeight(), 130);
+            }
+        }
+
+        void verticalMovesKeepTheTimeline()
+        {
+            const auto viewportOf = [] (EditPage& page) -> juce::Viewport*
+            {
+                for (auto* child : page.getChildren())
+                    if (auto* vp = dynamic_cast<juce::Viewport*> (child)) return vp;
+                return nullptr;
+            };
+
+            beginTest ("Tab to rename keeps the timeline where it is");
+            {
+                Session s (12, { kRate });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                page.setZoom (8.0f);
+                auto* vp = viewportOf (page);
+                const auto rows = rowsOf (page);
+                expect (vp != nullptr && rows.size() == 12, "setup: twelve rows in a viewport");
+                if (vp != nullptr && rows.size() == 12)
+                {
+                    vp->setViewPosition (600, 0);
+                    rows.back()->beginRename();
+                    expectEquals (vp->getViewPositionX(), 600, "the hop reset the timeline to its start");
+                    expect (vp->getViewPositionY() > 0, "setup: the hop has to scroll");
+                }
+            }
+
+            beginTest ("A swatch drag scrolls the rows, not the timeline");
+            {
+                Session s (12, { kRate });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                page.setZoom (8.0f);
+                auto* vp = viewportOf (page);
+                expect (vp != nullptr, "setup: a viewport");
+                if (vp != nullptr)
+                {
+                    vp->setViewPosition (600, 0);
+                    for (int step = 0; step < 8; ++step)
+                        page.updateReorderPreview ({ 4, vp->getBottom() - 4 });
+                    page.clearReorderPreview();
+                    expectEquals (vp->getViewPositionX(), 600, "the drag slid the timeline back");
+                    expect (vp->getViewPositionY() > 0, "the drag no longer scrolls the rows");
+                }
             }
         }
 
