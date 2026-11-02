@@ -1855,7 +1855,7 @@ namespace zynforge
             // EditTimeRuler) so a fresh session lets the engineer place
             // the cursor anywhere and drop markers before recording.
             if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
-                && inWavePane (e.x))
+                && inWavePane (e.x) && ! isInResizeZone (e.getPosition()))
             {
                 const auto& player = engine.getPlayer();
                 const juce::int64 loadedSamples = player.isLoaded()
@@ -2537,7 +2537,7 @@ namespace zynforge
             // Duplicate / Nudge can act on it. Shift+click toggles the clip
             // in/out of a multi-selection. A plain click on empty lane area
             // clears the selection.
-            if (wasClick && laneMode == LaneMode::Waveform && inWavePane (e.x))
+            if (wasClick && ! wasResizing && laneMode == LaneMode::Waveform && inWavePane (e.x))
                 if (auto* page = findParentComponentOfClass<EditPage>())
                 {
                     if (clickedClipIdx >= 0)

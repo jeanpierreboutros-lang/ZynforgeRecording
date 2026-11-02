@@ -161,6 +161,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            resizingARowMovesNothing();
             noFirstLookDuringATake();
             newMediaKeepsTheCache (main);
             shiftRangeAdds();
@@ -635,6 +636,23 @@ namespace zynforge
                 }
                 MultitrackRecorder::deleteSessionAfterCancellingReports (fresh);
                 fresh.deleteRecursively();
+            }
+        }
+
+        void resizingARowMovesNothing()
+        {
+            beginTest ("Grabbing a row's bottom edge in the lane resizes it and places no cursor");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                s.engine.getPlayer().setPositionSamples (1000);
+                const juce::Point<int> edge (laneX (row, 0.5), row.getHeight() - 2);
+                drag (row, edge, edge + juce::Point<int> (0, 30));
+                expectEquals (s.engine.getEditCursorSample(), (juce::int64) -1, "the grab placed an edit cursor");
+                expectEquals (s.engine.getPlayer().getPositionSamples(), (juce::int64) 1000, "the grab moved the playhead");
+                expect (row.getRowSize() == Row::Size::Custom, "the drag did not resize the row");
+                expectEquals (row.getCustomHeight(), 130);
             }
         }
 
