@@ -36,7 +36,6 @@ namespace zynforge
         };
         addAndMakeVisible (cueCombo);
 
-        addCueButton.setButtonText ("+ Cue");
         addCueButton.setColour (juce::TextButton::buttonColourId, brand::selectFill);
         addCueButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::selectFill));
         addCueButton.setTooltip ("Drop a new cue at the current transport position");

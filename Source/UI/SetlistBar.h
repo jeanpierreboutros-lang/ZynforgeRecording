@@ -1,5 +1,6 @@
 #pragma once
 
+#include "IconButton.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
@@ -125,7 +126,7 @@ namespace zynforge
         ArrowButton        prevButton  { "Previous cue", false };
         juce::ComboBox     cueCombo;
         ArrowButton        nextButton  { "Next cue",     true };
-        juce::TextButton   addCueButton;
+        IconButton         addCueButton { icons::Glyph::Plus, "CUE" };
         juce::TextButton   updateButton;
         juce::TextButton   recallButton;
 
