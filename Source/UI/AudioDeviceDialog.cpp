@@ -9,31 +9,22 @@ namespace zynforge
     namespace
     {
         // ─── Reusable labelled card ────────────────────────────────────────
-        // Paints a header bar with a coloured accent stripe + a body area
-        // where the caller drops its widgets. The card has a dark gradient
-        // background and a subtle border.
+        // A quiet heading + a body area where the caller drops its widgets.
         class Card final : public juce::Component
         {
         public:
-            Card (const juce::String& heading, juce::Colour accentBar)
-                : title (heading), accent (accentBar) {}
+            explicit Card (const juce::String& heading) : title (heading) {}
 
             void paint (juce::Graphics& g) override
             {
                 auto r = getLocalBounds().toFloat().reduced (1.0f);
 
-                // Card body -- vertical gradient (lighter top → darker bottom).
-                g.setGradientFill (brand::verticalGradient (brand::bgStrip, r, 0.10f, 0.18f));
+                g.setColour (brand::bgStrip);
                 g.fillRoundedRectangle (r, brand::radius::lg);
-
                 g.setColour (brand::borderSubtle);
                 g.drawRoundedRectangle (r, brand::radius::lg, 1.0f);
 
-                // Header strip -- 22 px tall with a coloured 3 px accent
-                // bar on the left, then the title text.
-                auto header = r.removeFromTop (24.0f);
-                g.setColour (accent);
-                g.fillRoundedRectangle (header.withWidth (3.0f), 1.5f);
+                auto header = r.removeFromTop ((float) kHeadingH);
                 g.setColour (brand::textSecondary);
                 g.setFont (brand::type::uiLabel());
                 g.drawText (title.toUpperCase(),
@@ -43,13 +34,13 @@ namespace zynforge
 
             juce::Rectangle<int> bodyArea() const
             {
-                return getLocalBounds().reduced (brand::space::md)
-                                       .withTrimmedTop (24);
+                return getLocalBounds().withTrimmedTop (kHeadingH).reduced (brand::space::md, 0)
+                                       .withTrimmedBottom (brand::space::md);
             }
 
         private:
+            static constexpr int kHeadingH = 26;
             juce::String title;
-            juce::Colour accent;
         };
 
         // ─── Mini input level meter (single bar) ───────────────────────────
@@ -122,11 +113,11 @@ namespace zynforge
 
             explicit DialogContent (AudioEngine& eng)
                 : engine (eng),
-                  outputCard  ("Output",       brand::accentPlay),
-                  inputCard   ("Input",        brand::accentRecord),
-                  rateCard    ("Sample Rate",  brand::featureEngaged),
-                  bufferCard  ("Buffer Size",  brand::engagedAmber),
-                  monitorCard ("Monitor Bus",  brand::brandOrange),
+                  outputCard  ("Output"),
+                  inputCard   ("Input"),
+                  rateCard    ("Sample Rate"),
+                  bufferCard  ("Buffer Size"),
+                  monitorCard ("Monitor Bus"),
                   inputMeter (eng)
             {
                 auto& dm = engine.getDeviceManager();
@@ -210,8 +201,7 @@ namespace zynforge
                 addAndMakeVisible (inputMeter);
 
                 testButton.setTooltip ("Play a short 440 Hz tone through the selected output.");
-                testButton.setColour (juce::TextButton::buttonColourId, brand::featureEngaged.withAlpha (zynforge::brand::alpha::soft));
-                testButton.setColour (juce::TextButton::textColourOffId, brand::featureEngaged);
+                dialog::styleSecondary (testButton);
                 testButton.onClick = [this] { engine.getDeviceManager().playTestSound(); };
                 addAndMakeVisible (testButton);
 
@@ -232,7 +222,8 @@ namespace zynforge
                 addAndMakeVisible (cancelButton);
 
                 refreshAll();
-                setSize (640, 560);
+                setSize (640, dialog::titleH + kDeviceCardH + kSingleCardH + kMonitorCardH + 2 * kCardGap
+                                  + 2 * brand::space::sm + dialog::footerH);
             }
 
             ~DialogContent() override
@@ -311,21 +302,16 @@ namespace zynforge
                 auto footer = r.removeFromBottom (60).reduced (brand::space::md);
                 r.reduce (brand::space::md, brand::space::sm);
 
-                // 3-row card layout:
+                // 3-row card layout, each row as tall as its controls:
                 //   row 1: Output | Input
                 //   row 2: Sample Rate | Buffer Size
                 //   row 3: Monitor Bus (full width)
-                const int totalH      = r.getHeight();
-                const int rowGap      = brand::space::sm;
-                const int row3H       = 96;                              // Monitor card -- single short row
-                const int dualRowsH   = totalH - row3H - rowGap * 2;     // height shared by rows 1 + 2
-                const int cardH       = (dualRowsH - rowGap) / 2;
-
-                auto topRow = r.removeFromTop (cardH);
+                const int rowGap = kCardGap;
+                auto topRow = r.removeFromTop (kDeviceCardH);
                 r.removeFromTop (rowGap);
-                auto midRow = r.removeFromTop (cardH);
+                auto midRow = r.removeFromTop (kSingleCardH);
                 r.removeFromTop (rowGap);
-                auto monRow = r.removeFromTop (row3H);
+                auto monRow = r.removeFromTop (kMonitorCardH);
 
                 const int half = (topRow.getWidth() - rowGap) / 2;
                 outputCard.setBounds (topRow.removeFromLeft (half));
@@ -376,6 +362,11 @@ namespace zynforge
             }
 
         private:
+            static constexpr int kCardGap      = brand::space::sm;
+            static constexpr int kDeviceCardH  = 132;
+            static constexpr int kSingleCardH  = 58;
+            static constexpr int kMonitorCardH = 76;
+
             void changeListenerCallback (juce::ChangeBroadcaster*) override
             {
                 refreshAll();
