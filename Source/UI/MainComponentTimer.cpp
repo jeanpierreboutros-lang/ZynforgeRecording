@@ -434,6 +434,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     perfDashboard.setDeviceInfo (status.sampleRate,
                                  status.blockSize);
     perfDashboard.setRecording (rec);
+    updateBackupButton (status);
     for (auto& strip : strips) strip->setTakeRolling (rec);
     // Drives per-strip meter refresh: full rate while recording or
     // playing, throttled to ~8 Hz when stopped (see TrackState.h).
@@ -444,6 +445,33 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
         dashWasRecording = rec;
         resized();
     }
+}
+
+// What the header says about the backup is read fresh, never remembered from
+// the dialog that picked the folder. A take's writers know how it is going.
+// Between takes a probe thread watches the folder, so a dead mount never reaches
+// this tick.
+void MainComponent::updateBackupButton (const zynforge::EngineStatus& status)
+{
+    constexpr int kProbePeriodMs = 2000, kProbeStaleMs = 6000;
+    const auto folder = engine.getRecorder().getBackupDirectory();
+    const bool configured = folder.getFullPathName().isNotEmpty();
+    if (folder != backupProbeFolder)
+    {
+        backupProbeFolder = folder;
+        backupProbe.reset (configured ? new VolumeProbe (folder, VolumeProbe::readFolder, kProbePeriodMs) : nullptr);
+    }
+
+    bool ok = false;
+    if (status.recording) ok = status.backupActive;
+    else if (backupProbe != nullptr)
+    {
+        const auto reading = backupProbe->latest();
+        if (reading.atMs <= 0.0) return;   // no answer yet, so nothing new to say
+        ok = reading.totalBytes > 0 && juce::Time::getMillisecondCounterHiRes() - reading.atMs < kProbeStaleMs;
+    }
+    const juce::String text (! configured ? "BACKUP" : ok && ! status.backupFailed ? "BACKUP OK" : "BACKUP !");
+    if (backupButton.getButtonText() != text) backupButton.setButtonText (text);
 }
 
 void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)

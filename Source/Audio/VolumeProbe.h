@@ -53,6 +53,14 @@ namespace zynforge
             return reading;
         }
 
+        // readVolume, with a folder that has gone reading as no volume at all.
+        static Reading readFolder (const juce::File& folder)
+        {
+            auto reading = readVolume (folder);
+            if (! folder.isDirectory()) reading.totalBytes = 0;
+            return reading;
+        }
+
         // Whether the volume answers in time. The read runs on a thread of its
         // own, so a mount that never answers costs the caller timeoutMs at most.
         static bool answersWithin (const juce::File& root, int timeoutMs, Reader reader = readVolume)

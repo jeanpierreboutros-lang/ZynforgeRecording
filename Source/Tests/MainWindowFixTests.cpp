@@ -183,6 +183,7 @@ namespace zynforge
             recordTimeWarns();
             noDriveReadsDuringATake();
             preflightHasATimeLimit();
+            backupButtonIsLive();
             smallRepairs();
         }
 
@@ -1248,6 +1249,47 @@ namespace zynforge
                 expectLessThan (took, 12000.0, "pre-flight hung on the dead drive");
                 expectEquals (modalCount(), 1, "pre-flight never opened");
                 dismissModals();
+                w.engine().setBackupDirectory (before);
+            }
+        }
+
+        void backupButtonIsLive()
+        {
+            beginTest ("The BACKUP button says what is true now");
+            {
+                Window w;
+                const auto before = w.recorder().getBackupDirectory();
+                const auto backup = tempDir ("button");
+                w.dirs.add (backup);
+                expect (backup.createDirectory().wasOk());
+                expect (w.engine().setBackupDirectory (backup));
+
+                const auto textOf = [&w] (const EngineStatus& status, const juce::String& wanted)
+                {
+                    pumpUntil ([&] { w.main.updateBackupButton (status); return w.main.backupButton.getButtonText() == wanted; }, 8000);
+                    return w.main.backupButton.getButtonText();
+                };
+                expectEquals (textOf ({}, "BACKUP OK"), juce::String ("BACKUP OK"));
+
+                EngineStatus rolling;
+                rolling.recording = true;
+                rolling.backupActive = true;
+                expectEquals (textOf (rolling, "BACKUP OK"), juce::String ("BACKUP OK"));
+                rolling.backupFailed = true;
+                expectEquals (textOf (rolling, "BACKUP !"), juce::String ("BACKUP !"), "OK stood beside BACKUP WRITE FAILED");
+                rolling.backupFailed = false;
+                rolling.backupActive = false;
+                expectEquals (textOf (rolling, "BACKUP !"), juce::String ("BACKUP !"), "a take with no backup writing said OK");
+
+                EngineStatus failed;
+                failed.backupFailed = true;
+                expectEquals (textOf (failed, "BACKUP !"), juce::String ("BACKUP !"), "a failed take's backup reads OK after STOP");
+
+                expect (backup.deleteRecursively());
+                expectEquals (textOf ({}, "BACKUP !"), juce::String ("BACKUP !"), "a folder that went still read OK");
+
+                w.engine().setBackupDirectory ({});
+                expectEquals (textOf ({}, "BACKUP"), juce::String ("BACKUP"));
                 w.engine().setBackupDirectory (before);
             }
         }

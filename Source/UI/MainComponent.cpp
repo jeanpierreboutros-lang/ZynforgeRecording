@@ -1218,9 +1218,7 @@ void MainComponent::onBackupClicked()
     zynforge::BackupMirrorDialog::launch (engine, {
         [self] (const juce::String& refusal)
         {
-            if (self == nullptr) return;
-            self->backupButton.setButtonText ("BACKUP !");
-            self->showStatus (refusal);
+            if (self != nullptr) self->showStatus (refusal);
         },
         [self] (const juce::File& dir) { return self != nullptr && self->applyBackupFolder (dir); } });
 }
@@ -1233,7 +1231,6 @@ bool MainComponent::applyBackupFolder (const juce::File& dir)
         showStatus ("Backup folder not changed -- a take is rolling or finalizing");
         return false;
     }
-    backupButton.setButtonText ("BACKUP OK");
     showStatus ("Backup folder -> " + dir.getFileName());
     return true;
 }
