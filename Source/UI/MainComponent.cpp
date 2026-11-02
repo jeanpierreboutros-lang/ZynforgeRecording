@@ -681,17 +681,25 @@ void MainComponent::onPlayClicked()
     }
     else
     {
-        // Pro Tools-style: if the engineer has placed the edit cursor,
-        // playback starts there instead of from wherever the player
-        // happened to be paused. Without a cursor (-1) the player
-        // resumes from its current position as before.
-        const auto cursor = engine.getEditCursorSample();
-        if (cursor >= 0)
-            player.setPositionSamples (cursor);
-
-        engine.startPlayback();
-        statusLabel.setText ("Playing -> " + player.getSessionName(), juce::dontSendNotification);
+        startPlaybackFromCursor();
     }
+}
+
+// PLAY and Space are one gesture. Pro Tools-style: if the engineer has placed
+// the edit cursor, playback starts there instead of from wherever the player
+// happened to be paused. Without a cursor (-1) the player resumes from its
+// current position as before.
+void MainComponent::startPlaybackFromCursor()
+{
+    auto& player = engine.getPlayer();
+    const auto cursor = engine.getEditCursorSample();
+    if (cursor >= 0)
+        player.setPositionSamples (cursor);
+
+    engine.startPlayback();
+    // The engine refuses with nothing ahead, as a two-tap RECORD stop leaves it.
+    if (player.isPlaying()) statusLabel.setText ("Playing -> " + player.getSessionName(), juce::dontSendNotification);
+    else                    showStatus ("Nothing to play from here -- locate back into the take");
 }
 
 void MainComponent::onStopClicked()

@@ -1361,6 +1361,22 @@ namespace zynforge
                 expect (w.main.nextCueLabel.getText().contains (name), w.main.nextCueLabel.getText());
             }
 
+            beginTest ("Space and PLAY start from the same place and tell the truth");
+            {
+                Window w;
+                const auto total = w.player().getTotalLengthSamples();
+                w.player().setPositionSamples (total);
+                w.main.keyPressed (juce::KeyPress (juce::KeyPress::spaceKey), nullptr);
+                expect (! w.engine().isPlaying());
+                expect (! w.main.statusLabel.getText().startsWith ("Playing"), w.main.statusLabel.getText());
+
+                w.engine().setEditCursorSample (2000);
+                w.main.keyPressed (juce::KeyPress (juce::KeyPress::spaceKey), nullptr);
+                expect (w.engine().isPlaying(), w.main.statusLabel.getText());
+                expect (w.player().getPositionSamples() < 40000, "Space ignored the cursor PLAY obeys");
+                w.engine().stopPlayback();
+                w.engine().setEditCursorSample (-1);
+            }
 
         }
 

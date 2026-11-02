@@ -115,6 +115,7 @@ private:
     void onLoadSessionClicked();
     void completeOpenFolder (const juce::File& dir);
     void onPlayClicked();
+    void startPlaybackFromCursor();
     void onStopClicked();
     // Immediate capture stop shared by the confirmed UI STOP, remote
     // transports and "Stop & Quit".  Unlike onStopClicked it has no two-tap
