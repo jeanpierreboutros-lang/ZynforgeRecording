@@ -562,6 +562,7 @@ private:
     // Show pre-flight checklist -- one-screen view of every show-critical
     // setting (device, SR, inputs, armed, backup, disk, cues, recording state).
     void  showPreflightChecklist();
+    std::function<void()> preflightStallForTests;   // runs where a dead drive would block
     juce::String backupChecklistRow();
 
     zynforge::ZynForgeLookAndFeel laf;

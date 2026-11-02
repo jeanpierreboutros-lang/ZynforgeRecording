@@ -182,6 +182,7 @@ namespace zynforge
             headerKeepsItsWarnings();
             recordTimeWarns();
             noDriveReadsDuringATake();
+            preflightHasATimeLimit();
             smallRepairs();
         }
 
@@ -1213,6 +1214,41 @@ namespace zynforge
                 for (juce::PopupMenu::MenuItemIterator item (menu, true); item.next();)
                     if (item.getItem().itemID == 251) { found = true; enabled = item.getItem().isEnabled; }
                 expect (found && enabled, "Session Info stayed grey after the take");
+            }
+        }
+
+        void preflightHasATimeLimit()
+        {
+            beginTest ("A drive that never answers probes as gone, in the time allowed");
+            {
+                auto held = std::make_shared<juce::WaitableEvent> (true);
+                const auto started = juce::Time::getMillisecondCounterHiRes();
+                const auto answer = preflight::withinTime (150, [held] { held->wait (5000); return true; });
+                expect (! answer.has_value());
+                expectLessThan (juce::Time::getMillisecondCounterHiRes() - started, 2000.0, "the wait ran past its limit");
+                held->signal();
+                expect (preflight::withinTime (2000, [] { return 7; }).value_or (0) == 7);
+            }
+
+            beginTest ("Pre-flight opens in bounded time over a backup that has stopped answering");
+            {
+                Window w;
+                auto held = std::make_shared<juce::WaitableEvent> (true);
+                const auto before = w.recorder().getBackupDirectory();
+                const auto backup = tempDir ("stalled-backup");
+                w.dirs.add (backup);
+                expect (backup.createDirectory().wasOk());
+                expect (w.engine().setBackupDirectory (backup));
+                w.main.preflightStallForTests = [held] { held->wait (20000); };
+                const auto started = juce::Time::getMillisecondCounterHiRes();
+                w.main.showPreflightChecklist();
+                const auto took = juce::Time::getMillisecondCounterHiRes() - started;
+                w.main.preflightStallForTests = {};
+                held->signal();
+                expectLessThan (took, 12000.0, "pre-flight hung on the dead drive");
+                expectEquals (modalCount(), 1, "pre-flight never opened");
+                dismissModals();
+                w.engine().setBackupDirectory (before);
             }
         }
 

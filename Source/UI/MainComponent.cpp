@@ -1541,7 +1541,12 @@ juce::String MainComponent::backupChecklistRow()
                                       ? captureSupervisor.lastStatus().backupActive
                                       : engine.getRecorder().isBackupActive();
     const bool backupWritable = ! engine.isRecording() && backupConfigured
-                                  && zynforge::preflight::volumeWritable (backupDir);
+                                  && zynforge::preflight::withinTime (zynforge::preflight::kDriveWaitMs,
+                                         [backupDir, stall = preflightStallForTests]
+                                         {
+                                             if (stall) stall();
+                                             return zynforge::preflight::volumeWritable (backupDir);
+                                         }).value_or (false);
     using BackupState = zynforge::preflight::RedundancyReadiness;
     const auto backupState = zynforge::preflight::redundancyReadiness (
         engine.isRecording(), backupConfigured, backupWritable, backupWriterActive);
@@ -1581,10 +1586,19 @@ void MainComponent::showPreflightChecklist()
     for (int i = 0; i < total; ++i)
         if (engine.getRecorder().getTrack (i).armed.load (std::memory_order_relaxed)) ++armed;
 
+    using zynforge::preflight::withinTime;
+    using zynforge::preflight::kDriveWaitMs;
     const auto sess   = engine.getActiveSessionDir();
-    const bool hasSes = sess.isDirectory();
-    const auto root   = zynforge::preflight::storageRoot (sess, getSessionsRoot());
-    const double freeGB = bytesToGB (root.exists() ? root.getBytesFreeOnVolume() : 0);
+    const auto sessionState = withinTime (kDriveWaitMs, [sess] { return sess.isDirectory(); });
+    const bool hasSes = sessionState.value_or (false);
+    const auto root   = hasSes ? sess.getParentDirectory() : getSessionsRoot();
+    const auto freeBytes = withinTime (kDriveWaitMs, [root]
+                                       { return root.exists() ? root.getBytesFreeOnVolume() : juce::int64 (0); });
+    const double freeGB = bytesToGB (freeBytes.value_or (0));
+    const auto backupFolder = engine.getRecorder().getBackupDirectory();
+    const bool estimateAnswers = sessionState.has_value() && freeBytes.has_value()
+        && (backupFolder.getFullPathName().isEmpty()
+            || zynforge::VolumeProbe::answersWithin (backupFolder, kDriveWaitMs));
     const auto fmt    = engine.getRecorder().getCaptureFormat();
     const auto fmtStr = checklistFormatName (fmt);
 
@@ -1592,7 +1606,8 @@ void MainComponent::showPreflightChecklist()
     // this list can never call a disk fine that RECORD then turns away.
     const auto wantBytes = recordHeadroomBytes (sr, juce::jmax (1, armed), fmt);
     // The clock's own estimate when there is one, so the two can't disagree.
-    engine.refreshDiskMinutesRemaining();
+    // It stats both drives from this thread, so only once they have answered.
+    if (estimateAnswers) engine.refreshDiskMinutesRemaining();
     const int estimated = engine.getEstimatedMinutesRemaining();
     const double headroomMinutes = estimated > 0 ? (double) estimated
                                  : wantBytes > 0 ? (freeGB * 1.0e9 / (double) wantBytes) * 30.0 : 0.0;
@@ -1612,7 +1627,9 @@ void MainComponent::showPreflightChecklist()
     rows.push_back ({ chk (numOutputs > 0), "Outputs", juce::String (numOutputs) + " active" });
     rows.push_back ({ chk (total > 0), "Channel strips", juce::String (total) });
     rows.push_back ({ chk (armed > 0), "Armed for record", juce::String (armed) + " / " + juce::String (total) });
-    rows.push_back ({ chk (hasSes), "Active session", hasSes ? sess.getFileName() : juce::String ("(none)") });
+    rows.push_back ({ chk (hasSes), "Active session", hasSes                     ? sess.getFileName()
+                                                    : sessionState.has_value() ? juce::String ("(none)")
+                                                                               : juce::String ("drive not answering") });
     rows.push_back ({ cues.empty() ? Row::Status::info : Row::Status::ok, "Setlist cues",
                       cues.empty() ? juce::String ("none (optional)") : juce::String ((int) cues.size()) });
     rows.push_back ({ chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0), "Disk free",
@@ -1691,9 +1708,12 @@ void MainComponent::showPreflightChecklist()
     else if (hasSes || root.isDirectory())
     {
         const auto speedDir = hasSes ? sess : root;
-        const double gotMBps = zynforge::preflight::measureWriteSpeedMBps (speedDir);
+        const auto measured = withinTime (zynforge::preflight::kSpeedTestWaitMs, [speedDir]
+                                          { return zynforge::preflight::measureWriteSpeedMBps (speedDir); });
+        const double gotMBps = measured.value_or (-1.0);
         rows.push_back ({ chk (gotMBps > needMBps * 1.5, gotMBps > needMBps), "Disk write speed (measured)",
-                          juce::String (juce::roundToInt (gotMBps)) + " MB/s (need " + needText + ")" });
+                          measured.has_value() ? juce::String (juce::roundToInt (gotMBps)) + " MB/s (need " + needText + ")"
+                                               : "did not finish in time (need " + needText + ")" });
     }
 
     // Every configured mirror drive: mounted AND actually writable.
@@ -1706,8 +1726,15 @@ void MainComponent::showPreflightChecklist()
         }
         else
         {
-            const bool w = zynforge::preflight::volumeWritable (m.root);
-            rows.push_back ({ chk (w), item, w ? juce::String ("writable") : juce::String ("NOT writable / missing") });
+            const auto answer = withinTime (kDriveWaitMs, [root = m.root, stall = preflightStallForTests]
+            {
+                if (stall) stall();
+                return zynforge::preflight::volumeWritable (root);
+            });
+            const bool w = answer.value_or (false);
+            rows.push_back ({ chk (w), item, w ? juce::String ("writable")
+                                                : answer.has_value() ? juce::String ("NOT writable / missing")
+                                                                     : juce::String ("drive not answering") });
         }
     }
 
