@@ -3,6 +3,7 @@
 #include <juce_graphics/juce_graphics.h>
 #include <array>
 #include <atomic>
+#include <cmath>
 
 #include "ForgeTokens.h"
 
@@ -38,11 +39,17 @@ namespace zynforge::brand
     // Used as a low-alpha fill + medium-alpha edge on the EDIT view.
     inline const auto accentEdit = juce::Colour (forge::accentEdit);
 
-    // ── Text (4-step, all WCAG-AA against bg-surface) ─────────────────────
+    // ── Text (4-step) ─────────────────────────────────────────────────────
+    // Everything meant to be read reaches 4.5:1 on bgElevated and on an OFF
+    // control. textTertiary overrides the family value, which is 3.7:1 there,
+    // until tokens.json takes this one. textMuted is 2.1:1 and is only for a
+    // control that really is disabled.
     inline const auto textPrimary = juce::Colour (forge::textPrimary);
     inline const auto textSecondary = juce::Colour (forge::textSecondary);
-    inline const auto textTertiary = juce::Colour (forge::textTertiary);
-    inline const auto textMuted = juce::Colour (forge::textMuted);  // genuine disabled state
+    inline const auto textTertiary = juce::Colour (0xffa3aeb9);
+    inline const auto textMuted = juce::Colour (forge::textMuted);
+    // Red that reads as text on a dialog: accentRecord is only 3.7:1 on bgElevated.
+    inline const auto textDanger = juce::Colour (0xffff8a8a);
 
     // ── Semantic signal accents ───────────────────────────────────────────
     inline const auto accentRecord = juce::Colour (forge::accentRecord);  // record / danger
@@ -53,6 +60,26 @@ namespace zynforge::brand
     inline const auto alertAmber = juce::Colour (forge::alertAmber);
     inline const auto engagedAmber = juce::Colour (forge::engagedAmber);  // BYPASS / LIVE / LOCK
     inline const auto featureEngaged = juce::Colour (forge::featureEngaged);  // cool-teal toggle-on
+
+    // ── Selection + primary action ────────────────────────────────────────
+    // The one fill for "this is selected" and "this is the action": a muted
+    // burnt ember, calm on a dark stage. Bright colour keeps its meaning: green
+    // is PLAY, meters and good status, red is RECORD. Recording-local until
+    // the family token source gains it.
+    inline const auto selectFill = juce::Colour (0xffb35a3e);
+
+    // The clock plate while a take rolls: a whole plate of it reads from across
+    // the room, white digits sit on it at 12:1, and it stays well below the
+    // alarm banner's bright red, so an alarm is still the loudest thing on screen.
+    inline const auto takePlate = juce::Colour (0xff6b1616);
+
+    // A choice that isn't selected: clean and available, lifted off the surface
+    // it sits on, so OFF never reads as disabled.
+    inline const auto controlOff = juce::Colour (forge::controlBgDown);
+
+    // Fader level fill: neutral steel, so channel colour stays in the header
+    // and spine and the fader reads the same on every strip.
+    inline const auto faderFill = juce::Colour (forge::faderThumbEdge);
 
     // ── Meter colours (deliberately duller than accents) ──────────────────
     inline const auto meterGreen = juce::Colour (forge::meterGreen);
@@ -110,9 +137,8 @@ namespace zynforge::brand
     // semantically a 'primed but not active' colour. Keeps brandOrange
     // free for its two documented uses (signalMute + brand assertion).
     inline juce::Colour signalArmedReady()  { return engagedAmber; }
-    // EDIT tools active selection -- cool-teal so it doesn't collide
-    // with any of the signal colours above.
-    inline juce::Colour toolActive()        { return featureEngaged; }
+    // EDIT tools active selection: a selection like any other.
+    inline juce::Colour toolActive()        { return selectFill; }
 
     // ── Alpha tokens for layered overlays ────────────────────────────
     // Anything painted on top of the waveform / lane should pick one
@@ -240,6 +266,38 @@ namespace zynforge::brand
         return bg.getPerceivedBrightness() > 0.55f
                    ? juce::Colours::black
                    : textPrimary;
+    }
+
+    // WCAG relative luminance, 0..1. perceived brightness is a different scale.
+    inline float relativeLuminance (juce::Colour c) noexcept
+    {
+        auto linear = [] (float v)
+        { return v <= 0.03928f ? v / 12.92f : std::pow ((v + 0.055f) / 1.055f, 2.4f); };
+        return 0.2126f * linear (c.getFloatRed())
+             + 0.7152f * linear (c.getFloatGreen())
+             + 0.0722f * linear (c.getFloatBlue());
+    }
+
+    // A channel colour as a header plate: the same hue, sunk only as far as
+    // white text needs to reach 4.5:1. The engineer picks the colour, the name
+    // on it must read whatever they picked.
+    inline juce::Colour stripHeaderFill (juce::Colour strip) noexcept
+    {
+        for (int i = 0; i < 16 && 1.05f / (relativeLuminance (strip) + 0.05f) < 4.5f; ++i)
+            strip = strip.darker (0.1f);
+        return strip;
+    }
+
+    // An EDIT clip: a dark body that keeps a hint of the track's hue, and the
+    // waveform in the track's own colour, lifted until it reads on that body.
+    // A light clip was the brightest thing on screen in a dark room.
+    inline juce::Colour clipBody (juce::Colour track) noexcept
+    {
+        return bgDeep.interpolatedWith (track, alpha::subtle);
+    }
+    inline juce::Colour clipWave (juce::Colour track) noexcept
+    {
+        return track.withBrightness (juce::jmax (track.getBrightness(), 0.72f));
     }
 
     // ── Personality wash colours -- INS 1-8 ────────────────────────────────

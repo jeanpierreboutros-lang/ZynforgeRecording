@@ -314,7 +314,7 @@ namespace zynforge
                 c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep.withAlpha (zynforge::brand::alpha::muted));
                 c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
                 c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-                c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+                c.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
             };
             styleCombo (inputCombo);
             styleCombo (outputCombo);
@@ -437,6 +437,19 @@ namespace zynforge
             ensureRoutingItem (outputCombo, wantOut, outR, "Out ");
             if (inputCombo .getSelectedId() != wantIn ) inputCombo .setSelectedId (wantIn,  juce::dontSendNotification);
             if (outputCombo.getSelectedId() != wantOut) outputCombo.setSelectedId (wantOut, juce::dontSendNotification);
+        }
+
+        // A clip keeps its file-stem name on disk and in the session ("Track_03",
+        // "Track_03 continued", "Track_03 (a)"). On screen that stem reads as the
+        // channel; a name the engineer gave a clip stays as it is.
+        juce::String clipDisplayName (const Clip& c) const
+        {
+            const auto name = c.name.isNotEmpty() ? c.name
+                                                  : engine.getTakeName (index, engine.getActiveTakeIdx (index));
+            const auto stem = name.upToFirstOccurrenceOf (" ", false, false);
+            if (stem.startsWith ("Track_") && stem.substring (6).containsOnly ("0123456789"))
+                return nameLabel.getText() + name.substring (stem.length());
+            return name;
         }
 
         // Make sure `id` exists in `box`; if not, append a correctly-labelled
@@ -724,7 +737,7 @@ namespace zynforge
             if (existingFrac <= 0.0 || thumb.getTotalLength() <= 0.0) return;
             auto existing = area.withWidth ((int) (area.getWidth() * juce::jlimit (0.0, 1.0, existingFrac)));
             if (existing.getWidth() <= 0) return;
-            g.setColour (brand::accentPlay.withAlpha (zynforge::brand::alpha::muted));   // existing take = dim context
+            g.setColour (brand::clipWave (getStripColour()).withAlpha (brand::alpha::muted));   // existing take = dim context
             drawThumbnailVisible (g, thumb, existing, 0.0, thumb.getTotalLength(), wholeFile ? -1 : chan, zoom);
         }
 
@@ -840,33 +853,21 @@ namespace zynforge
             auto drawLane = [&]()
             {
 
-            // ── Waveform fill (Pro Tools-style: COLOURED clip bg + DARK wave) ──
-            // The "alive", easy-on-the-eyes look is the clip filled with the
-            // channel's COLOUR, and the waveform drawn DARK on top of it: loud
-            // sections fill dark, quiet sections let the colour show through. This
-            // is the INVERSE of a bright wave on a near-black lane (which glowed
-            // like a noisy barcode). The dark wave is a deep shade of the same
-            // channel hue, so colour identity carries. A thin LIGHTER rim along
-            // the envelope (drawn first, full height; dark body inset 1px over it)
-            // gives the contour definition PT has.
-            // The DARK waveform is the BOLD, dominant element (like Pro Tools);
-            // the coloured clip is the lighter backdrop. Derive the wave by
-            // SINKing the channel colour directly (keeps its saturation -> a deep,
-            // bold navy/hue), NOT by sinking the lightened bg (that came out muddy
-            // + washed, so the bg looked more alive than the wave). The bg is the
-            // channel colour LIFTed light. Solid wave (no rim) so it reads bold.
-            const auto waveBg   = brand::lift (getStripColour(), 0.48f);  // light coloured clip backdrop
-            const auto waveDark = brand::sink (getStripColour(), 0.68f);  // BOLD deep wave = the focal point
-            auto drawWaveOutlined = [this, &g, waveBg, waveDark]
+            // Each clip is a dark body with the waveform in the track's colour,
+            // so the colour says which channel and the shape reads at a glance
+            // without the lanes lighting up a dark room.
+            const auto waveBg   = brand::clipBody (getStripColour());
+            const auto waveFace = brand::clipWave (getStripColour());
+            auto drawWaveOutlined = [this, &g, waveBg, waveFace]
                 (juce::AudioThumbnail& thumb, juce::Rectangle<int> area,
                  bool wholeFile, int chan, double t0, double t1, float zoom)
             {
                 g.setColour (waveBg);
-                g.fillRect (area);                      // light coloured clip backdrop
-                g.setColour (waveDark);                 // solid BOLD dark waveform on top
+                g.fillRect (area);
+                g.setColour (waveFace);
                 if (! (wholeFile && thumb.getNumChannels() != 1)
                     && drawOverviewWave (g, thumb, area, chan, t0, t1, zoom,
-                                         waveDark, waveDark.withAlpha (brand::alpha::muted)))
+                                         waveFace, waveFace.withAlpha (brand::alpha::muted)))
                     return;
                 drawThumbnailVisible (g, thumb, area, t0, t1, wholeFile ? -1 : chan, zoom);
             };
@@ -1026,13 +1027,13 @@ namespace zynforge
                 {
                     const int x = mapper.toX (mk.sampleOffset);
                     if (x < inner.getX() || x > inner.getRight()) continue;
-                    g.setColour (brand::accentStatus);
+                    g.setColour (brand::textSecondary);
                     g.drawVerticalLine (x, (float) inner.getY(), (float) inner.getBottom());
                     // Flag + name at the top.
                     g.fillRect (juce::Rectangle<int> (x, inner.getY(), 6, 4));
                     if (mk.name.isNotEmpty())
                     {
-                        g.setColour (brand::onSignal (brand::accentStatus));
+                        g.setColour (brand::onSignal (brand::textSecondary));
                         g.setFont (brand::type::micro());
                         g.drawText (mk.name,
                                     juce::Rectangle<int> (x + 4, inner.getY() + 1, 90, 11),
@@ -1179,7 +1180,7 @@ namespace zynforge
                     const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);
                     auto sampleToX = [&] (juce::int64 sp) -> int
                     { return TimelineMapper::forLane (inner2, totalSamples).toXFloor (sp); };
-                    // The little green fade grab-squares were drawn on EVERY
+                    // The little fade grab-squares were drawn on EVERY
                     // clip edge even with no fade, which clutters the view. Show
                     // the empty grab-target only when the Fade tool is active;
                     // a clip that already HAS a fade always shows its handle so
@@ -1286,8 +1287,8 @@ namespace zynforge
                                 && (hovered || active || std::abs (c.gainDb) > 0.05f))
                             {
                                 const float g12 = juce::jlimit (-12.0f, 12.0f, c.gainDb);
-                                const auto col = active ? brand::accentStatus
-                                                        : brand::accentStatus.withAlpha (zynforge::brand::alpha::prominent);
+                                const auto col = active ? brand::selectFill
+                                                        : brand::selectFill.withAlpha (zynforge::brand::alpha::prominent);
                                 const float cx = (float) hr.getX() + 10.0f;
                                 // Fader track -- wider + clearer than the old hairline.
                                 g.setColour (brand::bgDeep.withAlpha (zynforge::brand::alpha::scrim));
@@ -1334,20 +1335,18 @@ namespace zynforge
                         if (headH > 0)
                         {
                             auto headRect = block.withHeight (headH);
-                            g.setColour (clipTint.withAlpha (c.muted ? 0.30f : 0.68f));
+                            g.setColour (brand::stripHeaderFill (clipTint).withAlpha (c.muted ? brand::alpha::wash
+                                                                                              : brand::alpha::bold));
                             g.fillRect (headRect);
                             if (block.getWidth() > 26)
                             {
-                                const auto clipName = c.name.isNotEmpty()
-                                    ? c.name
-                                    : engine.getTakeName (index, engine.getActiveTakeIdx (index));
-                                g.setColour (brand::onSignal (clipTint));
+                                g.setColour (brand::textPrimary);
                                 g.setFont (brand::type::micro());
-                                g.drawText (clipName, headRect.reduced (5, 0),
+                                g.drawText (clipDisplayName (c), headRect.reduced (5, 0),
                                             juce::Justification::centredLeft, false);
                             }
                         }
-                        g.setColour (brand::lift (clipTint, 0.30f).withAlpha (zynforge::brand::alpha::prominent));
+                        g.setColour (brand::stripHeaderFill (clipTint));
                         g.drawRect (block, 1);
 
                         // Selected-clip highlight -- the clip you're working
@@ -1399,7 +1398,7 @@ namespace zynforge
                             if (c.fadeInSamples > 0)
                             {
                                 const auto [from, to] = fadeInLevels (c);
-                                g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::ghost));
+                                g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::ghost));
                                 juce::Path p;
                                 p.startNewSubPath ((float) xL, levelY (from));
                                 p.lineTo ((float) xF, levelY (to));
@@ -1413,7 +1412,7 @@ namespace zynforge
                                 const juce::Rectangle<float> handle (
                                     (float) xF - 3.5f, (float) inner2.getY(),
                                     7.0f, 7.0f);
-                                g.setColour (brand::accentStatus);
+                                g.setColour (brand::selectFill);
                                 g.fillRect (handle);
                             }
                         }
@@ -1423,7 +1422,7 @@ namespace zynforge
                             if (c.fadeOutSamples > 0)
                             {
                                 const auto [from, to] = fadeOutLevels (c);
-                                g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::ghost));
+                                g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::ghost));
                                 juce::Path p;
                                 p.startNewSubPath ((float) xF, levelY (from));
                                 p.lineTo ((float) xR, levelY (to));
@@ -1434,7 +1433,7 @@ namespace zynforge
                                 const juce::Rectangle<float> handle (
                                     (float) xF - 3.5f, (float) inner2.getY(),
                                     7.0f, 7.0f);
-                                g.setColour (brand::accentStatus);
+                                g.setColour (brand::selectFill);
                                 g.fillRect (handle);
                             }
                         }
@@ -1462,9 +1461,9 @@ namespace zynforge
                         const auto band = juce::Rectangle<int> (xL, inner2.getY(),
                                                                 xR - xL,
                                                                 inner2.getHeight());
-                        g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::faint));
+                        g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::faint));
                         g.fillRect (band);
-                        g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::prominent));
+                        g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::prominent));
                         // Outgoing (a) -- top-left to bottom-right.
                         g.drawLine ((float) xL, (float) inner2.getY(),
                                     (float) xR, (float) inner2.getBottom(), 1.4f);
@@ -1474,7 +1473,7 @@ namespace zynforge
                         // Midpoint handle for future drag-to-adjust.
                         const int xMid = (xL + xR) / 2;
                         const int yMid = inner2.getY() + inner2.getHeight() / 2;
-                        g.setColour (brand::accentStatus);
+                        g.setColour (brand::selectFill);
                         g.fillEllipse ((float) xMid - 3.0f, (float) yMid - 3.0f,
                                        6.0f, 6.0f);
                     }
@@ -1625,12 +1624,12 @@ namespace zynforge
             g.setColour (headerBg);
             g.fillRect (header);
 
-            // ── Heated Steel: orange spine + stamped number + orange seam ──
-            // Mirrors the mixer strip header identity on the EDIT track rows.
-            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::wash));               // spine glow
-            g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 7.0f, (float) getHeight()));
-            g.setColour (brand::brandOrange);                                 // spine
-            g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 3.0f, (float) getHeight()));
+            // Bright ember marks a take rolling on this track, as on the strip.
+            if (liveRecording)
+            {
+                g.setColour (brand::brandOrange);
+                g.fillRect (swatchArea.toFloat().withWidth (3.0f));
+            }
             {
                 const auto num = juce::String (index + 1).paddedLeft ('0', 2);
                 auto numBox = juce::Rectangle<int> (hx + swatchW + 7, 3, 24, 18);
@@ -1643,15 +1642,13 @@ namespace zynforge
 
             g.setColour (brand::edge);
             g.drawVerticalLine (hx + headerW - 1, 0.0f, (float) getHeight());
-            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::half));               // orange seam
-            g.drawVerticalLine (hx + headerW - 2, 0.0f, (float) getHeight());
 
             if (auto* page = findParentComponentOfClass<EditPage>())
                 if (page->isTrackSelected && page->isTrackSelected (index))
                 {
-                    g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::subtle));
+                    g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::soft));
                     g.fillRect (header);
-                    g.setColour (brand::brandOrange);
+                    g.setColour (brand::selectFill);
                     g.fillRect (juce::Rectangle<int> (hx + swatchW, 0, 3, getHeight()));
                 }
         }

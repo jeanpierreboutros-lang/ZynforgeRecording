@@ -43,9 +43,10 @@ bool MainComponent::twinStartRecord (juce::String& refusal)
     if (engine.performRemoteTransport (AudioEngine::RemoteTransportAction::StartRecord, error))
         return true;
     // A pre-flight refusal comes back only as "check the host", and that host
-    // is another Mac for the operator reading this. Its status line has the why.
+    // is another Mac for the operator reading this. The refusal here has the why.
     const bool preflight = ! sessionLocked && ! (useCaptureDaemon && ! captureSupervisor.isAttached());
-    refusal = preflight ? statusLabel.getText() : error;
+    refusal = ! preflight ? error
+            : recordRefusal.isNotEmpty() ? recordRefusal : statusLabel.getText();
     return false;
 }
 

@@ -161,7 +161,7 @@ namespace zynforge
                 lab (connVal, "osc.udp://" + host + ":" + juce::String (oscPort (e)) + "/", brand::textPrimary, true);
                 lab (portKey, "Listen Port", brand::textSecondary);
                 lab (addrKey, "Address root", brand::textSecondary);
-                lab (addrVal, juce::String (info.prefix) + "*", brand::accentStatus, true);
+                lab (addrVal, juce::String (info.prefix) + "*", brand::textPrimary, true);
 
                 dialog::styleTextEditor (portEd);
                 portEd.setInputRestrictions (5, "0123456789");
@@ -214,8 +214,9 @@ namespace zynforge
                     addAndMakeVisible (reqB); addAndMakeVisible (createB);
 
                     debugToggle.setButtonText ("Debug: log OSC traffic");
+                    dialog::styleCheckRow (debugToggle);
                     debugToggle.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-                    debugToggle.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                    debugToggle.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                     debugToggle.setToggleState (engine.getRemotes().isOscDebug(), juce::dontSendNotification);
                     debugToggle.onClick = [this] { engine.getRemotes().setOscDebug (debugToggle.getToggleState()); };
                     logB.setButtonText ("View OSC Log...");
@@ -224,7 +225,7 @@ namespace zynforge
                     addAndMakeVisible (debugToggle); addAndMakeVisible (logB);
 
                     statusL.setFont (brand::type::caption());
-                    statusL.setColour (juce::Label::textColourId, brand::textMuted);
+                    statusL.setColour (juce::Label::textColourId, brand::textTertiary);
                     statusL.setJustificationType (juce::Justification::topLeft);
                     addAndMakeVisible (statusL);
                 }
@@ -321,7 +322,7 @@ namespace zynforge
                                       + " -- channel names fill in as the console replies."
                                     : "Couldn't send -- check Console IP + Receive Port.",
                                  juce::dontSendNotification);
-                statusL.setColour (juce::Label::textColourId, ok ? brand::accentStatus : brand::accentRecord);
+                statusL.setColour (juce::Label::textColourId, ok ? brand::accentStatus : brand::textDanger);
             }
 
             AudioEngine& engine;
@@ -354,7 +355,7 @@ namespace zynforge
                 note.setText ("Saved with the app. Tick this surface in the Control Surfaces list to open it: "
                               "faders, mute, solo, arm, transport and jog work live.",
                               juce::dontSendNotification);
-                note.setColour (juce::Label::textColourId, brand::textMuted);
+                note.setColour (juce::Label::textColourId, brand::textTertiary);
                 note.setFont (brand::type::caption());
                 note.setJustificationType (juce::Justification::topLeft);
                 addAndMakeVisible (note);
@@ -437,10 +438,10 @@ namespace zynforge
                 title.setColour (juce::Label::textColourId, brand::textPrimary);
                 addAndMakeVisible (title);
 
-                hint.setText ("Tick to enable a protocol, then open its settings. OSC consoles are "
-                              "live now; MIDI surfaces save their config.", juce::dontSendNotification);
+                hint.setText ("Tick a surface to switch it on. Protocol Settings sets its network port "
+                              "or its MIDI in and out.", juce::dontSendNotification);
                 hint.setFont (brand::type::caption());
-                hint.setColour (juce::Label::textColourId, brand::textMuted);
+                hint.setColour (juce::Label::textColourId, brand::textTertiary);
                 addAndMakeVisible (hint);
 
                 settingsB.setButtonText ("Protocol Settings...");
@@ -489,13 +490,13 @@ namespace zynforge
             {
                 if (row < 0 || row >= getNumRows()) return;
                 const auto& pi = protocols()[(size_t) row];
-                if (selected) { g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::subtle)); g.fillRect (0, 0, w, h); }
+                if (selected) { g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::ghost)); g.fillRect (0, 0, w, h); }
 
                 const auto box = juce::Rectangle<float> (12.0f, h * 0.5f - 8.0f, 16.0f, 16.0f);
                 g.setColour (brand::edge); g.drawRoundedRectangle (box, brand::radius::md, 1.2f);
                 if (protoEnabled (engine, pi))
                 {
-                    g.setColour (brand::accentStatus);
+                    g.setColour (brand::selectFill);
                     g.fillRoundedRectangle (box.reduced (3.0f), 2.0f);
                 }
                 g.setColour (brand::textPrimary);
@@ -503,7 +504,7 @@ namespace zynforge
                 g.drawText (pi.name, 40, 0, w - 48, h, juce::Justification::centredLeft, true);
                 if (! pi.osc)
                 {
-                    g.setColour (brand::textMuted);
+                    g.setColour (brand::textTertiary);
                     g.setFont (brand::type::caption());
                     g.drawText ("set MIDI in/out in settings", 40, 0, w - 56, h,
                                 juce::Justification::centredRight, true);

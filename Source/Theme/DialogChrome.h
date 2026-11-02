@@ -12,7 +12,7 @@ namespace zynforge::dialog
     // touches this file.
     inline constexpr int titleH     = 44;
     inline constexpr int footerH    = 60;
-    inline constexpr int stripeW    = 3;   // brand-orange title accent
+    inline constexpr int stripeW    = 3;   // title accent
     inline constexpr int btnPrimary = 110;
     inline constexpr int btnSecond  = 90;
     inline constexpr int btnH       = 28;
@@ -61,7 +61,7 @@ namespace zynforge::dialog
                                                  juce::PathStrokeType::rounded));
     }
 
-    // Title bar -- 44 px tall, brand-orange 3 px stripe down the left
+    // Title bar -- 44 px tall, muted ember 3 px stripe down the left
     // edge, forge-mark badge, then section-title text in textPrimary.
     // Returns the rect the title bar occupied so the caller can measure
     // remaining space.
@@ -71,7 +71,7 @@ namespace zynforge::dialog
     {
         auto bar = host.getLocalBounds().removeFromTop (titleH)
                                         .reduced (brand::space::md, 0);
-        g.setColour (brand::brandOrange);
+        g.setColour (brand::selectFill);
         g.fillRect (bar.removeFromLeft (stripeW));
         bar.removeFromLeft (brand::space::md);
 
@@ -124,26 +124,30 @@ namespace zynforge::dialog
                    .reduced (brand::space::md);
     }
 
-    // Apply / primary action button -- accentStatus background, legible
-    // foreground via brand::onSignal. Matches AudioDeviceDialog's
-    // primary action treatment.
+    // Apply / primary action button -- the selection ember, legible
+    // foreground via brand::onSignal.
     inline void stylePrimary (juce::TextButton& b) noexcept
     {
-        b.setColour (juce::TextButton::buttonColourId,
-                     brand::accentStatus.withAlpha (brand::alpha::prominent));
-        b.setColour (juce::TextButton::textColourOffId,
-                     brand::onSignal (brand::accentStatus));
-        b.setColour (juce::TextButton::textColourOnId,
-                     brand::onSignal (brand::accentStatus));
+        b.setColour (juce::TextButton::buttonColourId,  brand::selectFill);
+        b.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::selectFill));
+        b.setColour (juce::TextButton::textColourOnId,  brand::onSignal (brand::selectFill));
     }
 
-    // Cancel / secondary action button -- bgElevated background,
-    // textSecondary foreground. Matches AudioDeviceDialog Cancel.
+    // Cancel / secondary action button -- lifted off the dialog body so it
+    // reads as available, never as a dark dead slot.
     inline void styleSecondary (juce::TextButton& b) noexcept
     {
-        b.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
-        b.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
-        b.setColour (juce::TextButton::textColourOnId,  brand::textSecondary);
+        b.setColour (juce::TextButton::buttonColourId,  brand::controlOff);
+        b.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+        b.setColour (juce::TextButton::textColourOnId,  brand::textPrimary);
+    }
+
+    // A yes/no choice in a dialog: a tick box and its label, not a pill.
+    // The LookAndFeel keys on this property (see drawToggleButton).
+    inline const juce::Identifier checkRowKey { "zfCheckRow" };
+    inline void styleCheckRow (juce::ToggleButton& b) noexcept
+    {
+        b.getProperties().set (checkRowKey, true);
     }
 
     // Standard combo / text-editor / numeric-field treatment -- same
@@ -154,7 +158,7 @@ namespace zynforge::dialog
         c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
         c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-        c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+        c.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
     }
     // Prime an AlertWindow's text editor so the engineer can start
     // typing immediately when the dialog opens: all text selected,
@@ -202,8 +206,8 @@ namespace zynforge::dialog
         t.setColour (juce::TextEditor::backgroundColourId,     brand::bgDeep);
         t.setColour (juce::TextEditor::textColourId,           brand::textPrimary);
         t.setColour (juce::TextEditor::outlineColourId,        brand::edge);
-        t.setColour (juce::TextEditor::focusedOutlineColourId, brand::accentStatus);
+        t.setColour (juce::TextEditor::focusedOutlineColourId, brand::selectFill);
         t.setColour (juce::TextEditor::highlightColourId,
-                     brand::accentStatus.withAlpha (brand::alpha::dimmed));
+                     brand::selectFill.withAlpha (brand::alpha::half));
     }
 }

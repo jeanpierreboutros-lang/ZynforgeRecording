@@ -239,6 +239,9 @@ void MainComponent::updateNextCueCountdown()
         if (nextCueLabel.getText() != txt)
             nextCueLabel.setText (txt, juce::dontSendNotification);
     }
+
+    // The first cue brings the setlist row in; deleting the last takes it away.
+    if (cues.empty() != setlistBar.isCollapsed()) resized();
 }
 
 void MainComponent::syncStripsWithEngine()
@@ -394,10 +397,9 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
                           status.primaryDiskStale ? BigClockPanel::DiskReading::PrimaryStale
                           : status.copyDiskStale  ? BigClockPanel::DiskReading::CopyStale
                                                   : BigClockPanel::DiskReading::Fresh);
-    bigClock.setLoudness (status.integratedLufs,
-                          status.momentaryLufs,
-                          status.truePeakDb);
-
+    perfDashboard.setLoudness (status.integratedLufs,
+                               status.momentaryLufs,
+                               status.truePeakDb);
     perfDashboard.setMetrics (status.audioLoadPct,
                               (float) status.diskMBPerSec,
                               status.ringFillPct,
@@ -405,6 +407,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     perfDashboard.setDeviceInfo (status.sampleRate,
                                  status.blockSize);
     perfDashboard.setRecording (rec);
+    for (auto& strip : strips) strip->setTakeRolling (rec);
     // Drives per-strip meter refresh: full rate while recording or
     // playing, throttled to ~8 Hz when stopped (see TrackState.h).
     gTransportActive.store (rec || playing, std::memory_order_relaxed);
@@ -510,8 +513,10 @@ void MainComponent::showRecordRefusal (const juce::String& reason)
 {
     recordRefusal = reason;
     recordRefusalShownMs = juce::Time::getMillisecondCounter();
-    showStatus (reason);
     refreshAlarmBanner();
+    // The banner is the one place for this. Only something more urgent holding
+    // it sends the reason to the status line instead: a press never goes unanswered.
+    if (alarmBanner.getText() != reason) showStatus (reason);
 }
 
 // Query SMART health for the session + backup volumes on a BACKGROUND thread.

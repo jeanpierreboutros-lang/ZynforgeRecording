@@ -96,18 +96,17 @@ namespace zynforge
             void paint (juce::Graphics& g) override
             {
                 auto r = getLocalBounds().toFloat();
-                // Background: selected = bgElevated; hover = bgPanel; idle = transparent.
+                // Background: selected = bgElevated; hover = controlBg; idle = transparent.
                 if (selected)
                 {
                     g.setGradientFill (brand::verticalGradient (brand::bgElevated, r, 0.05f, 0.10f));
                     g.fillRect (r);
-                    // Brand-orange selection stripe on the left edge.
-                    g.setColour (brand::brandOrange);
+                    g.setColour (brand::selectFill);
                     g.fillRect (r.withWidth (3.0f));
                 }
                 else if (hovered)
                 {
-                    g.setColour (brand::lift (brand::bgPanel, 0.04f));
+                    g.setColour (brand::controlBg);
                     g.fillRect (r);
                 }
 
@@ -166,8 +165,8 @@ namespace zynforge
                 styleFieldLabel (storageLabel);
 
                 addAndMakeVisible (pathButton);
-                pathButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-                pathButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
+                pathButton.setColour (juce::TextButton::buttonColourId, brand::controlOff);
+                pathButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
                 pathButton.setButtonText (compactPath (storageDir));
                 pathButton.onClick = [this] { pickFolder(); };
 
@@ -390,13 +389,13 @@ namespace zynforge
                 addAndMakeVisible (recentHeader);
                 recentHeader.setText ("Recent", juce::dontSendNotification);
                 recentHeader.setFont (brand::type::ui (14.0f, true));
-                recentHeader.setColour (juce::Label::textColourId, brand::textMuted);
+                recentHeader.setColour (juce::Label::textColourId, brand::textTertiary);
 
                 addAndMakeVisible (recentHint);
                 recentHint.setText ("(sessions you record or open appear here)",
                                     juce::dontSendNotification);
                 recentHint.setFont (brand::type::caption());
-                recentHint.setColour (juce::Label::textColourId, brand::textMuted);
+                recentHint.setColour (juce::Label::textColourId, brand::textTertiary);
                 recentHint.setVisible (recent.isEmpty());
 
                 for (const auto& dir : recent)
@@ -524,7 +523,7 @@ namespace zynforge
                 const auto rail = juce::Rectangle<float> (0.0f, 0.0f,
                                                           (float) kSideRailW,
                                                           (float) getHeight());
-                g.setGradientFill (brand::verticalGradient (brand::bgDeep, rail, 0.04f, 0.10f));
+                g.setColour (brand::bgStrip);
                 g.fillRect (rail);
                 g.setColour (brand::edge);
                 g.drawVerticalLine (kSideRailW - 1, 0.0f, (float) getHeight());
@@ -533,7 +532,7 @@ namespace zynforge
                 const auto content = juce::Rectangle<float> ((float) kSideRailW, 0.0f,
                                                              (float) (getWidth() - kSideRailW),
                                                              (float) getHeight());
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, content, 0.04f, 0.12f));
+                g.setColour (brand::bgElevated);
                 g.fillRect (content);
 
                 // Tab row divider under the "Session" tab title.
@@ -652,7 +651,7 @@ namespace zynforge
         juce::DialogWindow::LaunchOptions opts;
         opts.dialogTitle                  = "Welcome";
         opts.content.setOwned (content.release());
-        opts.dialogBackgroundColour       = brand::bgDeep;
+        opts.dialogBackgroundColour       = brand::bgElevated;
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;

@@ -40,8 +40,8 @@ namespace zynforge
 
                 label (mtcType, "MTC", brand::textPrimary, 14.0f, true);
                 label (ltcType, "LTC", brand::textPrimary, 14.0f, true);
-                label (mtcStatus, "-- idle", brand::textMuted, 14.0f, false);
-                label (ltcStatus, "-- idle", brand::textMuted, 14.0f, false);
+                label (mtcStatus, "-- idle", brand::textTertiary, 14.0f, false);
+                label (ltcStatus, "-- idle", brand::textTertiary, 14.0f, false);
                 mtcStatus.setFont (brand::type::monoCounter());
                 ltcStatus.setFont (brand::type::monoCounter());
 
@@ -49,7 +49,7 @@ namespace zynforge
                 for (auto* r : { &mtcSel, &ltcSel })
                 {
                     r->setRadioGroupId (1);
-                    r->setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                    r->setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                     addAndMakeVisible (*r);
                 }
                 masterIsMtc = (engine.getChaseMode() != AudioEngine::ChaseMode::Ltc);
@@ -83,8 +83,9 @@ namespace zynforge
                 addAndMakeVisible (ltcSource);
 
                 keepRolling.setButtonText ("Keep rolling if sync is lost");
+                dialog::styleCheckRow (keepRolling);
                 keepRolling.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-                keepRolling.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                keepRolling.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                 keepRolling.setToggleState (engine.isKeepRollingOnSyncLoss(), juce::dontSendNotification);
                 keepRolling.onClick = [this] { engine.setKeepRollingOnSyncLoss (keepRolling.getToggleState()); };
                 addAndMakeVisible (keepRolling);
@@ -228,7 +229,7 @@ namespace zynforge
                     else
                     {
                         l.setText ("-- idle", juce::dontSendNotification);
-                        l.setColour (juce::Label::textColourId, brand::textMuted);
+                        l.setColour (juce::Label::textColourId, brand::textTertiary);
                     }
                 };
                 set (mtcStatus, mode_mtc);

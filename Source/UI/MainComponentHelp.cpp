@@ -111,12 +111,12 @@ namespace
                 for (const auto& s : sections())
                 {
                     // Section header -- light grey on slightly lifted
-                    // panel, brand-orange accent stripe so groups read
-                    // distinctly without colour collisions.
+                    // panel, muted ember stripe so groups read distinctly
+                    // without colour collisions.
                     juce::Rectangle<int> hdr (0, y, getWidth(), kHeaderH);
                     g.setColour (brand::bgElevated);
                     g.fillRect (hdr);
-                    g.setColour (brand::brandOrange);
+                    g.setColour (brand::selectFill);
                     g.fillRect (hdr.removeFromLeft (3));
                     g.setColour (brand::textPrimary);
                     g.setFont (brand::type::uiLabel());

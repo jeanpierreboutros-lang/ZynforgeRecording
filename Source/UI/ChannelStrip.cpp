@@ -4,116 +4,34 @@
 #include "../Theme/BrandTokens.h"
 #include "StripColourPicker.h"
 
-// ── Heated Steel: resting-identity paint helpers (self-contained) ─────────
-// Direction C drop-in. Inlined here so this single file needs no new header
-// and no other edits. Colours route through brand:: tokens; the steel greys
-// are raw hex for the trial -- promote them to BrandColors.h (steelHeaderHi/
-// Lo + debossInk + a structuralForge() accessor) once you keep this.
-// Textures/paths are built ONCE (function-local statics) so a 24-strip wall
-// repaints at today's cost.
+// Strip paint helpers. Flat: the channel colour lives in the header and the
+// spine, so the fader and meter sit on one calm body on every strip.
 namespace
 {
     namespace steel
     {
-        inline juce::Colour structuralForge() { return zynforge::brand::brandOrange; }
-
-        inline const juce::Image& hammeredTile()
+        // A take rolling on this strip is the one thing that lights the spine.
+        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour colour,
+                               bool rolling, float pulse)
         {
-            static const juce::Image tile = []
+            if (rolling)
             {
-                const int W = 96, H = 96;
-                juce::Image img (juce::Image::ARGB, W, H, true);
-                juce::Graphics g (img);
-                for (int x = 0; x < W; x += 4)
-                {
-                    g.setColour (zynforge::brand::gloss (0.045f));
-                    g.fillRect (x, 0, 1, H);
-                }
-                juce::Graphics::ScopedSaveState ss (g);
-                g.addTransform (juce::AffineTransform::rotation (0.14f, W * 0.5f, H * 0.5f));
-                for (int y = -H; y < H * 2; y += 9)
-                {
-                    g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::faint));
-                    g.fillRect (-W, y, W * 3, 2);
-                }
-                return img;
-            }();
-            return tile;
+                const auto hot = zynforge::brand::structuralForge();
+                g.setColour (hot.withAlpha ((0.34f + 0.30f * pulse)));
+                g.fillRect (r.getX(), r.getY(), 9.0f + 5.0f * pulse, r.getHeight());
+                colour = hot;
+            }
+            g.setColour (colour);
+            g.fillRect (r.getX(), r.getY(), 4.0f, r.getHeight());
         }
 
-        inline void drawHammered (juce::Graphics& g, juce::Rectangle<float> r, float a = 0.42f)
+        // Channel number: a small line above the name, which is what gets read.
+        inline void drawNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based)
         {
-            juce::Graphics::ScopedSaveState ss (g);
-            g.setFillType (juce::FillType (hammeredTile(),
-                           juce::AffineTransform::translation (r.getX(), r.getY())));
-            g.setOpacity (a);
-            g.fillRect (r);
-        }
-
-        inline void drawSteelHeader (juce::Graphics& g, juce::Rectangle<float> r)
-        {
-            // Pixel target: near-pure-black plate so it reads as a distinct
-            // band even on an uncoloured (grey) strip; bright orange under-seam.
-            g.setColour (zynforge::brand::steelHeaderHi);   // FLAT: solid plate (no gradient)
-            g.fillRect (r);
-            g.setColour (zynforge::brand::gloss (0.18f));                 // top bevel highlight
-            g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted));            // subdued structural seam (2px)
-            g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
-            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));         // crisp dark divider
-            g.fillRect (r.removeFromBottom (1.0f));
-        }
-
-        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool armed, float pulse = 0.0f)
-        {
-            const auto c = structuralForge();
-            // Armed: the spine breathes -- glow alpha + width pulse with `pulse`
-            // (0..1). Idle: a steady resting spine.
-            // Structural identity spine: EMBER-subdued at rest, escalating to a
-            // hot, glowing bar only when the channel is record-armed -- so the
-            // bright orange means "this channel is live", not just "this channel
-            // exists" (it no longer competes with a hot meter for the eye).
-            const float glowA = armed ? (0.34f + 0.30f * pulse) : 0.18f;
-            const float glowW = armed ? (9.0f + 5.0f * pulse)   : 7.0f;
-            g.setColour (c.withAlpha (glowA));                            // glow
-            g.fillRect (r.getX(), r.getY(), glowW, r.getHeight());
-            g.setColour (c.withAlpha (armed ? 1.0f : 0.45f));             // bar: ember at rest, hot when armed
-            g.fillRect (r.getX(), r.getY(), 5.0f, r.getHeight());
-        }
-
-        inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)
-        {
-            const auto xf = juce::AffineTransform::scale (r.getWidth(), r.getHeight())
-                                                   .translated (r.getX(), r.getY());
-            juce::Path hex;
-            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
-            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
-            juce::Path chv;
-            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
-            chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
-            hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::wash));
-            g.fillPath (hex);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f));
-            g.strokePath (hex, juce::PathStrokeType (1.0f));
-            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.24f));
-            g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f),
-                                                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            const float s = r.getWidth() * 0.05f;
-            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.30f));
-            g.fillEllipse (r.getCentreX() - s, r.getY() + r.getHeight() * 0.27f - s, s * 2.0f, s * 2.0f);
-        }
-
-        // Deboss-stamped channel number -- font sizes to the box so it fits
-        // the strip's short name row. Engraved look: gloss underprint + dark face.
-        inline void drawDebossNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based)
-        {
-            const auto txt = juce::String (channel1Based).paddedLeft ('0', 2);
-            g.setFont (zynforge::brand::type::mono ((float) juce::jlimit (12, 26, box.getHeight()), true));
-            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));          // engraved shadow
-            g.drawText (txt, box.translated (0, 1), juce::Justification::centredLeft, false);
-            g.setColour (zynforge::brand::debossFace);                           // raised steel face
-            g.drawText (txt, box, juce::Justification::centredLeft, false);
+            g.setFont (zynforge::brand::type::mono (10.0f, true));
+            g.setColour (zynforge::brand::textPrimary);
+            g.drawText (juce::String (channel1Based).paddedLeft ('0', 2), box,
+                        juce::Justification::centredLeft, false);
         }
     }
 }
@@ -244,14 +162,13 @@ namespace zynforge
             // soundcheck report reads the strip as it is now.
             strip.state.fftBlockReady.store (false, std::memory_order_release);
 
-            // Heated Steel: while record-armed, repaint just the left spine
-            // column (12px) at 10 Hz so the orange spine breathes. Cheap --
-            // the rest of the strip stays static, honouring the 24-strip
-            // repaint budget; only ARMED strips animate. Skipped entirely
-            // under reduced-motion (the spine then holds a static glow).
-            if (! zynforge::brand::reduceMotion()
+            // While a take rolls on this strip, repaint just the left spine
+            // column at 10 Hz so it breathes. Cheap: the rest of the strip stays
+            // static, honouring the 24-strip repaint budget. Skipped under
+            // reduced-motion (the spine then holds a static glow).
+            if (! zynforge::brand::reduceMotion() && strip.takeRolling
                 && strip.state.armed.load (std::memory_order_relaxed))
-                strip.repaint (0, 0, 12, strip.getHeight());
+                strip.repaint (0, 0, 16, strip.getHeight());
         }
     private:
         ChannelStrip& strip;
@@ -299,12 +216,27 @@ namespace zynforge
                 : juce::String ("In ") + juce::String (i + 1);
             inputCombo.addItem (live ? label : (label + " (off)"), i + 2);
         }
+        ensureRoutingItem (inputCombo, current, n, "In ");
         if (current < 0) inputCombo.setSelectedId (1,            juce::dontSendNotification);
         else             inputCombo.setSelectedId (current + 2, juce::dontSendNotification);
     }
 
+    // A stereo strip lists the odd pairs (In 1-2, In 3-4), but a pair can sit on
+    // an even channel (In 6-7). Selecting an id the box doesn't hold blanks it,
+    // so the real entry is added on demand, as the EDIT row does.
+    void ChannelStrip::ensureRoutingItem (juce::ComboBox& box, int dev, int channels, const char* prefix)
+    {
+        if (dev < 0 || box.indexOfItemId (dev + 2) >= 0) return;
+        const bool stereoStrip = (pairState != nullptr);
+        auto label = juce::String (prefix) + juce::String (dev + 1);
+        if (stereoStrip) label << "-" << juce::String (dev + 2);
+        const bool live = stereoStrip ? (dev + 1 < channels) : (dev < channels);
+        box.addItem (live ? label : (label + " (off)"), dev + 2);
+    }
+
     void ChannelStrip::setAvailableOutputs (int n)
     {
+        availableOutputs = n;
         const bool stereoStrip = (pairState != nullptr);
         int current = state.outputRouting.load (std::memory_order_relaxed);
         // -2 default now resolves to -1 (master-only) so a fresh strip
@@ -323,6 +255,7 @@ namespace zynforge
                 : juce::String ("Out ") + juce::String (i + 1);
             outputCombo.addItem (live ? label : (label + " (off)"), i + 2);
         }
+        ensureRoutingItem (outputCombo, current, n, "Out ");
         if (current < 0) outputCombo.setSelectedId (1,            juce::dontSendNotification);
         else             outputCombo.setSelectedId (current + 2, juce::dontSendNotification);
     }
@@ -360,6 +293,7 @@ namespace zynforge
         if (std::abs ((float) gainFader.getValue() - gainDb) > 0.05f)
         {
             gainFader.setValue (gainDb, juce::dontSendNotification);
+            showFaderValue();
             dirty = true;
         }
         if (std::abs ((float) panSlider.getValue() - panL) > 0.01f)
@@ -386,14 +320,8 @@ namespace zynforge
         if (resolved.getARGB() != lastAppliedColour)
         {
             lastAppliedColour = resolved.getARGB();
-            const auto knobCol = brand::lift (resolved, 0.30f);
             if (swatch != nullptr)
                 swatch->setDisplayColour (resolved);
-            gainFader.setColour (juce::Slider::thumbColourId, knobCol);
-            panSlider.setColour (juce::Slider::thumbColourId, knobCol);
-            panSlider.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
-            panSliderR.setColour (juce::Slider::thumbColourId, knobCol);
-            panSliderR.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
             dirty = true;
         }
 
@@ -426,6 +354,8 @@ namespace zynforge
         const int wantedIn  = (inR  == -2) ? stripIndex + 2 : pick (inputCombo,  inR);
         const int wantedOut = (outR == -2) ? stripIndex + 2 : pick (outputCombo, outR);
 
+        ensureRoutingItem (inputCombo,  wantedIn  - 2, availableInputs,  "In ");
+        ensureRoutingItem (outputCombo, wantedOut - 2, availableOutputs, "Out ");
         if (inputCombo .getSelectedId() != wantedIn)
             inputCombo .setSelectedId (wantedIn,  juce::dontSendNotification);
         if (outputCombo.getSelectedId() != wantedOut)
@@ -648,9 +578,12 @@ namespace zynforge
         if (pairState != nullptr)
             meter.setStereoPartner (pairState);
         nameLabel.setText (s.name, juce::dontSendNotification);
-        nameLabel.setJustificationType (juce::Justification::centred);
         nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
         nameLabel.setFont (brand::type::channelName());
+        nameLabel.setJustificationType (juce::Justification::centredLeft);
+        nameLabel.setBorderSize ({});
+        nameLabel.setMinimumHorizontalScale (0.6f);   // squeeze before it ever truncates
+        nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         // Double-click to rename inline; single-click does nothing.
         nameLabel.setEditable (false, true, false);
         nameLabel.onTextChange = [this]
@@ -678,7 +611,7 @@ namespace zynforge
             c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
             c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
             c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-            c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+            c.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
         };
         styleCombo (inputCombo);
         styleCombo (outputCombo);
@@ -792,22 +725,6 @@ namespace zynforge
         panSlider  .setTitle (pairState != nullptr ? "Pan left" : "Pan");
         panSliderR .setTitle ("Pan right");
 
-        // Reference-screenshot pan readouts:
-        //   mono   → "pan  ◂  N  ▸"
-        //   stereo → "◂  100  ▸"  on each of two knobs
-        auto formatPanText = [] (double v, bool compact)
-        {
-            const int pct = juce::jlimit (0, 100, juce::roundToInt (std::abs (v) * 100.0));
-            const juce::String mid = (pct == 0)
-                                       ? juce::String ("0")
-                                       : (v < 0.0 ? juce::String ("L") + juce::String (pct)
-                                                  : juce::String ("R") + juce::String (pct));
-            const auto core = juce::String::fromUTF8 ("\xe2\x97\x82") + "  "
-                            + mid + "  "
-                            + juce::String::fromUTF8 ("\xe2\x96\xb8");
-            return compact ? core : juce::String ("pan  ") + core;
-        };
-
         // Helper to style a pan rotary identically for L (and optional R).
         auto stylePanKnob = [this] (juce::Slider& s)
         {
@@ -818,11 +735,9 @@ namespace zynforge
             s.setRange (-1.0, 1.0, 0.01);
             s.setDoubleClickReturnValue (true, 0.0);
             s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-            s.setColour (juce::Slider::rotarySliderFillColourId,
-                         brand::lift (getResolvedColour(), 0.30f));
+            s.setColour (juce::Slider::rotarySliderFillColourId, brand::textSecondary);
             s.setColour (juce::Slider::rotarySliderOutlineColourId, brand::edge);
-            s.setColour (juce::Slider::thumbColourId,
-                         brand::lift (getResolvedColour(), 0.30f));
+            s.setColour (juce::Slider::thumbColourId, brand::textSecondary);
             s.setMouseDragSensitivity (160);
         };
 
@@ -835,7 +750,7 @@ namespace zynforge
         panSlider.setScrollWheelEnabled (false);
         panSlider.setTooltip ("Pan L -- drag to set L100..0..R100. Double-click for centre.");
         panSlider.setValue (s.pan.load(), juce::dontSendNotification);
-        panSlider.onValueChange = [this, formatPanText]
+        panSlider.onValueChange = [this]
         {
             const float v = (float) panSlider.getValue();
             state.pan.store (v, std::memory_order_relaxed);
@@ -846,15 +761,14 @@ namespace zynforge
                 // independent → don't sync R
             }
             if (panCb) panCb (v);
-            panLabel.setText (formatPanText (v, pairState != nullptr), juce::dontSendNotification);
+            showPanText();
         };
         addAndMakeVisible (panSlider);
 
         // Pan label below the knob(s).
         panLabel.setFont (zynforge::brand::type::monoStamp());
-        panLabel.setColour (juce::Label::textColourId, brand::accentStatus);
+        panLabel.setColour (juce::Label::textColourId, brand::textSecondary);
         panLabel.setJustificationType (juce::Justification::centred);
-        panLabel.setText (formatPanText (s.pan.load(), pairState != nullptr), juce::dontSendNotification);
         addAndMakeVisible (panLabel);
 
         // For stereo strips: a second pan knob + label for R.
@@ -864,7 +778,7 @@ namespace zynforge
             panSliderR.setScrollWheelEnabled (false);
             panSliderR.setTooltip ("Pan R -- drag to set L100..0..R100. Double-click for centre.");
             panSliderR.setValue (pairState->pan.load(), juce::dontSendNotification);
-            panSliderR.onValueChange = [this, formatPanText]
+            panSliderR.onValueChange = [this]
             {
                 const float v = (float) panSliderR.getValue();
                 if (pairState != nullptr)
@@ -872,27 +786,27 @@ namespace zynforge
                 // Persist the R-side pan via its own callback so the
                 // L/R values are independent and both survive a relaunch.
                 if (panRCb) panRCb (v);
-                panLabelR.setText (formatPanText (v, true), juce::dontSendNotification);
+                showPanText();
             };
             addAndMakeVisible (panSliderR);
 
             panLabelR.setFont (zynforge::brand::type::monoStamp());
-            panLabelR.setColour (juce::Label::textColourId, brand::accentStatus);
+            panLabelR.setColour (juce::Label::textColourId, brand::textSecondary);
             panLabelR.setJustificationType (juce::Justification::centred);
-            panLabelR.setText (formatPanText (pairState->pan.load(), true), juce::dontSendNotification);
             addAndMakeVisible (panLabelR);
         }
+        showPanText();
 
         gainFader.setSliderStyle (juce::Slider::LinearVertical);
         gainFader.setRange (-60.0, 12.0, 0.1);
         gainFader.setSkewFactorFromMidPoint (-15.0);   // log-ish console feel
         gainFader.setDoubleClickReturnValue (true, 0.0);
         gainFader.setTextValueSuffix (" dB");
-        gainFader.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 56, 14);
+        gainFader.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         gainFader.setNumDecimalPlacesToDisplay (1);
         gainFader.setColour (juce::Slider::trackColourId,        brand::edge);
         gainFader.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
-        gainFader.setColour (juce::Slider::thumbColourId,        brand::lift (getResolvedColour(), 0.30f));
+        gainFader.setColour (juce::Slider::thumbColourId,        brand::faderFill);
         // Snap to mouse position so the cap STICKS to the pointer 1:1 while
         // dragging (standard DAW fader feel). The old "relative drag"
         // (snap=false + a 250 px sensitivity longer than the fader itself)
@@ -901,10 +815,6 @@ namespace zynforge
         // narrow bounds, not the strip body, so strip-select clicks elsewhere
         // never touch it.
         gainFader.setSliderSnapsToMousePosition (true);
-        gainFader.setColour (juce::Slider::textBoxTextColourId,  brand::textPrimary);
-        gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        gainFader.setColour (juce::Slider::textBoxBackgroundColourId,
-                             brand::bgDeep.withAlpha (zynforge::brand::alpha::ghost));
         // Same reasoning as the pan knob: scroll-wheel / trackpad
         // gestures should NEVER move the gain. The fader changes only
         // on a direct click+drag interaction.
@@ -916,8 +826,32 @@ namespace zynforge
             state.gainDb.store (v, std::memory_order_relaxed);
             if (pairState) pairState->gainDb.store (v, std::memory_order_relaxed);
             if (gainCb) gainCb (v);
+            showFaderValue();
         };
         addAndMakeVisible (gainFader);
+
+        // The fader's own text box is only as wide as the cap, which cut the
+        // value to "0....", so the value gets the strip's width. It stays
+        // click-to-type, as the box was.
+        faderValue.setFont (zynforge::brand::type::monoStamp());
+        faderValue.setColour (juce::Label::textColourId, brand::textPrimary);
+        faderValue.setColour (juce::Label::backgroundColourId,
+                              brand::bgDeep.withAlpha (zynforge::brand::alpha::ghost));
+        faderValue.setJustificationType (juce::Justification::centred);
+        faderValue.setBorderSize ({});
+        faderValue.setMinimumHorizontalScale (0.6f);
+        faderValue.setEditable (true, false, false);
+        faderValue.setTitle ("Gain value");
+        faderValue.setTooltip ("Fader level -- click to type a value.");
+        faderValue.onTextChange = [this]
+        {
+            const auto typed = gainFader.getValueFromText (faderValue.getText());
+            gainFader.setValue (gainFader.snapValue (typed, juce::Slider::notDragging),
+                                juce::sendNotificationSync);
+            showFaderValue();   // a refused or clamped entry shows what was applied
+        };
+        showFaderValue();
+        addAndMakeVisible (faderValue);
 
         // dB scale label strip between the fader and the LED meter.
         dbRuler = std::make_unique<DbRuler> (gainFader);
@@ -925,7 +859,7 @@ namespace zynforge
 
         outLabel.setText ("OUT", juce::dontSendNotification);
         outLabel.setFont (brand::type::ledLabel());
-        outLabel.setColour (juce::Label::textColourId, brand::textMuted);
+        outLabel.setColour (juce::Label::textColourId, brand::textTertiary);
         outLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (outLabel);
 
@@ -944,6 +878,55 @@ namespace zynforge
         addMouseListener (this, true);
     }
 
+    void ChannelStrip::setTakeRolling (bool rolling)
+    {
+        if (takeRolling == rolling) return;
+        takeRolling = rolling;
+        repaint();
+    }
+
+    // Pan readout for the room there is: "pan < L40 >", "< L40 >" or just "L40",
+    // so a narrow strip shows the value rather than a clipped word.
+    void ChannelStrip::showPanText()
+    {
+        auto format = [] (double v, int detail)
+        {
+            const int pct = juce::jlimit (0, 100, juce::roundToInt (std::abs (v) * 100.0));
+            const juce::String mid = (pct == 0)
+                                       ? juce::String ("0")
+                                       : (v < 0.0 ? juce::String ("L") + juce::String (pct)
+                                                  : juce::String ("R") + juce::String (pct));
+            if (detail == 0) return mid;
+            const auto core = juce::String::fromUTF8 ("\xe2\x97\x82") + "  "
+                            + mid + "  "
+                            + juce::String::fromUTF8 ("\xe2\x96\xb8");
+            return detail == 1 ? core : juce::String ("pan  ") + core;
+        };
+        const int room = pairState != nullptr ? getWidth() / 2 : getWidth();
+        const int detail = room < 60 ? 0 : (room < 96 ? 1 : 2);
+        panLabel.setText (format (panSlider.getValue(), detail), juce::dontSendNotification);
+        if (pairState != nullptr)
+            panLabelR.setText (format (panSliderR.getValue(), detail), juce::dontSendNotification);
+    }
+
+    void ChannelStrip::showFaderValue()
+    {
+        faderValue.setText (gainFader.getTextFromValue (gainFader.getValue()), juce::dontSendNotification);
+    }
+
+    // Clear of the spine on the left.
+    juce::Rectangle<int> ChannelStrip::contentArea() const
+    {
+        return getLocalBounds().withTrimmedLeft (brand::space::md + 1)
+                               .withTrimmedRight (brand::space::sm - 1)
+                               .reduced (0, brand::space::sm);
+    }
+
+    juce::Rectangle<int> ChannelStrip::numberBounds() const
+    {
+        return contentArea().removeFromTop (kIdRowH).withWidth (20);
+    }
+
     void ChannelStrip::paint (juce::Graphics& g)
     {
         // Condemned strip (invalidate() called, TrackState about to be / already
@@ -953,84 +936,43 @@ namespace zynforge
         // window. Just fill the body so it isn't a visual hole.
         if (! stripValid) { g.fillAll (brand::bgPanel); return; }
 
-        auto r = getLocalBounds().toFloat().reduced (4.0f);
-        auto stripColour = getResolvedColour();
+        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        const auto stripColour = getResolvedColour();
+        const auto body = hovered ? brand::lift (brand::bgStrip, brand::tint::hover) : brand::bgStrip;
 
-        // Hover lift -- mouse over the strip brightens the wash ~6% so
-        // the engineer reads 'this is the strip my pointer is on'
-        // without needing a focus ring or selection state.
-        if (hovered) stripColour = brand::lift (stripColour, 0.06f);
-
-        // Vertical gradient wash in the personality colour -- matches
-        // ZynForge Live's strip finish and gives every channel a sense
-        // of depth instead of a flat block.
-        g.setGradientFill (brand::verticalGradient (stripColour, r, 0.18f, 0.28f));
-        g.fillRoundedRectangle (r, brand::radius::xl);
-
-        // ── Heated Steel: forged resting identity (paint-only) ── FORGE_STEEL_V3
         {
-            const bool armedNow = state.armed.load (std::memory_order_relaxed);
             juce::Path bodyClip;
-            bodyClip.addRoundedRectangle (r, brand::radius::xl);
+            bodyClip.addRoundedRectangle (r, brand::radius::lg);
             juce::Graphics::ScopedSaveState clip (g);
             g.reduceClipRegion (bodyClip);
-            steel::drawHammered    (g, r, 0.38f);              // ③ hammered steel
-            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::edgeSoft));  // light forged scrim -- lets colour show
+            g.setColour (body);
             g.fillRect (r);
-            steel::drawSteelHeader (g, r.withHeight (30.0f));  // taller near-black stamped plate
-            // Heated Steel: the spine breathes at ~1 Hz while record-armed.
-            // Phase from the wall clock so it animates whenever paint() runs
-            // (StripTimer repaints the spine column at 10 Hz when armed).
+            g.setColour (brand::stripHeaderFill (stripColour));
+            g.fillRect (r.withHeight ((float) kHeaderH));
+
+            // The spine breathes at ~1 Hz while a take rolls here. Phase from
+            // the wall clock so it animates whenever paint() runs (StripTimer
+            // repaints the spine column at 10 Hz).
+            const bool rollingHere = takeRolling && state.armed.load (std::memory_order_relaxed);
             float armPulse = 0.0f;
-            if (armedNow)
+            if (rollingHere)
                 armPulse = zynforge::brand::reduceMotion()
                              ? 0.6f   // reduced-motion: static raised-glow end-state
                              : 0.5f + 0.5f * std::sin ((float) (juce::Time::getMillisecondCounter() % 1000)
                                                        / 1000.0f * juce::MathConstants<float>::twoPi);
-            steel::drawSpine       (g, r, armedNow, armPulse); // ① structural orange spine (pulses when armed)
-            if (getWidth() >= 78)                               // ② deboss channel number
-                steel::drawDebossNumber (g, { 15, 7, 30, 17 }, stripIndex + 1);
-            // ④ forge-mark top-right, only where no EG chip sits
-            const bool badgeHere = state.editGroup.load (std::memory_order_relaxed) >= 0;
-            if (! badgeHere)
-                steel::drawForgeMark (g, { r.getRight() - 18.0f, r.getY() + 3.0f, 13.0f, 13.0f }, armedNow);
+            steel::drawSpine (g, r, stripColour, rollingHere, armPulse);
+            steel::drawNumber (g, numberBounds(), stripIndex + 1);
         }
 
-        // ── Ember armed-glow (brand signature) ──────────────────────────────
-        // A forged channel runs HOT. When record-armed, the strip gets a warm
-        // ember bloom weighted to the top (where REC / arm live) fading down,
-        // so an armed channel reads as heated steel from across the room. The
-        // meter already supplies the heat motion; this marks the *channel*.
-        const bool isArmed = state.armed.load (std::memory_order_relaxed);
-        if (isArmed)
-        {
-            // FLAT: a solid, subtle ember wash marks the armed channel (no glow gradient).
-            g.setColour (brand::meterEmber.withAlpha (zynforge::brand::alpha::faint));
-            g.fillRoundedRectangle (r, brand::radius::xl);
-        }
+        g.setColour (hovered ? brand::borderBright : brand::edge);
+        g.drawRoundedRectangle (r, brand::radius::lg, 1.0f);
 
-        // Hover border -- a touch brighter than the resting edge so the
-        // strip lifts subtly off the canvas.
-        const float edgeAlpha = hovered ? 0.55f : 0.30f;
-        g.setColour (brand::lift (stripColour, 0.40f).withAlpha (edgeAlpha));
-        g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
-
-        // An armed strip wins the edge: a hot forge-orange rim over the resting
-        // border so "this channel is live to disk" reads instantly.
-        if (isArmed)
-        {
-            g.setColour (brand::meterHot.withAlpha (zynforge::brand::alpha::muted));
-            g.drawRoundedRectangle (r.reduced (0.5f), brand::radius::xl, 1.5f);
-        }
-
-        // Multi-select highlight -- a 2 px accent-yellow outline so a
-        // group of selected strips is unambiguous from the side of the
-        // room while still letting the strip's personality colour
-        // dominate.
+        // Multi-select highlight -- a 2 px outline in the selection fill so
+        // a group of selected strips is unambiguous from the side of the room.
         if (selected)
         {
-            g.setColour (brand::accentSolo);
-            g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::xl, 2.5f);
+            g.setColour (brand::selectFill);
+            g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::lg, 2.5f);
         }
 
         // Edit Group badge. Pro Tools shows group names per strip
@@ -1072,58 +1014,22 @@ namespace zynforge
 
     void ChannelStrip::resized()
     {
-        auto r = getLocalBounds().reduced (brand::space::sm, brand::space::md);
+        auto r = contentArea();
 
-        // ── 1. Name + colour swatch (top of strip) ── mock header layout
-        auto nameRow = r.removeFromTop (22);
-        const bool wideHdr  = getWidth() >= 78;
-        const bool veryWide = getWidth() >= 150;   // L preset -- name on its OWN row
-        const bool hasBadge = state.editGroup.load (std::memory_order_relaxed) >= 0;
-        if (veryWide)
-        {
-            // L view: the NAME sits INSIDE the black steel header plate,
-            // centred in the space between the painted deboss number (left)
-            // and the colour chip / caret / badge (right) -- no separate plate
-            // underneath it.
-            nameRow.removeFromLeft (44);     // painted deboss number
-            nameRow.removeFromRight (20);    // collapse caret
-            if (hasBadge)
-                nameRow.removeFromRight (36);
-            if (swatch != nullptr)
-                swatch->setBounds (nameRow.removeFromRight (18).withSizeKeepingCentre (12, 12));
-            nameLabel.setBounds (nameRow.reduced (4, 0));
-            nameLabel.setJustificationType (juce::Justification::centred);
-            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-        }
-        else if (wideHdr)
-        {
-            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-            // Painted deboss number occupies the far left -- reserve it.
-            nameRow.removeFromLeft (44);
-            // Reserve the far right for the collapse caret so the name never
-            // runs under it, then the colour chip -- mock header order.
-            nameRow.removeFromRight (20);
-            if (hasBadge && nameRow.getWidth() > 60)
-                nameRow.removeFromRight (36);
-            if (swatch != nullptr)
-                swatch->setBounds (nameRow.removeFromRight (18).withSizeKeepingCentre (12, 12));
-            nameLabel.setBounds (nameRow.reduced (2, 0));
-            nameLabel.setJustificationType (juce::Justification::centredLeft);
-        }
-        else
-        {
-            // Narrow header: a small colour chip + the NAME, which gets every
-            // remaining pixel -- the rename field always has room (the badge /
-            // group glyph is dropped here; the spine colour still IDs the
-            // strip). Left-justified so a truncated long name reads from its
-            // start, and double-click still opens the rename editor.
-            if (swatch != nullptr)
-                swatch->setBounds (nameRow.removeFromLeft (14).withSizeKeepingCentre (10, 10));
-            nameLabel.setBounds (nameRow.reduced (2, 0));
-            nameLabel.setJustificationType (juce::Justification::centredLeft);
-            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-        }
-        r.removeFromTop (brand::space::xs);
+        // ── 1. Header ── a thin line for the number + colour chip, then the
+        // NAME across the strip's whole width at every size: it is what gets
+        // read from the mix position, so nothing else shares its row.
+        auto idRow = r.removeFromTop (kIdRowH);
+        if (state.editGroup.load (std::memory_order_relaxed) >= 0 && getWidth() >= 78)
+            idRow.removeFromRight (26);      // painted EG badge
+        if (swatch != nullptr)
+            swatch->setBounds (idRow.removeFromRight (kIdRowH).withSizeKeepingCentre (10, 10));
+        // Largest type on the strip at every size, chosen for the room there is.
+        nameLabel.setFont (getWidth() < 64 ? brand::type::channelName()
+                         : getWidth() < 96 ? brand::type::sectionTitle()
+                                           : brand::type::headline());
+        nameLabel.setBounds (r.removeFromTop (kNameRowH));
+        r.removeFromTop (brand::space::md);
 
         // Routing combos: keep them in flow but small -- they live above
         // the pan section in the existing UX (engineer can also use the
@@ -1202,6 +1108,7 @@ namespace zynforge
         // out the column.
         auto bottom = r.removeFromBottom (brand::space::xl);
         dbLabel.setBounds (bottom);
+        faderValue.setBounds (r.removeFromBottom (kFaderValueH));
 
         // Pro-Tools-style COMPACT fader cluster: the dB ruler hugs the fader on
         // the left and the meter hugs it on the right, with the fader just wide
@@ -1216,16 +1123,23 @@ namespace zynforge
 
         auto cluster = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), clusterW),
                                                 r.getHeight());
+        // On a narrow strip the meter's scale has to do: the ruler would take
+        // the whole fader's width, and a fader nobody can see can't be moved.
+        const bool roomForRuler = cluster.getWidth() >= rulerW + 2 + kMinFaderW + 2 + meterW;
         if (dbRuler != nullptr)
         {
-            dbRuler->setVisible (true);
-            dbRuler->setBounds (cluster.removeFromLeft (rulerW));
-            cluster.removeFromLeft (2);
+            dbRuler->setVisible (roomForRuler);
+            if (roomForRuler)
+            {
+                dbRuler->setBounds (cluster.removeFromLeft (rulerW));
+                cluster.removeFromLeft (2);
+            }
         }
         meter.setBounds (cluster.removeFromRight (meterW));
         cluster.removeFromRight (2);
         gainFader.setBounds (cluster);
 
         outLabel.setBounds ({});  // collapsed -- output combo serves the role
+        showPanText();
     }
 }

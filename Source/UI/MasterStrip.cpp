@@ -2,68 +2,23 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
-// ── Heated Steel (Direction C) -- self-contained paint helpers ───────────
+// The forge mark, cold: the master is chrome, not state.
 namespace
 {
-    namespace steel
+    inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r)
     {
-        inline juce::Colour structuralForge() { return zynforge::brand::brandOrange; }
-
-        inline const juce::Image& hammeredTile()
-        {
-            static const juce::Image tile = []
-            {
-                const int W = 96, H = 96;
-                juce::Image img (juce::Image::ARGB, W, H, true);
-                juce::Graphics g (img);
-                for (int x = 0; x < W; x += 4) { g.setColour (zynforge::brand::gloss (0.045f)); g.fillRect (x, 0, 1, H); }
-                juce::Graphics::ScopedSaveState ss (g);
-                g.addTransform (juce::AffineTransform::rotation (0.14f, W * 0.5f, H * 0.5f));
-                for (int y = -H; y < H * 2; y += 9) { g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::faint)); g.fillRect (-W, y, W * 3, 2); }
-                return img;
-            }();
-            return tile;
-        }
-        inline void drawHammered (juce::Graphics& g, juce::Rectangle<float> r, float a = 0.40f)
-        {
-            juce::Graphics::ScopedSaveState ss (g);
-            g.setFillType (juce::FillType (hammeredTile(), juce::AffineTransform::translation (r.getX(), r.getY())));
-            g.setOpacity (a); g.fillRect (r);
-        }
-        inline void drawSteelHeader (juce::Graphics& g, juce::Rectangle<float> r)
-        {
-            g.setColour (zynforge::brand::steelMasterHi);   // FLAT: solid plate (no gradient)
-            g.fillRect (r);
-            g.setColour (zynforge::brand::gloss (0.14f)); g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted));            // structural seam (subdued)
-            g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
-            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::strong)); g.fillRect (r.removeFromBottom (1.0f));
-        }
-        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool armed)
-        {
-            const auto c = structuralForge();
-            if (armed) { g.setColour (zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::wash)); g.fillRect (r.getX(), r.getY(), 7.0f, r.getHeight()); }
-            g.setColour (c.withAlpha (armed ? 1.0f : 0.55f));   // subdued at rest, hot when armed
-            g.fillRect (r.getX(), r.getY(), 3.0f, r.getHeight());
-        }
-        inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)
-        {
-            const auto xf = juce::AffineTransform::scale (r.getWidth(), r.getHeight()).translated (r.getX(), r.getY());
-            juce::Path hex;
-            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
-            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
-            juce::Path chv;
-            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
-            chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
-            hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::wash)); g.fillPath (hex);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f)); g.strokePath (hex, juce::PathStrokeType (1.0f));
-            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.24f));
-            g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            const float s = r.getWidth() * 0.05f;
-            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.30f));
-            g.fillEllipse (r.getCentreX() - s, r.getY() + r.getHeight() * 0.27f - s, s * 2.0f, s * 2.0f);
-        }
+        const auto xf = juce::AffineTransform::scale (r.getWidth(), r.getHeight()).translated (r.getX(), r.getY());
+        juce::Path hex;
+        hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
+        hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
+        juce::Path chv;
+        chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
+        chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
+        hex.applyTransform (xf); chv.applyTransform (xf);
+        g.setColour (zynforge::brand::gloss (0.10f));
+        g.strokePath (hex, juce::PathStrokeType (1.0f));
+        g.setColour (zynforge::brand::gloss (0.24f));
+        g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }
 
@@ -89,7 +44,7 @@ namespace zynforge
         : engine (eng), meter (eng.getMasterState())
     {
         title.setFont (brand::type::sectionTitle());
-        title.setColour (juce::Label::textColourId, brand::brandOrange);
+        title.setColour (juce::Label::textColourId, brand::textPrimary);
         title.setJustificationType (juce::Justification::centredLeft);
         addAndMakeVisible (title);
 
@@ -101,7 +56,7 @@ namespace zynforge
         outputCombo.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
         outputCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         outputCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-        outputCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+        outputCombo.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
         outputCombo.setTooltip (kOutputTooltip);
         outputCombo.onChange = [this]
         {
@@ -124,11 +79,10 @@ namespace zynforge
         addChildComponent (heldLabel);
 
         // Mono / stereo mode toggle. Reuses the toggle-button pill style;
-        // text flips between 'MONO' and 'ST', tick colour goes brand-orange
-        // when stereo (the default) and teal when mono so the difference
-        // reads at a glance.
+        // text flips between 'MONO' and 'ST', and stereo (the default) takes
+        // the selection fill so the difference reads at a glance.
         modeButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-        modeButton.setColour (juce::ToggleButton::tickColourId, brand::brandOrange);
+        modeButton.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
         modeButton.setClickingTogglesState (true);
         modeButton.setToggleState (engine.getMasterStereo(), juce::dontSendNotification);
         modeButton.setButtonText (engine.getMasterStereo() ? "ST" : "MONO");
@@ -166,7 +120,7 @@ namespace zynforge
         fader.setTextValueSuffix (" dB");
         fader.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 14);
         fader.setNumDecimalPlacesToDisplay (1);
-        fader.setColour (juce::Slider::thumbColourId, brand::lift (brand::brandOrange, 0.20f));
+        fader.setColour (juce::Slider::thumbColourId, brand::faderFill);
         fader.setColour (juce::Slider::backgroundColourId, brand::bgDeep);
         fader.setColour (juce::Slider::textBoxTextColourId, brand::textPrimary);
         fader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
@@ -276,22 +230,19 @@ namespace zynforge
     void MasterStrip::paint (juce::Graphics& g)
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
-        g.setGradientFill (brand::verticalGradient (brand::bgElevated, r, 0.05f, 0.30f));
-        g.fillRoundedRectangle (r, brand::radius::xl);
-        g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::ghost));
-        g.drawRoundedRectangle (r, brand::radius::xl, 1.5f);
-
-        // ── Heated Steel: forged finish (Direction C) ────────────────────
+        g.setColour (brand::bgStrip);
+        g.fillRoundedRectangle (r, brand::radius::lg);
         {
             juce::Path bodyClip;
-            bodyClip.addRoundedRectangle (r, brand::radius::xl);
-            juce::Graphics::ScopedSaveState steelClip (g);
+            bodyClip.addRoundedRectangle (r, brand::radius::lg);
+            juce::Graphics::ScopedSaveState clip (g);
             g.reduceClipRegion (bodyClip);
-            steel::drawHammered    (g, r, 0.40f);
-            steel::drawSteelHeader (g, r.withHeight (30.0f));
-            steel::drawSpine       (g, r, false);
-            steel::drawForgeMark   (g, { r.getX() + 8.0f, r.getY() + 7.0f, 19.0f, 19.0f }, true);
+            g.setColour (brand::steelMasterHi);
+            g.fillRect (r.withHeight (30.0f));
         }
+        g.setColour (brand::edge);
+        g.drawRoundedRectangle (r, brand::radius::lg, 1.0f);
+        drawForgeMark (g, { r.getX() + 8.0f, r.getY() + 6.0f, 18.0f, 18.0f });
 
         // Etched maker's mark -- "ZYNFORGE" pressed into the bottom of the
         // master plate like a stamp on forged steel. Deboss: a gloss lower lip

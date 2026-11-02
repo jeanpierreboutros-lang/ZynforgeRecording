@@ -166,9 +166,9 @@ components:
     radius:            "{rounded.xl}"
 
   button:
-    # Small dark-grey rounded panel with light text. Highlighted state
-    # uses a bright translucent accent (e.g. record→accentRecord,
-    # transport→accentPlay, macros→accentVS, feature-engaged→teal).
+    # Small dark-grey rounded panel with light text. Selected and primary
+    # use the muted ember selectFill; only record→accentRecord and
+    # transport→accentPlay keep a bright accent.
     bg:                "{colors.bg-elevated}"
     bg-on:             "{colors.engaged-amber}"
     text:              "{colors.text-primary}"
@@ -457,9 +457,9 @@ Depth comes from `brand::lift`/`sink` solids + 1 px edges. Bright
 permanent chrome — enforced by `tools/design_audit.sh`. The signature
 surfaces:
 - **Forge-heat meters** (above) — the most-looked-at element.
-- **Ember armed-glow** — a record-armed channel strip gets a warm ember
-  bloom from the top + a hot forge-orange rim (`ChannelStrip::paint`), so a
-  live-to-disk channel reads as heated metal across the room.
+- **Armed strips stay calm** — an armed strip shows its lit R button, and the
+  forge-orange rim appears only while a take rolls (`ChannelStrip::paint`). Bright
+  ember means a take is live, not that one could be.
 - **Milled-steel fader cap** — the fader thumb has a single HOT forge groove
   (`meter-hot`) milled down its centre + a gloss top sheen
   (`ZynForgeLookAndFeel::drawLinearSlider`). The channel colour shows in the
@@ -467,21 +467,17 @@ surfaces:
 - **Etched maker's mark** — a debossed "ZYNFORGE" pressed into the bottom of
   the master plate (`MasterStrip::paint`): gloss lower lip + dark engraved
   face, like a stamp on forged steel.
-- **BigClock ember-underglow** — while recording, the hero timecode plate
-  breathes an ember tint + a hot underglow rising from its base
-  (`BigClockPanel::paint`), so the centrepiece reads as metal being worked.
-- **Pro Tools-style EDIT waveform** — replaced the old forge-heat
-  `setHeatWaveFill` (an always-on orange that read as a noisy barcode and
-  broke the "orange = STATE" rule) on 2026-06-15. Each clip is a light,
-  **channel-coloured block** (`waveBg = lift(stripColour)`) with the
-  waveform drawn **DARK on top** (`waveDark = sink(waveBg)`): loud fills
-  dark, quiet lets the colour show, at honest levels (a gentle 1.5×
-  auto-gain cap, `jlimit(1.0, 1.5, 0.9/peak)` — no over-amplified hiss;
-  V+/V−/Shift-wheel magnifies a quiet take on demand). Clip gain just SCALES the
-  waveform (no gain line; the handle appears on hover). Dynamic
-  forge-orange survives only for the *live-capture* envelope (recording =
-  STATE — and it builds while continuing or punching a take), dimming to
-  the channel colour on stop. (`EditTrackRow::drawWaveOutlined`.)
+- **Rolling clock plate** — while recording, the whole clock plate turns
+  deep record red (`takePlate`) and breathes at 1 Hz, with white type on it
+  (`BigClockPanel::paint`), so a rolling take is unmistakable from across the
+  room. It stays well below the alarm banner's bright red.
+- **Dark EDIT clips** — each clip is a dark body that keeps a hint of the
+  track's hue (`clipBody`) with the waveform in the track's own colour, lifted
+  until it reads (`clipWave`). A light clip was the brightest thing on screen in
+  a dark room. Clip gain just SCALES the waveform (no gain line; the handle
+  appears on hover). Dynamic forge-orange survives only for the *live-capture*
+  envelope (recording = STATE, and it builds while continuing or punching a
+  take), dimming to the channel colour on stop. (`EditTrackRow::drawWaveOutlined`.)
 
 **Restraint rule:** bright `meter-hot` is reserved for *live signal /
 armed / recording*; resting chrome stays cold steel (e.g. the fader-cap
@@ -580,7 +576,10 @@ The most complex component in the app: one timeline lane per logical strip (ster
 Path-drawn icon buttons (no glyph fonts): play/pause, stop, record, loop, return-to-zero, marker-drop. **States:** idle (cold control chrome, 3-step hover) · play active (accentPlay) · record active (accentRecord + the app-wide REC treatment) · loop engaged (engagedAmber). Record is shape-distinct from play (field rule: readable across a dark stage). All six expose spoken accessibility names (headless-tested).
 
 ### BigClockPanel
-The hero timecode plate (44 pt JetBrains Mono, `type::hero`). **Modes:** Idle (cold) · Playing (0.14 active tint) · Recording (ember underglow rising from the base + 1 Hz `motion::pulseHz` breathe — the centrepiece reads as metal being worked) · ArmedReady (engagedAmber border pulse). Carries the disk-health banner (free GB / last-write ms / missed samples — missed > 0 glows red) and the BS.1770 loudness readout. Fed once per tick from the `EngineStatus` snapshot, change-gated repaints.
+The hero timecode plate. **Modes:** Idle (cold, lamp reads IDLE) · ArmedReady (amber lamp, reads ARMED) · Playing (active tint) · Recording (whole plate `takePlate` red with a 1 Hz `motion::pulseHz` breathe, white type, reads REC). Carries the time, record time left (free disk while nothing rolls) and the disk-health rows (free GB, missed samples, last write, markers). Those rows give way first when the row is short, in the order they are drawn. Fed by MainComponent's timer.
+
+### PerfDashboard
+The status panel beside the clock, in both views at every window size. Top row: device format, then master loudness (LUFS momentary and integrated, true peak, red within 1 dB of full scale); a dropped sample takes the loudness side over. Second row: AUDIO, DISK and BUF, each green / yellow / red. One thin bar along the bottom shows disk load, full at 50 MB/s. Red ring while recording.
 
 ## Do's and Don'ts
 

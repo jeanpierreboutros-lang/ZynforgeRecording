@@ -159,7 +159,7 @@ namespace zynforge
         {
             radio->setRadioGroupId (1);
             radio->setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-            radio->setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+            radio->setColour (juce::ToggleButton::tickColourId, brand::selectFill);
             radio->setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
             radio->onClick = [this] { refresh(); };
             addAndMakeVisible (*radio);
@@ -177,8 +177,9 @@ namespace zynforge
         {
             auto tick = std::make_unique<juce::ToggleButton> (name);
             tick->setToggleState (true, juce::dontSendNotification);
+            dialog::styleCheckRow (*tick);
             tick->setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-            tick->setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+            tick->setColour (juce::ToggleButton::tickColourId, brand::selectFill);
             tick->setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
             tick->onClick = [this] { refresh(); };
             listHolder.addAndMakeVisible (*tick);
@@ -220,7 +221,7 @@ namespace zynforge
             { if (safe != nullptr) safe->exportButton.grabKeyboardFocus(); });
 
         const int listH = juce::jlimit (kRowH, kRowH * kVisibleRows, (int) ticks.size() * kRowH);
-        setSize (kWidth, dialog::titleH + 3 * kRowH + 20 + 28 + listH + ExportFormatControls::kPreferredHeight + 32
+        setSize (kWidth, dialog::titleH + kRowH + 20 + 28 + listH + ExportFormatControls::kPreferredHeight + 32
                              + 5 * brand::space::md + 2 * brand::space::lg);
     }
 
@@ -229,9 +230,11 @@ namespace zynforge
         auto r = getLocalBounds().reduced (brand::space::lg);
         r.removeFromTop (dialog::titleH - brand::space::lg);
 
-        rawButton   .setBounds (r.removeFromTop (kRowH));
-        editedButton.setBounds (r.removeFromTop (kRowH));
-        mixButton   .setBounds (r.removeFromTop (kRowH));
+        auto choices = r.removeFromTop (kRowH);
+        const int third = choices.getWidth() / 3;
+        rawButton   .setBounds (choices.removeFromLeft (third));
+        editedButton.setBounds (choices.removeFromLeft (third));
+        mixButton   .setBounds (choices);
         note.setBounds (r.removeFromTop (20));
         r.removeFromTop (brand::space::md);
 

@@ -84,16 +84,14 @@ namespace zynforge
             addAndMakeVisible (table);
 
             recoverButton.setButtonText ("Recover selected");
-            recoverButton.setColour (juce::TextButton::buttonColourId,
-                                     brand::accentStatus.withMultipliedAlpha (0.20f));
-            recoverButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
+            dialog::stylePrimary (recoverButton);
             recoverButton.onClick = [this] { recoverSelected(); };
             addAndMakeVisible (recoverButton);
 
             deleteButton.setButtonText ("Delete...");
             deleteButton.setColour (juce::TextButton::buttonColourId,
                                     brand::accentRecord.withMultipliedAlpha (0.18f));
-            deleteButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord);
+            deleteButton.setColour (juce::TextButton::textColourOffId, brand::textDanger);
             deleteButton.onClick = [this] { deleteSelected(); };
             addAndMakeVisible (deleteButton);
 
@@ -265,7 +263,7 @@ namespace zynforge
             {
                 case 1: text = r.name;                              break;
                 case 2: text = juce::String (r.trackCount);
-                        if (r.trackCount == 0) fg = brand::textMuted;
+                        if (r.trackCount == 0) fg = brand::textTertiary;
                         break;
                 case 3: text = formatBytes (r.sizeBytes);
                         if (r.sizeBytes == 0) fg = brand::accentRecord;

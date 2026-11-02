@@ -74,7 +74,7 @@ MainComponent::MainComponent()
     titleLabel.setVisible (false);
 
     statusLabel.setFont (brand::type::uiBody());
-    statusLabel.setColour (juce::Label::textColourId, brand::textMuted);
+    statusLabel.setColour (juce::Label::textColourId, brand::textTertiary);
     // Alarm prefixes must stay in view when a long warning is clipped.
     statusLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (statusLabel);
@@ -114,7 +114,7 @@ MainComponent::MainComponent()
     addChildComponent (punchPill);
 
     sessionLabel.setFont (brand::type::caption());
-    sessionLabel.setColour (juce::Label::textColourId, brand::textMuted);
+    sessionLabel.setColour (juce::Label::textColourId, brand::textTertiary);
     sessionLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (sessionLabel);
 
@@ -125,13 +125,15 @@ MainComponent::MainComponent()
     addAndMakeVisible (transportLabel);
 
     deviceButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
-    deviceButton.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
+    deviceButton.setColour (juce::TextButton::textColourOffId,   brand::textSecondary);
     deviceButton.onClick = [this] { onDeviceClicked(); };
     addAndMakeVisible (deviceButton);
 
-    // Mock parity: neutral dark pill; keep a subtle red label as the danger cue.
+    // Header chips are neutral at rest. Amber fill = LOCK engaged, its one meaning.
     lockButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-    lockButton.setColour (juce::TextButton::textColourOffId, brand::lift (brand::accentRecord, 0.10f));
+    lockButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
+    lockButton.setColour (juce::TextButton::buttonOnColourId, brand::engagedAmber);
+    lockButton.setColour (juce::TextButton::textColourOnId, brand::onSignal (brand::engagedAmber));
     lockButton.onClick = [this] { onLockToggled(); };
     addAndMakeVisible (lockButton);
 
@@ -153,11 +155,9 @@ MainComponent::MainComponent()
         openPatchWindow();
     };
 
-    // VSC chip uses accentVS so the 'virtual soundcheck' role has a unique
-    // visual identity (was sharing engagedAmber).
-    // Mock parity: neutral pill, amber glyph/label keeps the VSC dot identity.
+    // VSC is a one-shot repatch, never a held state, so it stays neutral.
     vscButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
-    vscButton.setColour (juce::TextButton::textColourOffId, brand::accentVS);
+    vscButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
     vscButton.setTooltip ("Virtual Soundcheck -- repatch every strip's OUTPUT to match its INPUT, "
                           "so playback feeds the desk via the same channels the live mics did.");
     vscButton.onClick = [this] { onVscClicked(); };
@@ -167,11 +167,9 @@ MainComponent::MainComponent()
     auto styleViewBtn = [] (juce::TextButton& b, bool engaged)
     {
         b.setColour (juce::TextButton::buttonColourId,
-                     engaged ? brand::sink (brand::accentStatus, 0.55f)
-                             : brand::bgElevated);
+                     engaged ? brand::selectFill : brand::bgElevated);
         b.setColour (juce::TextButton::textColourOffId,
-                     engaged ? brand::lift (brand::accentStatus, 0.10f)
-                             : brand::textSecondary);
+                     engaged ? brand::onSignal (brand::selectFill) : brand::textSecondary);
     };
     styleViewBtn (mixViewButton,  true);
     styleViewBtn (editViewButton, false);
@@ -187,9 +185,9 @@ MainComponent::MainComponent()
     auto styleStripBtn = [] (juce::TextButton& b, const char* tt)
     {
         b.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
-        b.setColour (juce::TextButton::buttonOnColourId,  brand::accentStatus);
+        b.setColour (juce::TextButton::buttonOnColourId,  brand::selectFill);
         b.setColour (juce::TextButton::textColourOffId,   brand::textSecondary);
-        b.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::accentStatus));
+        b.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::selectFill));
         b.setClickingTogglesState (false);
         b.setTooltip (tt);
     };
@@ -231,7 +229,7 @@ MainComponent::MainComponent()
     }
 
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-    addChannelButton.setColour (juce::TextButton::textColourOffId, brand::lift (brand::accentStatus, 0.10f));
+    addChannelButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
     addChannelButton.setTooltip ("Set the number of recording channels -- opens a prompt where you type the count (1-256).");
     addChannelButton.onClick = [this]
     {
@@ -301,7 +299,7 @@ MainComponent::MainComponent()
     addAndMakeVisible (addChannelButton);
 
     metersButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
-    metersButton.setColour (juce::TextButton::textColourOffId,   brand::lift (brand::featureEngaged, 0.10f));
+    metersButton.setColour (juce::TextButton::textColourOffId,   brand::textSecondary);
     metersButton.onClick = [this]
     {
         if (auto* w = metersDialog.getComponent())
@@ -318,12 +316,12 @@ MainComponent::MainComponent()
     // Header "tab" buttons that open a floating panel light up while that
     // panel is open (and clear when it's closed -- by the button OR by the
     // panel's own close box; syncTabButtonStates() in the 10 Hz timer keeps
-    // them in sync). The active wash uses engagedAmber, the app's "this is
-    // engaged" accent. Pressing the button again closes the panel.
+    // them in sync). An open panel is a selection, so it takes the selection
+    // fill. Pressing the button again closes the panel.
     for (auto* b : { &deviceButton, &patchButton, &metersButton })
     {
-        b->setColour (juce::TextButton::buttonOnColourId, brand::engagedAmber);
-        b->setColour (juce::TextButton::textColourOnId,   brand::onSignal (brand::engagedAmber));
+        b->setColour (juce::TextButton::buttonOnColourId, brand::selectFill);
+        b->setColour (juce::TextButton::textColourOnId,   brand::onSignal (brand::selectFill));
     }
 
     // Tooltips on header controls.
@@ -630,10 +628,9 @@ void MainComponent::switchView (View v)
     auto colour = [] (juce::TextButton& b, bool engaged)
     {
         b.setColour (juce::TextButton::buttonColourId,
-                     engaged ? brand::accentStatus.withAlpha (zynforge::brand::alpha::wash)
-                             : brand::bgElevated);
+                     engaged ? brand::selectFill : brand::bgElevated);
         b.setColour (juce::TextButton::textColourOffId,
-                     engaged ? brand::accentStatus : brand::textSecondary);
+                     engaged ? brand::onSignal (brand::selectFill) : brand::textSecondary);
     };
     colour (mixViewButton,  mix);
     colour (editViewButton, ! mix);

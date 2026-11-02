@@ -757,8 +757,8 @@ namespace zynforge
                 DeskMacroListener macro (main.engine);
                 macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/record"), 0.0);
                 expect (! main.engine.isRecording(), "RECORD started without pre-flight");
-                expect (main.statusLabel.getText().contains ("audio device"),
-                        "pre-flight's reason was hidden: " + main.statusLabel.getText());
+                expect (main.alarmBanner.getText().contains ("audio device"),
+                        "pre-flight's reason was hidden: " + main.alarmBanner.getText());
                 main.engine.clearAllStripOverrides();
             }
 

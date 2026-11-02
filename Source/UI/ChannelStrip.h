@@ -49,6 +49,9 @@ namespace zynforge
         // combos in sync when the PATCH page mutates routing.
         void refreshRoutingSelection();
 
+        // A take is on disk: armed strips light their spine for its length.
+        void setTakeRolling (bool rolling);
+
         // Re-reads name + colour from TrackState so changes made in the
         // EDIT view (rename, colour swatch) propagate back to the mixer.
         void refreshAppearance();
@@ -109,6 +112,19 @@ namespace zynforge
         void mouseExit  (const juce::MouseEvent&) override;
 
     private:
+        // The header plate: id row (number + chip) over the name row.
+        static constexpr int kIdRowH   = 12;
+        static constexpr int kNameRowH = 22;
+        static constexpr int kHeaderH  = kIdRowH + kNameRowH + 8;
+        static constexpr int kFaderValueH = 14;
+        static constexpr int kMinFaderW   = 18;
+
+        juce::Rectangle<int> contentArea() const;
+        juce::Rectangle<int> numberBounds() const;
+        void showFaderValue();
+        void showPanText();
+        void ensureRoutingItem (juce::ComboBox&, int deviceChannel, int deviceChannels, const char* prefix);
+
         bool hovered { false };
         // Tracks whether an edit-group badge is currently shown so
         // the slow poll can re-lay-out the name label (which reserves room for
@@ -128,6 +144,7 @@ namespace zynforge
         const std::shared_ptr<TrackState> keepAlive;
         TrackState*  pairState { nullptr };   // R partner when this is a stereo strip
         int          availableInputs { 0 };   // device inputs, from setAvailableInputs
+        int          availableOutputs { 0 };  // device outputs, from setAvailableOutputs
         juce::Colour personality;
         ColourCallback colourCb;
         NameCallback   renameCb;
@@ -154,6 +171,7 @@ namespace zynforge
         juce::ToggleButton muteButton  { "M" };
         juce::ToggleButton soloButton  { "S" };
         juce::Label   dbLabel;
+        juce::Label   faderValue;
         juce::Label   clipLabel;
         // Mono: panSlider + panLabel ('pan  <  0  >'). Stereo: two
         // knobs panSlider/panSliderR, two compact labels ('<  100  >').
@@ -169,6 +187,7 @@ namespace zynforge
         std::unique_ptr<StripTimer> stripTimer;
 
         bool selected { false };
+        bool takeRolling { false };
         // False once invalidate() has run (the backing TrackState is being
         // destroyed). Guards StripTimer::timerCallback against a dangling ref.
         bool stripValid { true };

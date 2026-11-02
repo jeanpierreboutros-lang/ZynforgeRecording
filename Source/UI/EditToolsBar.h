@@ -180,7 +180,7 @@ namespace zynforge
                 g.setColour (active ? brand::onSignal (accent) : brand::textSecondary);
                 paintGlyph (g, rect, tool);
                 g.setFont (brand::type::label());
-                g.setColour (active ? brand::onSignal (accent) : brand::textMuted);
+                g.setColour (active ? brand::onSignal (accent) : brand::textTertiary);
                 g.drawText (caption, capArea, juce::Justification::centred, false);
             }
 

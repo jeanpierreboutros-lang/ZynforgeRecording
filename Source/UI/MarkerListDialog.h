@@ -29,7 +29,7 @@ namespace zynforge
 
             table.setHeaderHeight (22);
             table.setRowHeight (22);
-            table.setColour (juce::ListBox::backgroundColourId, brand::bgPanel);
+            table.setColour (juce::ListBox::backgroundColourId, brand::bgStrip);
             table.setModel (this);
             addAndMakeVisible (table);
 
@@ -73,7 +73,7 @@ namespace zynforge
         void paintRowBackground (juce::Graphics& g, int /*r*/, int /*w*/,
                                   int /*h*/, bool selected) override
         {
-            g.fillAll (selected ? brand::controlBgHover : brand::bgPanel);
+            g.fillAll (selected ? brand::controlBgHover : brand::bgStrip);
         }
 
         void paintCell (juce::Graphics& g, int row, int col, int w, int h, bool) override

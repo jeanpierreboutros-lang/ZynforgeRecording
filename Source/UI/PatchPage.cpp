@@ -170,7 +170,9 @@ namespace zynforge
 
                         g.setColour (brand::onSignal (stripCol));
                         g.setFont (brand::type::ui (22.0f, true));
-                        g.drawText (juce::String (c + 1),
+                        // The strip's own number, as MIXER and EDIT show it. A column
+                        // count drifts from it after the first stereo pair.
+                        g.drawText (juce::String (ls.trackIndex + 1).paddedLeft ('0', 2),
                                     juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
                                     juce::Justification::centred, false);
 
@@ -225,9 +227,8 @@ namespace zynforge
                     }
                 }
 
-                // ─── Heated Steel: orange seams framing the frozen panes,
-                // mirroring the mixer-strip spine/seam identity.
-                g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::half));
+                // Seams framing the frozen panes.
+                g.setColour (brand::borderSubtle);
                 g.fillRect (0, bodyY - 1, getWidth(), 1);   // under the column-header band
                 g.fillRect (bodyX - 1, 0, 1, getHeight());  // right of the row-header column
 

@@ -8,6 +8,18 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ---
 
+## 2026-11-02 design pass — not yet performed
+
+Tests and rendered images can't judge these. They need the real app on a real display, at the mix position, in a dark room.
+
+| Step | Do | Pass | Fail |
+|---|---|---|---|
+| ☐ D.1 | From the mix position, read the channel names in MIXER at XS, S, M and L. | Every name reads at every size. | A name is cut or too small. |
+| ☐ D.2 | Roll a take on a disposable session. Stand back from the screen. | REC, the time and the red plate read from across the room. | You have to walk up to see that it is rolling. |
+| ☐ D.3 | With a take rolling, pull the session drive or force another alarm. | The banner is the first thing you see, clearly louder than the plate. | Banner and plate blur together. |
+| ☐ D.4 | Play a session through the master. Read the status panel. | LUFS M and I and TP move, and TP turns red within 1 dB of full scale. Readable from your normal seat. | Figures stay at `--`, or are too small to use. |
+| ☐ D.5 | Look at EDIT in the dark for a minute. | Clips sit back, waveforms read, nothing glares. | A clip or a control is the brightest thing on screen for no reason. |
+
 ## 2026-11-02 cut to recorder and virtual soundcheck — not yet performed
 
 None of this has been tried on real hardware, and it is not in the installed `281c6c0`: install a build from `main` on purpose before starting. Use disposable sessions.

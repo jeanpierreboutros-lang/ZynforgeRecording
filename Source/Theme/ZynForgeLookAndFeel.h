@@ -34,6 +34,12 @@ namespace zynforge
                                float rotaryStartAngle, float rotaryEndAngle,
                                juce::Slider&) override;
 
+        // A combo too narrow for its arrow gives the arrow's room to the text:
+        // on a narrow strip the routing is what the box is there to show.
+        void drawComboBox (juce::Graphics&, int width, int height, bool isButtonDown,
+                           int buttonX, int buttonY, int buttonW, int buttonH, juce::ComboBox&) override;
+        void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
+
         // Wide pill-shaped toggle button: dark gradient body, accent-coloured
         // bold text whose colour reflects the toggle state.
         void drawToggleButton (juce::Graphics&, juce::ToggleButton&,

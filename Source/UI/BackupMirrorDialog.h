@@ -147,7 +147,7 @@ namespace zynforge
                                    juce::dontSendNotification);
                 pathLabel.setColour (juce::Label::textColourId,
                                      reason.isNotEmpty() && ! blank ? brand::accentRecord
-                                     : blank                        ? brand::textMuted
+                                     : blank                        ? brand::textTertiary
                                                                     : brand::textPrimary);
             }
 
@@ -232,7 +232,7 @@ namespace zynforge
                 for (auto* caption : { &backupCaption, &mirrorCaption })
                 {
                     caption->setFont (brand::type::captionBold());
-                    caption->setColour (juce::Label::textColourId, brand::textMuted);
+                    caption->setColour (juce::Label::textColourId, brand::textTertiary);
                     addAndMakeVisible (*caption);
                 }
                 backupCaption.setText ("Backup", juce::dontSendNotification);
@@ -254,7 +254,7 @@ namespace zynforge
                 addAndMakeVisible (addBtn);
 
                 status.setFont (brand::type::caption());
-                status.setColour (juce::Label::textColourId, brand::accentRecord);
+                status.setColour (juce::Label::textColourId, brand::textDanger);
                 status.setJustificationType (juce::Justification::centredLeft);
                 addAndMakeVisible (status);
 

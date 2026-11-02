@@ -16,7 +16,7 @@ namespace zynforge
         static void styleReadOnly (juce::Label& l)
         {
             l.setFont (brand::type::channelName());
-            l.setColour (juce::Label::textColourId, brand::accentStatus);
+            l.setColour (juce::Label::textColourId, brand::textPrimary);
         }
 
         class Content final : public juce::Component
@@ -24,12 +24,6 @@ namespace zynforge
         public:
             explicit Content (const SessionInfoDialog::Fields& fields)
             {
-                title.setText ("Session Info", juce::dontSendNotification);
-                title.setFont (brand::type::headline());
-                title.setColour (juce::Label::textColourId, brand::textPrimary);
-                title.setJustificationType (juce::Justification::centred);
-                addAndMakeVisible (title);
-
                 // The session name is the FOLDER name, which is what the title
                 // bar, the status line, the recent list and the .zfproj all use.
                 // Renaming a session means moving the folder and its .zfproj
@@ -48,7 +42,7 @@ namespace zynforge
 
                 configHeader.setText ("Audio configuration", juce::dontSendNotification);
                 configHeader.setFont (brand::type::captionBold());
-                configHeader.setColour (juce::Label::textColourId, brand::textMuted);
+                configHeader.setColour (juce::Label::textColourId, brand::textTertiary);
                 addAndMakeVisible (configHeader);
 
                 auto setupRO = [&] (juce::Label& cap, juce::Label& val,
@@ -87,7 +81,7 @@ namespace zynforge
             void resized() override
             {
                 auto b = getLocalBounds();
-                title.setBounds (b.removeFromTop (40));
+                b.removeFromTop (dialog::titleH - brand::space::xs);   // the painted header
                 b.reduce (24, 12);
 
                 {
@@ -124,7 +118,6 @@ namespace zynforge
             }
 
         private:
-            juce::Label title;
             juce::Label nameLabel, nameValue, nameHint;
             juce::Label configHeader;
             juce::Label sampleRateCap, bitDepthCap, formatCap;

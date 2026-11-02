@@ -1,5 +1,6 @@
 #pragma once
 
+#include "IconButton.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
@@ -72,6 +73,11 @@ namespace zynforge
         // +1 = move down (later). Host applies the swap + persists.
         std::function<void (int /*direction*/)> onMoveCue;
 
+        // An empty setlist needs no row of its own, only a way to start one:
+        // collapsed, the bar is just its + Cue button, as a neutral header chip.
+        void setCollapsed (bool shouldCollapse);
+        bool isCollapsed() const noexcept { return collapsed; }
+
         void mouseDown (const juce::MouseEvent&) override;
 
         void paint (juce::Graphics&) override;
@@ -120,11 +126,12 @@ namespace zynforge
         ArrowButton        prevButton  { "Previous cue", false };
         juce::ComboBox     cueCombo;
         ArrowButton        nextButton  { "Next cue",     true };
-        juce::TextButton   addCueButton;
+        IconButton         addCueButton { icons::Glyph::Plus, "CUE" };
         juce::TextButton   updateButton;
         juce::TextButton   recallButton;
 
         bool suppressComboCallback { false };
+        bool collapsed { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SetlistBar)
     };

@@ -971,7 +971,7 @@ public:
             // No strips here, so the replayed press stops at RECORD's first refusal.
             expect (pumpUntil ([&] { return host.pendingMetadataSaves == 0; }));
             expectEquals ((int) host.recordPressHeldAtMs, 0);
-            expect (host.statusLabel.getText().contains ("+CH"), host.statusLabel.getText());
+            expect (host.alarmBanner.getText().contains ("+CH"), host.alarmBanner.getText());
             host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
         }
 

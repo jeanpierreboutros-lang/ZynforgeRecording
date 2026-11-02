@@ -8,7 +8,7 @@ namespace zynforge
     {
         titleLabel.setText ("SETLIST", juce::dontSendNotification);
         titleLabel.setFont (brand::type::uiLabel());
-        titleLabel.setColour (juce::Label::textColourId, brand::textMuted);
+        titleLabel.setColour (juce::Label::textColourId, brand::textTertiary);
         titleLabel.setJustificationType (juce::Justification::centredLeft);
         addAndMakeVisible (titleLabel);
 
@@ -25,7 +25,7 @@ namespace zynforge
         cueCombo.setColour (juce::ComboBox::backgroundColourId, brand::inputBg);
         cueCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         cueCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-        cueCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+        cueCombo.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
         cueCombo.setTextWhenNothingSelected ("(empty setlist)");
         cueCombo.setTooltip ("Pick a cue to jump to. Use + Cue to add at the transport position.");
         cueCombo.onChange = [this]
@@ -36,9 +36,8 @@ namespace zynforge
         };
         addAndMakeVisible (cueCombo);
 
-        addCueButton.setButtonText ("+ Cue");
-        addCueButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-        addCueButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
+        addCueButton.setColour (juce::TextButton::buttonColourId, brand::selectFill);
+        addCueButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::selectFill));
         addCueButton.setTooltip ("Drop a new cue at the current transport position");
         addCueButton.onClick = [this] { if (onAddCue) onAddCue(); };
         addAndMakeVisible (addCueButton);
@@ -53,11 +52,10 @@ namespace zynforge
 
         // Explicit RECALL -- re-applies the selected cue's mix on demand
         // (the dropdown + arrows also recall, but a clear
-        // button makes the action obvious during a show). Distinct teal so it
-        // reads apart from the green '+ Cue' and grey 'Update'.
+        // button makes the action obvious during a show).
         recallButton.setButtonText ("Recall");
-        recallButton.setColour (juce::TextButton::buttonColourId,  brand::featureEngaged);
-        recallButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::featureEngaged));
+        recallButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
+        recallButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
         recallButton.setTooltip ("Recall the selected cue -- apply its mix now.");
         recallButton.onClick = [this] { if (onRecallCue) onRecallCue(); };
         addAndMakeVisible (recallButton);
@@ -126,16 +124,28 @@ namespace zynforge
         repaint();
     }
 
+    void SetlistBar::setCollapsed (bool shouldCollapse)
+    {
+        if (collapsed == shouldCollapse) return;
+        collapsed = shouldCollapse;
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &titleLabel, &prevButton, &cueCombo,
+                                                                            &nextButton, &updateButton, &recallButton })
+            c->setVisible (! collapsed);
+        addCueButton.setColour (juce::TextButton::buttonColourId, collapsed ? brand::bgElevated : brand::selectFill);
+        addCueButton.setColour (juce::TextButton::textColourOffId,
+                                collapsed ? brand::textSecondary : brand::onSignal (brand::selectFill));
+        resized();
+        repaint();
+    }
+
     void SetlistBar::paint (juce::Graphics& g)
     {
+        if (collapsed) return;
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.04f, 0.10f));
         g.fillRoundedRectangle (r, brand::radius::md);
         g.setColour (brand::edge);
         g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
-        // Heated Steel: hairline orange seam on the left edge ties the bar in.
-        g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::scrim));
-        g.fillRect (r.getX(), r.getY() + 3.0f, 2.0f, r.getHeight() - 6.0f);
     }
 
     void SetlistBar::resized()
@@ -144,6 +154,11 @@ namespace zynforge
         //   SETLIST | ◂ | combo(260px) | ▸ | + Cue | Update | Rename
         // The combo is fixed-width -- the engineer doesn't want it
         // swallowing the whole row. Empty space sits to the right.
+        if (collapsed)
+        {
+            addCueButton.setBounds (getLocalBounds());
+            return;
+        }
         auto r = getLocalBounds().reduced (brand::space::md, brand::space::xs);
 
         titleLabel  .setBounds (r.removeFromLeft (64));
