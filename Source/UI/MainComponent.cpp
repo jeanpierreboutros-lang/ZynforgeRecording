@@ -1563,12 +1563,12 @@ void MainComponent::showPreflightChecklist()
          << chk (armed > 0) << "Armed for record: " << armed << " / " << total << "\n"
          << chk (hasSes) << "Active session: "
                           << (hasSes ? sess.getFileName() : juce::String ("(none)")) << "\n"
-         << chk (! cues.empty(), cues.empty())
-                          << "Setlist cues: " << (int) cues.size() << "\n"
+         << (cues.empty() ? "[i]  Setlist cues: none (optional)" : chk (true) + "Setlist cues: " + juce::String ((int) cues.size()))
+         << "\n"
          << "\n"
          << chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0)
          << "Disk free:    " << juce::String (freeGB, 1) << " GB ("
-         << juce::String (minHeadroom, 0) << " min headroom at " << fmtStr << ")\n"
+         << juce::String (juce::roundToInt (minHeadroom)) << " min headroom at " << fmtStr << ")\n"
          << chk (! engine.isRecording())
          << "Status:       " << (engine.isRecording() ? juce::String ("RECORDING ROLLING")
                                                        : engine.getPlayer().isPlaying()
@@ -1645,7 +1645,7 @@ void MainComponent::showPreflightChecklist()
         const auto speedDir = hasSes ? sess : root;
         const double gotMBps = zynforge::preflight::measureWriteSpeedMBps (speedDir);
         body << chk (gotMBps > needMBps * 1.5, gotMBps > needMBps)
-             << "Disk write speed (measured): " << juce::String (gotMBps, 0)
+             << "Disk write speed (measured): " << juce::String (juce::roundToInt (gotMBps))
              << " MB/s  (need " << juce::String (needMBps, 1) << " MB/s for "
              << juce::jmax (1, armed) << " ch)\n";
     }

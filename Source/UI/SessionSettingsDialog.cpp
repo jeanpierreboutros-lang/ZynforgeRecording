@@ -6,6 +6,7 @@
 #include "SessionSettingsDialog.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "../Theme/DialogChrome.h"
 
 namespace zynforge
 {
@@ -14,7 +15,7 @@ namespace
     struct SessionFormatContent final : public juce::Component
     {
         SessionFormatContent (AudioEngine& e, std::function<void()> relocate, std::function<void (double)> applyRate)
-            : eng (e), onRelocate (std::move (relocate)), onApplySampleRate (std::move (applyRate)) { rebuild(); setSize (440, 398); }
+            : eng (e), onRelocate (std::move (relocate)), onApplySampleRate (std::move (applyRate)) { rebuild(); setSize (460, 378); }
 
         void rebuild()
         {
@@ -41,6 +42,7 @@ namespace
                           : (cur == F::Aiff16 || cur == F::Aiff24 || cur == F::Aiff32Float) ? 2 : 3;
             fmtBox.setSelectedId (container, juce::dontSendNotification);
             fmtBox.onChange = [this] { refreshBits(); };
+            for (auto* box : { &fmtBox, &rateBox, &bitsBox, &preRollBox }) dialog::styleCombo (*box);
             addAndMakeVisible (fmtBox);
 
             rateBox.addItem ("44.1 kHz",  1);
@@ -97,6 +99,8 @@ namespace
 
             applyB.setButtonText ("Apply");
             cancelB.setButtonText ("Cancel");
+            dialog::stylePrimary (applyB);
+            dialog::styleSecondary (cancelB);
             applyB.onClick  = [this] { apply(); };
             cancelB.onClick = [this] { close(); };
             addAndMakeVisible (applyB);
@@ -161,7 +165,7 @@ namespace
 
         void resized() override
         {
-            auto r = getLocalBounds().reduced (16);
+            auto r = dialog::bodyBounds (*this).reduced (brand::space::xl, brand::space::md);
             const int rowH = 30, labelW = 120;
             auto row = [&] (juce::Label& l, juce::ComboBox& b)
             {
@@ -183,18 +187,15 @@ namespace
             r.removeFromTop (brand::space::md);
             stereoMixB.setBounds (r.removeFromTop (28));
 
-            r.removeFromTop (brand::space::lg);
-            auto br = r.removeFromBottom (32);
-            applyB .setBounds (br.removeFromRight (110));
-            br.removeFromRight (brand::space::md);
-            cancelB.setBounds (br.removeFromRight (110));
+            auto br = dialog::footerBounds (*this).reduced (0, brand::space::xs);
+            applyB .setBounds (br.removeFromRight (dialog::btnPrimary));
+            br.removeFromRight (brand::space::sm);
+            cancelB.setBounds (br.removeFromRight (dialog::btnSecond));
         }
 
         void paint (juce::Graphics& g) override
         {
-            auto r = getLocalBounds().toFloat();
-            g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.08f, 0.14f));
-            g.fillRect (r);
+            dialog::paintChrome (g, *this, "SESSION SETTINGS");
         }
 
         AudioEngine& eng;
@@ -216,7 +217,7 @@ void SessionSettingsDialog::launch (AudioEngine& engine,
     juce::DialogWindow::LaunchOptions opts;
     opts.content.setOwned (content);
     opts.dialogTitle                  = "Session Settings";
-    opts.dialogBackgroundColour       = brand::bgPanel;
+    opts.dialogBackgroundColour       = brand::bgElevated;
     opts.escapeKeyTriggersCloseButton = true;
     opts.useNativeTitleBar            = true;
     opts.resizable                    = false;

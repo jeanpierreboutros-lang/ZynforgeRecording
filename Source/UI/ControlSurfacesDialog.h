@@ -437,8 +437,8 @@ namespace zynforge
                 title.setColour (juce::Label::textColourId, brand::textPrimary);
                 addAndMakeVisible (title);
 
-                hint.setText ("Tick to enable a protocol, then open its settings. OSC consoles are "
-                              "live now; MIDI surfaces save their config.", juce::dontSendNotification);
+                hint.setText ("Tick a surface to switch it on. Protocol Settings sets its network port "
+                              "or its MIDI in and out.", juce::dontSendNotification);
                 hint.setFont (brand::type::caption());
                 hint.setColour (juce::Label::textColourId, brand::textMuted);
                 addAndMakeVisible (hint);
