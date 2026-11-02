@@ -634,6 +634,87 @@ namespace zynforge
         return v.empty() ? nullptr : &v;
     }
 
+    juce::String AudioEngine::punchRefusal (juce::int64 start, juce::int64 end)
+    {
+        const auto last = end >= 0 ? end : std::numeric_limits<juce::int64>::max();
+        const juce::ScopedLock structure (recorder.getStructureLock());
+        const int strips = recorder.getNumTracks();
+
+        const auto refused = [this] (int track, const juce::String& why)
+        {
+            return "Punch refused -- " + recorder.getTrack (track).getNameThreadSafe() + ": " + why;
+        };
+
+        for (int t = 0; t < strips; ++t)
+        {
+            // A stereo strip's punch rewrites one file, so its right half
+            // answers for that file too, armed or not.
+            const bool leftArmed = t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed)
+                                && recorder.getTrack (t - 1).armed.load (std::memory_order_relaxed);
+            if (! leftArmed && ! recorder.getTrack (t).armed.load (std::memory_order_relaxed)) continue;
+
+            static const std::vector<Clip> none;
+            const auto& clips = t < (int) trackClips.size() ? trackClips[(size_t) t] : none;
+            const auto media  = player.getTrackLengthSamples (t);
+            int channel = 0;
+            const auto take = getTrackAudioFile (t, &channel);
+            const auto playsTake = [&] (const Clip& c)
+            {
+                return (c.audioFile == juce::File() || c.audioFile == take)
+                    && (c.sourceChannel < 0 || c.sourceChannel == channel);
+            };
+
+            std::vector<std::pair<juce::int64, juce::int64>> spans;
+            juce::int64 clipsEnd = 0;
+            for (const auto& c : clips)
+            {
+                const auto from = c.timelineStartSamples, to = from + c.fileLengthSamples;
+                clipsEnd = juce::jmax (clipsEnd, to);
+                if (to <= start || from >= last) continue;
+                if (! playsTake (c))                 return refused (t, "the clip here plays another file");
+                if (from != c.fileStartSamples)      return refused (t, "the clip here has moved, so the timeline is not the take here");
+                spans.emplace_back (from, to);
+            }
+
+            // No clip list at all is not an edit: the file plays whole, from zero.
+            const bool cleared = clips.empty() && t < (int) trackPlaylists.size()
+                              && ! trackPlaylists[(size_t) t].takes.empty();
+            if (! clips.empty() || cleared)
+            {
+                std::sort (spans.begin(), spans.end());
+                auto reached = start;
+                for (const auto& [from, to] : spans)
+                {
+                    if (from > reached) break;
+                    reached = juce::jmax (reached, to);
+                }
+                // Past the strip's end there is nothing to lose. An unedited
+                // strip that simply ended early still takes the punch there.
+                const auto stripEnd = juce::jmax (media, clipsEnd);
+                const bool plain = clips.size() == 1 && clips[0].timelineStartSamples == 0
+                                && clips[0].fileStartSamples == 0 && playsTake (clips[0])
+                                && clips[0].fileLengthSamples >= media;
+                if (reached < juce::jmin (last, stripEnd) || (start >= stripEnd && ! plain))
+                    return refused (t, "no clip plays here, so the punch would go unheard into the take");
+            }
+
+            // The same file audio can also sound somewhere else: a duplicate,
+            // or a clip pasted to another strip. A punch would change it there.
+            for (size_t other = 0; other < trackClips.size(); ++other)
+                for (const auto& c : trackClips[other])
+                {
+                    const bool ownClip = (int) other == t;
+                    const bool readsTake = c.audioFile == juce::File() ? ownClip
+                                                                       : take != juce::File() && c.audioFile == take;
+                    if (! readsTake || c.fileStartSamples >= last
+                        || c.fileStartSamples + c.fileLengthSamples <= start) continue;
+                    if (ownClip && c.timelineStartSamples == c.fileStartSamples) continue;
+                    return refused (t, "this audio also plays from another clip, which the punch would change");
+                }
+        }
+        return {};
+    }
+
     bool AudioEngine::isTrackArrangementEmpty (int track) const noexcept
     {
         // Present in trackClips (seedDefaultClips sized it / an edit created

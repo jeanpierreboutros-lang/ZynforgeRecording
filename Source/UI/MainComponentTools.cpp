@@ -146,8 +146,8 @@ void MainComponent::servicePunch()
                 engine.clearCaptureWindow();
                 engine.getRecorder().cancelPunchIn();
                 const auto why = engine.getRecorder().getStartError();
-                showStatus ("Punch-in failed -- existing take is untouched"
-                            + (why.isNotEmpty() ? " (" + why + ")" : juce::String()));
+                showRecordRefusal ("Punch-in failed -- existing take is untouched"
+                                   + (why.isNotEmpty() ? " (" + why + ")" : juce::String()));
                 wasInsidePunch = inside;
                 return;
             }

@@ -415,6 +415,12 @@ namespace zynforge
         // before the punch-in and after the punch-out is preserved). Forwarded
         // to the recorder; auto-cleared on stop. See MultitrackRecorder.
         void armPunchIn (juce::int64 punchInSample) noexcept { recorder.armPunchIn (punchInSample); }
+        // A punch writes into the take FILE at this position, so it may run only
+        // where the timeline is the file, on every strip it writes. Empty when
+        // it may; otherwise the strip's name and why. end < 0 means the punch
+        // runs until STOP. startRecording asks this for every punch, whatever
+        // started it; RECORD also asks first, so a refusal moves nothing.
+        juce::String punchRefusal (juce::int64 start, juce::int64 end);
         // A selection punch opens its writers before transport rolls, then the
         // audio callback admits only samples inside [start, end). This avoids
         // 10 Hz UI-timer quantisation and permits sub-block punch windows.

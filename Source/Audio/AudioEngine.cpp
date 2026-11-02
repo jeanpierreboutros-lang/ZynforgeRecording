@@ -247,6 +247,20 @@ namespace zynforge
             return false;
         }
 
+        // Here and not on a button, because PUNCH mode, a rolling press and a
+        // selection all end up at this one door.
+        if (recorder.isPunchInArmed())
+        {
+            const auto refusal = punchRefusal (recorder.getRecordBaseSamples(),
+                                               isCaptureWindowActive()
+                                                   ? captureWindowEnd.load (std::memory_order_relaxed) : -1);
+            if (refusal.isNotEmpty())
+            {
+                recorder.refuseStart (refusal);
+                return false;
+            }
+        }
+
         bwf::TimeAnchor timecode;
         if (getTimecodeAnchor (timecode)) recorder.setTimeReferenceHint (timecode);
         else                              recorder.clearTimeReferenceHint();
