@@ -67,6 +67,9 @@ namespace zynforge
         setColour (juce::AlertWindow::backgroundColourId,     brand::bgElevated);
         setColour (juce::AlertWindow::textColourId,           brand::textPrimary);
         setColour (juce::AlertWindow::outlineColourId,        brand::borderSubtle);
+        // JUCE's default scheme paints these bright blue.
+        setColour (juce::ScrollBar::thumbColourId,            brand::borderBright);
+        setColour (juce::ScrollBar::trackColourId,            juce::Colours::transparentBlack);
     }
 
     juce::Typeface::Ptr ZynForgeLookAndFeel::getTypefaceForFont (const juce::Font& f)
