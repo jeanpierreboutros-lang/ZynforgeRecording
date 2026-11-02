@@ -335,9 +335,18 @@ namespace zynforge
                 }
             }
         }
+        // Wide enough for the label: on a prompt the label is the choice, and
+        // "Continue Without Saving" was being cut to "Without Sav...".
         juce::Array<int> widths;
         for (int i = 0; i < btns.size(); ++i)
-            widths.add (i == 0 ? dialog::btnPrimary : dialog::btnSecond);
+        {
+            const int least = i == 0 ? dialog::btnPrimary : dialog::btnSecond;
+            const int label = btns[i] == nullptr ? 0
+                            : juce::GlyphArrangement::getStringWidthInt (getTextButtonFont (*btns[i], dialog::btnH),
+                                                                         btns[i]->getButtonText())
+                                  + 2 * brand::space::lg;
+            widths.add (juce::jmax (least, label));
+        }
         return widths;
     }
 
