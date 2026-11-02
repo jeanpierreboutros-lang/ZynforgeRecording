@@ -177,8 +177,8 @@ namespace
     class BatchColourTable final : public juce::Component
     {
     public:
-        BatchColourTable (AudioEngine& eng, std::function<void()> changed)
-            : engine (eng), onChanged (std::move (changed))
+        BatchColourTable (AudioEngine& eng, std::function<void()> changed, std::function<bool()> current)
+            : engine (eng), onChanged (std::move (changed)), stillCurrent (std::move (current))
         {
             const int n = eng.getRecorder().getNumTracks();
 
@@ -270,7 +270,7 @@ namespace
 
         void setRowColour (int idx, juce::Colour c)
         {
-            if (idx < 0 || idx >= (int) rows.size()) return;
+            if (idx < 0 || idx >= (int) rows.size() || ! stillCurrent()) return;
             engine.setTrackColour (idx, c);
             rows[(size_t) idx]->swatch.setColour (juce::TextButton::buttonColourId, c);
             rows[(size_t) idx]->swatch.repaint();
@@ -279,6 +279,8 @@ namespace
 
         void pickForOne (int idx)
         {
+            // These rows were made for the strips of the moment the dialog opened.
+            if (! stillCurrent() || idx >= engine.getRecorder().getNumTracks()) return;
             const auto cur = juce::Colour (engine.getRecorder().getTrack (idx)
                                               .colourARGB.load (std::memory_order_relaxed));
             juce::Component::SafePointer<BatchColourTable> self (this);
@@ -292,7 +294,7 @@ namespace
         void pickForRange()
         {
             const int n = (int) rows.size();
-            if (n == 0) return;
+            if (n == 0 || ! stillCurrent()) return;
             const int first = juce::jlimit (1, n, fromEd.getText().getIntValue());
             const int last  = juce::jlimit (first, n, toEd.getText().getIntValue());
             juce::Component::SafePointer<BatchColourTable> self (this);
@@ -309,6 +311,7 @@ namespace
 
         AudioEngine& engine;
         std::function<void()> onChanged;
+        std::function<bool()> stillCurrent;
         juce::Label      rangeLabel, dashLabel;
         juce::TextEditor fromEd, toEd;
         juce::TextButton rangeBtn;
@@ -391,6 +394,99 @@ void MainComponent::deleteSelectedStrips()
                 : "Could not remove strips; check disk permissions and Session File Backups");
 }
 
+void MainComponent::addTracks (const std::vector<zynforge::AddTracksDialog::Entry>& entries,
+                               const QuestionScope& scope)
+{
+    if (entries.empty() || ! stillInScope (scope)) return;
+    // A take or LOCK can arrive behind the dialog, and the engine refuses new
+    // strips under a take without a word.
+    if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
+    {
+        showStatus (sessionLocked         ? "LOCKED -- no tracks were added"
+                    : engine.isRecording() ? "No tracks were added -- a take started while the dialog was open"
+                                           : "No tracks were added -- wait for the session operation to finish");
+        return;
+    }
+
+    const int existing = engine.getRecorder().getNumTracks();
+    int firstNew = existing;
+    int newTracks = 0;
+    for (const auto& e : entries)
+        newTracks += e.count * (e.stereo ? 2 : 1);
+    const int target = juce::jlimit (0, 256, existing + newTracks);
+    engine.setStripCount (target);
+
+    // Apply per-row naming + stereo flags to the just-added strips.
+    int cursor = firstNew;
+    int totalStereo = 0;
+    for (const auto& e : entries)
+    {
+        for (int i = 0; i < e.count && cursor < target; ++i)
+        {
+            const int suffix = e.count > 1 ? i + 1 : 0;
+            const auto base  = e.baseName.isNotEmpty() ? e.baseName : juce::String (cursor + 1);
+            if (e.stereo && cursor + 1 < target)
+            {
+                const auto label = suffix > 0 ? base + " " + juce::String (suffix) : base;
+                engine.setTrackName  (cursor,     label);
+                engine.setTrackName  (cursor + 1, label + " R");
+                engine.setTrackStereo (cursor,     true);
+                engine.setTrackStereo (cursor + 1, false);
+                // Hard-pan the new pair L/R so it reproduces its full
+                // stereo image from the start. Matches import.
+                engine.setTrackPan (cursor,     -1.0f);
+                engine.setTrackPan (cursor + 1,  1.0f);
+                cursor += 2;
+                ++totalStereo;
+            }
+            else
+            {
+                engine.setTrackName  (cursor, suffix > 0 ? base + " " + juce::String (suffix)
+                                                          : base);
+                engine.setTrackStereo (cursor, false);
+                ++cursor;
+            }
+        }
+    }
+    lastTrackCount = -1;   // force rebuild for stereo collapse
+    showStatus ("Added " + zynforge::counted (cursor - firstNew, "track")
+                + (totalStereo > 0 ? " (" + juce::String (totalStereo) + " stereo)"
+                                    : juce::String()));
+}
+
+void MainComponent::removeStrip (int firstTrack, int width)
+{
+    if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
+    {
+        showStatus (sessionLocked         ? "LOCKED -- click UNLOCK to resume control"
+                    : engine.isRecording() ? "Stop recording before removing a strip"
+                                           : "Wait for the session operation to finish");
+        return;
+    }
+    std::vector<int> order;
+    for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
+        if (t < firstTrack || t >= firstTrack + width) order.push_back (t);
+    condemnAllStrips();
+    const bool ok = engine.reorderTracks (order);
+    lastTrackCount = -1;
+    showStatus (ok ? "Strip removed; audio retained in Removed Tracks"
+                : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
+                : "Could not remove strip safely");
+}
+
+MainComponent::QuestionScope MainComponent::questionScope()
+{
+    return { engine.getActiveSessionDir(), engine.getRecorder().getTrackGeneration() };
+}
+
+bool MainComponent::stillInScope (const QuestionScope& scope)
+{
+    if (scope.session == engine.getActiveSessionDir()
+        && scope.layout == engine.getRecorder().getTrackGeneration()) return true;
+    showStatus ("The session changed while that question was open -- nothing was changed");
+    return false;
+}
+
 void MainComponent::colourSelectedStrips()
 {
     if (selectedLogical.empty()) return;
@@ -442,6 +538,8 @@ void MainComponent::showBatchRenameDialog()
 {
     const int total = engine.getRecorder().getNumTracks();
     if (total <= 0) { showStatus ("No channels to rename"); return; }
+    if (engine.isRecording())
+    { showStatus ("Batch rename waits until the take has stopped -- its window would stand in front of STOP"); return; }
 
     auto* aw = new juce::AlertWindow ("Rename Channels",
                                       "Edit any channel name, then Apply. Changes show "
@@ -458,11 +556,11 @@ void MainComponent::showBatchRenameDialog()
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([self, aw, table] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, table, scope = questionScope()] (int result)
         {
             std::unique_ptr<juce::AlertWindow> disposeAw (aw);
             std::unique_ptr<RenameTable>       disposeTable (table);
-            if (result != 1 || self == nullptr) return;
+            if (result != 1 || self == nullptr || ! self->stillInScope (scope)) return;
 
             table->applyTo (self->engine);
             self->lastTrackCount = -1;   // force a strip rebuild so names refresh
@@ -483,6 +581,8 @@ void MainComponent::showBatchColourDialog()
 {
     const int total = engine.getRecorder().getNumTracks();
     if (total <= 0) { showStatus ("No channels to colour"); return; }
+    if (engine.isRecording())
+    { showStatus ("Batch colour waits until the take has stopped -- its window would stand in front of STOP"); return; }
 
     // Snapshot every colour so Cancel can revert (the table applies live).
     std::vector<juce::uint32> snapshot;
@@ -499,19 +599,21 @@ void MainComponent::showBatchColourDialog()
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome (not JUCE-default navy)
 
     juce::Component::SafePointer<MainComponent> self (this);
-    auto* table = new BatchColourTable (engine, [self]
-    { if (self != nullptr) self->lastTrackCount = -1; });
+    const auto scope = questionScope();
+    auto* table = new BatchColourTable (engine,
+        [self] { if (self != nullptr) self->lastTrackCount = -1; },
+        [self, scope] { return self != nullptr && self->stillInScope (scope); });
     table->setSize (460, table->preferredHeight());
     aw->addCustomComponent (table);
     aw->addButton ("Done",   1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([self, aw, table, snapshot, total] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, table, snapshot, total, scope] (int result)
         {
             std::unique_ptr<juce::AlertWindow>     disposeAw (aw);
             std::unique_ptr<BatchColourTable>      disposeTable (table);
-            if (self == nullptr) return;
+            if (self == nullptr || ! self->stillInScope (scope)) return;
             if (result != 1)   // Cancel -> restore the snapshot
             {
                 for (int i = 0; i < total && i < (int) snapshot.size(); ++i)
@@ -621,15 +723,13 @@ bool MainComponent::setStereoLink (int i, bool link)
     if (i < 0 || i + 1 >= engine.getRecorder().getNumTracks()) return false;
     if (link && engine.getRecorder().getTrack (i + 1).isStereo.load())
     { showStatus ("Unlink the neighbouring stereo pair first"); return false; }
-    engine.setTrackStereo (i, link);
-    // The engine refuses while a take is live; then the pans must not move
-    // either (they reach the monitor and stream mid-show).
-    if (engine.getRecorder().getTrack (i).isStereo.load() != link)
+    if (! engine.linkStereoPair (i, link))
     { showStatus ("Stop recording before linking or unlinking a stereo pair"); return false; }
-    // Newly linked stereo -> hard-pan L/R for the full image; unlinked back to
-    // mono -> recentre both halves so a mono strip isn't left stuck hard-right.
-    engine.setTrackPan (i,     link ? -1.0f : 0.0f);
-    engine.setTrackPan (i + 1, link ?  1.0f : 0.0f);
+    if (link)
+    {
+        const auto wrapped = engine.pairWrapNotice (i);
+        if (wrapped.isNotEmpty()) showStatus (wrapped);
+    }
     // Trigger a full rebuild on the next timer tick.
     lastTrackCount = -1;
     return true;

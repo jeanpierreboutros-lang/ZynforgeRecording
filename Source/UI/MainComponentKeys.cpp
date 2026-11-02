@@ -131,8 +131,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         }
         else if (player.isLoaded())
         {
-            engine.startPlayback();
-            showStatus ("Playing");
+            startPlaybackFromCursor();
         }
         else
         {

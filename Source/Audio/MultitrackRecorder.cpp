@@ -3536,7 +3536,9 @@ namespace zynforge
             if (volume.bytesPerMinute > 0)
                 minutes = juce::jmin (minutes, (int) juce::jmin ((juce::int64) std::numeric_limits<int>::max(),
                                                                  volume.freeBytes / volume.bytesPerMinute));
-        estimate.minutes = minutes == std::numeric_limits<int>::max() ? 0 : minutes;
+        // 0 means no estimate. The last minute must not read as that: it would
+        // take the warning down at the moment it matters most.
+        estimate.minutes = minutes == std::numeric_limits<int>::max() ? 0 : juce::jmax (1, minutes);
         return estimate;
     }
 

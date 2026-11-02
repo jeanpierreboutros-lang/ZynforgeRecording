@@ -9,7 +9,11 @@
 
 using namespace zynforge;
 
-namespace { constexpr int kEditToolsW = 330; }
+namespace
+{
+    constexpr int kEditToolsW = 330;
+    constexpr int kPillW      = 176;
+}
 
 void MainComponent::paint (juce::Graphics& g)
 {
@@ -166,10 +170,6 @@ void MainComponent::resized()
     titleLabel.setBounds (row1.removeFromLeft (248));
     row1.removeFromLeft (brand::space::md);
 
-    const bool rateWarning = srWarnLabel.getText().isNotEmpty();
-    srWarnLabel.setBounds (rateWarning
-        ? row1.removeFromLeft (juce::jmin (245, row1.getWidth() / 2)).reduced (0, 4)
-        : juce::Rectangle<int>());
     twinStatusLabel.setBounds (twinStatusLabel.getText().isNotEmpty()
         ? row1.removeFromLeft (juce::jmin (124, row1.getWidth() / 2)).reduced (0, brand::space::xs)
         : juce::Rectangle<int>());
@@ -216,14 +216,22 @@ void MainComponent::resized()
     stripLButton .setToggleState (stripWidthPreset == StripWidth::L,  juce::dontSendNotification);
     gridButton   .setToggleState (mixerGridView, juce::dontSendNotification);
     transportLabel.setBounds (row2.removeFromLeft (140));
-    punchPill.setBounds (punchPill.isVisible()
-        ? row2.removeFromLeft (juce::jmin (176, row2.getWidth())).reduced (0, brand::space::sm)
-        : juce::Rectangle<int>());
-    if (punchPill.isVisible()) row2.removeFromLeft (brand::space::sm);
-    soundcheckPill.setBounds (soundcheckPill.isVisible()
-        ? row2.removeFromLeft (juce::jmin (176, row2.getWidth())).reduced (0, brand::space::sm)
-        : juce::Rectangle<int>());
-    if (soundcheckPill.isVisible()) row2.removeFromLeft (brand::space::sm);
+    // The two pills share one column and stack when both show. Each warns about
+    // what happens next, so neither may squeeze the other out.
+    const bool punchUp = punchPill.isVisible(), deskUp = soundcheckPill.isVisible();
+    auto pills = punchUp || deskUp ? row2.removeFromLeft (juce::jmin (kPillW, row2.getWidth()))
+                                   : juce::Rectangle<int>();
+    if (punchUp || deskUp) row2.removeFromLeft (brand::space::sm);
+    if (punchUp && deskUp)
+    {
+        punchPill     .setBounds (pills.removeFromTop (pills.getHeight() / 2).withTrimmedBottom (1));
+        soundcheckPill.setBounds (pills.withTrimmedTop (1));
+    }
+    else
+    {
+        punchPill     .setBounds (punchUp ? pills.reduced (0, brand::space::sm) : juce::Rectangle<int>());
+        soundcheckPill.setBounds (deskUp  ? pills.reduced (0, brand::space::sm) : juce::Rectangle<int>());
+    }
     sessionLabel  .setBounds (row2);
 
     // Tracks are what a laptop screen is for, so this row stays short, more so
@@ -312,7 +320,10 @@ void MainComponent::resized()
         const int cols  = 12;
         const int rows  = (total + cols - 1) / cols;
         const int gridW = (pageW - (cols - 1) * gap) / cols;
-        const int rowH  = juce::jmax (200, (viewportArea.getHeight() - gap) / 2);
+        // Two rows when they fit. On a smaller window a row keeps what a strip
+        // needs, and the viewport scrolls to the rest.
+        const int rowH  = juce::jmax (zynforge::ChannelStrip::heightNeededAt (gridW),
+                                      (viewportArea.getHeight() - gap) / 2);
         const int containerH = rows * rowH + (rows - 1) * gap;
 
         stripsViewport.setScrollBarsShown (true, false);   // vertical scroll

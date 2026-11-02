@@ -387,15 +387,20 @@ void MainComponent::promptConsoleConnect()
                 && self->consoleLink.getProfile().note.isNotEmpty())
                 self->showStatus (self->consoleLink.getProfile().displayName + " -- "
                             + self->consoleLink.getProfile().note);
-            // Show-night state saved with the session (stage patch +
-            // gains) comes back automatically on VSC day.
-            const auto sess = self->engine.getActiveSessionDir();
-            const bool mayReadDisk = ! self->engine.isTakeOnDisk();
-            self->consoleLink.setSessionDir (sess, mayReadDisk);
-            if (mayReadDisk && sess.isDirectory() && self->consoleLink.loadFrom (sess))
-                self->showStatus ("Console link open: " + host
-                            + " -- loaded saved patch + gains from session");
+            self->loadConsoleStateAfterConnect (host);
         }), false);
+}
+
+// Show-night state saved with the session (stage patch + gains) comes back
+// automatically on VSC day. During a take that read would go to the take's
+// drive from this thread, so it waits: the 10 Hz tick loads it after STOP.
+void MainComponent::loadConsoleStateAfterConnect (const juce::String& host)
+{
+    const auto sess = engine.getActiveSessionDir();
+    const bool mayRead = ! engine.isTakeOnDisk();
+    consoleLink.setSessionDir (sess, mayRead);
+    if (mayRead && sess.isDirectory() && consoleLink.loadFrom (sess))
+        showStatus ("Console link open: " + host + " -- loaded saved patch + gains from session");
 }
 
 void MainComponent::wireConsoleLink()
@@ -925,6 +930,12 @@ void MainComponent::writeSoundcheckReport()
 
 void MainComponent::showSessionInfo()
 {
+    // Everything below reads the session's drive, from this thread.
+    if (engine.isTakeOnDisk())
+    {
+        showStatus ("Session Info reads the session's drive -- open it after the take");
+        return;
+    }
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {

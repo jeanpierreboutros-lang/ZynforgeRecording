@@ -193,6 +193,10 @@ namespace zynforge
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }
         void  setMasterOutputs (int l, int r);
+        // One second of 440 Hz on the master pair and nowhere else, under the
+        // master fader and MUTE. Empty means it plays; otherwise the reason it
+        // does not. A take refuses it and ends one already sounding.
+        juce::String playTestTone();
         // True while the audio callback keeps the master bus off its outputs
         // because a strip is patched to one (mix::busHeldOffOutputs).
         bool  isMasterHeldOff() const noexcept { return masterHeldOff.load (std::memory_order_relaxed); }
@@ -354,6 +358,15 @@ namespace zynforge
         // physical channel N on both sides. PATCH page + per-strip combos
         // both call this so input and output stay linked.
         void  setTrackLinkedRouting (int channelIndex, int deviceCh);
+        // A strip's whole patch from one view, `numChannels` being what that view
+        // lists. A pair's R is always L + 1, so no view has its own rule.
+        void  setStripLinkedRouting (int firstTrack, bool stereo, int deviceCh, int numChannels);
+        // Links or unlinks a pair with the pans that go with it. False, with the
+        // pans untouched, when the engine refused: they reach monitor and stream.
+        bool  linkStereoPair (int leftIndex, bool link);
+        // Non-empty when a linked pair's R isn't the input after its L here,
+        // because this device ends before it.
+        juce::String pairWrapNotice (int leftIndex);
         // The master is not a channel. -1 on an output means the mix; -1 on an
         // input means no signal, and RECORD repatches an armed strip with no
         // input. So going back to the master moves the output alone, on both
@@ -994,6 +1007,11 @@ namespace zynforge
         std::atomic<bool> streamHeldOff { false };
         std::atomic<bool> mixMaySharePatchedOutputs { false };
         std::atomic<int>  masterOutL    { 0 };
+        static constexpr double kTestToneHz = 440.0, kTestToneSeconds = 1.0, kTestToneRampSeconds = 0.005;
+        static constexpr double kTestToneLevel = 0.1;   // -20 dBFS: a line-up level, not a shock
+        std::atomic<int>  testToneLeft { 0 }, testToneLength { 0 };
+        double            testTonePhase { 0.0 };        // audio thread only
+        void renderTestTone (int outL, int outR, double gain, int numSamples) noexcept;
         std::atomic<int>  masterOutR    { 1 };
         std::atomic<bool> masterStereo  { true };
 

@@ -495,16 +495,7 @@ namespace zynforge
                                                            std::memory_order_relaxed);
                         break;
                 case 10: if (addCb)        addCb();        break;
-                case 11: if (deleteCb)
-                         {
-                             // deleteCb() runs engine.removeStripAt, freeing
-                             // this strip's TrackState synchronously. Stop the
-                             // StripTimer BEFORE that so it can't dereference
-                             // the dangling reference before the next rebuild.
-                             invalidate();
-                             deleteCb();
-                         }
-                         break;
+                case 11: requestDelete(); break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
                 default:
                     // Edit group assignment: 900 = None, 901..908 = group 0..7.
@@ -1088,7 +1079,7 @@ namespace zynforge
         // than 78 px so each toggle gets full width (~70+ px) at the
         // cost of one extra row of height. Engineers running at XS for
         // density still get a usable hit zone.
-        const bool stack = getWidth() < 78;
+        const bool stack = getWidth() < kStackBelowW;
 
         if (stack)
         {

@@ -236,6 +236,9 @@ namespace zynforge
             b->setTitle (b->getName());        // "Go to start", "Play", ...
             b->setHelpText (b->getTooltip());
             b->setWantsKeyboardFocus (true);   // reachable via Tab / VO
+            // A click must not leave focus here: Return would then press it,
+            // and two Returns end a take.
+            b->setMouseClickGrabsKeyboardFocus (false);
         }
 
         // Jumping the playhead mid-record would desync the live-capture

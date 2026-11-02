@@ -64,13 +64,20 @@ void MainComponent::onRecordClicked()
     if (captureMetadataPending || engine.isCaptureFinalizing()
         || (sessionIoBusy.load() && ! engine.isRecording()))
     {
+        const bool settled = ! captureMetadataPending && ! engine.isCaptureFinalizing();
+        // During a punch's tail this press ends the punch, and STOP comes here
+        // too. Held, it would outlive the punch and start a take of its own.
+        if (settled && punchSessionActive) { endPunchSession(); return; }
         // An autosave or layout write is over in moments and nobody chose to
         // start it, so it must not cost the engineer the press. Copies, exports
         // and a stop's finalization are not held: those can take far longer.
-        if (! captureMetadataPending && ! engine.isCaptureFinalizing()
-            && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
+        // Only a press made here is held. A held press runs later with nothing
+        // to say where it came from, and a remote must never run as a local one.
+        const bool pressedHere = ! remoteStartInFlight && ! twinStartInFlight;
+        if (settled && pressedHere && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
         {
             recordPressHeldAtMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
+            recordPressHeldRolling = engine.getPlayer().isPlaying();
             showStatus ("RECORD held -- starting as soon as this save finishes");
             return;
         }
@@ -124,6 +131,7 @@ void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     cursorPunchQuestion = aw;
+    cursorPunchScope = questionScope();
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int answer)
     {
@@ -134,7 +142,7 @@ void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
 
 void MainComponent::answerCursorPunch (int answer)
 {
-    if (answer == 0) return;
+    if (answer == 0 || ! stillInScope (cursorPunchScope)) return;
     // This is a fresh press through every refusal, because anything can have
     // moved while the question was open. A take or playback started since
     // would give the press another meaning, so it stops here.
@@ -164,8 +172,12 @@ void MainComponent::releaseHeldRecordPress()
     const auto heldForMs = juce::Time::getMillisecondCounter() - recordPressHeldAtMs;
     recordPressHeldAtMs = 0;
     if (sessionLocked) return;
+    // Rolling, RECORD punches. Stopped, it appends. A press made in one state
+    // never runs in the other.
     if (heldForMs > kLongestHoldMs) showStatus ("Saving took too long -- press RECORD again");
-    else                            onRecordClicked();
+    else if (engine.getPlayer().isPlaying() != recordPressHeldRolling)
+        showStatus ("The transport moved while RECORD was held -- press RECORD again");
+    else onRecordClicked();
 }
 
 void MainComponent::runRecordPlan (RecordStartPlan& plan)
@@ -188,21 +200,22 @@ void MainComponent::runRecordPlan (RecordStartPlan& plan)
     if (! punch && engine.isRecording()) twinLink.noteLocalTakeStarted();
 }
 
+// A RECORD-triggered selection punch is in flight (pre-roll / recording /
+// post-roll) -- a press ends it: punch out if recording (splices the take),
+// then stop the transport and tear down.
+void MainComponent::endPunchSession()
+{
+    const bool wasRecording = engine.isRecording();
+    if (wasRecording) stopActiveCaptureAsync (false);
+    engine.stopPlayback();
+    engine.setPunchModeOn (false);
+    punchSessionActive = false;
+    if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
+}
+
 bool MainComponent::handleRecordPressDuringTake()
 {
-    // A RECORD-triggered selection punch is in flight (pre-roll / recording /
-    // post-roll) -- pressing RECORD again ends it: punch out if recording
-    // (splices the take), then stop the transport and tear down.
-    if (punchSessionActive)
-    {
-        const bool wasRecording = engine.isRecording();
-        if (wasRecording) stopActiveCaptureAsync (false);
-        engine.stopPlayback();
-        engine.setPunchModeOn (false);
-        punchSessionActive = false;
-        if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
-        return true;
-    }
+    if (punchSessionActive) { endPunchSession(); return true; }
 
     if (manualPunchActive && engine.isRecording())
     {
@@ -690,21 +703,30 @@ void MainComponent::onPlayClicked()
     }
     else
     {
-        // Pro Tools-style: if the engineer has placed the edit cursor,
-        // playback starts there instead of from wherever the player
-        // happened to be paused. Without a cursor (-1) the player
-        // resumes from its current position as before.
-        const auto cursor = engine.getEditCursorSample();
-        if (cursor >= 0)
-            player.setPositionSamples (cursor);
-
-        engine.startPlayback();
-        statusLabel.setText ("Playing -> " + player.getSessionName(), juce::dontSendNotification);
+        startPlaybackFromCursor();
     }
+}
+
+// PLAY and Space are one gesture. Pro Tools-style: if the engineer has placed
+// the edit cursor, playback starts there instead of from wherever the player
+// happened to be paused. Without a cursor (-1) the player resumes from its
+// current position as before.
+void MainComponent::startPlaybackFromCursor()
+{
+    auto& player = engine.getPlayer();
+    const auto cursor = engine.getEditCursorSample();
+    if (cursor >= 0)
+        player.setPositionSamples (cursor);
+
+    engine.startPlayback();
+    // The engine refuses with nothing ahead, as a two-tap RECORD stop leaves it.
+    if (player.isPlaying()) statusLabel.setText ("Playing -> " + player.getSessionName(), juce::dontSendNotification);
+    else                    showStatus ("Nothing to play from here -- locate back into the take");
 }
 
 void MainComponent::onStopClicked()
 {
+    recordPressHeldAtMs = 0;   // STOP after a held RECORD means don't start
     if (captureMetadataPending)
     { showStatus ("Recording stopped; finalization pending"); return; }
     if (punchSessionActive)
@@ -1021,6 +1043,7 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     {
         if (! recording)
         {
+            recordPressHeldAtMs = 0;
             if (captureMetadataPending)
             { error = "recording stopped; finalization pending"; return false; }
             // A failed take stays reported, but it never holds up stopping
@@ -1056,6 +1079,9 @@ std::optional<bool> MainComponent::handleRemoteTransport (
             showRecordRefusal ("Remote RECORD refused -- capture daemon is unavailable");
             return false;
         }
+        // A daemon take this window has not adopted yet still rolls, and a
+        // press there is a STOP, which a remote start must never turn into.
+        if (daemonModeActive() && captureSupervisor.isDaemonRecording()) return true;
         // During a punch's post-roll a RECORD press would end the punch.
         if (punchSessionActive)
         {
@@ -1067,9 +1093,9 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         remotePunchRefused = false;
         onRecordClicked();
         if (engine.isRecording()) return true;
-        error = recordPressHeldAtMs != 0 ? "a session save is finishing; RECORD starts when it ends"
-              : remotePunchRefused ? "RECORD would punch into the take; clear the cursor or selection on the host"
-                                   : "recording could not start; check the host pre-flight message";
+        error = remotePunchRefused        ? "RECORD would punch into the take; clear the cursor or selection on the host"
+              : pendingMetadataSaves != 0 ? "session finalization or saving is pending"
+                                          : "recording could not start; check the host pre-flight message";
         return false;
     }
 
@@ -1110,6 +1136,8 @@ void MainComponent::applyLockState()
     if (patchDialog != nullptr) patchDialog->setEnabled (e);
     if (deviceDialog != nullptr) deviceDialog->setEnabled (e);
     if (twinDialog != nullptr) twinDialog->setEnabled (e);
+    // A click on a meter clears its clip evidence, which the report reads.
+    if (metersDialog != nullptr) metersDialog->setEnabled (e);
 
     lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
     lockButton.setToggleState (sessionLocked, juce::dontSendNotification);
@@ -1132,12 +1160,15 @@ void MainComponent::openMetersWindow()
 {
     if (auto* w = metersDialog.getComponent()) { w->toFront (true); return; }
     metersDialog = zynforge::Meterbridge::launch (engine);
+    if (metersDialog != nullptr) metersDialog->setEnabled (! sessionLocked);
 }
 
 void MainComponent::forgetSessionUiState()
 {
     lastCaptureFinalizationError.clear();
     recordRefusal.clear();
+    recordPressHeldAtMs = 0;   // that press meant the session that just left
+    deviceLossForgotten = deviceLossLatched;
     cues.clear();
     currentCueIndex = -1;
     setlistBar.setCues (cues, currentCueIndex);
@@ -1158,9 +1189,9 @@ void MainComponent::onVscClicked()
     if (strips <= 0) { showStatus ("No strips to repatch"); return; }
 
     juce::Component::SafePointer<MainComponent> self (this);
-    const auto repatch = [self]
+    const auto repatch = [self, scope = questionScope()]
     {
-        if (self == nullptr) return;
+        if (self == nullptr || ! self->stillInScope (scope)) return;
         if (self->engine.isRecording() || self->captureMetadataPending)
         { self->showStatus ("Virtual Soundcheck waits until the take has stopped"); return; }
         const auto before = self->beginMixerUndo();
@@ -1201,9 +1232,9 @@ juce::String MainComponent::vscReachText (int moved)
 void MainComponent::restoreOutputPatch()
 {
     juce::Component::SafePointer<MainComponent> self (this);
-    const auto restore = [self]
+    const auto restore = [self, scope = questionScope()]
     {
-        if (self == nullptr) return;
+        if (self == nullptr || ! self->stillInScope (scope)) return;
         if (self->engine.isRecording() || self->captureMetadataPending)
         { self->showStatus ("Restoring outputs waits until the take has stopped"); return; }
         const auto before = self->beginMixerUndo();
@@ -1237,9 +1268,7 @@ void MainComponent::onBackupClicked()
     zynforge::BackupMirrorDialog::launch (engine, {
         [self] (const juce::String& refusal)
         {
-            if (self == nullptr) return;
-            self->backupButton.setButtonText ("BACKUP !");
-            self->showStatus (refusal);
+            if (self != nullptr) self->showStatus (refusal);
         },
         [self] (const juce::File& dir) { return self != nullptr && self->applyBackupFolder (dir); } });
 }
@@ -1252,7 +1281,6 @@ bool MainComponent::applyBackupFolder (const juce::File& dir)
         showStatus ("Backup folder not changed -- a take is rolling or finalizing");
         return false;
     }
-    backupButton.setButtonText ("BACKUP OK");
     showStatus ("Backup folder -> " + dir.getFileName());
     return true;
 }
@@ -1578,7 +1606,12 @@ juce::String MainComponent::backupChecklistRow()
                                       ? captureSupervisor.lastStatus().backupActive
                                       : engine.getRecorder().isBackupActive();
     const bool backupWritable = ! engine.isRecording() && backupConfigured
-                                  && zynforge::preflight::volumeWritable (backupDir);
+                                  && zynforge::preflight::withinTime (zynforge::preflight::kDriveWaitMs,
+                                         [backupDir, stall = preflightStallForTests]
+                                         {
+                                             if (stall) stall();
+                                             return zynforge::preflight::volumeWritable (backupDir);
+                                         }).value_or (false);
     using BackupState = zynforge::preflight::RedundancyReadiness;
     const auto backupState = zynforge::preflight::redundancyReadiness (
         engine.isRecording(), backupConfigured, backupWritable, backupWriterActive);
@@ -1643,10 +1676,19 @@ void MainComponent::showPreflightChecklist()
     for (int i = 0; i < total; ++i)
         if (engine.getRecorder().getTrack (i).armed.load (std::memory_order_relaxed)) ++armed;
 
+    using zynforge::preflight::withinTime;
+    using zynforge::preflight::kDriveWaitMs;
     const auto sess   = engine.getActiveSessionDir();
-    const bool hasSes = sess.isDirectory();
-    const auto root   = zynforge::preflight::storageRoot (sess, getSessionsRoot());
-    const double freeGB = bytesToGB (root.exists() ? root.getBytesFreeOnVolume() : 0);
+    const auto sessionState = withinTime (kDriveWaitMs, [sess] { return sess.isDirectory(); });
+    const bool hasSes = sessionState.value_or (false);
+    const auto root   = hasSes ? sess.getParentDirectory() : getSessionsRoot();
+    const auto freeBytes = withinTime (kDriveWaitMs, [root]
+                                       { return root.exists() ? root.getBytesFreeOnVolume() : juce::int64 (0); });
+    const double freeGB = bytesToGB (freeBytes.value_or (0));
+    const auto backupFolder = engine.getRecorder().getBackupDirectory();
+    const bool estimateAnswers = sessionState.has_value() && freeBytes.has_value()
+        && (backupFolder.getFullPathName().isEmpty()
+            || zynforge::VolumeProbe::answersWithin (backupFolder, kDriveWaitMs));
     const auto fmt    = engine.getRecorder().getCaptureFormat();
     const auto fmtStr = checklistFormatName (fmt);
 
@@ -1654,7 +1696,8 @@ void MainComponent::showPreflightChecklist()
     // this list can never call a disk fine that RECORD then turns away.
     const auto wantBytes = recordHeadroomBytes (sr, juce::jmax (1, armed), fmt);
     // The clock's own estimate when there is one, so the two can't disagree.
-    engine.refreshDiskMinutesRemaining();
+    // It stats both drives from this thread, so only once they have answered.
+    if (estimateAnswers) engine.refreshDiskMinutesRemaining();
     const int estimated = engine.getEstimatedMinutesRemaining();
     const double headroomMinutes = estimated > 0 ? (double) estimated
                                  : wantBytes > 0 ? (freeGB * 1.0e9 / (double) wantBytes) * 30.0 : 0.0;
@@ -1674,7 +1717,9 @@ void MainComponent::showPreflightChecklist()
     rows.push_back ({ chk (numOutputs > 0), "Outputs", juce::String (numOutputs) + " active" });
     rows.push_back ({ chk (total > 0), "Channel strips", juce::String (total) });
     rows.push_back ({ chk (armed > 0), "Armed for record", juce::String (armed) + " / " + juce::String (total) });
-    rows.push_back ({ chk (hasSes), "Active session", hasSes ? sess.getFileName() : juce::String ("(none)") });
+    rows.push_back ({ chk (hasSes), "Active session", hasSes                     ? sess.getFileName()
+                                                    : sessionState.has_value() ? juce::String ("(none)")
+                                                                               : juce::String ("drive not answering") });
     rows.push_back ({ cues.empty() ? Row::Status::info : Row::Status::ok, "Setlist cues",
                       cues.empty() ? juce::String ("none (optional)") : juce::String ((int) cues.size()) });
     rows.push_back ({ chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0), "Disk free",
@@ -1759,9 +1804,12 @@ void MainComponent::showPreflightChecklist()
     else if (hasSes || root.isDirectory())
     {
         const auto speedDir = hasSes ? sess : root;
-        const double gotMBps = zynforge::preflight::measureWriteSpeedMBps (speedDir);
+        const auto measured = withinTime (zynforge::preflight::kSpeedTestWaitMs, [speedDir]
+                                          { return zynforge::preflight::measureWriteSpeedMBps (speedDir); });
+        const double gotMBps = measured.value_or (-1.0);
         rows.push_back ({ chk (gotMBps > needMBps * 1.5, gotMBps > needMBps), "Disk write speed (measured)",
-                          juce::String (juce::roundToInt (gotMBps)) + " MB/s (need " + needText + ")" });
+                          measured.has_value() ? juce::String (juce::roundToInt (gotMBps)) + " MB/s (need " + needText + ")"
+                                               : "did not finish in time (need " + needText + ")" });
     }
 
     // Every configured mirror drive: mounted AND actually writable.
@@ -1774,8 +1822,15 @@ void MainComponent::showPreflightChecklist()
         }
         else
         {
-            const bool w = zynforge::preflight::volumeWritable (m.root);
-            rows.push_back ({ chk (w), item, w ? juce::String ("writable") : juce::String ("NOT writable / missing") });
+            const auto answer = withinTime (kDriveWaitMs, [root = m.root, stall = preflightStallForTests]
+            {
+                if (stall) stall();
+                return zynforge::preflight::volumeWritable (root);
+            });
+            const bool w = answer.value_or (false);
+            rows.push_back ({ chk (w), item, w ? juce::String ("writable")
+                                                : answer.has_value() ? juce::String ("NOT writable / missing")
+                                                                     : juce::String ("drive not answering") });
         }
     }
 

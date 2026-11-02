@@ -500,6 +500,13 @@ report "a take's status path reads no disk" \
        "read recorder.readDiskEstimate(), or gate an idle-only read behind engine.isTakeOnDisk()" \
        "$(sed '/^$/d' <<<"$HITS")"
 
+# ── The device test tone stays on the monitor pair ──────────────────────────
+# JUCE's test sound mixes into every output after the callback, so it reached
+# every desk return, past master MUTE and over a rolling take.
+report "the device test goes through the engine" \
+       "use AudioEngine::playTestTone, which sounds on the master pair only" \
+       "$(grep -rn --include='*.cpp' --include='*.h' 'playTestSound' $SCOPE)"
+
 # ── A failed read is a failure ──────────────────────────────────────────────
 # JUCE's readers fill a short read with zeros and return true, so a render on a
 # dropping drive reported success over digital silence. Only ConcatReader::create

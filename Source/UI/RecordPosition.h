@@ -2,10 +2,22 @@
 
 #include <juce_core/juce_core.h>
 
+#include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
 
 namespace zynforge
 {
+    // Where the timeline is now. The player stands still through a plain take,
+    // so a take reads its own clock, and only a punch's rolling playhead counts.
+    inline juce::int64 currentPlayheadSamples (AudioEngine& engine)
+    {
+        auto& player = engine.getPlayer();
+        if (engine.isRecording())
+            return engine.isCaptureWindowActive() && player.isPlaying() ? player.getPositionSamples()
+                                                                        : engine.getRecordTimelineSamples();
+        return player.isLoaded() ? player.getPositionSamples() : 0;
+    }
+
     // FLAC counts at its uncompressed size, which is conservative.
     inline int captureBytesPerSample (CaptureFormat format) noexcept
     {

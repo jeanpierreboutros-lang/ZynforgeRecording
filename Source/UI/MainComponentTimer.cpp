@@ -253,8 +253,8 @@ void MainComponent::updateNextCueCountdown()
                 const int totalSec = juce::jmax (0, (int) secs);
                 const int mins  = totalSec / 60;
                 const int secsR = totalSec % 60;
-                txt = juce::String::formatted ("Next: %s in %d:%02d",
-                                                next->name.toRawUTF8(), mins, secsR);
+                txt = "Next: " + next->name + " in " + juce::String (mins)
+                    + juce::String::formatted (":%02d", secsR);
             }
         }
         if (nextCueLabel.getText() != txt)
@@ -269,11 +269,23 @@ void MainComponent::syncStripsWithEngine()
 {
     // Keep each strip's input/output combos in sync with engine state --
     // the PATCH page can mutate routing behind the strip's back. Also
-    // refresh name + colour so changes made from the EDIT view show up.
+    // refresh name + colour so changes made from the EDIT view show up. A
+    // device change moves neither the strip count nor the generation, and what
+    // a combo reads depends on the channels this device has.
+    const int inputs  = engine.getCurrentDeviceInputCount();
+    const int outputs = engine.getCurrentDeviceOutputCount();
+    const bool deviceChanged = inputs != stripsInputs || outputs != stripsOutputs;
+    stripsInputs  = inputs;
+    stripsOutputs = outputs;
     for (size_t k = 0; k < strips.size(); ++k)
     {
         auto& s = strips[k];
         if (s == nullptr) continue;
+        if (deviceChanged)
+        {
+            s->setAvailableInputs  (inputs);
+            s->setAvailableOutputs (outputs);
+        }
         s->refreshRoutingSelection();
         s->refreshAppearance();
     }
@@ -424,6 +436,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     perfDashboard.setDeviceInfo (status.sampleRate,
                                  status.blockSize);
     perfDashboard.setRecording (rec);
+    updateBackupButton (status);
     for (auto& strip : strips) strip->setTakeRolling (rec);
     // Drives per-strip meter refresh: full rate while recording or
     // playing, throttled to ~8 Hz when stopped (see TrackState.h).
@@ -436,14 +449,47 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     }
 }
 
+// What the header says about the backup is read fresh, never remembered from
+// the dialog that picked the folder. A take's writers know how it is going.
+// Between takes a probe thread watches the folder, so a dead mount never reaches
+// this tick.
+void MainComponent::updateBackupButton (const zynforge::EngineStatus& status)
+{
+    constexpr int kProbePeriodMs = 2000, kProbeStaleMs = 6000;
+    const auto folder = engine.getRecorder().getBackupDirectory();
+    const bool configured = folder.getFullPathName().isNotEmpty();
+    if (folder != backupProbeFolder)
+    {
+        backupProbeFolder = folder;
+        backupProbe.reset (configured ? new VolumeProbe (folder, VolumeProbe::readFolder, kProbePeriodMs) : nullptr);
+    }
+
+    bool ok = false;
+    if (status.recording) ok = status.backupActive;
+    else if (backupProbe != nullptr)
+    {
+        const auto reading = backupProbe->latest();
+        if (reading.atMs <= 0.0) return;   // no answer yet, so nothing new to say
+        ok = reading.totalBytes > 0 && juce::Time::getMillisecondCounterHiRes() - reading.atMs < kProbeStaleMs;
+    }
+    const juce::String text (! configured ? "BACKUP" : ok && ! status.backupFailed ? "BACKUP OK" : "BACKUP !");
+    if (backupButton.getButtonText() != text) backupButton.setButtonText (text);
+}
+
 void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
 {
+    constexpr int kRecordTimeNoticeMinutes = 30, kRecordTimeDangerMinutes = 10;
     const bool rec = status.recording;
+    // The recorder holds this until the next take, but it belongs to the
+    // session it happened in.
+    if (rec || ! status.captureDeviceLost) deviceLossForgotten = false;
+    deviceLossLatched = status.captureDeviceLost;
+    const bool deviceLost = status.captureDeviceLost && ! deviceLossForgotten;
     // Live show-day warnings -- only while recording, refreshed at the
     // timer cadence. Both flags clear automatically when the condition
     // recovers (e.g. swap drives + the new primary write succeeds, or
     // disk catches back up). Status bar is the engineer's first read.
-    if (rec || status.captureDeviceLost || (useCaptureDaemon && engine.isRecording()))
+    if (rec || deviceLost || (useCaptureDaemon && engine.isRecording()))
     {
         const bool primFail   = status.primaryFailed;
         const bool backupFail = status.backupFailed;
@@ -463,22 +509,28 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int mirrorsSkipped = status.mirrorsSkipped;
         const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
         const bool primaryNotAnswering = status.primaryDiskStale && status.source != "daemon-unavailable";
+        // RECORD only asks for 30 minutes of room, so a long show can get here.
+        const int minutesLeft = rec ? status.minutesRemaining : 0;   // 0 = no estimate
+        const bool timeRunningOut = minutesLeft > 0 && minutesLeft <= kRecordTimeDangerMinutes;
+        const bool timeShort      = minutesLeft > kRecordTimeDangerMinutes && minutesLeft <= kRecordTimeNoticeMinutes;
         // Only a desk that was answering. One that never did may simply not
         // answer probes, and a notice that is always up teaches nothing.
         const bool consoleSilent = consoleLink.isConnected()
                                 && consoleLink.getHealth() == zynforge::ConsoleLink::Health::Silent;
-        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
+        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || deviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
-            || ! status.copyProblems.isEmpty() || consoleSilent)
+            || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort || consoleSilent)
         {
-            // Most serious first: the banner shares its row with the header
-            // buttons, and a long list can run out of room at the far end.
+            // Most serious first. Two spaces end each alarm: that is how the
+            // banner tells them apart, and a '!' is what makes one a danger.
             juce::String warn;
-            if (status.captureDeviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
+            if (deviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";
             if (samplesMissed) warn << "! " << status.missedSamples << " SAMPLES MISSED -- the take has gaps  ";
+            if (timeRunningOut) warn << "! " << recordTimeText (minutesLeft * 60.0) << " OF RECORD TIME LEFT -- a drive is nearly full  ";
+            if (timeShort) warn << recordTimeText (minutesLeft * 60.0) << " of record time left  ";
             warn << inputAlarms;
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
             if (backupFail)  warn << "! BACKUP WRITE FAILED -- primary recording continues  ";
@@ -520,19 +572,57 @@ void MainComponent::refreshAlarmBanner()
             || juce::Time::getMillisecondCounter() - recordRefusalShownMs > kRefusalShownMs))
         recordRefusal.clear();
 
-    // What threatens the take outranks a refused press. A failed finalization
-    // stays up after STOP, until the next take or another session.
-    auto text = activeCaptureWarning;
-    if (text.isEmpty()) text = lastCaptureFinalizationError;
-    if (text.isEmpty() && engine.isRecording()) text = srWarnLabel.getText();
-    const bool takeThreatened = text.isNotEmpty()
-                             && ! (activeCaptureWarning.isNotEmpty() && ! activeCaptureWarning.containsChar ('!'));
-    if (text.isEmpty()) text = recordRefusal;
-
     // Red is for a take in trouble, so it still means something when it shows.
     // A refused press and the quiet "no signal yet" notice, which has no '!',
-    // are amber.
-    alarmBanner.show (text, takeThreatened ? AlarmBanner::Level::Danger : AlarmBanner::Level::Notice);
+    // are amber. A failed finalization stays up after STOP, until the next take
+    // or another session. The banner covers everything else in this row, so
+    // whatever would be hidden under it goes in here.
+    using Alarm = AlarmBanner::Alarm;
+    using Level = AlarmBanner::Level;
+    std::vector<Alarm> alarms;
+    for (const auto& alarm : AlarmBanner::splitAlarms (activeCaptureWarning))
+        alarms.push_back ({ alarm, alarm.startsWithChar ('!') ? Level::Danger : Level::Notice });
+    if (lastCaptureFinalizationError.isNotEmpty())
+        alarms.push_back ({ lastCaptureFinalizationError, Level::Danger });
+    // Nothing can roll at the wrong rate from idle: RECORD refuses. A take that
+    // is already rolling is the one in trouble.
+    if (sampleRateWarning.isNotEmpty())
+        alarms.push_back ({ sampleRateWarning, engine.isRecording() ? Level::Danger : Level::Notice });
+    collectTwinAlarms (twinLink.snapshot(), alarms);
+    if (recordRefusal.isNotEmpty()) alarms.push_back ({ recordRefusal, Level::Notice });
+    alarmBanner.show (std::move (alarms), juce::Time::getMillisecondCounter());
+}
+
+// While a take rolls on either Mac, a link in trouble means the second copy may
+// not be there, and that raises the banner on its own. The rest only comes along
+// on a banner already up: the header pill says it well enough until something
+// covers the pill. A link that dropped reports no peer, so the peer's state is
+// the last one heard.
+void MainComponent::collectTwinAlarms (const zynforge::twin::Snapshot& link,
+                                       std::vector<zynforge::AlarmBanner::Alarm>& alarms)
+{
+    using Level = AlarmBanner::Level;
+    if (link.state == zynforge::twin::LinkState::Off) twinPeerRolling = false;
+    else if (link.peer.has_value()) twinPeerRolling = link.peer->recording;
+    const bool rolling = engine.isRecording() || twinPeerRolling;
+
+    juce::StringArray trouble, quiet;
+    if (link.level == 2)
+        trouble.add ("! " + link.headline + (link.detail.isNotEmpty() ? " -- " + link.detail : juce::String()));
+    else if (link.level == 1 && link.warnings.isEmpty())
+        quiet.add (link.headline);
+    for (int i = 0; i < link.warnings.size(); ++i)
+    {
+        if (i < link.setupWarnings) quiet.add ("TWIN: " + link.warnings[i]);
+        else                        trouble.add ("! TWIN: " + link.warnings[i]);
+    }
+
+    if (rolling)
+        for (const auto& alarm : trouble) alarms.push_back ({ alarm, Level::Danger });
+    if (alarms.empty()) return;
+    if (! rolling)
+        for (const auto& alarm : trouble) alarms.push_back ({ alarm, Level::Notice });
+    for (const auto& alarm : quiet) alarms.push_back ({ alarm, Level::Notice });
 }
 
 void MainComponent::showRecordRefusal (const juce::String& reason)
@@ -540,9 +630,10 @@ void MainComponent::showRecordRefusal (const juce::String& reason)
     recordRefusal = reason;
     recordRefusalShownMs = juce::Time::getMillisecondCounter();
     refreshAlarmBanner();
-    // The banner is the one place for this. Only something more urgent holding
-    // it sends the reason to the status line instead: a press never goes unanswered.
-    if (alarmBanner.getText() != reason) showStatus (reason);
+    alarmBanner.showPageHolding (reason, recordRefusalShownMs);
+    // The banner is the one place for this. Only a reason too long for one page
+    // also goes to the status line: a press never goes unanswered.
+    if (! alarmBanner.getShownText().contains (reason)) showStatus (reason);
 }
 
 // Query SMART health for the session + backup volumes on a BACKGROUND thread.
@@ -602,6 +693,15 @@ double MainComponent::takeClockRate (double deviceRate)
 void MainComponent::updateTransportLabels()
 {
     auto& player = engine.getPlayer();
+    // The session, not the player: a new session has no audio until its first
+    // take has stopped.
+    const bool sessionOpen = engine.hasSessionFolder();
+    sessionLabel.setText (sessionOpen || player.isLoaded()
+                              ? "Session: " + (sessionOpen ? engine.getActiveSessionDir().getFileName() : player.getSessionName())
+                                    + " (" + juce::String (engine.getRecorder().getNumTracks()) + " tr)"
+                              : juce::String ("No session loaded"),
+                          juce::dontSendNotification);
+
     // The player stands still through a plain take, so this clock follows the
     // take instead, or it would sit frozen beside the big one.
     if (engine.isRecording())
@@ -613,18 +713,6 @@ void MainComponent::updateTransportLabels()
     const auto pos = samplesToTimecode (player.getPositionSamples(), sr);
     const auto tot = samplesToTimecode (player.getTotalLengthSamples(), sr);
     transportLabel.setText (pos + " / " + tot, juce::dontSendNotification);
-
-    if (player.isLoaded())
-    {
-        const auto name = player.getSessionName();
-        const auto tracks = juce::String (player.getNumTracks());
-        sessionLabel.setText ("Session: " + name + " (" + tracks + " tr)",
-                              juce::dontSendNotification);
-    }
-    else
-    {
-        sessionLabel.setText ("No session loaded", juce::dontSendNotification);
-    }
 }
 
 // Compare the device's live sample rate against the session's intended rate
@@ -635,15 +723,7 @@ void MainComponent::updateTransportLabels()
 // the dialog fires while stopped, which is when the engineer can fix it.
 void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
 {
-    auto setWarning = [this] (const juce::String& warning)
-    {
-        if (srWarnLabel.getText() != warning)
-        {
-            srWarnLabel.setText (warning, juce::dontSendNotification);
-            srWarnLabel.setTooltip (warning);
-            resized();
-        }
-    };
+    auto setWarning = [this] (const juce::String& warning) { sampleRateWarning = warning; };
     if (deviceSampleRate <= 0.0) { setWarning ({}); return; }
 
     // With no session there is no rate to disagree with: 48 kHz here is only a
@@ -684,9 +764,9 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
         return;
     }
 
-    // Persistent always-visible banner (record-red) while mismatched.
+    // Stands in the alarm banner while mismatched.
     // ASCII only -- sample-rate mismatch must stay legible in every UI face.
-    // (it rendered as mojibake); the red colour carries the alarm.
+    // (it rendered as mojibake); the banner's colour carries the alarm.
     setWarning ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
                 + "  vs  session " + fmt (sessionSR) + "  - recording blocked");
 

@@ -832,6 +832,7 @@ namespace zynforge
         friend class TwinLinkTests;            // report publication ordering
         friend class CaptureMetaTests;
         friend class ChannelAlarmTests;        // what the daemon's loop latched
+        friend class MainWindowFixTests;       // what the window refuses while a take finalizes
         std::function<void()> afterFifoReservationForTests;
         std::function<void()> beforeStampForTests;
         std::function<void (CaptureCopy&)> beforeCopyWriteForTests;

@@ -375,6 +375,9 @@ void MainComponent::adoptDaemonTakeSession (const zynforge::EngineStatus& status
 
 bool MainComponent::openSessionDocument (const juce::File& document, bool confirmBeforeReplacing)
 {
+    // Finder and a second instance come straight here, past the menu's LOCK.
+    if (sessionLocked)
+    { showStatus ("LOCKED -- click UNLOCK to resume control"); return false; }
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before opening another session"); return false; }
     if (sessionIoBusy.load())
@@ -750,6 +753,13 @@ void MainComponent::requestUILayoutSave()
 
 void MainComponent::saveCueChanges (const juce::String& success)
 {
+    // Nothing goes to the take's drive during a take, and a save that stalled
+    // there would hold every key but Space. STOP's save carries the cues.
+    if (engine.isTakeOnDisk())
+    {
+        if (success.isNotEmpty()) showStatus (success + " -- saved at STOP");
+        return;
+    }
     enqueueMetadataSave (engine.getActiveSessionDir(), success);
 }
 

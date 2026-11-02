@@ -588,6 +588,50 @@ namespace zynforge
         return false;
     }
 
+    juce::String AudioEngine::playTestTone()
+    {
+        if (isRecording()) return "Test tone refused -- a take is rolling";
+        const auto rate = deviceSampleRate.load (std::memory_order_relaxed);
+        if (rate <= 0.0) return "Test tone refused -- no audio device";
+        if (masterOutL.load (std::memory_order_relaxed) < 0)
+            return "Test tone refused -- the monitor bus is set to no output";
+        if (masterState.muted.load (std::memory_order_relaxed))
+            return "Test tone refused -- master MUTE is on";
+        if (masterHeldOff.load (std::memory_order_relaxed))
+            return "Test tone refused -- a strip is patched to the monitor outputs";
+        const int length = (int) (rate * kTestToneSeconds);
+        testToneLength.store (length, std::memory_order_relaxed);
+        testToneLeft.store (length, std::memory_order_relaxed);
+        return {};
+    }
+
+    // Lands in the accumulator after the master sum, so it reaches the device
+    // through the one place that enforces master MUTE, and no other output.
+    void AudioEngine::renderTestTone (int outL, int outR, double gain, int numSamples) noexcept
+    {
+        auto left = testToneLeft.load (std::memory_order_relaxed);
+        // A take beginning takes the outputs back, even in the middle of a tone.
+        if (outL < 0 || isRecording()) { testToneLeft.compare_exchange_strong (left, 0); return; }
+
+        const int length = testToneLength.load (std::memory_order_relaxed);
+        const int count  = juce::jmin (numSamples, left);
+        const int ramp   = juce::jmax (1, (int) (deviceSampleRate.load (std::memory_order_relaxed) * kTestToneRampSeconds));
+        const double step = juce::MathConstants<double>::twoPi * kTestToneHz
+                          / deviceSampleRate.load (std::memory_order_relaxed);
+        double* dstL = outputAccum.getWritePointer (outL);
+        double* dstR = outR >= 0 ? outputAccum.getWritePointer (outR) : nullptr;
+        for (int i = 0; i < count; ++i)
+        {
+            const int played = length - left + i;
+            const double fade = juce::jmin (1.0, (double) juce::jmin (played, left - i) / (double) ramp);
+            const double sample = std::sin (testTonePhase) * kTestToneLevel * fade * gain;
+            testTonePhase = std::fmod (testTonePhase + step, juce::MathConstants<double>::twoPi);
+            dstL[i] += sample;
+            if (dstR != nullptr) dstR[i] += sample;
+        }
+        testToneLeft.compare_exchange_strong (left, left - count);
+    }
+
     void AudioEngine::setMasterGainDb (float dB)
     {
         masterState.gainDb.store (dB, std::memory_order_relaxed);
@@ -2213,6 +2257,35 @@ namespace zynforge
         setTrackOutputRouting (channelIndex, deviceCh);
     }
 
+    void AudioEngine::setStripLinkedRouting (int firstTrack, bool stereo, int deviceCh, int numChannels)
+    {
+        if (stereo) deviceCh = pairStartChannel (deviceCh, numChannels);
+        setTrackLinkedRouting (firstTrack, deviceCh);
+        if (stereo) setTrackLinkedRouting (firstTrack + 1, deviceCh < 0 ? -1 : deviceCh + 1);
+    }
+
+    bool AudioEngine::linkStereoPair (int leftIndex, bool link)
+    {
+        if (leftIndex < 0 || leftIndex + 1 >= recorder.getNumTracks()) return false;
+        setTrackStereo (leftIndex, link);
+        if (recorder.getTrack (leftIndex).isStereo.load() != link) return false;
+        // Linked: hard L/R for the full image. Unlinked: recentre both, so a
+        // mono strip isn't left stuck hard right.
+        setTrackPan (leftIndex,     link ? -1.0f : 0.0f);
+        setTrackPan (leftIndex + 1, link ?  1.0f : 0.0f);
+        return true;
+    }
+
+    juce::String AudioEngine::pairWrapNotice (int leftIndex)
+    {
+        if (leftIndex < 0 || leftIndex + 1 >= recorder.getNumTracks()) return {};
+        const int left  = getEffectiveInputRouting (leftIndex);
+        const int right = getEffectiveInputRouting (leftIndex + 1);
+        if (left < 0 || right < 0 || right == left + 1) return {};
+        return "This device has no input after In " + juce::String (left + 1)
+             + " -- the right half hears In " + juce::String (right + 1) + " here";
+    }
+
     void AudioEngine::sendStripToMaster (int channelIndex, bool stereoPair)
     {
         if (isRecording() || isCaptureFinalizing()) return;
@@ -2918,6 +2991,9 @@ const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxe
             for (int i = 0; i < blk; ++i)
                 dstR[i] += accR[i] * mGain;
         }
+
+        if (testToneLeft.load (std::memory_order_relaxed) > 0)
+            renderTestTone (masterAudible ? outL : -1, masterAudible ? outR : -1, mGain, blk);
 
         // Final downcast: the 64-bit accumulator → device-output float
         // buffers. Done in one place at the very end so per-strip /

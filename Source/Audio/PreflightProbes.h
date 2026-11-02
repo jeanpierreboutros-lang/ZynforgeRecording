@@ -2,8 +2,35 @@
 
 #include <juce_core/juce_core.h>
 
+#include <memory>
+#include <optional>
+#include <thread>
+
 namespace zynforge::preflight
 {
+    // How long the checklist waits on one drive, and on the speed test. The
+    // window freezes for as long as it waits.
+    inline constexpr int kDriveWaitMs = 1500, kSpeedTestWaitMs = 4000;
+
+    // A stat or a write on a dead mount can block for minutes or for good. The
+    // probe runs on a thread of its own that owns only what it was handed, so a
+    // drive that never answers strands that thread and costs the caller
+    // `waitMs`. Empty means no answer in time.
+    template <typename Probe>
+    auto withinTime (int waitMs, Probe probe) -> std::optional<decltype (probe())>
+    {
+        using Result = decltype (probe());
+        struct Shared { juce::WaitableEvent done { true }; Result value {}; };
+        auto shared = std::make_shared<Shared>();
+        std::thread ([shared, run = std::move (probe)]() mutable
+        {
+            shared->value = run();
+            shared->done.signal();
+        }).detach();
+        if (! shared->done.wait (waitMs)) return std::nullopt;
+        return shared->value;
+    }
+
     // getBytesFreeOnVolume returns 0 both for a full volume and for a query
     // that failed. A known volume size tells them apart.
     inline bool freeSpaceKnown (juce::int64 freeBytes, juce::int64 volumeBytes) noexcept

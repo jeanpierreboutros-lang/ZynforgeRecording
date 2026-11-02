@@ -11,6 +11,7 @@
 #include "../Network/ConsoleLink.h"
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
+#include "AddTracksDialog.h"
 #include "AlarmBanner.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
@@ -37,7 +38,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -58,6 +59,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // Both header rows keep their status and warnings readable down to here.
+    static constexpr int kMinWidth = 1210, kMinHeight = 700;
+
     bool keyPressed (const juce::KeyPress&, juce::Component*) override;
 
     // MenuBarModel -- populates the macOS system menu bar.
@@ -77,6 +81,12 @@ private:
     void rebuildStrips();
     void updateMixerPlaceholder();   // show/hide the MIXER empty-state overlay
     void onRecordClicked();
+    // What an open question was raised about. By the time it is answered the
+    // menu bar, a Finder open or a remote can have changed either.
+    struct QuestionScope { juce::File session; int layout { -1 }; };
+    QuestionScope questionScope();
+    bool stillInScope (const QuestionScope&);
+    void addTracks (const std::vector<zynforge::AddTracksDialog::Entry>&, const QuestionScope&);
     // onRecordClicked's stages, in order. A press during a take is consumed
     // first; prepareRecordStart runs EVERY refusal before anything changes;
     // then the take starts through exactly one path.
@@ -88,6 +98,7 @@ private:
         juce::int64 punchAt { -1 };
     };
     bool handleRecordPressDuringTake();
+    void endPunchSession();
     bool prepareRecordStart (RecordStartPlan&);
     void planRecordPosition (RecordStartPlan&);
     bool recordPlanHasSelection (const RecordStartPlan&);
@@ -104,6 +115,7 @@ private:
     void onLoadSessionClicked();
     void completeOpenFolder (const juce::File& dir);
     void onPlayClicked();
+    void startPlaybackFromCursor();
     void onStopClicked();
     // Immediate capture stop shared by the confirmed UI STOP, remote
     // transports and "Stop & Quit".  Unlike onStopClicked it has no two-tap
@@ -293,6 +305,7 @@ private:
     void colourSelectedStrips();
     void moveSelectedStrips (int delta);
     void clearStripSelection();
+    void removeStrip (int firstTrack, int width);
     void selectAllStrips();
     int  physicalFromLogicalIdx (int logical);
     int  logicalFromPhysicalIdx (int physical);
@@ -352,6 +365,7 @@ private:
     void saveFinalizedCaptureMetadata (bool mediaOk, juce::String mediaError,
                                        std::function<void (bool)> completion);
     void promptConsoleConnect();
+    void loadConsoleStateAfterConnect (const juce::String& host);
     void wireConsoleLink();
     void saveConsoleLog();
     void writeConsoleLog (const juce::File&);
@@ -387,7 +401,8 @@ private:
 
     // Auto-save bookkeeping (see serviceAutosave / showAutosaveSettings).
     juce::uint32 lastAutosaveMs    { 0 };   // 0 = clock not started yet
-    juce::uint32 recordPressHeldAtMs { 0 }; // a RECORD press waiting out an idle save; 0 = none
+    juce::uint32 recordPressHeldAtMs { 0 }; // a press on this Mac waiting out an idle save; 0 = none
+    bool         recordPressHeldRolling { false };  // whether the transport rolled when it was pressed
     int          autosaveFailures  { 0 };   // in a row; spaces out the retries
     int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
     juce::String lastMetadataSaveError;     // why the last save failed, for the STOP message
@@ -428,6 +443,7 @@ private:
     // view (right-click ▸ Delete Channel, or Delete on a selected channel).
     // Recorded files stay on disk; runs onConfirm only on "Delete".
     void confirmDeleteChannels (std::function<void()> onConfirm);
+    void confirmDeleteChannels (int count, std::function<void()> onConfirm);
 
     // Coalesced mixer undo. The everyday strip mutations (fader, pan, mute,
     // solo, arm, monitor, rename, recolour, routing) have no dedicated undo
@@ -524,12 +540,20 @@ private:
     juce::String vscReachText (int moved);
     void updateNextCueCountdown();
     void syncStripsWithEngine();
+    int  stripsInputs { -1 }, stripsOutputs { -1 };   // the device the strips' combos were filled for
     void surfaceAsyncReportFailure();
     void updateClockAndDiskCadence (double deviceSR);
     void updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing);
     void updateCaptureWarnings (const zynforge::EngineStatus& status);
-    // The loud row: a standing alarm, or a refused RECORD until it times out.
+    void updateBackupButton (const zynforge::EngineStatus& status);
+    bool deviceLossLatched { false };     // as of the last status
+    bool deviceLossForgotten { false };   // that loss belonged to a session that has gone
+    std::unique_ptr<zynforge::VolumeProbe> backupProbe;
+    juce::File backupProbeFolder;
+    // The loud row: every standing alarm, and a refused RECORD until it times out.
     void refreshAlarmBanner();
+    void collectTwinAlarms (const zynforge::twin::Snapshot&, std::vector<zynforge::AlarmBanner::Alarm>&);
+    bool twinPeerRolling { false };   // as last heard over the link
     void showRecordRefusal (const juce::String& reason);
     // Open a modal warning if the loaded session's SR doesn't match the device.
     void warnIfSampleRateMismatch();
@@ -561,6 +585,7 @@ private:
     // Show pre-flight checklist -- one-screen view of every show-critical
     // setting (device, SR, inputs, armed, backup, disk, cues, recording state).
     void  showPreflightChecklist();
+    std::function<void()> preflightStallForTests;   // runs where a dead drive would block
     zynforge::PreflightRow deskPatchRow() const;
     zynforge::PreflightRow deskLinkRow() const;
     juce::String backupChecklistRow();
@@ -611,6 +636,7 @@ private:
     friend class zynforge::SessionSafetyTests;
     friend class zynforge::SessionFixTests;
     friend class zynforge::MainWindowGuardTests;
+    friend class zynforge::MainWindowFixTests;
     friend class zynforge::EditIntegrityTests;
     friend class zynforge::PunchRuleTests;
     friend class zynforge::EditDetailTests;
@@ -633,7 +659,7 @@ private:
     juce::uint32 recordRefusalShownMs { 0 };
     juce::Label  nextCueLabel      { {}, "" };
     juce::Label  danteLabel        { {}, "" };
-    juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner
+    juce::String sampleRateWarning;              // the device disagrees with the session; shown in the banner
     juce::Label  twinStatusLabel   { {}, "" };   // link state; empty while the link is off
     juce::Label  punchPill         { {}, "" };   // PUNCH mode, or what the next RECORD will replace
     juce::Label  soundcheckPill    { {}, "DESK ON SOUNDCHECK" };   // the desk is hearing card returns, not the stage
@@ -693,6 +719,7 @@ private:
     bool manualPunchActive { false };
     bool cursorPunchAnswered { false };   // true only around the press that "Replace From Cursor" makes
     juce::Component::SafePointer<juce::AlertWindow> cursorPunchQuestion;
+    QuestionScope cursorPunchScope;
 
     // Per-session cue list -- populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.
@@ -703,6 +730,7 @@ private:
     bool saveSetlistToActiveSession (bool writeBackup = true) const;
     void jumpToCue (int index);
     void addCueAtTransport();
+    double timelineRate();
     void updateCueAtTransport();
     void renameCurrentCue();
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
