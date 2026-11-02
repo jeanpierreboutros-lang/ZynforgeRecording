@@ -157,14 +157,18 @@ namespace zynforge::projectexport
                                                     juce::String& warning)
     {
         std::vector<juce::File> written;
+        juce::StringArray missing;
+        juce::String reason;
         const auto copied = rebased (input, handoffDir);
         for (const auto format : { Format::Reaper, Format::DawProject })
         {
             const auto dest = uniqueDestination (handoffDir, input.sessionName, format);
             const auto result = write (copied, format, dest, appVersion, cancel);
-            if (result.ok) written.push_back (result.file);
-            else if (warning.isEmpty()) warning = "DAW project files not written: " + result.error;
+            if (result.ok) { written.push_back (result.file); continue; }
+            missing.add (dest.getFileName());
+            if (reason.isEmpty()) reason = result.error;
         }
+        if (! missing.isEmpty()) warning = missing.joinIntoString (" and ") + " not written: " + reason;
         return written;
     }
 }

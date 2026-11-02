@@ -7,6 +7,7 @@
 #include <mutex>
 #include <limits>
 #include <algorithm>
+#include <optional>
 
 // Full "backup session" snapshot. Copies the files that DEFINE a session --
 // the .zfproj (setlist/cues/playlists/UI), session_mix.json,
@@ -59,6 +60,60 @@ namespace zynforge::sessionbackup
         return true;
     }
 
+    struct SnapshotName
+    {
+        juce::String stamp;
+        juce::int64 sequence { 0 };
+
+        bool operator< (const SnapshotName& other) const
+        {
+            return stamp != other.stamp ? stamp < other.stamp : sequence < other.sequence;
+        }
+    };
+
+    // "<stamp>", then nothing, "_<sequence>" or a legacy "(<n>)". Empty for
+    // anything else, so a journal or a similarly named folder is never taken
+    // for a snapshot.
+    inline std::optional<SnapshotName> parseSnapshotSuffix (const juce::String& suffix)
+    {
+        bool valid = suffix.length() >= 19;
+        for (int i = 0; valid && i < 19; ++i)
+            valid = (i == 4 || i == 7) ? suffix[i] == '-'
+                  : i == 10 ? suffix[i] == '_'
+                  : (i == 13 || i == 16) ? suffix[i] == '-'
+                  : suffix[i] >= '0' && suffix[i] <= '9';
+        if (! valid) return {};
+        auto tail = suffix.substring (19).trim();
+        juce::int64 sequence = 0;
+        if (tail.isNotEmpty())
+        {
+            if (tail.startsWithChar ('_')) tail = tail.substring (1);
+            else if (tail.startsWithChar ('(') && tail.endsWithChar (')'))
+                tail = tail.substring (1, tail.length() - 1); // legacy JUCE collision name
+            else return {};
+            if (tail.isEmpty()) return {};
+            for (const auto digit : tail)
+            {
+                if (digit < '0' || digit > '9'
+                    || sequence > (std::numeric_limits<juce::int64>::max() - (digit - '0')) / 10)
+                    return {};
+                sequence = sequence * 10 + digit - '0';
+            }
+        }
+        return SnapshotName { suffix.substring (0, 19), sequence };
+    }
+
+    // A snapshot's name starts with the session's name when it was taken, which
+    // a Save As or a rename in Finder has since changed.
+    inline std::optional<SnapshotName> parseSnapshotName (const juce::String& folderName)
+    {
+        for (int split = folderName.lastIndexOfChar ('_'); split > 0;
+             split = folderName.substring (0, split).lastIndexOfChar ('_'))
+            if (auto name = parseSnapshotSuffix (folderName.substring (split + 1)))
+                return name;
+        return {};
+    }
+
     // Optional clock input makes retention tests deterministic; ordinary callers
     // retain the existing current-time behaviour.
     inline juce::File writeSnapshot (const juce::File& sessionDir, int keepNewest = 10,
@@ -81,32 +136,8 @@ namespace zynforge::sessionbackup
         for (const auto& folder : backupsDir.findChildFiles (juce::File::findDirectories, false))
         {
             if (folder.isSymbolicLink() || ! folder.getFileName().startsWith (prefix)) continue;
-            const auto suffix = folder.getFileName().substring (prefix.length());
-            bool valid = suffix.length() >= 19;
-            for (int i = 0; valid && i < 19; ++i)
-                valid = (i == 4 || i == 7) ? suffix[i] == '-'
-                      : i == 10 ? suffix[i] == '_'
-                      : (i == 13 || i == 16) ? suffix[i] == '-'
-                      : suffix[i] >= '0' && suffix[i] <= '9';
-            if (! valid) continue;
-            auto tail = suffix.substring (19).trim();
-            juce::int64 sequence = 0;
-            if (tail.isNotEmpty())
-            {
-                if (tail.startsWithChar ('_')) tail = tail.substring (1);
-                else if (tail.startsWithChar ('(') && tail.endsWithChar (')'))
-                    tail = tail.substring (1, tail.length() - 1); // legacy JUCE collision name
-                else continue;
-                if (tail.isEmpty()) continue;
-                for (const auto digit : tail)
-                {
-                    if (digit < '0' || digit > '9'
-                        || sequence > (std::numeric_limits<juce::int64>::max() - (digit - '0')) / 10)
-                    { valid = false; break; }
-                    sequence = sequence * 10 + digit - '0';
-                }
-            }
-            if (valid) entries.push_back ({ folder, suffix.substring (0, 19), sequence });
+            if (const auto name = parseSnapshotSuffix (folder.getFileName().substring (prefix.length())))
+                entries.push_back ({ folder, name->stamp, name->sequence });
         }
         std::sort (entries.begin(), entries.end(), [] (const Entry& a, const Entry& b)
         {
