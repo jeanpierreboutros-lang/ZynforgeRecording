@@ -9,6 +9,7 @@
 #include "PatchPage.h"
 #include "EditToolsBar.h"
 #include "../Audio/PreflightProbes.h"
+#include "PreflightDialog.h"
 #include "BackupMirrorDialog.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
@@ -1514,9 +1515,6 @@ void MainComponent::showPreflightChecklist()
         showStatus ("Pre-flight reads the drives -- run it before the take or after STOP");
         return;
     }
-    // Build a one-screen status report -- green checks for what's OK,
-    // amber warnings for risks, red items for blockers. Engineer
-    // reads this before downbeat to verify the rig.
     auto* device = engine.getDeviceManager().getCurrentAudioDevice();
     const int numInputs  = device != nullptr
         ? device->getActiveInputChannels().countNumberOfSetBits()  : 0;
@@ -1542,72 +1540,59 @@ void MainComponent::showPreflightChecklist()
     const auto wantBytes = recordHeadroomBytes (sr, juce::jmax (1, armed), fmt);
     const double minHeadroom = wantBytes > 0 ? (freeGB * 1.0e9 / (double) wantBytes) * 30.0 : 0.0;
 
-    auto chk = [] (bool ok, bool warn = false) -> juce::String
+    using Row = zynforge::PreflightRow;
+    auto chk = [] (bool ok, bool warn = false)
     {
-        return ok ? juce::String ("[OK]  ")    // ✓
-              : warn ? juce::String ("[!]  ") // ⚠
-                      : juce::String ("[X]  ");// ✗
+        return ok ? Row::Status::ok : warn ? Row::Status::warning : Row::Status::failed;
     };
 
-    juce::String body;
-    body << chk (device != nullptr)
-         << "Audio device: " << (device != nullptr ? device->getName() : juce::String ("(none)"))
-         << "\n"
-         << chk (sr > 0.0)
-         << "Sample rate:  " << juce::String ((int) sr) << " Hz, buffer " << blockSize << " samples\n"
-         << chk (numInputs > 0)
-         << "Inputs:       " << numInputs << " active\n"
-         << chk (numOutputs > 0)
-         << "Outputs:      " << numOutputs << " active\n"
-         << "\n"
-         << chk (total > 0) << "Channel strips: " << total << "\n"
-         << chk (armed > 0) << "Armed for record: " << armed << " / " << total << "\n"
-         << chk (hasSes) << "Active session: "
-                          << (hasSes ? sess.getFileName() : juce::String ("(none)")) << "\n"
-         << (cues.empty() ? "[i]  Setlist cues: none (optional)" : chk (true) + "Setlist cues: " + juce::String ((int) cues.size()))
-         << "\n"
-         << "\n"
-         << chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0)
-         << "Disk free:    " << juce::String (freeGB, 1) << " GB ("
-         << juce::String (juce::roundToInt (minHeadroom)) << " min headroom at " << fmtStr << ")\n"
-         << chk (! engine.isRecording())
-         << "Status:       " << (engine.isRecording() ? juce::String ("RECORDING ROLLING")
-                                                       : engine.getPlayer().isPlaying()
-                                                           ? juce::String ("Playing back")
-                                                           : juce::String ("Idle"))
-         << "\n";
-
-    body << backupChecklistRow();
-    body << "\n\n";
+    std::vector<Row> rows;
+    rows.push_back ({ chk (device != nullptr), "Audio device",
+                      device != nullptr ? device->getName() : juce::String ("(none)") });
+    rows.push_back ({ chk (sr > 0.0), "Sample rate",
+                      juce::String ((int) sr) + " Hz, buffer " + juce::String (blockSize) + " samples" });
+    rows.push_back ({ chk (numInputs > 0),  "Inputs",  juce::String (numInputs) + " active" });
+    rows.push_back ({ chk (numOutputs > 0), "Outputs", juce::String (numOutputs) + " active" });
+    rows.push_back ({ chk (total > 0), "Channel strips", juce::String (total) });
+    rows.push_back ({ chk (armed > 0), "Armed for record", juce::String (armed) + " / " + juce::String (total) });
+    rows.push_back ({ chk (hasSes), "Active session", hasSes ? sess.getFileName() : juce::String ("(none)") });
+    rows.push_back ({ cues.empty() ? Row::Status::info : Row::Status::ok, "Setlist cues",
+                      cues.empty() ? juce::String ("none (optional)") : juce::String ((int) cues.size()) });
+    rows.push_back ({ chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0), "Disk free",
+                      juce::String (freeGB, 1) + " GB (" + juce::String (juce::roundToInt (minHeadroom))
+                          + " min headroom at " + fmtStr + ")" });
+    rows.push_back ({ chk (! engine.isRecording()), "Status",
+                      engine.isRecording() ? juce::String ("RECORDING ROLLING")
+                                           : engine.getPlayer().isPlaying() ? juce::String ("Playing back")
+                                                                            : juce::String ("Idle") });
+    rows.push_back (Row::fromLine (backupChecklistRow()));
 
     if (device != nullptr)
     {
         const auto dn = device->getName();
         if (dn.containsIgnoreCase ("Dante") || dn.containsIgnoreCase ("DVS"))
-            body << "[OK]  Dante network active (" << dn << ")\n";
+            rows.push_back ({ Row::Status::ok, "Dante network", "active (" + dn + ")" });
     }
 
     // ── Measured probes (not just configuration snapshots) ─────────────
 
     // CPU headroom: the real CoreAudio callback load right now.
     const float cpuPct = engine.getAudioLoadPct();
-    body << "\n"
-         << chk (cpuPct < 50.0f, cpuPct < 80.0f)
-         << "CPU (audio callback): " << juce::String (cpuPct, 1) << " %\n";
+    rows.push_back ({ chk (cpuPct < 50.0f, cpuPct < 80.0f), "CPU (audio callback)", juce::String (cpuPct, 1) + " %" });
 
     // Session SR vs device SR -- a mismatched virtual soundcheck plays
     // at the wrong pitch/speed.
     if (engine.getPlayer().isLoaded() && sr > 0.0)
     {
         const double fileSr = engine.getPlayer().getSampleRate();
-        body << chk (std::abs (fileSr - sr) < 1.0)
-             << "Session SR matches device: " << juce::String ((int) fileSr) << " Hz\n";
+        rows.push_back ({ chk (std::abs (fileSr - sr) < 1.0), "Session SR matches device",
+                          juce::String ((int) fileSr) + " Hz" });
     }
 
     // Asked on the probe's own thread: a stalled driver costs this checklist
     // the wait below, and then reads as "not available".
     constexpr int kClockReadWaitMs = 250;
-    body << zynforge::clocksource::preflightRow (engine.readClockSource (kClockReadWaitMs)) << "\n";
+    rows.push_back (Row::fromLine (zynforge::clocksource::preflightRow (engine.readClockSource (kClockReadWaitMs))));
 
     // Signal presence on armed channels (peaks are live at line check).
     if (armed > 0)
@@ -1620,8 +1605,8 @@ void MainComponent::showPreflightChecklist()
                 && t.peak.load (std::memory_order_relaxed) > 0.001f)   // > -60 dBFS
                 ++withSignal;
         }
-        body << chk (withSignal == armed, withSignal > 0)
-             << "Signal on armed inputs: " << withSignal << " / " << armed << "\n";
+        rows.push_back ({ chk (withSignal == armed, withSignal > 0), "Signal on armed inputs",
+                          juce::String (withSignal) + " / " + juce::String (armed) });
     }
 
     // Measured write speed of the session volume vs what the armed
@@ -1629,6 +1614,7 @@ void MainComponent::showPreflightChecklist()
     // for filesystem jitter mid-show).
     const double needMBps = zynforge::preflight::requiredWriteMBps (sr, juce::jmax (1, armed),
                                                                     captureBytesPerSample (fmt));
+    const auto needText = juce::String (needMBps, 1) + " MB/s for " + juce::String (juce::jmax (1, armed)) + " ch";
     if (engine.isRecording())
     {
         // NEVER probe mid-take. measureWriteSpeedMBps writes 16 MB
@@ -1636,42 +1622,33 @@ void MainComponent::showPreflightChecklist()
         // streaming to -- it steals write bandwidth from the capture (a real
         // dropout risk) and freezes the UI for the duration. Pre-flight is a
         // pre-show tool; while rolling we report the requirement only.
-        body << "[!]  Disk write speed: not measured while recording (the probe "
-                "would write 16 MB to the take's volume)  --  need "
-             << juce::String (needMBps, 1) << " MB/s for "
-             << juce::jmax (1, armed) << " ch\n";
+        rows.push_back ({ Row::Status::warning, "Disk write speed",
+                          "not measured while recording (the probe would write 16 MB to the take's volume), need " + needText });
     }
     else if (hasSes || root.isDirectory())
     {
         const auto speedDir = hasSes ? sess : root;
         const double gotMBps = zynforge::preflight::measureWriteSpeedMBps (speedDir);
-        body << chk (gotMBps > needMBps * 1.5, gotMBps > needMBps)
-             << "Disk write speed (measured): " << juce::String (juce::roundToInt (gotMBps))
-             << " MB/s  (need " << juce::String (needMBps, 1) << " MB/s for "
-             << juce::jmax (1, armed) << " ch)\n";
+        rows.push_back ({ chk (gotMBps > needMBps * 1.5, gotMBps > needMBps), "Disk write speed (measured)",
+                          juce::String (juce::roundToInt (gotMBps)) + " MB/s (need " + needText + ")" });
     }
 
     // Every configured mirror drive: mounted AND actually writable.
     for (const auto& m : engine.getMirrors())
     {
+        const auto item = "Mirror " + m.root.getFullPathName();
         if (engine.isRecording())
-            body << "[!]  Mirror " << m.root.getFullPathName()
-                 << ": write probe skipped while recording\n";
+        {
+            rows.push_back ({ Row::Status::warning, item, "write probe skipped while recording" });
+        }
         else
         {
             const bool w = zynforge::preflight::volumeWritable (m.root);
-            body << chk (w)
-                 << "Mirror " << m.root.getFullPathName()
-                 << (w ? juce::String (": writable") : juce::String (": NOT writable / missing")) << "\n";
+            rows.push_back ({ chk (w), item, w ? juce::String ("writable") : juce::String ("NOT writable / missing") });
         }
     }
 
-    auto* aw = new juce::AlertWindow ("Pre-flight checklist",
-                                      body, juce::MessageBoxIconType::NoIcon);
-    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
-    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->enterModalState (true, juce::ModalCallbackFunction::create (
-        [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));
+    zynforge::PreflightDialog::launch (std::move (rows));
 }
 
 void MainComponent::onDeviceClicked()
