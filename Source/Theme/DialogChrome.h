@@ -133,13 +133,21 @@ namespace zynforge::dialog
         b.setColour (juce::TextButton::textColourOnId,  brand::onSignal (brand::selectFill));
     }
 
-    // Cancel / secondary action button -- bgElevated background,
-    // textSecondary foreground. Matches AudioDeviceDialog Cancel.
+    // Cancel / secondary action button -- lifted off the dialog body so it
+    // reads as available, never as a dark dead slot.
     inline void styleSecondary (juce::TextButton& b) noexcept
     {
-        b.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
-        b.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
-        b.setColour (juce::TextButton::textColourOnId,  brand::textSecondary);
+        b.setColour (juce::TextButton::buttonColourId,  brand::controlOff);
+        b.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+        b.setColour (juce::TextButton::textColourOnId,  brand::textPrimary);
+    }
+
+    // A yes/no choice in a dialog: a tick box and its label, not a pill.
+    // The LookAndFeel keys on this property (see drawToggleButton).
+    inline const juce::Identifier checkRowKey { "zfCheckRow" };
+    inline void styleCheckRow (juce::ToggleButton& b) noexcept
+    {
+        b.getProperties().set (checkRowKey, true);
     }
 
     // Standard combo / text-editor / numeric-field treatment -- same

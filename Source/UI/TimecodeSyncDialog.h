@@ -83,6 +83,7 @@ namespace zynforge
                 addAndMakeVisible (ltcSource);
 
                 keepRolling.setButtonText ("Keep rolling if sync is lost");
+                dialog::styleCheckRow (keepRolling);
                 keepRolling.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
                 keepRolling.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                 keepRolling.setToggleState (engine.isKeepRollingOnSyncLoss(), juce::dontSendNotification);

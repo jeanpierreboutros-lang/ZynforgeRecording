@@ -10,6 +10,44 @@ namespace zynforge
     {
         constexpr int kNarrowComboW = 64;
 
+        // A quiet row: tick box, then the label. The box is the only colour, so
+        // a long list of ticked rows stays calm.
+        void drawCheckRow (juce::Graphics& g, juce::ToggleButton& b, bool over)
+        {
+            auto r = b.getLocalBounds().toFloat();
+            if (over && b.isEnabled())
+            {
+                g.setColour (brand::gloss (brand::alpha::faint));
+                g.fillRoundedRectangle (r, brand::radius::sm);
+            }
+
+            const auto box = r.removeFromLeft (28.0f).withSizeKeepingCentre (16.0f, 16.0f);
+            const bool enabled = b.isEnabled();
+            if (b.getToggleState())
+            {
+                g.setColour (enabled ? brand::selectFill : brand::controlOff);
+                g.fillRoundedRectangle (box, brand::radius::sm);
+                juce::Path tick;
+                tick.startNewSubPath (box.getX() + 3.5f, box.getCentreY() + 0.5f);
+                tick.lineTo (box.getX() + 6.8f, box.getBottom() - 4.0f);
+                tick.lineTo (box.getRight() - 3.5f, box.getY() + 4.5f);
+                g.setColour (enabled ? brand::onSignal (brand::selectFill) : brand::textMuted);
+                g.strokePath (tick, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+            }
+            else
+            {
+                g.setColour (brand::controlOff);
+                g.fillRoundedRectangle (box, brand::radius::sm);
+                g.setColour (enabled ? brand::borderBright : brand::borderSubtle);
+                g.drawRoundedRectangle (box.reduced (0.5f), brand::radius::sm, 1.0f);
+            }
+
+            g.setColour (enabled ? brand::textPrimary : brand::textMuted);
+            g.setFont (brand::type::uiBody());
+            g.drawText (b.getButtonText(), r, juce::Justification::centredLeft, true);
+        }
+
         // The ZynForge forge-mark badge -- the app-icon glyph (forged-steel
         // squircle + orange hex + rising double-chevron). Drawn programmatically
         // so it scales crisply at any size and needs no embedded PNG. Used as the
@@ -53,9 +91,10 @@ namespace zynforge
         setColour (juce::ResizableWindow::backgroundColourId, brand::bgDeep);
         setColour (juce::DocumentWindow::backgroundColourId,  brand::bgDeep);
         setColour (juce::Label::textColourId,                 brand::textPrimary);
-        setColour (juce::TextButton::buttonColourId,          brand::bgElevated);
+        setColour (juce::TextButton::buttonColourId,          brand::controlOff);
         setColour (juce::TextButton::textColourOnId,          brand::textPrimary);
         setColour (juce::TextButton::textColourOffId,         brand::textPrimary);
+        setColour (juce::ToggleButton::textColourId,          brand::textSecondary);
         setColour (juce::ComboBox::backgroundColourId,        brand::bgElevated);
         setColour (juce::ComboBox::textColourId,              brand::textPrimary);
         setColour (juce::ComboBox::outlineColourId,           brand::edge);
@@ -155,17 +194,20 @@ namespace zynforge
     void ZynForgeLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,
                                                 bool over, bool down)
     {
+        if (b.getProperties().contains (dialog::checkRowKey))
+        {
+            drawCheckRow (g, b, over);
+            return;
+        }
+
         auto r = b.getLocalBounds().toFloat().reduced (1.0f);
         const bool on = b.getToggleState();
 
-        // When toggled on the button glows in the colour pinned via
-        // ToggleButton::buttonOnColourId (R → red, I → green, M → red,
-        // S → yellow). Off state stays the dark control-bg pill.
         if (on)
         {
             // ToggleButton has no buttonOnColourId -- repurpose
             // tickColourId (already set per button: R red, I green,
-            // M red, S yellow) as the active fill source.
+            // M orange, S yellow) as the active fill source.
             const auto base = b.findColour (juce::ToggleButton::tickColourId);
             // FLAT: a solid fill, no gradient or sheen.
             g.setColour (down ? base.brighter (0.12f) : base);
@@ -176,24 +218,22 @@ namespace zynforge
         }
         else
         {
+            // OFF is clean and available: a lifted fill, not a dark slot that
+            // reads as disabled.
             const float lift = down ? 0.18f : (over ? 0.08f : 0.0f);
-            const auto  base = brand::controlBg.brighter (lift);
-            g.setGradientFill (brand::verticalGradient (base, r, 0.20f, 0.30f));
+            g.setColour (brand::controlOff.brighter (lift));
             g.fillRoundedRectangle (r, brand::radius::md);
-            g.setColour (brand::edge);
+            g.setColour (brand::borderSubtle);
             g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
         }
 
-        // Letter -- brand::onSignal picks black or white from the ACTUAL fill,
-        // muted grey when off. This was hardcoded white, which is correct only
-        // for record red: solo (#FFD64D), monitor (#4AD878), mute (#FF7733) and
-        // the dialog toggles (#5DD87A) are all bright enough that onSignal
-        // returns BLACK -- white on solo yellow is about 1.2:1, i.e. an
-        // unreadable S on the one chip you scan mid-show. Never hardcode a
-        // foreground over a caller-supplied accent.
+        // Letter -- brand::onSignal picks black or white from the ACTUAL fill.
+        // White on solo yellow is about 1.2:1, an unreadable S on the one chip
+        // you scan mid-show. Never hardcode a foreground over a caller's accent.
         const auto onFill = b.findColour (juce::ToggleButton::tickColourId);
         const auto txt    = on ? brand::onSignal (onFill)
-                               : b.isEnabled() ? brand::textSecondary : brand::textMuted;
+                               : b.isEnabled() ? b.findColour (juce::ToggleButton::textColourId)
+                                               : brand::textMuted;
         g.setColour (txt);
         // Heavier, slightly larger glyph than the default uiLabel so
         // the single-letter chips read at a glance.

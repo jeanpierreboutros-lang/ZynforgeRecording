@@ -86,6 +86,7 @@ namespace zynforge
         addAndMakeVisible (contentBox);
 
         stereoOneFile.setToggleState (true, juce::dontSendNotification);
+        dialog::styleCheckRow (stereoOneFile);
         stereoOneFile.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
         stereoOneFile.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
         stereoOneFile.setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);

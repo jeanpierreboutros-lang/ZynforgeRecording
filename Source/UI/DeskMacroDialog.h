@@ -62,6 +62,7 @@ namespace zynforge
                 addAndMakeVisible (ipEd);
 
                 enableToggle.setButtonText ("Listen for desk macros");
+                dialog::styleCheckRow (enableToggle);
                 enableToggle.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
                 enableToggle.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                 enableToggle.onClick = [this] { applyEnable(); };

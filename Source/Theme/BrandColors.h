@@ -66,6 +66,10 @@ namespace zynforge::brand
     // the family token source gains it.
     inline const auto selectFill = juce::Colour (0xffb35a3e);
 
+    // A choice that isn't selected: clean and available, lifted off the surface
+    // it sits on, so OFF never reads as disabled.
+    inline const auto controlOff = juce::Colour (forge::controlBgDown);
+
     // Fader level fill: neutral steel, so channel colour stays in the header
     // and spine and the fader reads the same on every strip.
     inline const auto faderFill = juce::Colour (forge::faderThumbEdge);

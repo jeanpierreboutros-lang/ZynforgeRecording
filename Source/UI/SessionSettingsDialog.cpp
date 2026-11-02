@@ -93,6 +93,7 @@ namespace
             addAndMakeVisible (changePathB);
 
             stereoMixB.setButtonText ("Record optional stereo stream mix");
+            dialog::styleCheckRow (stereoMixB);
             stereoMixB.setTooltip ("Also records the stream-send bus to Export Files; multitrack capture is unchanged.");
             stereoMixB.setToggleState (eng.getRecordStereoMix(), juce::dontSendNotification);
             addAndMakeVisible (stereoMixB);

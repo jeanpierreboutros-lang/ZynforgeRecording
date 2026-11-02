@@ -214,6 +214,7 @@ namespace zynforge
                     addAndMakeVisible (reqB); addAndMakeVisible (createB);
 
                     debugToggle.setButtonText ("Debug: log OSC traffic");
+                    dialog::styleCheckRow (debugToggle);
                     debugToggle.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
                     debugToggle.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                     debugToggle.setToggleState (engine.getRemotes().isOscDebug(), juce::dontSendNotification);
