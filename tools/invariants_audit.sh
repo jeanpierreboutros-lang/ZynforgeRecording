@@ -466,7 +466,7 @@ report "UI settings writes reload first" \
 # copy it into backups or journal it; they never write the in-memory mixer.
 HITS=$(grep -rnE '"session_mix\.json"' $SCOPE 2>/dev/null \
     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
-    | grep -vE '^Source/Audio/(SessionMixFile|SessionBackup|ShowHandoff|TrackFileTransaction)\.h:' \
+    | grep -vE '^Source/Audio/(SessionMixFile|SessionBackup|SessionRemovedData|ShowHandoff|TrackFileTransaction)\.h:' \
     | grep -vE '^Source/UI/(MainComponentCues|MainComponentHelp)\.cpp:')
 grep -q 'sessionmix::refusal' Source/UI/SessionMetadataWriter.h \
     || HITS+=$'\nSource/UI/SessionMetadataWriter.h: the metadata writer no longer applies the mixer guard'

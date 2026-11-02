@@ -5,11 +5,14 @@
 #include "../UI/SessionMetadataWriter.h"
 #include "../Audio/SessionBackup.h"
 #include "../Audio/SessionMixFile.h"
+#include "../Audio/SessionRemovedData.h"
+#include "../Audio/SessionRepair.h"
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/SettingsFile.h"
 #include <csignal>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -1028,6 +1031,320 @@ public:
         }
     }
 
+    // A session as an earlier build saved it when nobody touched the features
+    // that have since gone: every key there, at the value it wrote.
+    static juce::var oldMix (int strips)
+    {
+        auto mix = juce::JSON::parse (mixJson (strips));
+        auto* root = mix.getDynamicObject();
+        root->setProperty ("tempoBpm", 120.0);
+        root->setProperty ("timeSigNum", 4);
+        root->setProperty ("timeSigDenom", 4);
+        root->setProperty ("tempoMap", juce::var (juce::Array<juce::var>()));
+        juce::Array<juce::var> vcas;
+        for (int i = 0; i < 8; ++i)
+            vcas.add (juce::JSON::parse (R"({"gainDb":0.0,"muted":false,"soloed":false})"));
+        root->setProperty ("vcas", juce::var (vcas));
+        if (auto* saved = mix["strips"].getArray())
+            for (const auto& strip : *saved)
+            {
+                auto* fields = strip.getDynamicObject();
+                fields->setProperty ("isBus", false);
+                fields->setProperty ("vcaGroup", -1);
+                fields->setProperty ("referenceMedia", false);
+                fields->setProperty ("inRoute", 0);
+                juce::Array<juce::var> sends;
+                for (int s = 0; s < 4; ++s)
+                    sends.add (juce::JSON::parse (R"({"bus":-1,"dB":-60.0,"post":true})"));
+                fields->setProperty ("sends", juce::var (sends));
+            }
+        return mix;
+    }
+
+    static juce::var oldProject()
+    {
+        return juce::JSON::parse (R"({"zynforgeSession":true,"formatVersion":3,"playlists":[],
+            "automation":[{"track":0,"volume":[],"pan":[],"mute":[],"safe":false,"vTrim":0.0,"pTrim":0.0}],
+            "setlist":[{"name":"Opener","samplePos":0,"tempoBpm":120.0,"transition":0,"fadeBeats":0.0,
+                        "strips":[],"automation":[]}]})");
+    }
+
+    static void writeOldSession (const Folder& f, const juce::var& mix, const juce::var& project)
+    {
+        f.mix().replaceWithText (juce::JSON::toString (mix, true));
+        f.project().replaceWithText (juce::JSON::toString (project));
+        f.settings().replaceWithText (R"({"captureFormat":6,"preRollSeconds":0,"sampleRate":48000.0})");
+    }
+
+    static juce::MemoryBlock bytesOf (const juce::File& file)
+    {
+        juce::MemoryBlock data;
+        file.loadFileAsData (data);
+        return data;
+    }
+
+    static void pumpFor (int ms)
+    {
+        const auto deadline = juce::Time::getMillisecondCounterHiRes() + ms;
+        pumpUntil ([deadline] { return juce::Time::getMillisecondCounterHiRes() >= deadline; }, ms + 1000);
+    }
+
+    struct RemovedData
+    {
+        juce::String what;
+        std::function<void (juce::var& mix, juce::var& project)> set;
+    };
+
+    static std::vector<RemovedData> removedDataFixtures()
+    {
+        const auto strip0 = [] (juce::var& mix) { return mix["strips"][0].getDynamicObject(); };
+        const auto lanes0 = [] (juce::var& project) { return project["automation"][0].getDynamicObject(); };
+        const auto cue0   = [] (juce::var& project) { return project["setlist"][0].getDynamicObject(); };
+        const auto point  = [] { return juce::JSON::parse (R"([{"s":1000,"v":-6.0,"c":1}])"); };
+        return {
+            { "a Volume lane", [=] (auto&, auto& p) { lanes0 (p)->setProperty ("volume", point()); } },
+            { "a Pan lane",    [=] (auto&, auto& p) { lanes0 (p)->setProperty ("pan", point()); } },
+            { "a Mute lane",   [=] (auto&, auto& p) { lanes0 (p)->setProperty ("mute", point()); } },
+            { "an automation trim", [=] (auto&, auto& p) { lanes0 (p)->setProperty ("vTrim", -3.0); } },
+            { "Automation Safe",    [=] (auto&, auto& p) { lanes0 (p)->setProperty ("safe", true); } },
+            { "a cue's automation", [=] (auto&, auto& p)
+              { cue0 (p)->setProperty ("automation", juce::JSON::parse (R"([{"track":0,"volume":[{"s":1,"v":0.0,"c":1}]}])")); } },
+            { "a cue tempo curve", [=] (auto&, auto& p)
+              { cue0 (p)->setProperty ("tempoCurve", juce::JSON::parse (R"([{"off":100.0,"bpm":90.0}])")); } },
+            { "a Cue Fade",  [=] (auto&, auto& p) { cue0 (p)->setProperty ("transition", 1); cue0 (p)->setProperty ("fadeBeats", 8.0); } },
+            { "a cue tempo", [=] (auto&, auto& p) { cue0 (p)->setProperty ("tempoBpm", 92.0); } },
+            { "a VCA level", [] (auto& m, auto&) { m["vcas"][2].getDynamicObject()->setProperty ("gainDb", -6.0); } },
+            { "a VCA mute",  [] (auto& m, auto&) { m["vcas"][0].getDynamicObject()->setProperty ("muted", true); } },
+            { "a VCA solo",  [] (auto& m, auto&) { m["vcas"][7].getDynamicObject()->setProperty ("soloed", true); } },
+            { "a VCA assignment", [=] (auto& m, auto&) { strip0 (m)->setProperty ("vcaGroup", 2); } },
+            { "a bus strip",  [=] (auto& m, auto&) { strip0 (m)->setProperty ("isBus", true); } },
+            { "an aux send",  [=] (auto& m, auto&)
+              { strip0 (m)->getProperty ("sends")[0].getDynamicObject()->setProperty ("bus", 1); } },
+            { "a session tempo",   [] (auto& m, auto&) { m.getDynamicObject()->setProperty ("tempoBpm", 132.5); } },
+            { "a time signature",  [] (auto& m, auto&) { m.getDynamicObject()->setProperty ("timeSigNum", 3); } },
+            { "a tempo map", [] (auto& m, auto&)
+              { m.getDynamicObject()->setProperty ("tempoMap", juce::JSON::parse (R"([{"pos":4800,"bpm":140.0}])")); } },
+            { "a generated click row", [=] (auto& m, auto&) { strip0 (m)->setProperty ("referenceMedia", true); } },
+            { "a click row from before the flag", [=] (auto& m, auto&)
+              {
+                  strip0 (m)->removeProperty ("referenceMedia");
+                  strip0 (m)->setProperty ("name", "Click");
+                  strip0 (m)->setProperty ("inRoute", -1);
+              } },
+        };
+    }
+
+    void testRemovedFeatureData()
+    {
+        for (const auto& fixture : removedDataFixtures())
+        {
+            beginTest ("A session holding " + fixture.what + " opens, plays and saves, and keeps its originals");
+            Folder f;
+            auto mix = oldMix (3);
+            auto project = oldProject();
+            fixture.set (mix, project);
+            writeOldSession (f, mix, project);
+            expect (writeAudio (f.track (1)));
+            const auto audio = bytesOf (f.track (1));
+            const auto mixBefore = bytesOf (f.mix()), projectBefore = bytesOf (f.project()),
+                       settingsBefore = bytesOf (f.settings());
+
+            expect (removeddata::holdsData (f.dir));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (f.dir), 1);
+            expectEquals (host.engine.getRecorder().getNumTracks(), 3);
+
+            const auto kept = removeddata::folderFor (f.dir);
+            expect (kept.isDirectory(), "the originals were not copied");
+            expect (bytesOf (kept.getChildFile ("session_mix.json")) == mixBefore);
+            expect (bytesOf (kept.getChildFile (f.project().getFileName())) == projectBefore);
+            expect (bytesOf (kept.getChildFile ("session_settings.json")) == settingsBefore);
+            expect (pumpUntil ([&] { return host.statusLabel.getText().contains (removeddata::kFolderName); }),
+                    host.statusLabel.getText());
+
+            expectEquals ((int) host.cues.size(), 1);
+            host.jumpToCue (0);
+            host.engine.getMasterState().muted.store (false);
+            host.engine.startPlayback();
+            juce::AudioBuffer<float> out (2, 256);
+            for (int block = 0; block < 8; ++block)
+                host.engine.audioDeviceIOCallbackWithContext (nullptr, 0, out.getArrayOfWritePointers(), 2, 256, {});
+            host.engine.stopPlayback();
+
+            expect (host.saveSessionStateTo (f.dir), host.lastMetadataSaveError);
+            expect (bytesOf (kept.getChildFile ("session_mix.json")) == mixBefore, "a save reached the kept copy");
+            expect (bytesOf (kept.getChildFile (f.project().getFileName())) == projectBefore);
+            expect (bytesOf (f.track (1)) == audio, "the audio was touched");
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        const auto expectLeftAlone = [this] (const Folder& f)
+        {
+            expect (! removeddata::holdsData (f.dir), "default values read as data");
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) >= 0);
+            host.statusLabel.setText ("untouched", juce::dontSendNotification);
+            pumpFor (150);
+            expectEquals (host.statusLabel.getText(), juce::String ("untouched"), "a status line for nothing");
+            expect (host.saveSessionStateTo (f.dir), host.lastMetadataSaveError);
+            expect (! removeddata::folderFor (f.dir).exists(), "a backup folder for nothing");
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        };
+
+        beginTest ("A session saved by this build gets no backup folder and no status line");
+        {
+            Folder f; writeSavedShow (f);
+            expectLeftAlone (f);
+        }
+
+        beginTest ("A session an earlier build saved without these features gets none either");
+        {
+            Folder f; writeOldSession (f, oldMix (3), oldProject());
+            expectLeftAlone (f);
+        }
+
+        beginTest ("A session with no saved mixer at all gets none either");
+        {
+            Folder f; expect (writeAudio (f.track (1)));
+            expectLeftAlone (f);
+        }
+
+        beginTest ("A save never makes a session look old: the next open leaves it alone");
+        {
+            Folder f; auto mix = oldMix (3);
+            writeOldSession (f, mix, oldProject());
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) >= 0);
+            expect (host.saveSessionStateTo (f.dir), host.lastMetadataSaveError);
+            expect (! removeddata::holdsData (f.dir), "this build's own save reads as an old session");
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("The originals are copied once, and a later open says nothing");
+        {
+            Folder f; auto mix = oldMix (3); auto project = oldProject();
+            mix["vcas"][0].getDynamicObject()->setProperty ("gainDb", -6.0);
+            writeOldSession (f, mix, project);
+            const auto mixBefore = bytesOf (f.mix());
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) >= 0);
+            expect (pumpUntil ([&] { return host.statusLabel.getText().contains (removeddata::kFolderName); }));
+            expect (host.saveSessionStateTo (f.dir), host.lastMetadataSaveError);
+            expect (bytesOf (f.mix()) != mixBefore, "setup: the save must replace the mix");
+
+            // The data comes back, as if an earlier build had saved over it.
+            f.mix().replaceWithText (juce::JSON::toString (mix, true) + "\n");
+            host.statusLabel.setText ("untouched", juce::dontSendNotification);
+            expect (host.openSessionFolder (f.dir, true) >= 0);
+            pumpFor (150);
+            expect (! host.statusLabel.getText().contains (removeddata::kFolderName), "told twice");
+            expect (bytesOf (removeddata::folderFor (f.dir).getChildFile ("session_mix.json")) == mixBefore,
+                    "the first originals were replaced");
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A daemon take adopted at launch keeps its session's originals first");
+        {
+            Folder f; auto mix = oldMix (3);
+            mix.getDynamicObject()->setProperty ("tempoBpm", 90.0);
+            writeOldSession (f, mix, oldProject());
+            const auto mixBefore = bytesOf (f.mix());
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.adoptDaemonTakeSession (daemonStatus (f.dir, 3));
+            expect (bytesOf (removeddata::folderFor (f.dir).getChildFile ("session_mix.json")) == mixBefore);
+            expect (pumpUntil ([&] { return host.statusLabel.getText().contains (removeddata::kFolderName); }));
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("If the originals cannot be copied the session still opens, and no save replaces them");
+        {
+            Folder f; auto mix = oldMix (3); auto project = oldProject();
+            mix["strips"][1].getDynamicObject()->setProperty ("isBus", true);
+            project["setlist"][0].getDynamicObject()->setProperty ("fadeBeats", 4.0);
+            writeOldSession (f, mix, project);
+            const auto inTheWay = f.dir.getChildFile ("Session File Backups");
+            expect (inTheWay.replaceWithText ("a file where the folder goes"));
+            const auto mixBefore = bytesOf (f.mix()), projectBefore = bytesOf (f.project());
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) >= 0, "a failed copy must not stop the session opening");
+            expect (pumpUntil ([&] { return host.statusLabel.getText().startsWith ("!"); }), host.statusLabel.getText());
+            expect (! host.saveSessionStateTo (f.dir), "a save dropped data with no copy of it");
+            expect (host.lastMetadataSaveError.contains ("could not be copied"), host.lastMetadataSaveError);
+            expect (! host.engine.saveSessionMixTo (f.dir));
+            expect (! host.saveSetlistToActiveSession (false));
+            expect (bytesOf (f.mix()) == mixBefore && bytesOf (f.project()) == projectBefore);
+
+            expect (inTheWay.deleteFile());
+            expect (host.saveSessionStateTo (f.dir), host.lastMetadataSaveError);
+            expect (bytesOf (removeddata::folderFor (f.dir).getChildFile ("session_mix.json")) == mixBefore,
+                    "the first good save must copy them before writing");
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A copy that fails part way leaves no folder that looks complete");
+        {
+            Folder f (permissionsRoot()); auto mix = oldMix (2);
+            mix["vcas"][0].getDynamicObject()->setProperty ("muted", true);
+            writeOldSession (f, mix, oldProject());
+            const auto markers = f.dir.getChildFile ("markers.json");
+            expect (markers.replaceWithText ("{}"));
+            expectEquals (::chmod (markers.getFullPathName().toRawUTF8(), 0), 0);
+            expect (removeddata::keepOriginals (f.dir) == removeddata::Kept::failed);
+            ::chmod (markers.getFullPathName().toRawUTF8(), 0644);
+            expect (! removeddata::folderFor (f.dir).exists(), "a part of the set took the folder's name");
+            expect (f.dir.getChildFile ("Session File Backups").findChildFiles (juce::File::findDirectories, false).isEmpty(),
+                    "the staging folder was left behind");
+            expect (removeddata::keepOriginals (f.dir) == removeddata::Kept::justCopied);
+            expect (removeddata::keepOriginals (f.dir) == removeddata::Kept::nothingToDo);
+            expect (removeddata::folderFor (f.dir).getChildFile ("markers.json").existsAsFile());
+        }
+
+        beginTest ("Retention and repair leave the kept originals alone");
+        {
+            Folder f; auto mix = oldMix (2);
+            mix["vcas"][0].getDynamicObject()->setProperty ("muted", true);
+            writeOldSession (f, mix, oldProject());
+            expect (removeddata::keepOriginals (f.dir) == removeddata::Kept::justCopied);
+            for (int i = 0; i < 4; ++i)
+            {
+                f.mix().replaceWithText (mixJson (2 + i));
+                expect (sessionbackup::writeSnapshot (f.dir, 2).isDirectory());
+            }
+            expect (removeddata::folderFor (f.dir).getChildFile ("session_mix.json").existsAsFile(),
+                    "retention pruned the only copy of the data");
+            expect (sessionrepair::newestBackupOf (f.dir, "session_mix.json") != removeddata::folderFor (f.dir),
+                    "repair offered a months-old mix as the newest backup");
+        }
+
+        beginTest ("An old bus strip loads as an ordinary strip that records");
+        {
+            Folder f; auto mix = oldMix (3);
+            auto* bus = mix["strips"][2].getDynamicObject();
+            bus->setProperty ("isBus", true);
+            bus->setProperty ("inRoute", -1);
+            writeOldSession (f, mix, oldProject());
+            expect (writeAudio (f.track (1)));
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) > 0);
+            auto& engine = host.engine;
+            engine.setTrackInputRouting (2, 0);
+            engine.setTrackArmed (2, true);
+            expect (engine.startRecording (f.dir), engine.getRecorder().getStartError());
+            juce::AudioBuffer<float> in (1, 256), out (2, 256);
+            in.clear();
+            for (int block = 0; block < 16; ++block)
+                engine.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), 1,
+                                                         out.getArrayOfWritePointers(), 2, 256, {});
+            engine.stopRecording();
+            expect (! f.dir.getChildFile ("Audio Files").findChildFiles (juce::File::findFiles, false, "Track_03.*").isEmpty(),
+                    "the strip that was a bus did not record");
+            engine.clearSessionState(); engine.clearAllStripOverrides();
+        }
+    }
+
     // Earlier builds saved all of these. Nothing reads them now, and none of
     // them may get in the way of what still loads.
     void testKeysFromEarlierBuilds()
@@ -1066,6 +1383,11 @@ public:
                     props->setValue ("interleavedFlag", true);
                     props->setValue ("ioPreset", "Last Used");
                     props->setValue ("sessionName", "Old");
+                    props->setValue ("sessionTempoBpm", 92.0);
+                    props->setValue ("timeSigNumerator", 3);
+                    props->setValue ("timeSigDenominator", 8);
+                    props->setValue ("vca_0_name", "DRUMS");
+                    props->setValue ("vca_0_colour", 12345.0);
                     props->setValue ("cloudUploadCommand", "/usr/bin/false");
                     props->setValue ("cs_mackie_type", 2);
                     props->saveIfNeeded();
@@ -1076,7 +1398,9 @@ public:
             expect (host.openSessionFolder (f.dir) == 0);
             expectEquals (host.engine.getRecorder().getNumTracks(), 3);
             if (auto* props = host.engine.getAppProps())
-                for (const auto* key : { "interleavedFlag", "ioPreset", "sessionName", "cloudUploadCommand", "cs_mackie_type" })
+                for (const auto* key : { "interleavedFlag", "ioPreset", "sessionName", "cloudUploadCommand", "cs_mackie_type",
+                                         "sessionTempoBpm", "timeSigNumerator", "timeSigDenominator",
+                                         "vca_0_name", "vca_0_colour" })
                     props->removeValue (key);
             host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
         }
@@ -1116,6 +1440,7 @@ public:
         testShortWrites();
         testUnchangedBackups();
         testKeysFromEarlierBuilds();
+        testRemovedFeatureData();
     }
 };
 

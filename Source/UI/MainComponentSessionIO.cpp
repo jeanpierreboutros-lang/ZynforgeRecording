@@ -152,6 +152,8 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         return -1;
     }
 
+    keepRemovedFeatureData (dir);
+
     // Condemn the current strips before loading -- a smaller session shrinks
     // the recorder vector and frees TrackStates the live strips still point at.
     // Before anything loads: a damaged file read as empty, and the next save
@@ -197,6 +199,22 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
                     Toast::Kind::Warning);
     if (! damaged.empty()) reportDamagedFiles (dir, damaged);
     return n;
+}
+
+void MainComponent::keepRemovedFeatureData (const juce::File& dir)
+{
+    const auto kept = removeddata::keepOriginals (dir);
+    if (kept == removeddata::Kept::nothingToDo) return;
+    const auto message = kept == removeddata::Kept::justCopied
+        ? "This session used features that are gone. Its original files are in Session File Backups/"
+              + juce::String (removeddata::kFolderName)
+        : "! Could not copy this session's original files to Session File Backups: it cannot be saved until they are";
+    // Whoever opened the session ends with its own line, which would replace this.
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::MessageManager::callAsync ([self, message]
+    {
+        if (self != nullptr) self->showStatus (message);
+    });
 }
 
 void MainComponent::reportDamagedFiles (const juce::File& dir,
@@ -303,6 +321,8 @@ void MainComponent::adoptDaemonTakeSession (const zynforge::EngineStatus& status
     const juce::File dir (status.sessionPath);
     if (status.sessionPath.isEmpty() || engine.isRecording() || engine.mixerBelongsTo (dir))
         return;
+
+    keepRemovedFeatureData (dir);
 
     // A session opened before the daemon was found still holds unsaved work.
     if (const auto held = engine.getMixerSession(); held.isDirectory())

@@ -179,6 +179,9 @@ private:
     // Stands in for the dialog, which a headless test cannot answer.
     std::function<void (const std::vector<zynforge::sessionrepair::DamagedFile>&)> damagedFilesPromptForTests;
     void restoreSessionDocuments (const juce::File& dir);
+    // Copies, once, the documents of a session that holds data of a feature this
+    // build no longer has, before anything can overwrite them.
+    void keepRemovedFeatureData (const juce::File& dir);
     void adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs);
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
     void releaseHeldRecordPress();

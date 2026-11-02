@@ -45,6 +45,11 @@ namespace zynforge
             || fields->hasProperty ("setlist") || fields->hasProperty ("playlists");
         if (carriesSessionState && snapshot.mixerOwner != snapshot.directory)
             return { false, sessionmix::notThisSessionsMixer (snapshot.directory) };
+        // Opening kept them. This is for a copy that failed then, and for a
+        // session that reached a save some other way.
+        if (carriesSessionState
+            && removeddata::keepOriginals (snapshot.directory) == removeddata::Kept::failed)
+            return { false, removeddata::refusal (snapshot.directory) };
         if (snapshot.mixJson.isNotEmpty())
             if (const auto why = sessionmix::refusal (snapshot.directory, snapshot.mixerOwner, snapshot.mixJson);
                 why.isNotEmpty())
