@@ -59,9 +59,13 @@ bool copyFileCancellable (const juce::File& source, const juce::File& target,
         if (got == 0) break;
     }
     out->flush();
-    return ! in->getStatus().failed() && ! out->getStatus().failed()
-        && in->getPosition() == expectedSize && out->getPosition() == expectedSize
-        && source.getSize() == expectedSize;
+    const bool streamsClean = ! in->getStatus().failed() && ! out->getStatus().failed()
+        && in->getPosition() == expectedSize && out->getPosition() == expectedSize;
+    out.reset();
+    // The stream buffers a file's tail and flush() drops the result of writing
+    // it, while its position already counts those bytes. Only the file on disk
+    // can show a tail that never landed.
+    return streamsClean && target.getSize() == expectedSize && source.getSize() == expectedSize;
 }
 
 bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,

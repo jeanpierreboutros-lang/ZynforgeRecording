@@ -442,6 +442,37 @@ public:
         }
     }
 
+    void testCopyChecksTheFile()
+    {
+        beginTest ("A session copy whose tail never reached the disk fails");
+        {
+            Folder f; writeSavedShow (f); expect (writeAudio (f.track (1)));
+            // Smaller than the stream's buffer, so all of it goes out in the flush
+            // whose result the stream ignores.
+            expect (f.dir.getChildFile ("Notes.txt").replaceWithText (juce::String::repeatedString ("x", 20000)));
+            const auto dest = f.dir.getSiblingFile ("Copy");
+            Host host (f);
+
+            rlimit before {};
+            expect (getrlimit (RLIMIT_FSIZE, &before) == 0);
+            const auto previous = signal (SIGXFSZ, SIG_IGN);
+            rlimit small = before; small.rlim_cur = 12000;
+            expect (setrlimit (RLIMIT_FSIZE, &small) == 0);
+
+            expect (host.main.sessionJobs.reserve());
+            host.main.completeSaveAs (f.dir, dest);
+            const bool finished = pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); });
+
+            setrlimit (RLIMIT_FSIZE, &before);
+            signal (SIGXFSZ, previous);
+
+            expect (finished);
+            expect (host.status().contains ("failed"), "a short copy reported success: " + host.status());
+            expect (host.main.engine.getActiveSessionDir() == f.dir, "the app moved onto a short copy");
+            expect (! dest.getChildFile ("Notes.txt").exists(), "a short copy was left behind");
+        }
+    }
+
     void testUnloadedSession()
     {
         beginTest ("A session pinned but not loaded makes no handoff or project from empty memory");
@@ -484,6 +515,7 @@ public:
         testSoundcheckPatchStaysOut();
         testMissingDrive();
         testCopiesThatDoNotOpen();
+        testCopyChecksTheFile();
         testUnloadedSession();
     }
 };
