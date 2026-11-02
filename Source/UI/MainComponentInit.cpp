@@ -677,6 +677,8 @@ void MainComponent::rebuildStrips()
     strips.reserve ((std::size_t) n);
     const int numIns  = engine.getCurrentDeviceInputCount();
     const int numOuts = engine.getCurrentDeviceOutputCount();
+    stripsInputs  = numIns;
+    stripsOutputs = numOuts;
 
     // Iterate logical strips: a stereo L track owns its R partner and only
     // creates a single ChannelStrip representing the pair.

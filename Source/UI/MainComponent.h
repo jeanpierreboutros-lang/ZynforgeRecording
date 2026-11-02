@@ -515,6 +515,7 @@ private:
     void restoreOutputPatch();
     void updateNextCueCountdown();
     void syncStripsWithEngine();
+    int  stripsInputs { -1 }, stripsOutputs { -1 };   // the device the strips' combos were filled for
     void surfaceAsyncReportFailure();
     void updateClockAndDiskCadence (double deviceSR);
     void updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing);

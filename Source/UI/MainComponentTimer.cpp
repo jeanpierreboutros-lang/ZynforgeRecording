@@ -269,11 +269,23 @@ void MainComponent::syncStripsWithEngine()
 {
     // Keep each strip's input/output combos in sync with engine state --
     // the PATCH page can mutate routing behind the strip's back. Also
-    // refresh name + colour so changes made from the EDIT view show up.
+    // refresh name + colour so changes made from the EDIT view show up. A
+    // device change moves neither the strip count nor the generation, and what
+    // a combo reads depends on the channels this device has.
+    const int inputs  = engine.getCurrentDeviceInputCount();
+    const int outputs = engine.getCurrentDeviceOutputCount();
+    const bool deviceChanged = inputs != stripsInputs || outputs != stripsOutputs;
+    stripsInputs  = inputs;
+    stripsOutputs = outputs;
     for (size_t k = 0; k < strips.size(); ++k)
     {
         auto& s = strips[k];
         if (s == nullptr) continue;
+        if (deviceChanged)
+        {
+            s->setAvailableInputs  (inputs);
+            s->setAvailableOutputs (outputs);
+        }
         s->refreshRoutingSelection();
         s->refreshAppearance();
     }

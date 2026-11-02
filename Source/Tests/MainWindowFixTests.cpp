@@ -172,6 +172,7 @@ namespace zynforge
             nothingStandsInFrontOfStop();
             cuesDuringATake();
             stripDeleteAsks();
+            combosFollowTheDevice();
         }
 
     private:
@@ -790,6 +791,44 @@ namespace zynforge
                 w.recorder().bumpTrackGeneration();
                 answer();
                 expectEquals (w.recorder().getNumTracks(), 3, "the answer hit another strip");
+            }
+        }
+
+        static juce::String comboText (zynforge::ChannelStrip& strip, int whichCombo)
+        {
+            int seen = 0;
+            for (auto* child : strip.getChildren())
+                if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
+                    if (seen++ == whichCombo) return combo->getText();
+            return {};
+        }
+
+        void combosFollowTheDevice()
+        {
+            beginTest ("MIXER's combos follow a device change that leaves the strip count alone");
+            {
+                Window w (8);
+                auto& manager = w.engine().getDeviceManager();
+                manager.closeAudioDevice();
+                const juce::ScopeGuard deviceBack { [&]
+                {
+                    w.engine().setDeviceInputCountForTests (0);
+                    manager.restartLastAudioDevice();
+                } };
+                for (int t = 0; t < 8; ++t) w.engine().setTrackInputRouting (t, t);
+                w.engine().setDeviceInputCountForTests (8);
+                w.main.rebuildStrips();
+                expectEquals (comboText (*w.main.strips[6], 0), juce::String ("In 7"));
+
+                w.engine().setDeviceInputCountForTests (4);
+                w.main.syncStripsWithEngine();
+                expectEquals (w.engine().getEffectiveInputRouting (6), 2);
+                expectEquals (comboText (*w.main.strips[6], 0), juce::String ("In 3"),
+                              "MIXER named another input than the strip hears");
+
+                w.engine().setDeviceInputCountForTests (8);
+                w.main.syncStripsWithEngine();
+                expect (! comboText (*w.main.strips[6], 0).contains ("(off)"), "a live channel kept its (off)");
             }
         }
 
