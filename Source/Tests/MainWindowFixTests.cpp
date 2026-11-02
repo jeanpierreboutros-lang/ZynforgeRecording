@@ -1346,6 +1346,20 @@ namespace zynforge
                 expectGreaterThan (buttons, 0);
             }
 
+            beginTest ("The next-cue countdown keeps a name in any script");
+            {
+                Window w;
+                const auto name = juce::String::fromUTF8 ("Caf\xc3\xa9 \xd8\xb3\xd9\x84\xd8\xa7\xd9\x85");
+                SetlistBar::Cue cue;
+                cue.name = name;
+                cue.samplePos = 40000;
+                w.main.cues.push_back (cue);
+                w.player().setPositionSamples (0);
+                w.engine().startPlayback();
+                w.main.updateNextCueCountdown();
+                w.engine().stopPlayback();
+                expect (w.main.nextCueLabel.getText().contains (name), w.main.nextCueLabel.getText());
+            }
 
 
         }

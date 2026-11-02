@@ -253,8 +253,8 @@ void MainComponent::updateNextCueCountdown()
                 const int totalSec = juce::jmax (0, (int) secs);
                 const int mins  = totalSec / 60;
                 const int secsR = totalSec % 60;
-                txt = juce::String::formatted ("Next: %s in %d:%02d",
-                                                next->name.toRawUTF8(), mins, secsR);
+                txt = "Next: " + next->name + " in " + juce::String (mins)
+                    + juce::String::formatted (":%02d", secsR);
             }
         }
         if (nextCueLabel.getText() != txt)
