@@ -1541,6 +1541,17 @@ juce::String MainComponent::backupChecklistRow()
     return row;
 }
 
+// A desk nobody has read and one that can't be read are not a clean bill of
+// health, so only a patch the desk confirmed gets the tick.
+zynforge::PreflightRow MainComponent::deskPatchRow() const
+{
+    using Row = zynforge::PreflightRow;
+    return { consoleLink.isOnSoundcheckPatch() ? Row::Status::warning
+           : consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Stage ? Row::Status::ok
+                                                                           : Row::Status::info,
+             "Desk patch", consoleLink.deskPatchText() };
+}
+
 void MainComponent::showPreflightChecklist()
 {
     // Every check below goes to the drives, from this thread.
@@ -1605,9 +1616,7 @@ void MainComponent::showPreflightChecklist()
                                                                             : juce::String ("Idle") });
     rows.push_back (Row::fromLine (backupChecklistRow()));
     if (consoleLink.isConnected() || consoleLink.isOnSoundcheckPatch())
-        rows.push_back ({ chk (! consoleLink.isOnSoundcheckPatch(), true), "Desk patch",
-                          consoleLink.isOnSoundcheckPatch() ? juce::String ("on SOUNDCHECK (card returns)")
-                                                            : juce::String ("stage inputs") });
+        rows.push_back (deskPatchRow());
     if (zynforge::vsc::hasSavedPatch (engine))
         rows.push_back ({ Row::Status::warning, "Output patch", "on Virtual Soundcheck" });
 

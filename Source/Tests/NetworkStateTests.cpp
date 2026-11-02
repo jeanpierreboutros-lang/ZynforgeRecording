@@ -7,10 +7,13 @@
 
 #include "../UI/MainComponent.h"
 #include "../UI/PreflightDialog.h"
+#include "../Audio/AtomicFile.h"
 #include "../Audio/VirtualSoundcheck.h"
+#include "../Network/ConsoleLink.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <functional>
+#include <map>
 
 namespace zynforge
 {
@@ -18,6 +21,9 @@ namespace zynforge
     {
         constexpr double kRate = 48000.0;
         constexpr int kBlock = 256;
+
+        const char* const kInBlocks[] { "/config/routing/IN/1-8",  "/config/routing/IN/9-16",
+                                        "/config/routing/IN/17-24", "/config/routing/IN/25-32" };
 
         juce::File scratchDir()
         {
@@ -51,12 +57,102 @@ namespace zynforge
             for (int b = 0; b < blocks; ++b) rec.processBlock (inputs.data(), tracks, kBlock);
             rec.stopRecording();
         }
+
+        // Plays an X32 as the link hears one: routing and head-amps that writes
+        // change, and answers that arrive later, as they do on a network.
+        struct FakeDesk
+        {
+            std::vector<int> routing { 4, 5, 6, 7 };
+            std::map<int, float> headamps;
+            bool deaf { false };         // takes no write, still answers
+            int  lostWriteBlock { -1 };  // this one write never arrived
+            bool silent { false };       // answers nothing, as a wrong address
+            ConsoleLink* link { nullptr };
+            std::vector<ConsoleMessage> wire, replies;
+
+            static int blockOf (const juce::String& address)
+            {
+                for (int b = 0; b < 4; ++b)
+                    if (address == kInBlocks[b]) return b;
+                return -1;
+            }
+
+            static int headampOf (const juce::String& address)
+            {
+                if (! address.startsWith ("/headamp/")) return -1;
+                return address.fromFirstOccurrenceOf ("/headamp/", false, false).getIntValue();
+            }
+
+            void attach (ConsoleLink& l)
+            {
+                link = &l;
+                l.setMessageHook ([this] (const ConsoleMessage& m) { heard (m); });
+            }
+
+            void heard (const ConsoleMessage& m)
+            {
+                wire.push_back (m);
+                if (const int block = blockOf (m.address); block >= 0)
+                {
+                    if (m.hasArgs())
+                    {
+                        if (! deaf && block != lostWriteBlock) routing[(size_t) block] = m.intArg();
+                    }
+                    else if (! silent)
+                        replies.push_back (ConsoleMessage (m.address, { routing[(size_t) block] }));
+                }
+                else if (const int amp = headampOf (m.address); amp >= 0)
+                {
+                    if (m.hasArgs())
+                    {
+                        if (! deaf) headamps[amp] = m.floatArg();
+                    }
+                    else if (! silent)
+                        replies.push_back (ConsoleMessage (m.address, { (double) headamps[amp] }));
+                }
+            }
+
+            void answer()
+            {
+                auto pending = std::move (replies);
+                replies.clear();
+                for (const auto& r : pending) link->injectReply (r);
+            }
+
+            std::vector<int> writesSeen() const
+            {
+                std::vector<int> values;
+                for (const auto& m : wire)
+                    if (blockOf (m.address) >= 0 && m.hasArgs()) values.push_back (m.intArg());
+                return values;
+            }
+        };
+
+        // A deliberately false file: what a session saved by the broken build
+        // or a hand edit could hold.
+        juce::var stateFile (const juce::String& deskPatch, std::initializer_list<int> blocks)
+        {
+            juce::DynamicObject::Ptr state (new juce::DynamicObject());
+            juce::Array<juce::var> patch;
+            for (int value : blocks) patch.add (value);
+            state->setProperty ("stagePatch", patch);
+            if (deskPatch.isNotEmpty()) state->setProperty ("deskPatch", deskPatch);
+            return juce::var (state.get());
+        }
+
+        juce::String fileDeskPatch (const juce::File& dir)
+        {
+            return juce::JSON::parse (dir.getChildFile (ConsoleLink::kStateFileName))
+                       .getProperty ("deskPatch", "").toString();
+        }
     }
 
     class NetworkStateTests final : public juce::UnitTest
     {
     public:
         NetworkStateTests() : juce::UnitTest ("Network state", "zynforge") {}
+
+        using Patch = ConsoleLink::Patch;
 
         struct Bench
         {
@@ -76,6 +172,8 @@ namespace zynforge
                 if (engine().isRecording()) main.stopActiveCaptureAsync (false);
                 pumpUntil ([this] { return ! engine().isRecording() && ! main.captureMetadataPending
                                            && main.pendingMetadataSaves == 0; });
+                main.consoleLink.setMessageHook (nullptr);
+                main.consoleLink.disconnect();
                 engine().stopPlayback();
                 engine().clearSessionState();
                 main.forgetSessionUiState();
@@ -104,6 +202,14 @@ namespace zynforge
             main.setSize (1320, 820);
 
             cuesKeepTheShowPatch (main);
+            deskWithNoSoundcheckState (main);
+            restoreIsConfirmedByTheDesk();
+            gainsAreConfirmedByTheDesk();
+            desksStateOutlivesLinkAndSession();
+            checkTheDesk();
+            damagedPatchFile();
+            aSoundcheckReadUnderATake();
+            aCaptureLeftOpen();
         }
 
         // ── Cues and Virtual Soundcheck ────────────────────────────────────
@@ -209,6 +315,599 @@ namespace zynforge
                 b.engine().setTrackOutputRouting (1, 2);
                 main.jumpToCue (0);
                 expectEquals (b.track (1).outputRouting.load(), 6);
+            }
+        }
+
+        // ── A desk that cannot repatch ─────────────────────────────────────
+
+        void deskWithNoSoundcheckState (MainComponent& main)
+        {
+            const auto cannotRepatch = []
+            {
+                std::vector<ConsoleProfile> profiles;
+                for (const auto& p : consoleProfiles())
+                    if (! p.canRepatch) profiles.push_back (p);
+                return profiles;
+            }();
+
+            beginTest ("Every profile that can't repatch has no soundcheck state");
+            {
+                expect (cannotRepatch.size() >= 6, "the test lost a profile");
+                for (const auto& p : cannotRepatch)
+                {
+                    const auto dir = scratchDir();
+                    ConsoleLink link;
+                    link.setProfile (p.kind);
+                    link.setMessageHook ([] (const ConsoleMessage&) {});
+                    expect (! link.isOnSoundcheckPatch(), p.displayName + " lit on connect");
+                    expect (! link.hasStagePatch(), p.displayName + " claims a saved patch");
+
+                    // Whatever a file says.
+                    link.loadJson (stateFile ("soundcheck", {}));
+                    expect (! link.isOnSoundcheckPatch(), p.displayName + " believed a file");
+                    expect (link.getPatch() == Patch::Unknown, p.displayName);
+
+                    expect (atomicfile::writeText (dir.getChildFile (ConsoleLink::kStateFileName),
+                                                   juce::JSON::toString (stateFile ("soundcheck", { 1, 2, 3, 4 }))));
+                    link.setSessionDir (dir);
+                    expect (! link.isOnSoundcheckPatch(), p.displayName + " believed a session file");
+                    link.confirmDialectForTests();
+                    expect (! link.isOnSoundcheckPatch(), p.displayName + " lit on the handshake");
+                    link.disconnect();
+                    expect (! link.isOnSoundcheckPatch(), p.displayName + " lit on disconnect");
+
+                    link.setSessionDir ({});
+                    expect (! link.isOnSoundcheckPatch(), p.displayName + " lit leaving a session");
+                    dir.deleteRecursively();
+                }
+            }
+
+            beginTest ("A connect to a desk with no repatch leaves the chip dark and says what can't be seen");
+            {
+                Bench b (main);
+                for (const auto& p : cannotRepatch)
+                {
+                    main.consoleLink.setProfile (p.kind);
+                    main.consoleLink.setMessageHook ([] (const ConsoleMessage&) {});
+                    main.updateSoundcheckState();
+                    expect (! main.soundcheckPill.isVisible(), "DESK ON SOUNDCHECK lit for " + p.displayName);
+
+                    const auto row = main.deskPatchRow();
+                    expect (! row.isProblem(), p.displayName + " shows a problem in pre-flight");
+                    expect (row.status != PreflightRow::Status::ok, p.displayName + " gets a tick nothing proved");
+                    expect (row.value.containsIgnoreCase ("not visible"), row.value);
+                    main.consoleLink.setMessageHook (nullptr);
+                    main.consoleLink.disconnect();
+                }
+                main.consoleLink.setProfile (ConsoleProfile::Kind::BehringerX32);
+            }
+
+            beginTest ("A desk that can repatch says it has not been read until it has");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.attach (link);
+                expect (! link.isOnSoundcheckPatch());
+                expect (link.deskPatchText().containsIgnoreCase ("not read"), link.deskPatchText());
+            }
+        }
+
+        // ── STAGE needs the desk's word ────────────────────────────────────
+
+        static void toSoundcheck (ConsoleLink& link, FakeDesk& desk)
+        {
+            link.enterSoundcheck();
+            desk.answer();
+        }
+
+        void restoreIsConfirmedByTheDesk()
+        {
+            beginTest ("STAGE clears only when every block reads back the show patch");
+            {
+                const auto dir = scratchDir();
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.attach (link);
+                link.setSessionDir (dir);
+                toSoundcheck (link, desk);
+                expect (link.isOnSoundcheckPatch());
+                expect (desk.routing == std::vector<int> ({ 16, 17, 18, 19 }));
+
+                link.exitSoundcheck();
+                expect (link.isOnSoundcheckPatch(), "the chip cleared before the desk answered");
+                expectEquals (fileDeskPatch (dir), juce::String ("soundcheck"), "saved as restored on a send");
+                desk.answer();
+                expect (! link.isOnSoundcheckPatch());
+                expect (link.getPatch() == Patch::Stage);
+                expectEquals (fileDeskPatch (dir), juce::String ("stage"));
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A desk that never answers leaves SOUNDCHECK standing, and says so");
+            {
+                const auto dir = scratchDir();
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                link.setSessionDir (dir);
+                toSoundcheck (link, desk);
+
+                desk.silent = true;
+                link.exitSoundcheck();
+                desk.answer();
+                link.patchDeadlineMs = 1;
+                link.timerCallback();
+                expect (link.isOnSoundcheckPatch(), "the record of the desk is gone");
+                expectEquals (fileDeskPatch (dir), juce::String ("soundcheck"));
+                expect (status.containsIgnoreCase ("did not confirm"), status);
+                expect (status.contains ("SOUNDCHECK"), status);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("One lost write leaves SOUNDCHECK standing");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                toSoundcheck (link, desk);
+
+                desk.lostWriteBlock = 2;
+                link.exitSoundcheck();
+                desk.answer();
+                expect (link.isOnSoundcheckPatch(), "one block is still on card returns");
+                expect (status.contains ("1 of 4"), status);
+
+                // Pressing it again is the way out.
+                desk.lostWriteBlock = -1;
+                link.exitSoundcheck();
+                desk.answer();
+                expect (! link.isOnSoundcheckPatch());
+                expect (desk.routing == std::vector<int> ({ 4, 5, 6, 7 }));
+            }
+
+            beginTest ("A desk that ignores the writes leaves SOUNDCHECK standing");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                desk.deaf = true;
+                link.exitSoundcheck();
+                desk.answer();
+                expect (link.isOnSoundcheckPatch());
+            }
+
+            beginTest ("A partial read-back never confirms, even with a repeat of one block");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                link.exitSoundcheck();
+                desk.replies.clear();
+                for (int i = 0; i < 4; ++i)
+                    link.injectReply (ConsoleMessage (kInBlocks[0], { 4 }));
+                expect (link.isOnSoundcheckPatch(), "a repeated block finished the read");
+            }
+        }
+
+        void gainsAreConfirmedByTheDesk()
+        {
+            const auto captured = [] (ConsoleLink& link, FakeDesk& desk)
+            {
+                desk.headamps = { { 0, 0.25f }, { 1, 0.5f } };
+                link.captureGains (2);
+                desk.answer();
+            };
+
+            beginTest ("Restore Gains reports success only when the desk reads the gains back");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                captured (link, desk);
+                desk.headamps = { { 0, 0.75f }, { 1, 0.75f } };
+
+                link.restoreGains();
+                expect (! status.containsIgnoreCase ("restored"), status);
+                desk.answer();
+                expect (status.containsIgnoreCase ("confirmed"), status);
+                expect (status.contains ("2 head-amp gains"), status);
+            }
+
+            beginTest ("A desk that keeps its old gains is reported, by count");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                captured (link, desk);
+                desk.headamps = { { 0, 0.75f }, { 1, 0.75f } };
+                desk.deaf = true;
+                link.restoreGains();
+                desk.answer();
+                expect (status.contains ("did not take 2 of 2"), status);
+                expect (! status.containsIgnoreCase ("restored"), status);
+            }
+
+            beginTest ("A desk that says nothing leaves Restore Gains unconfirmed");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                captured (link, desk);
+                desk.silent = true;
+                link.restoreGains();
+                link.gainDeadlineMs = 1;
+                link.timerCallback();
+                expect (status.containsIgnoreCase ("did not confirm"), status);
+            }
+        }
+
+        // ── One state across links, sessions and relaunches ────────────────
+
+        void desksStateOutlivesLinkAndSession()
+        {
+            beginTest ("A clean return to STAGE stays clean when the link closes");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                link.exitSoundcheck();
+                desk.answer();
+                link.disconnect();
+                expect (! link.isOnSoundcheckPatch(), "disconnect lit SOUNDCHECK over a desk on stage");
+                expect (link.getPatch() == Patch::Stage);
+            }
+
+            beginTest ("A dropped link does not forget a desk on card returns");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                link.disconnect();
+                expect (link.isOnSoundcheckPatch());
+            }
+
+            beginTest ("Another session's file cannot clear a desk on card returns");
+            {
+                const auto a = scratchDir(), b = scratchDir();
+                {
+                    ConsoleLink earlier;
+                    FakeDesk desk;
+                    desk.attach (earlier);
+                    earlier.setSessionDir (b);
+                    toSoundcheck (earlier, desk);
+                    earlier.exitSoundcheck();
+                    desk.answer();
+                    expectEquals (fileDeskPatch (b), juce::String ("stage"));
+                }
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.attach (link);
+                link.setSessionDir (a);
+                toSoundcheck (link, desk);
+                link.disconnect();
+                link.setSessionDir (b);
+                desk.attach (link);
+                expect (link.isOnSoundcheckPatch(), "the chip went out with the desk on card returns");
+
+                desk.wire.clear();
+                link.enterSoundcheck();
+                expect (desk.wire.empty(), "a second soundcheck read the card returns as the show patch");
+
+                link.exitSoundcheck();
+                expect (desk.writesSeen() == std::vector<int> ({ 4, 5, 6, 7 }), "the way back was lost");
+                a.deleteRecursively();
+                b.deleteRecursively();
+            }
+
+            beginTest ("A relaunch keeps a desk on card returns through a session change");
+            {
+                const auto a = scratchDir(), b = scratchDir();
+                {
+                    ConsoleLink earlier;
+                    FakeDesk desk;
+                    desk.attach (earlier);
+                    earlier.setSessionDir (a);
+                    toSoundcheck (earlier, desk);
+                }
+                ConsoleLink relaunched;
+                relaunched.setSessionDir (a);
+                expect (relaunched.isOnSoundcheckPatch());
+                relaunched.setSessionDir (b);
+                expect (relaunched.isOnSoundcheckPatch(), "New Session forgot the desk");
+                relaunched.setSessionDir ({});
+                expect (relaunched.isOnSoundcheckPatch(), "closing the session forgot the desk");
+
+                // And the session open at the next relaunch knows too.
+                ConsoleLink again;
+                again.setSessionDir (b);
+                expect (again.isOnSoundcheckPatch(), "a relaunch in the second session forgot the desk");
+                a.deleteRecursively();
+                b.deleteRecursively();
+            }
+
+            beginTest ("STAGE restored from another session reaches the file that said SOUNDCHECK");
+            {
+                const auto a = scratchDir(), b = scratchDir();
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.attach (link);
+                link.setSessionDir (a);
+                toSoundcheck (link, desk);
+                link.setSessionDir (b);
+                link.exitSoundcheck();
+                desk.answer();
+                expectEquals (fileDeskPatch (b), juce::String ("stage"));
+                expectEquals (fileDeskPatch (a), juce::String ("stage"), "session A still says soundcheck");
+
+                ConsoleLink reopened;
+                reopened.setSessionDir (a);
+                expect (! reopened.isOnSoundcheckPatch(), "reopening A lit the chip over a desk on stage");
+                a.deleteRecursively();
+                b.deleteRecursively();
+            }
+
+            beginTest ("A file from before the state was saved counts as a soundcheck not known to have ended");
+            {
+                ConsoleLink link;
+                expect (link.loadJson (stateFile ({}, { 4, 5, 6, 7 })));
+                expect (link.isOnSoundcheckPatch());
+            }
+        }
+
+        void checkTheDesk()
+        {
+            beginTest ("A desk put back by hand clears SOUNDCHECK with nothing written to it");
+            {
+                const auto dir = scratchDir();
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                link.setSessionDir (dir);
+                toSoundcheck (link, desk);
+
+                desk.routing = { 0, 1, 2, 3 };   // today's patch, not the saved one
+                desk.wire.clear();
+                link.checkDeskPatch();
+                desk.answer();
+                expect (! link.isOnSoundcheckPatch());
+                expect (desk.writesSeen().empty(), "the check overwrote today's routing");
+                expect (desk.routing == std::vector<int> ({ 0, 1, 2, 3 }));
+                expectEquals (fileDeskPatch (dir), juce::String ("stage"));
+                expect (status.containsIgnoreCase ("nothing was written"), status);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A desk still partly on card returns stays on SOUNDCHECK");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                desk.routing = { 4, 5, 6, 19 };
+                link.checkDeskPatch();
+                desk.answer();
+                expect (link.isOnSoundcheckPatch());
+                expect (status.contains ("1 of 4"), status);
+            }
+
+            beginTest ("A show patch that uses the card is not read as a soundcheck");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.routing = { 16, 5, 6, 7 };   // block 1 plays from the card at the show
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                link.exitSoundcheck();
+                desk.answer();
+                link.checkDeskPatch();
+                desk.answer();
+                expect (! link.isOnSoundcheckPatch());
+            }
+
+            beginTest ("A desk that doesn't answer the check leaves the state alone");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                desk.silent = true;
+                link.checkDeskPatch();
+                link.patchDeadlineMs = 1;
+                link.timerCallback();
+                expect (link.isOnSoundcheckPatch());
+                expect (status.containsIgnoreCase ("did not answer"), status);
+            }
+
+            beginTest ("A saved SOUNDCHECK is put to the desk once when the link is up");
+            {
+                const auto dir = scratchDir();
+                {
+                    ConsoleLink earlier;
+                    FakeDesk desk;
+                    desk.attach (earlier);
+                    earlier.setSessionDir (dir);
+                    toSoundcheck (earlier, desk);
+                }
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.routing = { 4, 5, 6, 7 };
+                desk.attach (link);
+                link.setSessionDir (dir);
+                expect (link.isOnSoundcheckPatch());
+                link.timerCallback();
+                desk.answer();
+                expect (! link.isOnSoundcheckPatch(), "the desk said it was on stage");
+                expectEquals (fileDeskPatch (dir), juce::String ("stage"));
+
+                desk.wire.clear();
+                link.timerCallback();
+                expect (desk.wire.empty(), "the claim is asked about once");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("The check needs a desk that can answer");
+            {
+                ConsoleLink link;
+                link.setProfile (ConsoleProfile::Kind::DiGiCo);
+                juce::String status;
+                int sent = 0;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                link.setMessageHook ([&] (const ConsoleMessage&) { ++sent; });
+                link.checkDeskPatch();
+                expectEquals (sent, 0);
+                expect (status.containsIgnoreCase ("cannot report"), status);
+            }
+        }
+
+        void damagedPatchFile()
+        {
+            beginTest ("A saved patch outside the desk's range never reaches the desk");
+            {
+                for (const auto& bad : { std::vector<int> { 4, 5, 6, 999 }, std::vector<int> { 4, 5, 6, 20 },
+                                         std::vector<int> { -7, 5, 6, 7 } })
+                {
+                    ConsoleLink link;
+                    FakeDesk desk;
+                    juce::String status;
+                    link.onStatus = [&] (const juce::String& s) { status = s; };
+                    desk.attach (link);
+                    juce::DynamicObject::Ptr state (new juce::DynamicObject());
+                    juce::Array<juce::var> patch;
+                    for (int value : bad) patch.add (value);
+                    state->setProperty ("stagePatch", patch);
+                    state->setProperty ("deskPatch", "soundcheck");
+                    link.loadJson (juce::var (state.get()));
+
+                    expect (! link.hasStagePatch(), "a bad value became the way back");
+                    expect (status.containsIgnoreCase ("damaged"), status);
+                    link.exitSoundcheck();
+                    expect (desk.writesSeen().empty(), "a bad value went to the desk");
+                }
+            }
+
+            beginTest ("A value that isn't a number is damage too, not routing 0");
+            {
+                ConsoleLink link;
+                juce::DynamicObject::Ptr state (new juce::DynamicObject());
+                juce::Array<juce::var> patch { 4, 5, 6, juce::var ("seven") };
+                state->setProperty ("stagePatch", patch);
+                link.loadJson (juce::var (state.get()));
+                expect (! link.hasStagePatch());
+            }
+
+            beginTest ("A routing value the file could not reload is refused off the wire too");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                desk.routing = { 4, 5, 6, 99 };
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                expect (! link.isOnSoundcheckPatch());
+                expect (desk.routing[3] == 99, "the desk moved on a way back that can't be reloaded");
+            }
+        }
+
+        void aSoundcheckReadUnderATake()
+        {
+            beginTest ("A SOUNDCHECK read that lands after RECORD moves nothing");
+            {
+                const auto dir = scratchDir();
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                bool rolling = false;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                link.takeHoldsDesk = [&] { return rolling; };
+                desk.attach (link);
+                link.setSessionDir (dir);
+
+                link.enterSoundcheck();
+                rolling = true;
+                desk.answer();
+
+                expect (desk.writesSeen().empty(), "the desk moved under a take");
+                expect (! link.isOnSoundcheckPatch());
+                expect (! dir.getChildFile (ConsoleLink::kStateFileName).existsAsFile(),
+                        "the session's drive was written during the take");
+                expect (status.containsIgnoreCase ("take"), status);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Every write refuses at the link during a take, whoever asks");
+            {
+                ConsoleLink link;
+                FakeDesk desk;
+                bool rolling = false;
+                link.takeHoldsDesk = [&] { return rolling; };
+                desk.attach (link);
+                toSoundcheck (link, desk);
+                desk.headamps = { { 0, 0.25f } };
+                link.captureGains (1);
+                desk.answer();
+
+                rolling = true;
+                desk.wire.clear();
+                link.exitSoundcheck();
+                link.restoreGains();
+                expect (desk.wire.empty(), "a write reached the desk under a take");
+
+                link.captureGains (1);
+                expect (! desk.wire.empty(), "capturing gains is a read and stays available");
+            }
+        }
+
+        void aCaptureLeftOpen()
+        {
+            beginTest ("Closing the link ends a head-amp capture");
+            {
+                const auto dir = scratchDir();
+                {
+                    ConsoleLink earlier;
+                    FakeDesk desk;
+                    desk.attach (earlier);
+                    desk.headamps = { { 0, 0.5f } };
+                    earlier.captureGains (1);
+                    desk.answer();
+                    expect (earlier.saveTo (dir));
+                }
+
+                ConsoleLink link;
+                FakeDesk desk;
+                juce::String status;
+                link.onStatus = [&] (const juce::String& s) { status = s; };
+                desk.attach (link);
+                link.captureGains (2);
+                link.disconnect();
+
+                desk.attach (link);
+                expect (link.loadFrom (dir));
+                expectEquals ((int) link.getCapturedGains().size(), 1, "the saved capture was not read back");
+
+                status.clear();
+                link.injectReply (ConsoleMessage ("/headamp/001/gain", { 0.9 }));
+                expect (! status.containsIgnoreCase ("captured"), "a pushed update finished a closed capture");
+                expectEquals ((int) link.getCapturedGains().size(), 1);
+                dir.deleteRecursively();
             }
         }
     };

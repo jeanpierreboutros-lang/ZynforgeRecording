@@ -281,6 +281,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                ? "Console: back to STAGE patch"
                                : "Console: SOUNDCHECK patch (card returns)",
                        consoleRepatch);
+            m.addItem (987, "Console: check the desk's patch",
+                       consoleLink.isConnected() && consoleLink.getProfile().canRepatch);
             m.addItem (956, "Console: capture head-amp gains", consoleGains);
             m.addItem (957, "Console: restore head-amp gains",
                        consoleGains && ! engine.isRecording() && ! captureMetadataPending);
@@ -357,6 +359,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) twinLink.isEnabled()
         << '|' << (int) consoleLink.isConnected()
         << '|' << (int) consoleLink.getPatch()
+        << '|' << (int) consoleLink.isOnSoundcheckPatch()
         << '|' << (int) consoleLink.getProfile().canRepatch
         << '|' << (int) consoleLink.getProfile().canCaptureGains
         // The handshake flips canWrite() asynchronously AFTER connect, so it
@@ -506,6 +509,7 @@ void MainComponent::registerMenuCommands()
     m.add (953, [this] { detectSongsToMarkers(); });
     m.add (954, [this] { promptConsoleConnect(); });
     m.add (955, [this] { consoleToggleSoundcheck(); });
+    m.add (987, [this] { consoleCheckDeskPatch(); });
     m.add (956, [this] { consoleCaptureGains(); });
     m.add (957, [this] { consoleRestoreGains(); });
     m.add (958, [this] { toggleCaptureDaemon(); });

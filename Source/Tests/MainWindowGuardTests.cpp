@@ -1125,6 +1125,11 @@ namespace zynforge
                 w.main.updateSoundcheckState();
                 expect (w.main.soundcheckPill.isVisible(), "the desk's patch is only in a menu");
                 expect (w.main.soundcheckPill.getWidth() > 100, "the chip has no room");
+
+                // A desk on card returns outlives every session, and this window is shared.
+                w.main.consoleLink.setProfile (ConsoleProfile::Kind::GenericOsc);
+                w.main.consoleLink.setProfile (ConsoleProfile::Kind::BehringerX32);
+                w.main.updateSoundcheckState();
             }
 
             beginTest ("A pre-flight problem offers the control that deals with it");

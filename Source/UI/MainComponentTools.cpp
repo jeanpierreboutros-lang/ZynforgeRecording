@@ -400,8 +400,9 @@ void MainComponent::promptConsoleConnect()
             // Show-night state saved with the session (stage patch +
             // gains) comes back automatically on VSC day.
             const auto sess = self->engine.getActiveSessionDir();
-            self->consoleLink.setSessionDir (sess);
-            if (sess.isDirectory() && self->consoleLink.loadFrom (sess))
+            const bool mayReadDisk = ! self->engine.isTakeOnDisk();
+            self->consoleLink.setSessionDir (sess, mayReadDisk);
+            if (mayReadDisk && sess.isDirectory() && self->consoleLink.loadFrom (sess))
                 self->showStatus ("Console link up: " + host
                             + " -- loaded saved patch + gains from session");
         }), false);
@@ -434,6 +435,9 @@ void MainComponent::wireConsoleLink()
 
     consoleLink.onTraffic = [self] (const juce::String& line)
     { if (self != nullptr) self->engine.getRemotes().logOsc (line); };
+
+    consoleLink.takeHoldsDesk = [self]
+    { return self != nullptr && (self->engine.isTakeOnDisk() || self->captureMetadataPending); };
 }
 
 // A repatch or a head-amp write changes what the take records, so neither goes
@@ -459,10 +463,17 @@ void MainComponent::consoleToggleSoundcheck()
         consoleLink.enterSoundcheck();
 }
 
+void MainComponent::consoleCheckDeskPatch()
+{
+    if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    consoleLink.setSessionDir (engine.getActiveSessionDir(), ! engine.isTakeOnDisk());
+    consoleLink.checkDeskPatch();
+}
+
 void MainComponent::consoleCaptureGains()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
-    consoleLink.setSessionDir (engine.getActiveSessionDir());
+    consoleLink.setSessionDir (engine.getActiveSessionDir(), ! engine.isTakeOnDisk());
     // jlimit(1, ...) turned an empty session into a 1-channel poll, which then
     // "captured" a single head-amp and saved it as the show's gains.
     const int tracks = engine.getRecorder().getNumTracks();
