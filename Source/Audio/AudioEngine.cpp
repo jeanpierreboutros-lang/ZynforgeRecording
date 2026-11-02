@@ -293,6 +293,11 @@ namespace zynforge
             stereoMixWriter = std::move (mix.writer);
         }
 
+        continueFileBase = recorder.isContinueArmed() ? recorder.getRecordBaseSamples() : 0;
+        continueShift.store (recorder.isContinueArmed() && player.isLoaded()
+                                 ? continueFileBase - continueLandsAt() : 0,
+                             std::memory_order_release);
+
         // These strips are what this take was recorded with, so from here on
         // they are this folder's mixer, whichever session they came from.
         claimMixerFor (sessionDir);
@@ -378,7 +383,7 @@ namespace zynforge
         // pass began) leave the transport parked at the END of what was just
         // captured, so the next RECORD continues the take from here instead
         // of looking like it starts over from the beginning.
-        const auto recordEnd = recorder.getRecordTimelineSamples();
+        const auto recordEnd = getRecordTimelineSamples();
         recorder.stopRecording();
         clearCaptureWindow();
         player.setSeekLocked (false);
@@ -428,7 +433,7 @@ namespace zynforge
         auto job = std::make_unique<CaptureStopJob>();
         job->external = externalSession != juce::File();
         job->directory = job->external ? externalSession : recorder.getActiveSessionDir();
-        job->recordEnd = job->external ? externalEnd : recorder.getRecordTimelineSamples();
+        job->recordEnd = job->external ? externalEnd : getRecordTimelineSamples();
         job->sameSession = ! job->external || player.getSessionDir() == externalSession;
         job->playbackRate = deviceSampleRate.load();
         job->playbackBlock = deviceBlockSize.load();

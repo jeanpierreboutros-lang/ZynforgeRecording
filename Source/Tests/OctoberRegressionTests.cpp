@@ -293,6 +293,7 @@ public:
             EditPage::TrackRow row (0, false, e, fm, cache);
             row.setSize (row.getHeaderWidth() + 1008, 100);
             row.draggingClipIdx = 0; row.draggingClipMode = EditPage::TrackRow::ClipDrag::Move; row.dragStartX = row.getHeaderWidth() + 4;
+            row.dragTimelineSamples = 48000;   // a grab holds the scale it was made at
             for (int dx = 1; dx <= 150; ++dx)
             {
                 const juce::Point<float> down ((float) row.dragStartX, 50.0f);

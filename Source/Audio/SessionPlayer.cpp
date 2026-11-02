@@ -492,13 +492,24 @@ namespace zynforge
             if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
             activeClips[(size_t) trackIdx]        = std::move (clips);
             clipsAuthoritative[(size_t) trackIdx] = 1;   // explicit list (even if empty)
-            juce::int64 extent = 0;
-            for (const auto& t : tracks) extent = juce::jmax (extent, t.length);
+            // A track with a clip list is as long as its clips say, however
+            // much file sits behind them: a cropped show must not keep the
+            // whole take's length.
+            juce::int64 extent = 0, media = 0;
+            for (size_t i = 0; i < tracks.size(); ++i)
+            {
+                media = juce::jmax (media, tracks[i].length);
+                if (i >= clipsAuthoritative.size() || clipsAuthoritative[i] == 0)
+                    extent = juce::jmax (extent, tracks[i].length);
+            }
             for (const auto& list : activeClips)
                 for (const auto& c : list)
                     extent = juce::jmax (extent, c.timelineStartSamples + c.fileLengthSamples);
+            if (extent <= 0) extent = media;   // nothing arranged: still a session
             totalLength.store (extent, std::memory_order_release);
             loaded.store (extent > 0, std::memory_order_release);
+            if (position.load (std::memory_order_acquire) > extent)
+                position.store (extent, std::memory_order_release);
             // Mirror into the lock-free flag the audio thread reads on
             // clipsLock contention (see processBlock).
             if (trackIdx < kMaxAuthoritativeTracks)

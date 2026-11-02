@@ -1148,6 +1148,121 @@ namespace zynforge
             }
         }
 
+        struct Show
+        {
+            juce::File dir = tempDir ("edit");
+            AudioEngine engine;
+            static constexpr int kLength = 187 * kBlock;
+
+            explicit Show (int tracks = 2)
+            {
+                recordTake (dir, tracks, kLength / kBlock);
+                engine.clearAllStripOverrides();
+                engine.setStripCount (tracks);
+                engine.prepareForTests (kRate, kBlock);
+                engine.loadSession (dir);
+            }
+            ~Show() { dir.deleteRecursively(); }
+
+            // One continued pass of `blocks` on the armed strips.
+            void continueTake (std::initializer_list<int> armed, int blocks)
+            {
+                auto& rec = engine.getRecorder();
+                for (int t = 0; t < rec.getNumTracks(); ++t) rec.getTrack (t).armed.store (false);
+                for (int t : armed) rec.getTrack (t).armed.store (true);
+                engine.armContinue (engine.getCaptureLengthSamples());
+                engine.startRecording (dir);
+                feedAll (rec, -0.3f, blocks);
+            }
+        };
+
+        void continues()
+        {
+            beginTest ("A continue after a ripple lands at the end of the arrangement, on every clock");
+            {
+                Show s;
+                expect (s.engine.rippleDeleteTracks ({ 0, 1 }, 12000, 24000) >= 0);
+                const juce::int64 end = Show::kLength - 12000;
+                s.continueTake ({ 0 }, 20);
+                expect (s.engine.isRecording());
+                const juce::int64 taken = 20 * kBlock;
+                expectEquals (s.engine.getRecordTimelineSamples(), end + taken, "the clock ran from the file's end");
+                expectEquals (s.engine.getRecordBaseOnTimeline(), end, "the live waveform starts at the file's end");
+                s.engine.dropMarkerAtCurrentPosition ("mid-take");
+                s.engine.stopRecording();
+
+                const auto* clips = s.engine.tryClipsFor (0);
+                expect (clips != nullptr && ! clips->empty());
+                if (clips == nullptr || clips->empty()) return;
+                const auto& last = clips->back();
+                expectEquals (last.timelineStartSamples, end, "a silent gap went into the arrangement");
+                expectEquals (last.fileStartSamples, (juce::int64) Show::kLength);
+                expectEquals (last.fileLengthSamples, taken);
+                expectEquals (s.engine.getArrangementLengthSamples(), end + taken);
+                expectEquals (s.engine.getPlayer().getPositionSamples(), end + taken, "STOP did not park at the take's end");
+                expectEquals (s.engine.getMarkers().getMarker (0).sampleOffset, end + taken,
+                              "a marker dropped in the take landed away from its audio");
+
+                s.continueTake ({ 0 }, 10);
+                s.engine.stopRecording();
+                expectEquals (s.engine.getArrangementLengthSamples(), end + taken + 10 * kBlock,
+                              "the second continue went back to the file's end");
+            }
+
+            beginTest ("A continue past a duplicate clip does not sum with it, and strips stay aligned");
+            {
+                Show s;
+                expect (s.engine.pasteClip (0, Show::kLength, 0, 4800, 0, 0, 0.0f, "copy") >= 0);
+                const juce::int64 end = Show::kLength + 4800;
+                s.continueTake ({ 0, 1 }, 10);
+                s.engine.stopRecording();
+                for (int t : { 0, 1 })
+                {
+                    const auto* clips = s.engine.tryClipsFor (t);
+                    expect (clips != nullptr);
+                    if (clips != nullptr)
+                        expectEquals (clips->back().timelineStartSamples, end, "the new audio is not after the arrangement");
+                }
+            }
+
+            beginTest ("A continue on an unedited session stays exactly where it was");
+            {
+                Show s;
+                s.continueTake ({ 0 }, 10);
+                expectEquals (s.engine.getRecordBaseOnTimeline(), (juce::int64) Show::kLength);
+                s.engine.stopRecording();
+                const auto* clips = s.engine.tryClipsFor (0);
+                expect (clips != nullptr && clips->size() == 1, "a plain strip no longer grows in place");
+                if (clips != nullptr)
+                    expectEquals (clips->front().fileLengthSamples, (juce::int64) Show::kLength + 10 * kBlock);
+            }
+        }
+
+        void sessionLength()
+        {
+            beginTest ("Crop leaves the session as long as what it kept");
+            {
+                Show s;
+                const auto before = s.engine.captureTimelineState();
+                s.engine.getPlayer().setPositionSamples (Show::kLength - 100);
+                expect (s.engine.cropToRange (12000, 24000) > 0);
+                expectEquals (s.engine.getPlayer().getTotalLengthSamples(), (juce::int64) 12000,
+                              "the session kept the take's length");
+                expectEquals (s.engine.getPlayer().getPositionSamples(), (juce::int64) 12000, "the playhead sits past the end");
+                s.engine.restoreTimelineState (before);
+                expectEquals (s.engine.getPlayer().getTotalLengthSamples(), (juce::int64) Show::kLength,
+                              "undo did not bring the length back");
+            }
+
+            beginTest ("A session with everything cleared is still a session");
+            {
+                Show s (1);
+                expect (s.engine.clearTrackRange (0, 0, Show::kLength));
+                expect (s.engine.getPlayer().isLoaded());
+                expectEquals (s.engine.getPlayer().getTotalLengthSamples(), (juce::int64) Show::kLength);
+            }
+        }
+
         void analysis()
         {
             beginTest ("Detect Songs finds a song in a session with one voice");
@@ -1207,6 +1322,8 @@ namespace zynforge
                 AudioEngine::setTestModeSkipAudioInit (false);
             } };
             stripPaste();
+            continues();
+            sessionLength();
             analysis();
             timelineCsv();
         }

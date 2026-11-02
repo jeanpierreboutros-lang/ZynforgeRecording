@@ -445,12 +445,15 @@ namespace zynforge
         juce::int64 getRecordTimelineSamples()
         {
             if (! externalRecording.load (std::memory_order_acquire))
-                return recorder.getRecordTimelineSamples();
+                return recorder.getRecordTimelineSamples() - continueShift.load (std::memory_order_acquire);
             const auto status = captureStatus();
             if (status.source == "daemon") return status.positionSamples;
             std::lock_guard<std::mutex> lock (externalStatusLock);
             return externalStatus.positionSamples;
         }
+        // Where this take began on the timeline.
+        juce::int64 getRecordBaseOnTimeline() const noexcept
+        { return recorder.getRecordBaseSamples() - continueShift.load (std::memory_order_acquire); }
         // The loop region from SessionPlayer doubles as the punch window
         // -- there's only ever one 'do this between A and B' selection.
 
@@ -1057,7 +1060,15 @@ namespace zynforge
         std::vector<juce::int64> sourceTrackLengths;
         // Adds file span [from, to) of a track's own take to its active take,
         // at the same position on the timeline.
-        void addRecordedSpan (int track, juce::int64 from, juce::int64 to);
+        // `shift` is how far before its file position the span plays.
+        void addRecordedSpan (int track, juce::int64 from, juce::int64 to, juce::int64 shift = 0);
+        // Where a continue joins the arrangement: after everything but a reference bed.
+        juce::int64 continueLandsAt();
+        // A continue writes at the end of the file and plays at the end of the
+        // arrangement. After a Crop or a Ripple those are different places, and this
+        // is the distance between them for the take in progress.
+        std::atomic<juce::int64> continueShift { 0 };
+        juce::int64 continueFileBase { 0 };
         // Per-track Playlist storing every Take (named clip list). The
         // active take's clips mirror trackClips above so the player
         // path doesn't need to know about takes.

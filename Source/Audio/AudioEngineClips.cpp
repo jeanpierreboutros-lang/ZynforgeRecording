@@ -117,11 +117,15 @@ namespace zynforge
         if ((int) trackPlaylists.size() < n) trackPlaylists.resize ((size_t) n);
         if ((int) sourceTrackLengths.size() < n) sourceTrackLengths.resize ((size_t) n);
 
+        // A take that landed away from its file position lands there on every
+        // strip, or a plain strip growing in place would drift from the others.
+        const auto shift = appendRecordedAudio ? continueShift.exchange (0, std::memory_order_acq_rel) : (juce::int64) 0;
+
         for (int i = 0; i < n; ++i)
         {
             const auto oldLength = sourceTrackLengths[(size_t) i];
             const auto newLength = player.getTrackLengthSamples (i);
-            if (preserveEdits && trackIsEdited (i))
+            if (preserveEdits && (trackIsEdited (i) || shift != 0))
             {
                 // A continuation adds source media after the prior end. Keep
                 // every existing split/trim verbatim and expose only the
@@ -130,7 +134,8 @@ namespace zynforge
                 // holds pasted clips gets its whole new take the same way --
                 // requiring oldLength > 0 left that recording out entirely.
                 if (appendRecordedAudio && newLength > oldLength)
-                    addRecordedSpan (i, oldLength, newLength);
+                    addRecordedSpan (i, shift != 0 ? juce::jmax (oldLength, continueFileBase) : oldLength,
+                                     newLength, shift);
                 // Keep the engineer's edits verbatim. player.loadSession
                 // cleared the player-side clip lists, so republish what we
                 // already hold rather than reseeding a default over them.
@@ -173,15 +178,35 @@ namespace zynforge
                     player.setTrackClips (i, trackClips[(size_t) i]);
     }
 
-    void AudioEngine::addRecordedSpan (int track, juce::int64 from, juce::int64 to)
+    void AudioEngine::addRecordedSpan (int track, juce::int64 from, juce::int64 to, juce::int64 shift)
     {
+        if (to <= from) return;
         Clip appended;
         appended.name = juce::String::formatted ("Track_%02d continued", track + 1);
-        appended.timelineStartSamples = from;
+        appended.timelineStartSamples = from - shift;
         appended.fileStartSamples = from;
         appended.fileLengthSamples = to - from;
         trackClips[(size_t) track].push_back (std::move (appended));
         syncActiveTake (track);
+    }
+
+    juce::int64 AudioEngine::continueLandsAt()
+    {
+        juce::int64 end = 0;
+        const int strips = juce::jmax (recorder.getNumTracks(), (int) trackClips.size());
+        for (int t = 0; t < strips; ++t)
+        {
+            if (t < recorder.getNumTracks() && recorder.getTrack (t).referenceMedia.load (std::memory_order_relaxed))
+                continue;
+            const bool arranged = t < (int) trackClips.size()
+                               && (! trackClips[(size_t) t].empty()
+                                   || (t < (int) trackPlaylists.size() && ! trackPlaylists[(size_t) t].takes.empty()));
+            if (! arranged) end = juce::jmax (end, player.getTrackLengthSamples (t));
+            else
+                for (const auto& c : trackClips[(size_t) t])
+                    end = juce::jmax (end, c.timelineStartSamples + c.fileLengthSamples);
+        }
+        return end;
     }
 
     void AudioEngine::syncActiveTake (int track)

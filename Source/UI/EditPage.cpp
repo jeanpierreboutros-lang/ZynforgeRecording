@@ -311,7 +311,7 @@ namespace zynforge
             // capture draws AFTER the take, not from the left edge. Stable for
             // the whole pass (recordBaseSamples doesn't move mid-take).
             const auto base    = daemon ? remote.positionSamples - remote.elapsedSamples
-                                        : rec.getRecordBaseSamples();
+                                        : engine.getRecordBaseOnTimeline();
             const juce::int64 prefill = base > 0 ? base / TrackState::kLiveBinSamples : 0;
             for (auto& r : rows)
             {
