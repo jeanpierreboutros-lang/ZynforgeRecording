@@ -15,6 +15,7 @@ The development Mac (MacBook Pro) now has `fffab44`: the recorder and virtual so
 - **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Both executables are universal. The stage was copied with `ditto --norsrc --noextattr --noqtn`, because the build folder is on exFAT.
 - **Rollback:** `/Applications/Zynforge Recording.app.backup-20261102-094838-before-fffab44` (`281c6c0`).
 - **Signing:** ad-hoc, with no entitlements and no hardened runtime, the same as `281c6c0`. Only a `tools/notarize.sh` package carries `device.audio-input`. macOS shows the microphone prompt again, since a new ad-hoc build counts as a new app.
+- **Not in this build:** the fix that limits the crash notice to the recorder and its helper came right after it. `fffab44` can still count a crash of the tests app as the recorder's. Nothing else in the app differs.
 - **Not checked:** no recording was made, and no audio device was selected. Nothing here has run on real hardware.
 
 ## Two-Mac installation — 2026-10-29

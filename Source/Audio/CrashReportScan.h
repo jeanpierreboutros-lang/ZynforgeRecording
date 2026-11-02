@@ -17,15 +17,23 @@ namespace zynforge::crashscan
                    .getChildFile ("Library/Logs/DiagnosticReports");
     }
 
-    // Zynforge*.ips files modified after `since`, newest first.
-    inline juce::Array<juce::File> findNewReports (const juce::File& dir,
-                                                   juce::Time since,
-                                                   const juce::String& prefix = "Zynforge")
+    // macOS names a report <process>-<date>.ips, so the name up to the date says
+    // which process crashed. Other ZynForge tools share this folder and a
+    // "Zynforge" prefix, and telling the engineer the recorder crashed because
+    // one of them did is a false alarm.
+    inline bool isReportFromThisApp (const juce::File& report)
+    {
+        const auto name = report.getFileName();
+        return name.startsWith ("Zynforge Recording-") || name.startsWith ("ZynforgeCapture-");
+    }
+
+    // This app's .ips files modified after `since`, newest first.
+    inline juce::Array<juce::File> findNewReports (const juce::File& dir, juce::Time since)
     {
         juce::Array<juce::File> out;
         if (! dir.isDirectory()) return out;
-        for (auto& f : dir.findChildFiles (juce::File::findFiles, false, prefix + "*.ips"))
-            if (f.getLastModificationTime() > since)
+        for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.ips"))
+            if (isReportFromThisApp (f) && f.getLastModificationTime() > since)
                 out.add (f);
         std::sort (out.begin(), out.end(),
                    [] (const juce::File& a, const juce::File& b)

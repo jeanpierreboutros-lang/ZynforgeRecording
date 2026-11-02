@@ -57,6 +57,19 @@ namespace zynforge
                             "reports not sorted newest-first");
             }
 
+            beginTest ("Only the recorder and its capture helper count as this app's crashes");
+            {
+                makeReport ("ZynforgeCapture-2026-11-02-042913.ips", now);
+                makeReport ("Zynforge Recording Tests-2026-11-02-042913.ips", now);
+                juce::StringArray names;
+                for (const auto& f : crashscan::findNewReports (dir, now - juce::RelativeTime::hours (1)))
+                    names.add (f.getFileName());
+                expect (names.contains ("ZynforgeCapture-2026-11-02-042913.ips"), names.joinIntoString (", "));
+                expect (names.contains ("Zynforge Recording-b.ips"), names.joinIntoString (", "));
+                expect (! names.contains ("Zynforge Recording Tests-2026-11-02-042913.ips"),
+                        "another tool's crash was blamed on the recorder");
+            }
+
             beginTest ("summarize extracts timestamp / signal / type from the .ips header");
             {
                 const juce::String ips =

@@ -85,6 +85,7 @@ ZynForge Recording is now a recorder and virtual soundcheck. After a census of e
 
 - Changing Input or Output in the EDIT row now sets both sides, as MIXER and PATCH do, so the three views stay linked. The Output combo refuses during a take.
 - Ctrl+Cmd+C runs Crop. Cmd+C still copies.
+- The crash notice at launch counts only the recorder and its capture helper. A crash in another ZynForge tool is no longer reported as the recorder's.
 - Save As, Move and Show Handoff skip half-written temporary files, and a waveform cache that can't be read no longer fails a copy, since it costs only a rescan. Any other file that can't be copied still stops the copy. The comparison in Show Handoff skips the same files.
 
 ---

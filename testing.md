@@ -2,7 +2,7 @@
 
 ## Current validation — 2026-11-02
 
-Current source, after the cut to recorder and virtual soundcheck and the design pass: **1219 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports and no forced thread stops. `tools/design_audit.sh`, `tools/invariants_audit.sh`, `test_notarize.py` and `test_verify_tools.py` pass. Nothing here has run on real hardware. It is installed on the development Mac only; see [INSTALL.md](INSTALL.md).
+Current source, after the cut to recorder and virtual soundcheck and the design pass: **1219 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports and no forced thread stops. `tools/design_audit.sh`, `tools/invariants_audit.sh`, `test_notarize.py` and `test_verify_tools.py` pass. One later fix, which limits the crash notice to the recorder and its helper, brings it to 1220 groups in Release and CI; the sanitizers were not re-run for that string check. Nothing here has run on real hardware. It is installed on the development Mac only; see [INSTALL.md](INSTALL.md).
 
 Nothing in this section has run on real hardware, and it is installed on the development Mac only. The hardware steps are under *2026-11-02 cut* in [FIELD-TEST.md](FIELD-TEST.md).
 
