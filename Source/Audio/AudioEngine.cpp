@@ -2988,7 +2988,7 @@ const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxe
                                                     masterOutR.load (std::memory_order_relaxed),
                                                     numOutputs);
         const bool stereo = masterStereo.load (std::memory_order_relaxed)
-                         && masterPair.left != masterPair.right;
+                         && (masterPair.left != masterPair.right || masterPair.left < 0);
         if (! stereo)
         {
             for (int i = 0; i < blk; ++i)
