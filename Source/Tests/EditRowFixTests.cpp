@@ -161,6 +161,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            rulerSpeaksTheSessionRate();
             markersLaneShowsTheTake();
             verticalMovesKeepTheTimeline();
             resizingARowMovesNothing();
@@ -736,6 +737,35 @@ namespace zynforge
                 };
                 expect (changed (0.05, 0.45) > 0, "the lane showed no capture");
                 expectEquals (changed (0.60, 0.95), 0, "the capture ran past its share of the timeline");
+            }
+        }
+
+        void rulerSpeaksTheSessionRate()
+        {
+            beginTest ("The ruler reads a loaded session at its own rate");
+            {
+                const auto dir = tempDir ("rate");
+                dir.getChildFile ("Audio Files").createDirectory();
+                {
+                    juce::WavAudioFormat format;
+                    std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                        takeIn (dir, 1).createOutputStream().release(), 44100.0, 1, 24, {}, 0));
+                    juce::AudioBuffer<float> audio (1, 44100);
+                    audio.clear();
+                    expect (writer != nullptr && writer->writeFromAudioSampleBuffer (audio, 0, 44100));
+                }
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.prepareForTests ((double) kRate, 512);
+                EditTimeRuler ruler (engine);
+                expectEquals (ruler.timelineRate(), (double) kRate, "with nothing loaded the device sets the span");
+                engine.setStripCount (1);
+                engine.setActiveSessionDir (dir);
+                engine.claimMixerFor (dir);
+                engine.loadSession (dir);
+                expectEquals (ruler.timelineRate(), 44100.0, "the labels read short of file time");
+                engine.clearAllStripOverrides();
+                dir.deleteRecursively();
             }
         }
 
