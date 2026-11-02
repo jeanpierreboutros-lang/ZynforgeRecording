@@ -1121,9 +1121,47 @@ namespace zynforge
             }
         }
 
+        void testDiskFigures()
+        {
+            beginTest ("Two copies on one drive drain it twice as fast");
+            {
+                const auto root = tempDir ("volume");
+                const juce::ScopeGuard cleanUp { [&] { root.deleteRecursively(); } };
+                const auto session = root.getChildFile ("session");
+                const auto mirror = root.getChildFile ("mirror");
+                session.createDirectory();
+                mirror.createDirectory();
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                const auto alone = rec.estimateMinutesRemaining (session, {});
+                expect (rec.setMirrors ({ { mirror, CaptureFormat::Wav24 } }));
+                const auto twice = rec.estimateMinutesRemaining (session, {});
+                expectGreaterThan (alone, 0);
+                expectWithinAbsoluteError ((double) twice, alone / 2.0, alone * 0.1,
+                                           "a mirror on the session's own drive was counted as its own drive");
+            }
+
+            beginTest ("The idle record time reads the open session's drive, not the last take's");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                const auto root = tempDir ("idle-time");
+                const juce::ScopeGuard cleanUp { [&] { root.deleteRecursively(); } };
+                AudioEngine engine;
+                engine.prepareForTests (kRate, kBlock);
+                engine.setStripCount (1);
+                engine.getRecorder().getTrack (0).armed.store (true);
+                engine.setActiveSessionDir (root);
+                engine.refreshDiskMinutesRemaining();
+                expectGreaterThan (engine.getEstimatedMinutesRemaining(), 0, "no take has run, and the figure said nothing");
+                engine.clearAllStripOverrides();
+            }
+        }
+
         void runTest() override
         {
             const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
+            testDiskFigures();
             testHelperLifecycle();
             testCrashRemains();
             testDaemonDevice();

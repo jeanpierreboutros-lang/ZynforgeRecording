@@ -3699,16 +3699,16 @@ namespace zynforge
         // Combine rates that land on the SAME filesystem. Primary + backup on
         // one volume drain that volume twice as fast; mirrors on other drives
         // must not reduce the primary drive's estimate.
-        struct VolumeRate { juce::File file; int serial { 0 }; juce::int64 rate { 0 }; };
+        struct VolumeRate { juce::File file; juce::uint64 id { 0 }; juce::int64 rate { 0 }; };
         std::vector<VolumeRate> volumes;
         auto addVolumeRate = [&] (const juce::File& file, juce::int64 rate)
         {
             if (! file.exists() || rate <= 0) return;
-            const int serial = file.getVolumeSerialNumber();
-            if (serial != 0)
+            const auto id = VolumeProbe::readVolume (file).volumeId;
+            if (id != 0)
                 for (auto& volume : volumes)
-                    if (volume.serial == serial) { volume.rate += rate; return; }
-            volumes.push_back ({ file, serial, rate });
+                    if (volume.id == id) { volume.rate += rate; return; }
+            volumes.push_back ({ file, id, rate });
         };
 
         addVolumeRate (primaryVolume, rateFor (captureFormat));
