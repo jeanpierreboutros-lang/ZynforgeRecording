@@ -90,7 +90,7 @@ namespace zynforge
                                "integer fires. marker/goto takes the marker number, from 1.",
                                juce::dontSendNotification);
                 noteL.setFont (brand::type::caption());
-                noteL.setColour (juce::Label::textColourId, brand::textMuted);
+                noteL.setColour (juce::Label::textColourId, brand::textTertiary);
                 noteL.setJustificationType (juce::Justification::topLeft);
                 addAndMakeVisible (noteL);
 
@@ -206,7 +206,7 @@ namespace zynforge
                     stateL.setColour (juce::Label::textColourId,
                                       problem.isNotEmpty() && ! listening ? brand::accentRecord
                                       : listening                         ? brand::accentStatus
-                                                                          : brand::textMuted);
+                                                                          : brand::textTertiary);
                 }
             }
 

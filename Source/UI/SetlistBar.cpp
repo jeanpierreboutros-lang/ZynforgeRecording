@@ -8,7 +8,7 @@ namespace zynforge
     {
         titleLabel.setText ("SETLIST", juce::dontSendNotification);
         titleLabel.setFont (brand::type::uiLabel());
-        titleLabel.setColour (juce::Label::textColourId, brand::textMuted);
+        titleLabel.setColour (juce::Label::textColourId, brand::textTertiary);
         titleLabel.setJustificationType (juce::Justification::centredLeft);
         addAndMakeVisible (titleLabel);
 
@@ -25,7 +25,7 @@ namespace zynforge
         cueCombo.setColour (juce::ComboBox::backgroundColourId, brand::inputBg);
         cueCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         cueCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-        cueCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+        cueCombo.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
         cueCombo.setTextWhenNothingSelected ("(empty setlist)");
         cueCombo.setTooltip ("Pick a cue to jump to. Use + Cue to add at the transport position.");
         cueCombo.onChange = [this]

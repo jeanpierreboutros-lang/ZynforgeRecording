@@ -207,7 +207,7 @@ namespace zynforge
             // Left header column -- two stacked labels matching the
             // two-row layout: 'Markers' and 'Min:Secs'.
             const int headerInsetX = 8;
-            g.setColour (brand::textMuted);
+            g.setColour (brand::textTertiary);
             g.setFont (brand::type::caption());
             g.drawText ("Markers",
                         juce::Rectangle<int> (headerInsetX, 0,
@@ -339,7 +339,7 @@ namespace zynforge
                 const bool mid   = ! major && (k % minorPerMid) == 0;
                 const int  hPx   = major ? majorTickH : (mid ? midTickH : minorTickH);
                 g.setColour (major ? brand::textSecondary
-                                   : (mid ? brand::textMuted
+                                   : (mid ? brand::textTertiary
                                           : brand::edge.withAlpha (zynforge::brand::alpha::prominent)));
                 g.drawVerticalLine (x, (float) (rulerBottom - hPx), (float) rulerBottom);
 

@@ -39,11 +39,15 @@ namespace zynforge::brand
     // Used as a low-alpha fill + medium-alpha edge on the EDIT view.
     inline const auto accentEdit = juce::Colour (forge::accentEdit);
 
-    // ── Text (4-step, all WCAG-AA against bg-surface) ─────────────────────
+    // ── Text (4-step) ─────────────────────────────────────────────────────
+    // Everything meant to be read reaches 4.5:1 on bgElevated and on an OFF
+    // control. textTertiary overrides the family value, which is 3.7:1 there,
+    // until tokens.json takes this one. textMuted is 2.1:1 and is only for a
+    // control that really is disabled.
     inline const auto textPrimary = juce::Colour (forge::textPrimary);
     inline const auto textSecondary = juce::Colour (forge::textSecondary);
-    inline const auto textTertiary = juce::Colour (forge::textTertiary);
-    inline const auto textMuted = juce::Colour (forge::textMuted);  // genuine disabled state
+    inline const auto textTertiary = juce::Colour (0xffa3aeb9);
+    inline const auto textMuted = juce::Colour (forge::textMuted);
 
     // ── Semantic signal accents ───────────────────────────────────────────
     inline const auto accentRecord = juce::Colour (forge::accentRecord);  // record / danger

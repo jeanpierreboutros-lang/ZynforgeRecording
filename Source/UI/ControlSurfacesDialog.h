@@ -224,7 +224,7 @@ namespace zynforge
                     addAndMakeVisible (debugToggle); addAndMakeVisible (logB);
 
                     statusL.setFont (brand::type::caption());
-                    statusL.setColour (juce::Label::textColourId, brand::textMuted);
+                    statusL.setColour (juce::Label::textColourId, brand::textTertiary);
                     statusL.setJustificationType (juce::Justification::topLeft);
                     addAndMakeVisible (statusL);
                 }
@@ -354,7 +354,7 @@ namespace zynforge
                 note.setText ("Saved with the app. Tick this surface in the Control Surfaces list to open it: "
                               "faders, mute, solo, arm, transport and jog work live.",
                               juce::dontSendNotification);
-                note.setColour (juce::Label::textColourId, brand::textMuted);
+                note.setColour (juce::Label::textColourId, brand::textTertiary);
                 note.setFont (brand::type::caption());
                 note.setJustificationType (juce::Justification::topLeft);
                 addAndMakeVisible (note);
@@ -440,7 +440,7 @@ namespace zynforge
                 hint.setText ("Tick a surface to switch it on. Protocol Settings sets its network port "
                               "or its MIDI in and out.", juce::dontSendNotification);
                 hint.setFont (brand::type::caption());
-                hint.setColour (juce::Label::textColourId, brand::textMuted);
+                hint.setColour (juce::Label::textColourId, brand::textTertiary);
                 addAndMakeVisible (hint);
 
                 settingsB.setButtonText ("Protocol Settings...");
@@ -503,7 +503,7 @@ namespace zynforge
                 g.drawText (pi.name, 40, 0, w - 48, h, juce::Justification::centredLeft, true);
                 if (! pi.osc)
                 {
-                    g.setColour (brand::textMuted);
+                    g.setColour (brand::textTertiary);
                     g.setFont (brand::type::caption());
                     g.drawText ("set MIDI in/out in settings", 40, 0, w - 56, h,
                                 juce::Justification::centredRight, true);

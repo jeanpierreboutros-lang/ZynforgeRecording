@@ -45,7 +45,7 @@ namespace zynforge
                     c.setColour (juce::ComboBox::backgroundColourId, brand::bgElevated);
                     c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
                     c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-                    c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+                    c.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
                 };
                 modeCombo.addItem ("Mono",   1);
                 modeCombo.addItem ("Stereo", 2);
@@ -73,7 +73,7 @@ namespace zynforge
                 addAndMakeVisible (plusButton);
 
                 minusButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-                minusButton.setColour (juce::TextButton::textColourOffId, brand::textMuted);
+                minusButton.setColour (juce::TextButton::textColourOffId, brand::textTertiary);
                 minusButton.setButtonText ("-");
                 minusButton.setTooltip ("Remove this row.");
                 minusButton.onClick = [this] { if (onRemoveRow) onRemoveRow (this); };

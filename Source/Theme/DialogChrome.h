@@ -150,7 +150,7 @@ namespace zynforge::dialog
         c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
         c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-        c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+        c.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
     }
     // Prime an AlertWindow's text editor so the engineer can start
     // typing immediately when the dialog opens: all text selected,

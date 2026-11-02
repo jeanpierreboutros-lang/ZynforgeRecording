@@ -611,7 +611,7 @@ namespace zynforge
             c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
             c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
             c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-            c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+            c.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
         };
         styleCombo (inputCombo);
         styleCombo (outputCombo);
@@ -859,7 +859,7 @@ namespace zynforge
 
         outLabel.setText ("OUT", juce::dontSendNotification);
         outLabel.setFont (brand::type::ledLabel());
-        outLabel.setColour (juce::Label::textColourId, brand::textMuted);
+        outLabel.setColour (juce::Label::textColourId, brand::textTertiary);
         outLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (outLabel);
 

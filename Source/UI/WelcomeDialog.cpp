@@ -389,13 +389,13 @@ namespace zynforge
                 addAndMakeVisible (recentHeader);
                 recentHeader.setText ("Recent", juce::dontSendNotification);
                 recentHeader.setFont (brand::type::ui (14.0f, true));
-                recentHeader.setColour (juce::Label::textColourId, brand::textMuted);
+                recentHeader.setColour (juce::Label::textColourId, brand::textTertiary);
 
                 addAndMakeVisible (recentHint);
                 recentHint.setText ("(sessions you record or open appear here)",
                                     juce::dontSendNotification);
                 recentHint.setFont (brand::type::caption());
-                recentHint.setColour (juce::Label::textColourId, brand::textMuted);
+                recentHint.setColour (juce::Label::textColourId, brand::textTertiary);
                 recentHint.setVisible (recent.isEmpty());
 
                 for (const auto& dir : recent)

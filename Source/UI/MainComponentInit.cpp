@@ -74,7 +74,7 @@ MainComponent::MainComponent()
     titleLabel.setVisible (false);
 
     statusLabel.setFont (brand::type::uiBody());
-    statusLabel.setColour (juce::Label::textColourId, brand::textMuted);
+    statusLabel.setColour (juce::Label::textColourId, brand::textTertiary);
     // Alarm prefixes must stay in view when a long warning is clipped.
     statusLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (statusLabel);
@@ -114,7 +114,7 @@ MainComponent::MainComponent()
     addChildComponent (punchPill);
 
     sessionLabel.setFont (brand::type::caption());
-    sessionLabel.setColour (juce::Label::textColourId, brand::textMuted);
+    sessionLabel.setColour (juce::Label::textColourId, brand::textTertiary);
     sessionLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (sessionLabel);
 

@@ -40,8 +40,8 @@ namespace zynforge
 
                 label (mtcType, "MTC", brand::textPrimary, 14.0f, true);
                 label (ltcType, "LTC", brand::textPrimary, 14.0f, true);
-                label (mtcStatus, "-- idle", brand::textMuted, 14.0f, false);
-                label (ltcStatus, "-- idle", brand::textMuted, 14.0f, false);
+                label (mtcStatus, "-- idle", brand::textTertiary, 14.0f, false);
+                label (ltcStatus, "-- idle", brand::textTertiary, 14.0f, false);
                 mtcStatus.setFont (brand::type::monoCounter());
                 ltcStatus.setFont (brand::type::monoCounter());
 
@@ -228,7 +228,7 @@ namespace zynforge
                     else
                     {
                         l.setText ("-- idle", juce::dontSendNotification);
-                        l.setColour (juce::Label::textColourId, brand::textMuted);
+                        l.setColour (juce::Label::textColourId, brand::textTertiary);
                     }
                 };
                 set (mtcStatus, mode_mtc);

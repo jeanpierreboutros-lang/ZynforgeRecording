@@ -56,7 +56,7 @@ namespace zynforge
         outputCombo.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
         outputCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         outputCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-        outputCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+        outputCombo.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
         outputCombo.setTooltip (kOutputTooltip);
         outputCombo.onChange = [this]
         {

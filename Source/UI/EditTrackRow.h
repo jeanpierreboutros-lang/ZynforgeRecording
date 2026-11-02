@@ -314,7 +314,7 @@ namespace zynforge
                 c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep.withAlpha (zynforge::brand::alpha::muted));
                 c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
                 c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-                c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+                c.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
             };
             styleCombo (inputCombo);
             styleCombo (outputCombo);

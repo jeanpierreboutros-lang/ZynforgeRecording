@@ -130,7 +130,7 @@ namespace zynforge
 
             if (detail.isNotEmpty())
             {
-                g.setColour (brand::textMuted);
+                g.setColour (brand::textTertiary);
                 g.setFont (brand::type::ui (13.0f, false));
                 g.drawFittedText (detail, L.hint, juce::Justification::centredTop, 3);
             }

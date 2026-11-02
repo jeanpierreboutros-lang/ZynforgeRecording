@@ -48,7 +48,7 @@ namespace zynforge
 
                 configHeader.setText ("Audio configuration", juce::dontSendNotification);
                 configHeader.setFont (brand::type::captionBold());
-                configHeader.setColour (juce::Label::textColourId, brand::textMuted);
+                configHeader.setColour (juce::Label::textColourId, brand::textTertiary);
                 addAndMakeVisible (configHeader);
 
                 auto setupRO = [&] (juce::Label& cap, juce::Label& val,

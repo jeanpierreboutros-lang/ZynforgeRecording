@@ -192,7 +192,8 @@ namespace zynforge
         // unreadable S on the one chip you scan mid-show. Never hardcode a
         // foreground over a caller-supplied accent.
         const auto onFill = b.findColour (juce::ToggleButton::tickColourId);
-        const auto txt    = on ? brand::onSignal (onFill) : brand::textMuted;
+        const auto txt    = on ? brand::onSignal (onFill)
+                               : b.isEnabled() ? brand::textSecondary : brand::textMuted;
         g.setColour (txt);
         // Heavier, slightly larger glyph than the default uiLabel so
         // the single-letter chips read at a glance.
@@ -311,7 +312,7 @@ namespace zynforge
             g.drawRoundedRectangle (track, 2.0f, 1.0f);
 
             // Centre tick.
-            g.setColour (brand::textMuted);
+            g.setColour (brand::textTertiary);
             const float cx = track.getCentreX();
             g.drawVerticalLine ((int) cx, track.getY() - 2.0f, track.getBottom() + 2.0f);
 

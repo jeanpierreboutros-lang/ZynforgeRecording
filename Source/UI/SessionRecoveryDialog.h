@@ -263,7 +263,7 @@ namespace zynforge
             {
                 case 1: text = r.name;                              break;
                 case 2: text = juce::String (r.trackCount);
-                        if (r.trackCount == 0) fg = brand::textMuted;
+                        if (r.trackCount == 0) fg = brand::textTertiary;
                         break;
                 case 3: text = formatBytes (r.sizeBytes);
                         if (r.sizeBytes == 0) fg = brand::accentRecord;
