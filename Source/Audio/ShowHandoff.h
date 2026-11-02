@@ -80,7 +80,9 @@ namespace zynforge::showhandoff
         {
             const auto& strip = (*strips)[i];
             const int input = (int) strip.getProperty ("inRoute", -1);
-            const int output = (int) strip.getProperty ("outRoute", -1);
+            // Present only while Virtual Soundcheck holds the show patch: outRoute
+            // is then the soundcheck's, and this map is read to patch the show.
+            const int output = (int) strip.getProperty ("outputBeforeVsc", strip.getProperty ("outRoute", -1));
             csv << (i + 1) << ','
                 << timelineexport::csvField (strip.getProperty ("name", "").toString()) << ','
                 << (input >= 0 ? juce::String (input + 1) : juce::String()) << ','

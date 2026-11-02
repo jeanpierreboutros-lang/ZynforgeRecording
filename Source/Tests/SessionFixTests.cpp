@@ -204,6 +204,64 @@ public:
         expectEquals (line (false, true, "y"), juce::String ("Handoff incomplete at /Volumes/Out/Show Handoff -- the reason"));
     }
 
+    void testSoundcheckPatchStaysOut()
+    {
+        beginTest ("A template taken during Virtual Soundcheck holds the show patch");
+        {
+            Folder f; writeSavedShow (f, 2);
+            Host host (f);
+            auto& engine = host.main.engine;
+            engine.setTrackInputRouting (0, 3);  engine.setTrackOutputRouting (0, 7);
+            engine.setTrackInputRouting (1, 4);  engine.setTrackOutputRouting (1, 8);
+            vsc::repatch (engine);
+            expectEquals (engine.getRecorder().getTrack (0).outputRouting.load(), 3);
+
+            const auto text = host.main.sessionTemplateJson ("Festival");
+            const auto parsed = juce::JSON::parse (text);
+            auto* strips = parsed.getProperty ("strips", {}).getArray();
+            expect (strips != nullptr && strips->size() == 2);
+            if (strips != nullptr && strips->size() == 2)
+            {
+                expectEquals ((int) (*strips)[0].getProperty ("outRoute", -9), 7, "the template kept the soundcheck patch");
+                expectEquals ((int) (*strips)[1].getProperty ("outRoute", -9), 8);
+            }
+
+            const auto file = f.dir.getSiblingFile ("Festival.zftemplate");
+            expect (file.replaceWithText (text));
+            host.main.applySessionTemplate (file);
+            expectEquals (engine.getRecorder().getTrack (0).outputRouting.load(), 7);
+            expect (! vsc::hasSavedPatch (engine), "a new session must start with VSC off");
+        }
+
+        beginTest ("A template with VSC off holds the live patch");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            host.main.engine.setTrackOutputRouting (0, 5);
+            const auto parsed = juce::JSON::parse (host.main.sessionTemplateJson ("Plain"));
+            expectEquals ((int) (*parsed.getProperty ("strips", {}).getArray())[0].getProperty ("outRoute", -9), 5);
+        }
+
+        beginTest ("A handoff's channel map shows the show patch from a session saved with VSC on");
+        {
+            Folder f; writeSavedShow (f, 2);
+            Host host (f);
+            auto& engine = host.main.engine;
+            engine.setTrackInputRouting (0, 3);  engine.setTrackOutputRouting (0, 7);
+            engine.setTrackInputRouting (1, 4);  engine.setTrackOutputRouting (1, -1);
+            vsc::repatch (engine);
+            expect (engine.saveSessionMixTo (f.dir));
+
+            const auto rows = juce::StringArray::fromLines (showhandoff::channelMapCsv (f.dir));
+            expect (rows[1].endsWith (",4,8,no"), rows[1]);
+            expect (rows[2].endsWith (",5,,no"), "a strip with no output of its own stays blank: " + rows[2]);
+
+            vsc::restore (engine);
+            expect (engine.saveSessionMixTo (f.dir));
+            expect (juce::StringArray::fromLines (showhandoff::channelMapCsv (f.dir))[1].endsWith (",4,8,no"));
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -213,6 +271,7 @@ public:
         { MainComponent::s_testConstruct = previousTestConstruct; } };
         testHandoffStatus();
         testHandoffLines();
+        testSoundcheckPatchStaysOut();
     }
 };
 

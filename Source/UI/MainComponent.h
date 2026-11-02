@@ -526,6 +526,7 @@ private:
     juce::Array<juce::File> listSessionTemplates() const;
     void  promptSaveSessionTemplate();
     void  applySessionTemplate (const juce::File& templateFile);
+    juce::String sessionTemplateJson (const juce::String& name);
     void  promptDeleteSessionTemplate();
     // Default template: File ▸ New Session pre-applies it after creating
     // the session folder so the engineer starts with their preferred

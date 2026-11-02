@@ -21,6 +21,7 @@
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/PathSafety.h"
 #include "../Audio/ShowHandoff.h"
+#include "../Audio/VirtualSoundcheck.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
@@ -2246,6 +2247,33 @@ juce::Array<juce::File> MainComponent::listSessionTemplates() const
     return templatesDir().findChildFiles (juce::File::findFiles, false, "*.zftemplate");
 }
 
+// A template holds the show's patch. During Virtual Soundcheck the live outputs
+// are the soundcheck's, which a new session would take for its own.
+juce::String MainComponent::sessionTemplateJson (const juce::String& name)
+{
+    juce::DynamicObject::Ptr obj (new juce::DynamicObject());
+    obj->setProperty ("name",       name);
+    obj->setProperty ("createdAt",  juce::Time::getCurrentTime().toISO8601 (true));
+    obj->setProperty ("trackCount", engine.getRecorder().getNumTracks());
+
+    juce::Array<juce::var> strips;
+    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
+    {
+        auto& t = engine.getRecorder().getTrack (i);
+        juce::DynamicObject::Ptr s (new juce::DynamicObject());
+        s->setProperty ("name",    t.name);
+        s->setProperty ("colour",  (juce::int64) t.colourARGB.load (std::memory_order_relaxed));
+        s->setProperty ("inRoute", t.inputRouting .load (std::memory_order_relaxed));
+        s->setProperty ("outRoute",zynforge::vsc::showOutput (t));
+        s->setProperty ("stereo",  t.isStereo.load (std::memory_order_relaxed));
+        s->setProperty ("gainDb",  (double) t.gainDb.load (std::memory_order_relaxed));
+        s->setProperty ("pan",     (double) t.pan   .load (std::memory_order_relaxed));
+        strips.add (juce::var (s.get()));
+    }
+    obj->setProperty ("strips", juce::var (strips));
+    return juce::JSON::toString (juce::var (obj.get()));
+}
+
 void MainComponent::promptSaveSessionTemplate()
 {
     auto* aw = new juce::AlertWindow ("Save session template",
@@ -2265,31 +2293,9 @@ void MainComponent::promptSaveSessionTemplate()
         const auto name = aw->getTextEditorContents ("name").trim();
         if (name.isEmpty()) return;
 
-        juce::DynamicObject::Ptr obj (new juce::DynamicObject());
-        obj->setProperty ("name",       name);
-        obj->setProperty ("createdAt",  juce::Time::getCurrentTime().toISO8601 (true));
-        obj->setProperty ("trackCount", self->engine.getRecorder().getNumTracks());
-
-        juce::Array<juce::var> strips;
-        for (int i = 0; i < self->engine.getRecorder().getNumTracks(); ++i)
-        {
-            auto& t = self->engine.getRecorder().getTrack (i);
-            juce::DynamicObject::Ptr s (new juce::DynamicObject());
-            s->setProperty ("name",    t.name);
-            s->setProperty ("colour",  (juce::int64) t.colourARGB.load (std::memory_order_relaxed));
-            s->setProperty ("inRoute", t.inputRouting .load (std::memory_order_relaxed));
-            s->setProperty ("outRoute",t.outputRouting.load (std::memory_order_relaxed));
-            s->setProperty ("stereo",  t.isStereo.load (std::memory_order_relaxed));
-            s->setProperty ("gainDb",  (double) t.gainDb.load (std::memory_order_relaxed));
-            s->setProperty ("pan",     (double) t.pan   .load (std::memory_order_relaxed));
-            strips.add (juce::var (s.get()));
-        }
-        obj->setProperty ("strips", juce::var (strips));
-
         const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
         const auto out = self->templatesDir().getChildFile (safeName + ".zftemplate");
-        self->showStatus (zynforge::atomicfile::writeText (
-                              out, juce::JSON::toString (juce::var (obj.get())))
+        self->showStatus (zynforge::atomicfile::writeText (out, self->sessionTemplateJson (name))
                             ? "Template saved -> " + out.getFileName()
                             : "Template NOT saved -- check permissions / free space");
     }));
