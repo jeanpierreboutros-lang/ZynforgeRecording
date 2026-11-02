@@ -186,6 +186,9 @@ namespace zynforge
     {
         if (oneBasedIndex >= 1 && consoleCapture.load (std::memory_order_relaxed))
             capturedConsoleNames[oneBasedIndex] = name;
+        // The other console path refuses everything under LOCK. Names have no
+        // reason to differ from it, unlike a scene that marks a locked take.
+        if (engine.areControlsLocked()) return;
         const int i = oneBasedIndex - 1;
         if (i >= 0 && i < engine.getRecorder().getNumTracks())
             engine.setTrackName (i, name);

@@ -5,6 +5,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include "../UI/ControlSurfacesDialog.h"
 #include "../UI/MainComponent.h"
 #include "../UI/PreflightDialog.h"
 #include "../Audio/AtomicFile.h"
@@ -14,6 +15,7 @@
 #include "../Network/DeskMacro.h"
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <cstring>
 #include <functional>
 #include <map>
 
@@ -583,6 +585,110 @@ namespace zynforge
                 vsc::restore (b.engine());
                 expectEquals (b.track (0).outputRouting.load(), 4);
                 expectEquals (b.track (1).outputRouting.load(), 5, "R came back on its old output");
+            }
+
+            beginTest ("Remote PLAY says so when nothing plays");
+            {
+                Bench b (main);
+                auto& player = b.engine().getPlayer();
+                player.setPositionSamples (player.getTotalLengthSamples());
+                juce::String error;
+                expect (! b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::StartPlay, error),
+                        "PLAY reported success at the end of the session");
+                expect (error.containsIgnoreCase ("nothing to play"), error);
+
+                player.setPositionSamples (0);
+                expect (b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::StartPlay, error), error);
+                expect (b.engine().isPlaying());
+                expect (b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::TogglePlay, error), error);
+                expect (! b.engine().isPlaying());
+            }
+
+            beginTest ("Console names don't change a locked session, and a capture still hears them");
+            {
+                Bench b (main);
+                auto& remotes = b.engine().getRemotes();
+                main.consoleLink.setMessageHook ([] (const ConsoleMessage&) {});
+                const auto before = b.track (0).getNameThreadSafe();
+                remotes.setConsoleNameCapture (true);
+                main.onLockToggled();
+                main.consoleLink.injectReply (ConsoleMessage ("/ch/01/config/name", { juce::String ("Snare") }));
+                main.onLockToggled();
+                expectEquals (b.track (0).getNameThreadSafe(), before, "a desk renamed a strip under LOCK");
+                expectEquals (remotes.takeCapturedConsoleNames()[1], juce::String ("Snare"));
+                remotes.setConsoleNameCapture (false);
+
+                main.consoleLink.injectReply (ConsoleMessage ("/ch/01/config/name", { juce::String ("Snare") }));
+                expectEquals (b.track (0).getNameThreadSafe(), juce::String ("Snare"));
+            }
+
+            beginTest ("Console actions stay off the session's drive during a take");
+            {
+                Bench b (main);
+                auto& e = b.engine();
+                main.consoleLink.setMessageHook ([] (const ConsoleMessage&) {});
+                main.consoleLink.setSessionDir ({});
+                e.setTrackArmed (0, true);
+                e.armContinue (e.getCaptureLengthSamples());
+                expect (e.startRecording (b.session), b.recorder().getStartError());
+
+                main.consoleCaptureGains();
+                expect (main.consoleLink.stateLoadPending, "connecting state from a session read its drive during a take");
+                expect (! e.setChaseStartFromTake(), "Use Take Stamp listed the take's folder during a take");
+                main.stopActiveCaptureAsync (false);
+                pumpUntil ([&] { return ! e.isRecording() && ! main.captureMetadataPending
+                                        && main.pendingMetadataSaves == 0; });
+            }
+
+            beginTest ("Create Session from Console rechecks what it was asked to replace");
+            {
+                Bench b (main);
+                auto& e = b.engine();
+                auto& remotes = e.getRemotes();
+                const auto open = e.getActiveSessionDir();
+                const auto capture = [&]
+                {
+                    remotes.setConsoleNameCapture (true);
+                    remotes.onConsoleChannelName (1, "Kick");
+                };
+
+                capture();
+                main.onLockToggled();
+                main.finishSessionFromConsole (open, true, 0);
+                main.onLockToggled();
+                expect (e.getActiveSessionDir() == open, "the session was replaced under LOCK");
+                expect (main.statusLabel.getText().containsIgnoreCase ("locked"), main.statusLabel.getText());
+
+                capture();
+                main.sessionIoBusy.store (true);
+                main.finishSessionFromConsole (open, true, 0);
+                main.sessionIoBusy.store (false);
+                expect (e.getActiveSessionDir() == open, "the session was replaced under a session job");
+
+                capture();
+                main.finishSessionFromConsole (juce::File ("/nonexistent/other"), true, 0);
+                expect (e.getActiveSessionDir() == open, "a session the engineer never agreed to replace was replaced");
+                expect (main.statusLabel.getText().containsIgnoreCase ("another session"), main.statusLabel.getText());
+            }
+
+            beginTest ("A listener that can't start says so");
+            {
+                juce::DatagramSocket holder (false);
+                expect (holder.bindToPort (0));
+                const int port = holder.getBoundPort();
+
+                Bench b (main);
+                updateSettings (b.engine().getAppProps(), [&] (juce::PropertiesFile& p) { p.setValue ("oscListenPort", port); });
+                const auto& osc = cs_detail::protocols().front();
+                expect (osc.osc, "fixture: the first entry is an OSC protocol");
+                const auto refusal = cs_detail::setProtoEnabled (b.engine(), osc, true);
+                expect (refusal.contains (juce::String (port)), refusal);
+                expect (! b.engine().getRemotes().isOscListening());
+
+                holder.shutdown();
+                expect (cs_detail::setProtoEnabled (b.engine(), osc, true).isEmpty(), "a free port was refused");
+                expect (cs_detail::setProtoEnabled (b.engine(), osc, false).isEmpty());
+                updateSettings (b.engine().getAppProps(), [] (juce::PropertiesFile& p) { p.removeValue ("oscListenPort"); });
             }
 
             beginTest ("A surface is given its whole state when it connects");

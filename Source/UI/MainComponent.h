@@ -263,6 +263,7 @@ private:
     // Request channel names from a DiGiCo console, then build a session from
     // what comes back (the bidirectional console link).
     void createSessionFromConsole();
+    void finishSessionFromConsole (const juce::File& sessionAtPress, bool viaLink, int stereoPairsAsked);
     // Builds the session from what the desk reported. `stereoPairsAsked` is
     // how many link states were requested; 0 means this desk or path can't
     // report them.

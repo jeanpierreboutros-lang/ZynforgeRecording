@@ -275,19 +275,21 @@ namespace zynforge
         // another session.  Keeping this in AudioEngine makes non-UI entry
         // points obey the same boundary as File > Open/New.
         void clearSessionState();
-        void startPlayback()
+        // False when nothing started, so a remote can say so.
+        bool startPlayback()
         {
-            if (isCaptureFinalizing()) return;
+            if (isCaptureFinalizing()) return false;
             // Never play back on top of a live take. This is a recorder, not
             // a DAW -- summing the previous take into the monitor/master mid-
             // record is always wrong. The UI PLAY button guards this, but
             // network/remote entry points (OSC play, MCU Play) and timecode
             // chase reach here directly, so the guard belongs at the engine.
-            if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return;
+            if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return false;
             // Nothing to roll (no session, or parked at/after the end with no
             // loop to wrap): don't start.
-            if (! player.isPlaying() && ! player.hasAudioAhead()) return;
+            if (! player.isPlaying() && ! player.hasAudioAhead()) return false;
             player.start();
+            return true;
         }
         void stopPlayback() { player.stop(); }
 

@@ -543,11 +543,15 @@ namespace zynforge
         switch (action)
         {
             case RemoteTransportAction::TogglePlay:
-                if (player.isPlaying()) stopPlayback(); else startPlayback();
-                return true;
             case RemoteTransportAction::StartPlay:
-                startPlayback();
-                return true;
+                if (action == RemoteTransportAction::TogglePlay && player.isPlaying())
+                {
+                    stopPlayback();
+                    return true;
+                }
+                if (startPlayback()) return true;
+                error = isTakeOnDisk() ? "capture is running" : "nothing to play from here";
+                return false;
             case RemoteTransportAction::StopPlay:
                 stopPlayback();
                 return true;
@@ -744,6 +748,7 @@ namespace zynforge
 
     bool AudioEngine::setChaseStartFromTake()
     {
+        if (isTakeOnDisk()) return false;
         const auto folder = getActiveSessionDir().getChildFile ("Audio Files");
         auto files = folder.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "Track_*");
         files.sort();
