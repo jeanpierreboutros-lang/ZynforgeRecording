@@ -23,6 +23,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+The next four sections came in on 2026-11-02. They are in `main` only: not installed on either Mac, and not yet tried on real hardware.
+
+### Removed
+
+ZynForge Recording is now a recorder and virtual soundcheck. After a census of every feature, the owner cut what did not serve that.
+
+- **Mix:** VCAs, buses and aux sends. STREAM sends and StereoMix stay. An old session's bus strip loads as an ordinary strip.
+- **Mix automation:** Volume, Pan and Mute lanes, Write, Trim, Suspend, curves, Automation Safe and the toolbar. PUNCH recording is not affected.
+- **Tempo and click:** the tempo map, Tempo lane, TempoBar, TAP, time signature, cue tempo curves, Cue Fade, the click, Generate Click, the CLICK button and MIDI clock out.
+- **Editing:** comp lanes, comp from selection, take actions and the TAKE chip, Strip Silence, Normalize, Tab to transient and the Scrub tool. A session with several takes still opens on its active take and saves them all.
+- **Network:** the companion server with its state page, read-only confidence page and `/stream.wav`, and `tools/auto_stop.sh`, so an overnight soak now needs someone to stop it by hand. NDI, Session Mirror and cloud upload went too.
+- **Analysis and formats:** AAF export, the Noise Report, spectral auto-name, the strips' mini spectrum, the phase meter and MP3 export. The QC report still gives the noise floor, and Write soundcheck report stays.
+- **Dialogs and controls:** the Artist, Venue, FOH Engineer, Date and Notes fields, the MIDI surface Device Type box, the timeline strip, and buttons and dialog controls that did nothing.
+
+### Changed
+
+- Backup and Mirror Drives are one dialog, from File or the BACKUP button. Backup is its first row and now has its own format box. Its default stays WAV 24.
+- Export All Tracks, Export Individual Tracks, Bounce Edited Tracks and Bounce Stereo Mix are one dialog, File ▸ Export ▸ Export Audio: Raw takes, Edited tracks or Stereo mix. Raw takes use the format you pick; the other two are always 24-bit WAV.
+- Session Info is a read-only summary of the open session.
+- A cue recall moves the playhead and sets the mix, and changes nothing else.
+- Reaper and DAWproject exports carry a default 120 BPM in 4/4.
+- Tab does nothing outside a text field, so it can't walk focus onto a routing combo or a transport button.
+
+### Added
+
+- A session from an earlier build that used any of the removed features opens, plays and saves. Before anything can overwrite them, its original documents are copied once to `Session File Backups/Before Feature Removal/`, and the status line says so. If that copy fails, the session opens but can't be saved until it works. Audio is never touched, and a session that never used these features is left alone.
+
+### Fixed
+
+- Changing Input or Output in the EDIT row now sets both sides, as MIXER and PATCH do, so the three views stay linked. The Output combo refuses during a take.
+- Ctrl+Cmd+C runs Crop. Cmd+C still copies.
+- Save As, Move and Show Handoff skip half-written temporary files, and a waveform cache that can't be read no longer fails a copy, since it costs only a rescan. Any other file that can't be copied still stops the copy. The comparison in Show Handoff skips the same files.
+
+---
+
 Everything from here down to *Added — console and virtual soundcheck* came in on 2026-11-01. It is in `main` only: not installed on either Mac, and not yet tried on real hardware.
 
 ### Fixed — punch and RECORD safety
