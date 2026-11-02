@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CheckedFileStream.h"
 #include "FloatAiffWriter.h"
 #include "MultitrackRecorder.h"
 
@@ -37,6 +38,7 @@ namespace zynforge
             juce::int64  totalSamples { 0 };       // never resets
             juce::StringArray partFiles;
             bool         failed { false };
+            CheckedFileStream::Failed closeFailed { CheckedFileStream::makeFailedFlag() };
 
             juce::HeapBlock<float> ring;           // ringFrames per channel, planar
             juce::int64  head { 0 }, tail { 0 }, lostFrames { 0 }, countedLost { 0 };
@@ -97,10 +99,18 @@ namespace zynforge
         // This track's file is finished, by choice or by failure.
         void stopTrack (Track& t)
         {
-            t.writer.reset();
+            closeWriter (t);
             const std::lock_guard<std::mutex> g (ringLock);
             if (t.accepting) liveChannels.fetch_sub (t.channels, std::memory_order_relaxed);
             t.accepting = false;
+        }
+
+        // The stream can only say a close came up short once the writer is gone.
+        void closeWriter (Track& t)
+        {
+            const bool wasOpen = t.writer != nullptr;
+            t.writer.reset();
+            if (wasOpen && t.closeFailed->load()) failTrack (t);
         }
 
         // Opens one file. framesBefore: what this pass already wrote to earlier
@@ -110,7 +120,7 @@ namespace zynforge
             // All callers choose a new part or stash a punch target first.
             // Never truncate an unexpected file, including a foreign backup.
             if (target.exists()) return nullptr;
-            auto* out = target.createOutputStream().release();
+            auto* out = CheckedFileStream::open (target, t.closeFailed).release();
             if (out == nullptr) return nullptr;
 
             const auto chans = (unsigned int) juce::jmax (1, t.channels);
@@ -381,7 +391,7 @@ namespace zynforge
             if (projected < maxBytesForContainer (t.container)) return;
             // Closing finalises the header, so the file left behind is valid.
             if (! flushFloatAiffBeforeClose (t.writer.get())) failTrack (t);
-            t.writer.reset();
+            closeWriter (t);
             ++t.partNumber;
             const auto next = t.baseFile.getParentDirectory()
                 .getChildFile (t.baseFile.getFileName() + "_part"

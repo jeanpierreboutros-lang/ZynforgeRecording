@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "MultiPartReader.h"   // ConcatReader -- multi-part base for the splice
+#include "CheckedFileStream.h"
 #include "FloatAiffWriter.h"
 
 namespace zynforge
@@ -83,11 +84,14 @@ namespace zynforge
 
         std::unique_ptr<juce::AudioFormatWriter> w;
         juce::int64 room = 0;
-        const auto closeFile = [&w]
+        // The original is deleted on the strength of this file, so a close that
+        // comes up short has to count.
+        const auto closeFailed = CheckedFileStream::makeFailedFlag();
+        const auto closeFile = [&w, &closeFailed]
         {
             const bool closed = w == nullptr || flushFloatAiffBeforeClose (w.get());
             w.reset();
-            return closed;
+            return closed && ! closeFailed->load();
         };
         const auto nextFile = [&]
         {
@@ -97,7 +101,7 @@ namespace zynforge
                                           + juce::String::formatted ("%02d", (int) written.size() + 1)
                                           + outFile.getFileExtension());
             file.deleteFile();
-            std::unique_ptr<juce::FileOutputStream> os (file.createOutputStream());
+            auto os = CheckedFileStream::open (file, closeFailed);
             if (os == nullptr) return false;
             w.reset (isFloat && (ext == ".aif" || ext == ".aiff")
                          ? FloatAiffWriter::create (os.get(), baseR.sampleRate, (unsigned int) chans)

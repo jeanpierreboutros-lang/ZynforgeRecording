@@ -8,6 +8,7 @@
 #include "../Audio/CaptureCopy.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/MultitrackRecorder.h"
+#include "../Audio/PunchSplice.h"
 #include "../Audio/TrackOrderLog.h"
 #include "../Audio/WavRepair.h"
 #include "../Capture/CaptureDaemon.h"
@@ -19,6 +20,8 @@
 #include <thread>
 #include <vector>
 #include <CoreFoundation/CoreFoundation.h>
+#include <csignal>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -1224,9 +1227,67 @@ namespace zynforge
             }
         }
 
+        // Files stop growing at `bytes` while `work` runs, as on a drive that fills.
+        template <typename Work>
+        static void withFileLimit (juce::int64 bytes, Work&& work)
+        {
+            rlimit before {};
+            getrlimit (RLIMIT_FSIZE, &before);
+            const auto previous = std::signal (SIGXFSZ, SIG_IGN);
+            auto limited = before;
+            limited.rlim_cur = (rlim_t) bytes;
+            setrlimit (RLIMIT_FSIZE, &limited);
+            work();
+            setrlimit (RLIMIT_FSIZE, &before);
+            std::signal (SIGXFSZ, previous);
+        }
+
+        void testSmallerThings()
+        {
+            using Copy = MultitrackRecorder::CaptureCopy;
+
+            beginTest ("A take file that closes short is a failed write, not a clean STOP");
+            {
+                const auto root = tempDir ("short-close");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.startRecording (session));
+                Ramp ramp { rec };
+                for (int b = 0; b < 4; ++b) { ramp.block(); rec.drainPendingForTests(); }
+                withFileLimit (1500, [&] { rec.stopRecording(); });
+                expect (session.getChildFile ("Audio Files/Track_01.wav").getSize() < 4 * kBlock * 3,
+                        "the limit did not bite, so this proved nothing");
+                expect (rec.hasPrimaryFailed(), "STOP called a short file finished");
+            }
+
+            beginTest ("A punch that closes short never replaces the take");
+            {
+                const auto root = tempDir ("short-splice");
+                const juce::ScopeGuard cleanUp { [&] { root.deleteRecursively(); } };
+                const auto base = root.getChildFile ("base.wav");
+                const auto insert = root.getChildFile ("insert.wav");
+                const auto out = root.getChildFile ("out.wav");
+                writeWav (base, 1, 24, 4000);
+                writeWav (insert, 1, 24, 100);
+                bool spliced = true;
+                withFileLimit (9000, [&]
+                {
+                    juce::AudioFormatManager fm; fm.registerBasicFormats();
+                    spliced = splicePunchFile (fm, base, insert, 100, out);
+                });
+                expect (! spliced, "a short splice was reported whole");
+                expect (! out.exists());
+            }
+
+        }
+
         void runTest() override
         {
             const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
+            testSmallerThings();
             testRefusedThreads();
             testDiskFigures();
             testHelperLifecycle();

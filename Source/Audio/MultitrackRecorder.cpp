@@ -1834,7 +1834,8 @@ namespace zynforge
                                                int chans, double sampleRate, juce::int64 frames)
     {
         file.deleteFile();
-        std::unique_ptr<juce::FileOutputStream> os (file.createOutputStream());
+        const auto closeFailed = CheckedFileStream::makeFailedFlag();
+        auto os = CheckedFileStream::open (file, closeFailed);
         if (os == nullptr) return false;
         const auto channels = (unsigned int) juce::jmax (1, chans);
         std::unique_ptr<juce::AudioFormatWriter> w;
@@ -1860,6 +1861,7 @@ namespace zynforge
         }
         if (ok) ok = flushFloatAiffBeforeClose (w.get());
         w.reset();
+        ok = ok && ! closeFailed->load();
         if (! ok) file.deleteFile();
         return ok;
     }
