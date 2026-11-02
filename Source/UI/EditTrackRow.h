@@ -987,6 +987,29 @@ namespace zynforge
                 }
             }
 
+            // Live-capture placement on the timeline. The envelope covers
+            // [0, recPos], including a silent prefix for continue/punch.
+            // the lane covers [0, total] = max(existing take length, recPos).
+            //   CONTINUE: total == recPos -> liveFrac 1 (envelope fills the lane,
+            //             existing take is the [0, takeEnd) prefix).
+            //   PUNCH:    total == fullTake > recPos -> confine the envelope to
+            //             liveFrac so the drop-in sits AT the punch point instead
+            //             of stretching to the lane's right edge (which looked
+            //             like it recorded at the END), existing take fills [0,W].
+            // The overview retains the actual count of input bins even after
+            // downsampling, so long takes never drift ahead of the recorder.
+            const juce::int64 liveRecSamples = recPeakL.spanSamples();
+            const juce::int64 playerTotalS   = engine.getPlayer().getTotalLengthSamples();
+            const juce::int64 timelineTotalS = engine.isRecording()
+                ? juce::jmax (liveRecSamples, laneTimelineSamples())
+                : juce::jmax (playerTotalS, liveRecSamples);
+            const double liveFrac     = timelineTotalS > 0
+                ? juce::jlimit (0.0, 1.0, (double) liveRecSamples / (double) timelineTotalS) : 1.0;
+            const double existingFrac = timelineTotalS > 0
+                ? juce::jlimit (0.0, 1.0, (double) playerTotalS   / (double) timelineTotalS) : 1.0;
+            auto confineLive = [liveFrac] (juce::Rectangle<int> a)
+            { return a.withWidth (juce::jmax (1, (int) (a.getWidth() * liveFrac))); };
+
             // The Markers lane, overlaid on top of the dimmed waveform base above.
             if (laneMode == LaneMode::Markers)
             {
@@ -997,6 +1020,22 @@ namespace zynforge
                 g.setColour (brand::lift (brand::edge, 0.2f).withAlpha (zynforge::brand::alpha::muted));
                 g.drawHorizontalLine (inner.getCentreY(),
                                       (float) inner.getX(), (float) inner.getRight());
+
+                // A take rolling on this row shows here too, under the markers.
+                if (liveRecording)
+                {
+                    g.setColour (brand::meterHot);
+                    if (stereo)
+                    {
+                        const int laneH = inner.getHeight() / 2;
+                        drawRecEnvelope (g, confineLive (inner.withHeight (laneH)), recPeakL, vz);
+                        drawRecEnvelope (g, confineLive (inner.withTrimmedTop (laneH)), recPeakR, vz);
+                    }
+                    else
+                    {
+                        drawRecEnvelope (g, confineLive (inner), recPeakL, vz);
+                    }
+                }
 
                 // Real session markers, drawn at their actual sample
                 // positions (mapped through the same timeline as the
@@ -1076,29 +1115,6 @@ namespace zynforge
             // still show the NEW audio building live instead of only the static
             // clips. The clip-block renderer below is suppressed while showLive
             // for the same reason, then takes over on stop once the file scans.
-            // Live-capture placement on the timeline. The envelope covers
-            // [0, recPos], including a silent prefix for continue/punch.
-            // the lane covers [0, total] = max(existing take length, recPos).
-            //   CONTINUE: total == recPos -> liveFrac 1 (envelope fills the lane,
-            //             existing take is the [0, takeEnd) prefix).
-            //   PUNCH:    total == fullTake > recPos -> confine the envelope to
-            //             liveFrac so the drop-in sits AT the punch point instead
-            //             of stretching to the lane's right edge (which looked
-            //             like it recorded at the END), existing take fills [0,W].
-            // The overview retains the actual count of input bins even after
-            // downsampling, so long takes never drift ahead of the recorder.
-            const juce::int64 liveRecSamples = recPeakL.spanSamples();
-            const juce::int64 playerTotalS   = engine.getPlayer().getTotalLengthSamples();
-            const juce::int64 timelineTotalS = engine.isRecording()
-                ? juce::jmax (liveRecSamples, laneTimelineSamples())
-                : juce::jmax (playerTotalS, liveRecSamples);
-            const double liveFrac     = timelineTotalS > 0
-                ? juce::jlimit (0.0, 1.0, (double) liveRecSamples / (double) timelineTotalS) : 1.0;
-            const double existingFrac = timelineTotalS > 0
-                ? juce::jlimit (0.0, 1.0, (double) playerTotalS   / (double) timelineTotalS) : 1.0;
-            auto confineLive = [liveFrac] (juce::Rectangle<int> a)
-            { return a.withWidth (juce::jmax (1, (int) (a.getWidth() * liveFrac))); };
-
             if (! haveClipBlocks || showLive)
             {
             if (stereo)

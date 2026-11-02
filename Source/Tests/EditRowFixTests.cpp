@@ -161,6 +161,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            markersLaneShowsTheTake();
             verticalMovesKeepTheTimeline();
             resizingARowMovesNothing();
             noFirstLookDuringATake();
@@ -703,6 +704,38 @@ namespace zynforge
                     expectEquals (vp->getViewPositionX(), 600, "the drag slid the timeline back");
                     expect (vp->getViewPositionY() > 0, "the drag no longer scrolls the rows");
                 }
+            }
+        }
+
+        void markersLaneShowsTheTake()
+        {
+            beginTest ("A row on the Markers lane shows the take rolling on it");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                row.laneMode = Row::LaneMode::Markers;
+                auto render = [&row]
+                {
+                    juce::Image img (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                    juce::Graphics g (img);
+                    row.paint (g);
+                    return img;
+                };
+                const auto idle = render();
+                row.setLiveRecording (true);
+                for (int i = 0; i < 100; ++i) row.appendLivePeakL (0.9f);
+                const auto live = render();
+                auto changed = [&] (double from, double to)
+                {
+                    int differing = 0;
+                    for (int x = laneX (row, from); x < laneX (row, to); ++x)
+                        for (int y = 8; y < row.getHeight() - 8; ++y)
+                            if (live.getPixelAt (x, y) != idle.getPixelAt (x, y)) ++differing;
+                    return differing;
+                };
+                expect (changed (0.05, 0.45) > 0, "the lane showed no capture");
+                expectEquals (changed (0.60, 0.95), 0, "the capture ran past its share of the timeline");
             }
         }
 
