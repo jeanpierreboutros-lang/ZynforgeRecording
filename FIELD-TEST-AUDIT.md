@@ -59,7 +59,7 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 |---|---|---|---|
 | ☐ D.1 | Mark a strip **stereo** (mixer link or PATCH), arm + record real stereo. | **One** interleaved 2-ch `Track_NN.wav` — no second mono file. Pair hard-panned L/R. | Two mono files; pair centred. |
 | ☐ D.2 | Virtual-soundcheck playback of D.1. | Stereo image correct (L→its out, R→its out); the pair meters as one stereo strip. | Plays mono / wrong outputs / no meter. |
-| ☐ D.3 | Bounce the stereo pair (Export). | One interleaved stereo stem, both channels present, opens in the DAW. | R channel silent. |
+| ☐ D.3 | Export the stereo pair (Export Audio ▸ Edited tracks). | One interleaved stereo stem, both channels present, opens in the DAW. | R channel silent. |
 | ☐ D.4 | **Routing-mapping regression:** create 2 empty mono strips (don't record), then **import** a stereo file. | Stereo plays from **its own strip** + meters; the empty mono strips stay silent; muting them does nothing to the stereo. | Stereo plays out of the mono strips / no meter (the bug fixed `3b0b857`). |
 | ☐ D.5 | Open a **legacy** session (two-mono-file stereo pair). | Plays/edits/exports exactly as before. | Anything broken for old sessions. |
 | ☐ D.6 | Import a known four-channel source and inspect playback/export. | Four mono strips in source order, all channels present and sample-rate-converted together if needed. | Only L/R land, channels are swapped, or an incomplete import is reported as success. |

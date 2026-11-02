@@ -403,7 +403,7 @@ Some `MainComponent` state belongs to the SESSION, not the app, and every path t
 ```
 ~/Music/Zynforge Sessions/<Name>/
 ├── Audio Files/                  Track_01.wav … (recordings)
-├── Export Files/                 stereo bounce + per-track exports (was 'Bounced Files/')
+├── Export Files/                 stereo mix + per-track exports (was 'Bounced Files/')
 ├── Session File Backups/         timestamped backup-session folders <Name>_<stamp>/ (session-defining files, no audio; keep 10 newest)
 │   └── Before Feature Removal/   original documents of a session from an earlier build that held removed features (see above)
 ├── <Name>.zfproj                 cues, playlists, UI layout
