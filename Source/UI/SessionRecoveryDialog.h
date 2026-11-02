@@ -91,7 +91,7 @@ namespace zynforge
             deleteButton.setButtonText ("Delete...");
             deleteButton.setColour (juce::TextButton::buttonColourId,
                                     brand::accentRecord.withMultipliedAlpha (0.18f));
-            deleteButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord);
+            deleteButton.setColour (juce::TextButton::textColourOffId, brand::textDanger);
             deleteButton.onClick = [this] { deleteSelected(); };
             addAndMakeVisible (deleteButton);
 

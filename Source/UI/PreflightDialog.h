@@ -88,7 +88,7 @@ namespace zynforge
 
             auto area = dialog::bodyBounds (*this).reduced (kPad, 0);
             auto summary = area.removeFromTop (kSummaryH);
-            g.setColour (failed > 0 ? brand::accentRecord : warnings > 0 ? brand::alertAmber : brand::accentStatus);
+            g.setColour (failed > 0 ? brand::textDanger : warnings > 0 ? brand::alertAmber : brand::accentStatus);
             g.setFont (brand::type::headline());
             g.drawText (summaryText(), summary, juce::Justification::centredLeft, false);
 
@@ -128,7 +128,7 @@ namespace zynforge
         // what is wrong with a path comes after the path.
         static int rowHeight (const PreflightRow& row)
         {
-            return brand::type::uiBody().getStringWidthFloat (row.value) > (float) valueWidth()
+            return juce::GlyphArrangement::getStringWidth (brand::type::uiBody(), row.value) > (float) valueWidth()
                        ? kRowH + 16 : kRowH;
         }
 
@@ -204,8 +204,9 @@ namespace zynforge
                         juce::Justification::centredLeft, true);
 
             g.setFont (brand::type::uiBody());
-            g.setColour (problem ? statusColour (row) : brand::textPrimary);
-            g.drawFittedText (row.value, r.withTrimmedTop (brand::space::xs), juce::Justification::topLeft, 2, 1.0f);
+            g.setColour (row.status == PreflightRow::Status::failed ? brand::textDanger
+                         : problem ? statusColour (row) : brand::textPrimary);
+            g.drawFittedText (row.value, r.withTrimmedTop (brand::space::xs + 1), juce::Justification::topLeft, 2, 1.0f);
         }
 
         std::vector<PreflightRow> rows;

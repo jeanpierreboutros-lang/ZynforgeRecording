@@ -322,7 +322,7 @@ namespace zynforge
                                       + " -- channel names fill in as the console replies."
                                     : "Couldn't send -- check Console IP + Receive Port.",
                                  juce::dontSendNotification);
-                statusL.setColour (juce::Label::textColourId, ok ? brand::accentStatus : brand::accentRecord);
+                statusL.setColour (juce::Label::textColourId, ok ? brand::accentStatus : brand::textDanger);
             }
 
             AudioEngine& engine;

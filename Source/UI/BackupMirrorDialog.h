@@ -254,7 +254,7 @@ namespace zynforge
                 addAndMakeVisible (addBtn);
 
                 status.setFont (brand::type::caption());
-                status.setColour (juce::Label::textColourId, brand::accentRecord);
+                status.setColour (juce::Label::textColourId, brand::textDanger);
                 status.setJustificationType (juce::Justification::centredLeft);
                 addAndMakeVisible (status);
 

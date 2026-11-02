@@ -48,6 +48,8 @@ namespace zynforge::brand
     inline const auto textSecondary = juce::Colour (forge::textSecondary);
     inline const auto textTertiary = juce::Colour (0xffa3aeb9);
     inline const auto textMuted = juce::Colour (forge::textMuted);
+    // Red that reads as text on a dialog: accentRecord is only 3.7:1 on bgElevated.
+    inline const auto textDanger = juce::Colour (0xffff8a8a);
 
     // ── Semantic signal accents ───────────────────────────────────────────
     inline const auto accentRecord = juce::Colour (forge::accentRecord);  // record / danger

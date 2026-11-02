@@ -29,7 +29,7 @@ namespace
         inline void drawNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based)
         {
             g.setFont (zynforge::brand::type::mono (10.0f, true));
-            g.setColour (zynforge::brand::gloss (zynforge::brand::alpha::strong));
+            g.setColour (zynforge::brand::textPrimary);
             g.drawText (juce::String (channel1Based).paddedLeft ('0', 2), box,
                         juce::Justification::centredLeft, false);
         }
