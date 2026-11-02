@@ -37,7 +37,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -88,6 +88,7 @@ private:
         juce::int64 punchAt { -1 };
     };
     bool handleRecordPressDuringTake();
+    void endPunchSession();
     bool prepareRecordStart (RecordStartPlan&);
     void planRecordPosition (RecordStartPlan&);
     bool recordPlanHasSelection (const RecordStartPlan&);
@@ -375,7 +376,8 @@ private:
 
     // Auto-save bookkeeping (see serviceAutosave / showAutosaveSettings).
     juce::uint32 lastAutosaveMs    { 0 };   // 0 = clock not started yet
-    juce::uint32 recordPressHeldAtMs { 0 }; // a RECORD press waiting out an idle save; 0 = none
+    juce::uint32 recordPressHeldAtMs { 0 }; // a press on this Mac waiting out an idle save; 0 = none
+    bool         recordPressHeldRolling { false };  // whether the transport rolled when it was pressed
     int          autosaveFailures  { 0 };   // in a row; spaces out the retries
     int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
     juce::String lastMetadataSaveError;     // why the last save failed, for the STOP message
@@ -589,6 +591,7 @@ private:
     friend class zynforge::SessionInterchangeTests;
     friend class zynforge::SessionSafetyTests;
     friend class zynforge::MainWindowGuardTests;
+    friend class zynforge::MainWindowFixTests;
     friend class zynforge::EditIntegrityTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 

@@ -64,13 +64,20 @@ void MainComponent::onRecordClicked()
     if (captureMetadataPending || engine.isCaptureFinalizing()
         || (sessionIoBusy.load() && ! engine.isRecording()))
     {
+        const bool settled = ! captureMetadataPending && ! engine.isCaptureFinalizing();
+        // During a punch's tail this press ends the punch, and STOP comes here
+        // too. Held, it would outlive the punch and start a take of its own.
+        if (settled && punchSessionActive) { endPunchSession(); return; }
         // An autosave or layout write is over in moments and nobody chose to
         // start it, so it must not cost the engineer the press. Copies, exports
         // and a stop's finalization are not held: those can take far longer.
-        if (! captureMetadataPending && ! engine.isCaptureFinalizing()
-            && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
+        // Only a press made here is held. A held press runs later with nothing
+        // to say where it came from, and a remote must never run as a local one.
+        const bool pressedHere = ! remoteStartInFlight && ! twinStartInFlight;
+        if (settled && pressedHere && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
         {
             recordPressHeldAtMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
+            recordPressHeldRolling = engine.getPlayer().isPlaying();
             showStatus ("RECORD held -- starting as soon as this save finishes");
             return;
         }
@@ -158,8 +165,12 @@ void MainComponent::releaseHeldRecordPress()
     const auto heldForMs = juce::Time::getMillisecondCounter() - recordPressHeldAtMs;
     recordPressHeldAtMs = 0;
     if (sessionLocked) return;
+    // Rolling, RECORD punches. Stopped, it appends. A press made in one state
+    // never runs in the other.
     if (heldForMs > kLongestHoldMs) showStatus ("Saving took too long -- press RECORD again");
-    else                            onRecordClicked();
+    else if (engine.getPlayer().isPlaying() != recordPressHeldRolling)
+        showStatus ("The transport moved while RECORD was held -- press RECORD again");
+    else onRecordClicked();
 }
 
 void MainComponent::runRecordPlan (RecordStartPlan& plan)
@@ -182,21 +193,22 @@ void MainComponent::runRecordPlan (RecordStartPlan& plan)
     if (! punch && engine.isRecording()) twinLink.noteLocalTakeStarted();
 }
 
+// A RECORD-triggered selection punch is in flight (pre-roll / recording /
+// post-roll) -- a press ends it: punch out if recording (splices the take),
+// then stop the transport and tear down.
+void MainComponent::endPunchSession()
+{
+    const bool wasRecording = engine.isRecording();
+    if (wasRecording) stopActiveCaptureAsync (false);
+    engine.stopPlayback();
+    engine.setPunchModeOn (false);
+    punchSessionActive = false;
+    if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
+}
+
 bool MainComponent::handleRecordPressDuringTake()
 {
-    // A RECORD-triggered selection punch is in flight (pre-roll / recording /
-    // post-roll) -- pressing RECORD again ends it: punch out if recording
-    // (splices the take), then stop the transport and tear down.
-    if (punchSessionActive)
-    {
-        const bool wasRecording = engine.isRecording();
-        if (wasRecording) stopActiveCaptureAsync (false);
-        engine.stopPlayback();
-        engine.setPunchModeOn (false);
-        punchSessionActive = false;
-        if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
-        return true;
-    }
+    if (punchSessionActive) { endPunchSession(); return true; }
 
     if (manualPunchActive && engine.isRecording())
     {
@@ -683,6 +695,7 @@ void MainComponent::onPlayClicked()
 
 void MainComponent::onStopClicked()
 {
+    recordPressHeldAtMs = 0;   // STOP after a held RECORD means don't start
     if (captureMetadataPending)
     { showStatus ("Recording stopped; finalization pending"); return; }
     if (punchSessionActive)
@@ -997,6 +1010,7 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     {
         if (! recording)
         {
+            recordPressHeldAtMs = 0;
             if (captureMetadataPending)
             { error = "recording stopped; finalization pending"; return false; }
             // A failed take stays reported, but it never holds up stopping
@@ -1032,6 +1046,9 @@ std::optional<bool> MainComponent::handleRemoteTransport (
             showRecordRefusal ("Remote RECORD refused -- capture daemon is unavailable");
             return false;
         }
+        // A daemon take this window has not adopted yet still rolls, and a
+        // press there is a STOP, which a remote start must never turn into.
+        if (daemonModeActive() && captureSupervisor.isDaemonRecording()) return true;
         // During a punch's post-roll a RECORD press would end the punch.
         if (punchSessionActive)
         {
@@ -1043,9 +1060,9 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         remotePunchRefused = false;
         onRecordClicked();
         if (engine.isRecording()) return true;
-        error = recordPressHeldAtMs != 0 ? "a session save is finishing; RECORD starts when it ends"
-              : remotePunchRefused ? "RECORD would punch into the take; clear the cursor or selection on the host"
-                                   : "recording could not start; check the host pre-flight message";
+        error = remotePunchRefused        ? "RECORD would punch into the take; clear the cursor or selection on the host"
+              : pendingMetadataSaves != 0 ? "session finalization or saving is pending"
+                                          : "recording could not start; check the host pre-flight message";
         return false;
     }
 
@@ -1114,6 +1131,7 @@ void MainComponent::forgetSessionUiState()
 {
     lastCaptureFinalizationError.clear();
     recordRefusal.clear();
+    recordPressHeldAtMs = 0;   // that press meant the session that just left
     cues.clear();
     currentCueIndex = -1;
     setlistBar.setCues (cues, currentCueIndex);
