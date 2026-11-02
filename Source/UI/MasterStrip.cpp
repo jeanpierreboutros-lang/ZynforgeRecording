@@ -35,16 +35,7 @@ namespace
             g.setColour (zynforge::brand::steelMasterHi);   // FLAT: solid plate (no gradient)
             g.fillRect (r);
             g.setColour (zynforge::brand::gloss (0.14f)); g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted));            // structural seam (subdued)
-            g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
             g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::strong)); g.fillRect (r.removeFromBottom (1.0f));
-        }
-        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool armed)
-        {
-            const auto c = structuralForge();
-            if (armed) { g.setColour (zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::wash)); g.fillRect (r.getX(), r.getY(), 7.0f, r.getHeight()); }
-            g.setColour (c.withAlpha (armed ? 1.0f : 0.55f));   // subdued at rest, hot when armed
-            g.fillRect (r.getX(), r.getY(), 3.0f, r.getHeight());
         }
         inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)
         {
@@ -89,7 +80,7 @@ namespace zynforge
         : engine (eng), meter (eng.getMasterState())
     {
         title.setFont (brand::type::sectionTitle());
-        title.setColour (juce::Label::textColourId, brand::brandOrange);
+        title.setColour (juce::Label::textColourId, brand::textPrimary);
         title.setJustificationType (juce::Justification::centredLeft);
         addAndMakeVisible (title);
 
@@ -124,11 +115,10 @@ namespace zynforge
         addChildComponent (heldLabel);
 
         // Mono / stereo mode toggle. Reuses the toggle-button pill style;
-        // text flips between 'MONO' and 'ST', tick colour goes brand-orange
-        // when stereo (the default) and teal when mono so the difference
-        // reads at a glance.
+        // text flips between 'MONO' and 'ST', and stereo (the default) takes
+        // the selection fill so the difference reads at a glance.
         modeButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-        modeButton.setColour (juce::ToggleButton::tickColourId, brand::brandOrange);
+        modeButton.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
         modeButton.setClickingTogglesState (true);
         modeButton.setToggleState (engine.getMasterStereo(), juce::dontSendNotification);
         modeButton.setButtonText (engine.getMasterStereo() ? "ST" : "MONO");
@@ -278,8 +268,8 @@ namespace zynforge
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         g.setGradientFill (brand::verticalGradient (brand::bgElevated, r, 0.05f, 0.30f));
         g.fillRoundedRectangle (r, brand::radius::xl);
-        g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::ghost));
-        g.drawRoundedRectangle (r, brand::radius::xl, 1.5f);
+        g.setColour (brand::edge);
+        g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
 
         // ── Heated Steel: forged finish (Direction C) ────────────────────
         {
@@ -289,8 +279,7 @@ namespace zynforge
             g.reduceClipRegion (bodyClip);
             steel::drawHammered    (g, r, 0.40f);
             steel::drawSteelHeader (g, r.withHeight (30.0f));
-            steel::drawSpine       (g, r, false);
-            steel::drawForgeMark   (g, { r.getX() + 8.0f, r.getY() + 7.0f, 19.0f, 19.0f }, true);
+            steel::drawForgeMark   (g, { r.getX() + 8.0f, r.getY() + 7.0f, 19.0f, 19.0f }, false);
         }
 
         // Etched maker's mark -- "ZYNFORGE" pressed into the bottom of the

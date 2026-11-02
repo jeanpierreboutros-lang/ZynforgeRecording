@@ -101,8 +101,7 @@ namespace zynforge
                 {
                     g.setGradientFill (brand::verticalGradient (brand::bgElevated, r, 0.05f, 0.10f));
                     g.fillRect (r);
-                    // Brand-orange selection stripe on the left edge.
-                    g.setColour (brand::brandOrange);
+                    g.setColour (brand::selectFill);
                     g.fillRect (r.withWidth (3.0f));
                 }
                 else if (hovered)

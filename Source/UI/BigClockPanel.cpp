@@ -105,7 +105,7 @@ namespace zynforge
 
     void BigClockPanel::setArmedReady (bool ready)
     {
-        if (armedReady != ready) { armedReady = ready; syncPulseTimer(); repaint(); }
+        if (armedReady != ready) { armedReady = ready; repaint(); }
     }
 
     // Breathe animation tick rate. 15 Hz is plenty for a 1 Hz sine (still
@@ -115,7 +115,7 @@ namespace zynforge
 
     void BigClockPanel::syncPulseTimer()
     {
-        const bool wantPulse = ! brand::reduceMotion() && ((mode == Mode::Recording) || armedReady);
+        const bool wantPulse = ! brand::reduceMotion() && mode == Mode::Recording;
         if (wantPulse)
         {
             if (! isTimerRunning())
@@ -141,24 +141,7 @@ namespace zynforge
                                     igniteLevel + (mode == Mode::Recording ? 1.0f : -1.0f)
                                                       / (0.3f * (float) kPulseHz));
 
-        // Scope the invalidation: while recording the whole plate breathes, but
-        // when merely armed-and-ready only the 2px border pulses — the big
-        // timecode / forge-mark centre is static. Repainting just an outer band
-        // there avoids re-rasterising the centre AND (since the panel is
-        // non-opaque) re-drawing the MainComponent slice behind it 15×/s.
-        if (mode == Mode::Recording)
-        {
-            repaint();
-        }
-        else
-        {
-            const auto b = getLocalBounds();
-            constexpr int band = 12;   // covers the reduced(2/3) borders + brackets
-            repaint (b.getX(),               b.getY(),                b.getWidth(), band);              // top
-            repaint (b.getX(),               b.getBottom() - band,    b.getWidth(), band);              // bottom
-            repaint (b.getX(),               b.getY(),                band,         b.getHeight());     // left
-            repaint (b.getRight() - band,    b.getY(),                band,         b.getHeight());     // right
-        }
+        repaint();
     }
 
     static juce::String formatRemaining (double seconds)
@@ -202,38 +185,9 @@ namespace zynforge
             g.fillRoundedRectangle (bgRect, brand::radius::lg);
         }
 
-        // Armed-but-not-rolling border. Uses signalArmedReady
-        // (engagedAmber -- the BYPASS / LIVE / LOCK token) so the
-        // 'primed but not active' colour doesn't collide with the
-        // mute / brand-assertion claims on brandOrange. Pulses at
-        // 1 Hz so the call-to-action draws the eye.
-        if (armedReady && mode == Mode::Idle)
-        {
-            const float pulse = rm ? 0.5f : 0.5f + 0.5f * std::sin (pulsePhase);
-            const auto  col   = brand::signalArmedReady().withMultipliedBrightness (0.85f + 0.25f * pulse);
-            g.setColour (col);
-            g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 2.0f);
-        }
-        else
-        {
-            g.setColour (brand::edge);
-            g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 1.0f);
-        }
+        g.setColour (brand::edge);
+        g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 1.0f);
 
-        // ── Heated Steel: structural orange frame + forge-mark ─────────────
-        g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::muted));
-        g.drawRoundedRectangle (r.reduced (3.0f), brand::radius::lg, 2.0f);
-        // Orange corner brackets (top-left / top-right) -- target detail.
-        {
-            const float br = 20.0f, bw = 2.0f, off = 8.0f;
-            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::prominent));
-            // top-left
-            g.fillRect (r.getX() + off, r.getY() + off, br, bw);
-            g.fillRect (r.getX() + off, r.getY() + off, bw, br);
-            // top-right
-            g.fillRect (r.getRight() - off - br, r.getY() + off, br, bw);
-            g.fillRect (r.getRight() - off - bw, r.getY() + off, bw, br);
-        }
         steel::drawForgeMark (g, { r.getX() + 14.0f, r.getBottom() - 34.0f, 24.0f, 24.0f },
                               mode == Mode::Recording);
 
@@ -242,7 +196,8 @@ namespace zynforge
         // Left: state + lamp
         auto left = inner.removeFromLeft (juce::jmin (220.0f, inner.getWidth() * 0.30f));
         {
-            juce::Colour lamp = brand::textMuted;
+            // Armed and waiting is a lamp, not a frame: bright is for the take.
+            juce::Colour lamp = armedReady ? brand::signalArmedReady() : brand::textMuted;
             juce::String label = "IDLE";
             if (mode == Mode::Recording) { lamp = brand::accentRecord; label = "REC"; }
             else if (mode == Mode::Playing) { lamp = brand::accentPlay;  label = "PLAY"; }

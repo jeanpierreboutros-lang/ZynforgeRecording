@@ -12,7 +12,7 @@ namespace zynforge::dialog
     // touches this file.
     inline constexpr int titleH     = 44;
     inline constexpr int footerH    = 60;
-    inline constexpr int stripeW    = 3;   // brand-orange title accent
+    inline constexpr int stripeW    = 3;   // title accent
     inline constexpr int btnPrimary = 110;
     inline constexpr int btnSecond  = 90;
     inline constexpr int btnH       = 28;
@@ -61,7 +61,7 @@ namespace zynforge::dialog
                                                  juce::PathStrokeType::rounded));
     }
 
-    // Title bar -- 44 px tall, brand-orange 3 px stripe down the left
+    // Title bar -- 44 px tall, muted ember 3 px stripe down the left
     // edge, forge-mark badge, then section-title text in textPrimary.
     // Returns the rect the title bar occupied so the caller can measure
     // remaining space.
@@ -71,7 +71,7 @@ namespace zynforge::dialog
     {
         auto bar = host.getLocalBounds().removeFromTop (titleH)
                                         .reduced (brand::space::md, 0);
-        g.setColour (brand::brandOrange);
+        g.setColour (brand::selectFill);
         g.fillRect (bar.removeFromLeft (stripeW));
         bar.removeFromLeft (brand::space::md);
 

@@ -347,13 +347,10 @@ namespace zynforge
             auto groove = juce::Rectangle<float> (thumb.getCentreX() - grooveW * 0.5f,
                                                   thumb.getY() + inset,
                                                   grooveW, thumb.getHeight() - inset * 2.0f);
-            // STRUCTURAL identity orange (not meterHot): the cap groove is
-            // permanent chrome on every fader, so it must NOT borrow the
-            // meter's "you're peaking" colour -- meterHot is reserved for live
-            // signal so a hot meter still escalates beyond the resting UI.
-            g.setColour (brand::structuralForge().withAlpha (0.32f));      // glow
-            g.fillRoundedRectangle (groove.expanded (2.0f, 1.0f), 2.0f);
-            g.setColour (brand::structuralForge().withAlpha (0.78f));      // forge line (subdued at rest)
+            // The cap groove is permanent chrome on every fader, so it is the
+            // muted ember: bright orange is kept for a rolling take and live
+            // signal, and a hot meter still escalates beyond the resting UI.
+            g.setColour (brand::selectFill);
             g.fillRoundedRectangle (groove, 1.5f);
         }
 

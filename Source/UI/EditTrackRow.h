@@ -1635,12 +1635,12 @@ namespace zynforge
             g.setColour (headerBg);
             g.fillRect (header);
 
-            // ── Heated Steel: orange spine + stamped number + orange seam ──
-            // Mirrors the mixer strip header identity on the EDIT track rows.
-            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::wash));               // spine glow
-            g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 7.0f, (float) getHeight()));
-            g.setColour (brand::brandOrange);                                 // spine
-            g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 3.0f, (float) getHeight()));
+            // Bright ember marks a take rolling on this track, as on the strip.
+            if (liveRecording)
+            {
+                g.setColour (brand::brandOrange);
+                g.fillRect (swatchArea.toFloat().withWidth (3.0f));
+            }
             {
                 const auto num = juce::String (index + 1).paddedLeft ('0', 2);
                 auto numBox = juce::Rectangle<int> (hx + swatchW + 7, 3, 24, 18);
@@ -1653,15 +1653,13 @@ namespace zynforge
 
             g.setColour (brand::edge);
             g.drawVerticalLine (hx + headerW - 1, 0.0f, (float) getHeight());
-            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::half));               // orange seam
-            g.drawVerticalLine (hx + headerW - 2, 0.0f, (float) getHeight());
 
             if (auto* page = findParentComponentOfClass<EditPage>())
                 if (page->isTrackSelected && page->isTrackSelected (index))
                 {
-                    g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::subtle));
+                    g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::soft));
                     g.fillRect (header);
-                    g.setColour (brand::brandOrange);
+                    g.setColour (brand::selectFill);
                     g.fillRect (juce::Rectangle<int> (hx + swatchW, 0, 3, getHeight()));
                 }
         }

@@ -58,26 +58,20 @@ namespace
             g.fillRect (r);
             g.setColour (zynforge::brand::gloss (0.18f));                 // top bevel highlight
             g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted));            // subdued structural seam (2px)
-            g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
             g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));         // crisp dark divider
             g.fillRect (r.removeFromBottom (1.0f));
         }
 
-        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool armed, float pulse = 0.0f)
+        // A take rolling on this strip is the one thing that lights the spine.
+        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool rolling, float pulse)
         {
             const auto c = structuralForge();
-            // Armed: the spine breathes -- glow alpha + width pulse with `pulse`
-            // (0..1). Idle: a steady resting spine.
-            // Structural identity spine: EMBER-subdued at rest, escalating to a
-            // hot, glowing bar only when the channel is record-armed -- so the
-            // bright orange means "this channel is live", not just "this channel
-            // exists" (it no longer competes with a hot meter for the eye).
-            const float glowA = armed ? (0.34f + 0.30f * pulse) : 0.18f;
-            const float glowW = armed ? (9.0f + 5.0f * pulse)   : 7.0f;
-            g.setColour (c.withAlpha (glowA));                            // glow
-            g.fillRect (r.getX(), r.getY(), glowW, r.getHeight());
-            g.setColour (c.withAlpha (armed ? 1.0f : 0.45f));             // bar: ember at rest, hot when armed
+            if (rolling)
+            {
+                g.setColour (c.withAlpha ((0.34f + 0.30f * pulse)));
+                g.fillRect (r.getX(), r.getY(), 9.0f + 5.0f * pulse, r.getHeight());
+            }
+            g.setColour (rolling ? c : c.withAlpha (zynforge::brand::alpha::soft));
             g.fillRect (r.getX(), r.getY(), 5.0f, r.getHeight());
         }
 
@@ -218,14 +212,13 @@ namespace zynforge
             // soundcheck report reads the strip as it is now.
             strip.state.fftBlockReady.store (false, std::memory_order_release);
 
-            // Heated Steel: while record-armed, repaint just the left spine
-            // column (12px) at 10 Hz so the orange spine breathes. Cheap --
-            // the rest of the strip stays static, honouring the 24-strip
-            // repaint budget; only ARMED strips animate. Skipped entirely
-            // under reduced-motion (the spine then holds a static glow).
-            if (! zynforge::brand::reduceMotion()
+            // While a take rolls on this strip, repaint just the left spine
+            // column at 10 Hz so it breathes. Cheap: the rest of the strip stays
+            // static, honouring the 24-strip repaint budget. Skipped under
+            // reduced-motion (the spine then holds a static glow).
+            if (! zynforge::brand::reduceMotion() && strip.takeRolling
                 && strip.state.armed.load (std::memory_order_relaxed))
-                strip.repaint (0, 0, 12, strip.getHeight());
+                strip.repaint (0, 0, 16, strip.getHeight());
         }
     private:
         ChannelStrip& strip;
@@ -960,6 +953,13 @@ namespace zynforge
         addMouseListener (this, true);
     }
 
+    void ChannelStrip::setTakeRolling (bool rolling)
+    {
+        if (takeRolling == rolling) return;
+        takeRolling = rolling;
+        repaint();
+    }
+
     void ChannelStrip::showFaderValue()
     {
         faderValue.setText (gainFader.getTextFromValue (gainFader.getValue()), juce::dontSendNotification);
@@ -1005,30 +1005,18 @@ namespace zynforge
             g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::edgeSoft));  // light forged scrim -- lets colour show
             g.fillRect (r);
             steel::drawSteelHeader (g, r.withHeight ((float) kHeaderH));
-            // Heated Steel: the spine breathes at ~1 Hz while record-armed.
-            // Phase from the wall clock so it animates whenever paint() runs
-            // (StripTimer repaints the spine column at 10 Hz when armed).
+            // The spine breathes at ~1 Hz while a take rolls here. Phase from
+            // the wall clock so it animates whenever paint() runs (StripTimer
+            // repaints the spine column at 10 Hz).
+            const bool rollingHere = armedNow && takeRolling;
             float armPulse = 0.0f;
-            if (armedNow)
+            if (rollingHere)
                 armPulse = zynforge::brand::reduceMotion()
                              ? 0.6f   // reduced-motion: static raised-glow end-state
                              : 0.5f + 0.5f * std::sin ((float) (juce::Time::getMillisecondCounter() % 1000)
                                                        / 1000.0f * juce::MathConstants<float>::twoPi);
-            steel::drawSpine       (g, r, armedNow, armPulse); // ① structural orange spine (pulses when armed)
+            steel::drawSpine       (g, r, rollingHere, armPulse);
             steel::drawNumber (g, numberBounds(), stripIndex + 1);
-        }
-
-        // ── Ember armed-glow (brand signature) ──────────────────────────────
-        // A forged channel runs HOT. When record-armed, the strip gets a warm
-        // ember bloom weighted to the top (where REC / arm live) fading down,
-        // so an armed channel reads as heated steel from across the room. The
-        // meter already supplies the heat motion; this marks the *channel*.
-        const bool isArmed = state.armed.load (std::memory_order_relaxed);
-        if (isArmed)
-        {
-            // FLAT: a solid, subtle ember wash marks the armed channel (no glow gradient).
-            g.setColour (brand::meterEmber.withAlpha (zynforge::brand::alpha::faint));
-            g.fillRoundedRectangle (r, brand::radius::xl);
         }
 
         // Hover border -- a touch brighter than the resting edge so the
@@ -1037,21 +1025,11 @@ namespace zynforge
         g.setColour (brand::lift (stripColour, 0.40f).withAlpha (edgeAlpha));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
 
-        // An armed strip wins the edge: a hot forge-orange rim over the resting
-        // border so "this channel is live to disk" reads instantly.
-        if (isArmed)
-        {
-            g.setColour (brand::meterHot.withAlpha (zynforge::brand::alpha::muted));
-            g.drawRoundedRectangle (r.reduced (0.5f), brand::radius::xl, 1.5f);
-        }
-
-        // Multi-select highlight -- a 2 px accent-yellow outline so a
-        // group of selected strips is unambiguous from the side of the
-        // room while still letting the strip's personality colour
-        // dominate.
+        // Multi-select highlight -- a 2 px outline in the selection fill so
+        // a group of selected strips is unambiguous from the side of the room.
         if (selected)
         {
-            g.setColour (brand::accentSolo);
+            g.setColour (brand::selectFill);
             g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::xl, 2.5f);
         }
 

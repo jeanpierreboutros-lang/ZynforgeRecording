@@ -132,15 +132,15 @@ namespace zynforge
                 g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.08f, 0.12f));
                 g.fillRect (r);
 
-                // Heated Steel: near-black header band + orange seam behind the
-                // track-name row, plus a stamped column number per meter.
+                // Near-black header band behind the track-name row, plus a
+                // stamped column number per meter.
                 if (! meters.empty())
                 {
                     auto inner = getLocalBounds().reduced (12);
                     auto band  = juce::Rectangle<int> (inner.getX(), inner.getY(), inner.getWidth(), 20);
                     g.setColour (brand::steelHeaderHi);   // FLAT: solid header band (no gradient)
                     g.fillRect (band);
-                    g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::muted));
+                    g.setColour (brand::borderSubtle);
                     g.fillRect (band.getX(), band.getBottom(), band.getWidth(), 1);
 
                     // Stamped column numbers, aligned to the resized() columns.

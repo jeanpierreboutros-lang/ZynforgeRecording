@@ -49,6 +49,9 @@ namespace zynforge
         // combos in sync when the PATCH page mutates routing.
         void refreshRoutingSelection();
 
+        // A take is on disk: armed strips light their spine for its length.
+        void setTakeRolling (bool rolling);
+
         // Re-reads name + colour from TrackState so changes made in the
         // EDIT view (rename, colour swatch) propagate back to the mixer.
         void refreshAppearance();
@@ -181,6 +184,7 @@ namespace zynforge
         std::unique_ptr<StripTimer> stripTimer;
 
         bool selected { false };
+        bool takeRolling { false };
         // False once invalidate() has run (the backing TrackState is being
         // destroyed). Guards StripTimer::timerCallback against a dangling ref.
         bool stripValid { true };

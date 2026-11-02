@@ -405,6 +405,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     perfDashboard.setDeviceInfo (status.sampleRate,
                                  status.blockSize);
     perfDashboard.setRecording (rec);
+    for (auto& strip : strips) strip->setTakeRolling (rec);
     // Drives per-strip meter refresh: full rate while recording or
     // playing, throttled to ~8 Hz when stopped (see TrackState.h).
     gTransportActive.store (rec || playing, std::memory_order_relaxed);
