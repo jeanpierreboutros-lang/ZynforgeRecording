@@ -1431,6 +1431,80 @@ namespace zynforge
             }
         }
 
+        void longJobs()
+        {
+            beginTest ("A cancelled export stops inside the file and leaves nothing");
+            {
+                const auto dir = tempDir ("cancel");
+                dir.createDirectory();
+                const auto source = dir.getChildFile ("take.wav");
+                FailedReadTests::writeAudio (source);
+                for (double rate : { 48000.0, 44100.0 })
+                    for (bool pair : { false, true })
+                    {
+                        const auto stem = dir.getChildFile ("out");
+                        TrackExporter exporter;
+                        ExportOptions options;
+                        options.sampleRate = rate;
+                        juce::String error;
+                        const std::atomic<bool> cancel { true };
+                        const bool ok = pair ? exporter.exportStereoPair (source, source, stem, options, error, &cancel)
+                                             : exporter.exportTrack (source, stem, options, error, &cancel);
+                        expect (! ok, "a cancelled export ran to the end");
+                        expect (error == "Cancelled", error);
+                        expect (! stem.withFileExtension (".wav").existsAsFile());
+                        expectEquals (FailedReadTests::partials (dir), 0);
+                    }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A running job tells RECORD its name, and the File menu stops it");
+            {
+                MainComponent main;
+                testaudio::useSilentDevice (main.engine);
+                main.setSize (1320, 820);
+                PunchRuleTests::Session s (main);
+                std::atomic<bool> stopped { false };
+                expect (main.sessionJobs.reserve());
+                main.sessionJobs.launch ([&stopped] (const std::atomic<bool>& cancel) -> SessionJobRunner::Completion
+                {
+                    while (! cancel.load()) juce::Thread::sleep (2);
+                    stopped = true;
+                    return {};
+                }, "Export");
+
+                main.onRecordClicked();
+                expect (! s.engine().isRecording());
+                expect (main.recordRefusal.contains ("Export") && main.recordRefusal.containsIgnoreCase ("cancel"),
+                        main.recordRefusal);
+                expect (main.getMenuCommands().handles (981));
+                expect (main.getMenuForIndex (0, "File").containsAnyActiveItems());
+
+                main.menuItemSelected (981, 0);
+                expect (pumpUntil ([&] { return stopped.load() && ! main.sessionIoBusy.load(); }), "Cancel reached nothing");
+                expect (main.sessionJobs.runningJob().isEmpty());
+            }
+
+            beginTest ("Consolidate runs as a job the File menu can stop, and a stop changes nothing");
+            {
+                MainComponent main;
+                testaudio::useSilentDevice (main.engine);
+                main.setSize (1320, 820);
+                PunchRuleTests::Session s (main);
+                const auto before = juce::JSON::toString (s.engine().playlistsToJson());
+                main.consolidateTracks ({ 0 }, 0, 200 * kBlock);
+                expectEquals (main.sessionJobs.runningJob(), juce::String ("Consolidate"));
+                main.menuItemSelected (981, 0);
+                expect (pumpUntil ([&] { return ! main.sessionIoBusy.load(); }), "the job never ended");
+                const auto after = juce::JSON::toString (s.engine().playlistsToJson());
+                // A render that beat the press is a clean finish. A stop leaves no trace.
+                if (main.statusLabel.getText().contains ("cancelled"))
+                    expect (after == before, "a cancelled Consolidate changed the arrangement");
+                expectEquals (s.dir.findChildFiles (juce::File::findFiles, true, ".*consolidating*").size(), 0,
+                              "a stopped render left its temporary");
+            }
+        }
+
         void analysis()
         {
             beginTest ("Detect Songs finds a song in a session with one voice");
@@ -1494,6 +1568,7 @@ namespace zynforge
             sessionLength();
             exactExports();
             overs();
+            longJobs();
             analysis();
             timelineCsv();
         }

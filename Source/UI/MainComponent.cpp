@@ -74,7 +74,10 @@ void MainComponent::onRecordClicked()
             showStatus ("RECORD held -- starting as soon as this save finishes");
             return;
         }
-        showRecordRefusal ("Wait for recording finalization / session saving to finish");
+        const auto job = sessionJobs.runningJob();
+        showRecordRefusal (job.isNotEmpty()
+            ? "RECORD is waiting for the running " + job + " -- cancel it from the File menu"
+            : juce::String ("Wait for recording finalization / session saving to finish"));
         return;
     }
     recordRefusal.clear();

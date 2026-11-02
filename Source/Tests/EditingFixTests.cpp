@@ -346,22 +346,14 @@ public:
             AudioEngine e; setup (e); e.loadSession (f.dir);
             expect (e.setClipFades (0, 0, 20000, 0));
             expect (e.splitTrackAtSample (0, 8000));
-            std::atomic<bool> done { false };
-            int processed = -1;
-            e.consolidateRangeAsync ({ 0 }, 0, 48000,
-                                    [&] (int p, bool) { processed = p; done = true; });
+            auto run = e.prepareConsolidate ({ 0 }, 0, 48000);
+            expect (run != nullptr);
+            if (run == nullptr) return;
             // The render publishes on the message thread, so this edit lands first.
             expect (e.setClipFadeRamps (0, 1, 20001, 8000, 0, 0));
-            for (int i = 0; i < 2000 && ! done; ++i)
-            {
-               #if JUCE_MAC
-                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
-               #else
-                juce::Thread::sleep (5);
-               #endif
-            }
-            expect (done.load(), "Consolidate never finished");
-            expectEquals (processed, 0, "the stale result was published over the edit");
+            const std::atomic<bool> cancel { false };
+            AudioEngine::renderConsolidate (*run, cancel);
+            expectEquals (e.publishConsolidate (*run).first, 0, "the stale result was published over the edit");
             expectEquals (e.clipsFor (0)[1].fadeInRampSamples, (juce::int64) 20001);
         }
     }

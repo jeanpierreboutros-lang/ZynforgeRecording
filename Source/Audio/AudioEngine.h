@@ -681,12 +681,15 @@ namespace zynforge
         // (Audio Files/Track_NN_consolidated_K.wav) referenced by one clip,
         // baking in gains / fades / clip order. Returns true on success.
         bool consolidateRange (int track, juce::int64 start, juce::int64 end);
-        // Background multi-track consolidation. Rendering and file writes run
-        // off the message thread; clip-list changes are committed atomically
-        // back on it for the still-active session.
-        void consolidateRangeAsync (std::vector<int> tracks,
-                                    juce::int64 start, juce::int64 end,
-                                    std::function<void (int, bool)> completion);
+        // Multi-track consolidation, on a session job. prepare fixes what will
+        // be rendered, on the message thread, and is null when nothing can be.
+        // render runs on the job and touches only the run. publish, back on the
+        // message thread, commits each clip list that has not changed since,
+        // and returns the tracks done and whether that was all of them.
+        struct ConsolidateRun;
+        std::shared_ptr<ConsolidateRun> prepareConsolidate (std::vector<int> tracks, juce::int64 start, juce::int64 end);
+        static void renderConsolidate (ConsolidateRun&, const std::atomic<bool>& cancel);
+        std::pair<int, bool> publishConsolidate (ConsolidateRun&);
         // Remove the audio inside [start, end) on one track: split at both
         // edges, then drop every clip that falls fully inside the range
         // (locked clips are spared). Leaves a gap -- non-destructive, the

@@ -1043,7 +1043,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
                                   + (clipped > 0 ? " -- WARNING: " + juce::String (clipped) + " went over full scale and CLIPPED"
                                                  : juce::String()));
         };
-    });
+    }, "Export");
 }
 
 void MainComponent::onBounceStems (std::vector<int> tracks)
@@ -1153,7 +1153,7 @@ void MainComponent::completeBounceStems (juce::File dest, const std::vector<int>
                                       + zynforge::counted (attempted, "stem") + " failed");
             }
         };
-    });
+    }, "Stem Bounce");
 }
 
 void MainComponent::onBounceStereoMix()
@@ -1221,7 +1221,7 @@ void MainComponent::completeBounceStereoMix (juce::File dest)
             self->showStatus ("Bounced stereo mix -> " + dest.getFileName()
                               + (warning.isNotEmpty() ? " -- " + warning : juce::String()));
         };
-    });
+    }, "Mix Bounce");
 }
 
 void MainComponent::onSaveSessionState()
@@ -1445,7 +1445,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
                 + " -- loaded " + juce::String (loaded) + " for playback"
                 + (saved ? juce::String() : juce::String ("; WARNING: session state was not saved")));
         };
-    });
+    }, "Import");
 }
 
 void MainComponent::onSaveSessionAs()
@@ -1577,7 +1577,7 @@ void MainComponent::completeSaveAs (const juce::File& source, const juce::File& 
                 self->showStatus (carried ? "Saved As -> " + dest.getFileName()
                                           : "Saved As -> " + dest.getFileName() + "; unsaved changes could not be carried over");
             };
-        });
+        }, "Save As");
     };
 
     // Freeze a complete source snapshot before the background copy begins.
@@ -1897,7 +1897,7 @@ void MainComponent::exportDawProject (zynforge::projectexport::Format format)
                                                         "Exported " + result.file.getFileName(),
                                                         result.notes.joinIntoString ("\n\n"), "OK");
         };
-    });
+    }, "Project Export");
 }
 
 void MainComponent::exportSongs()
@@ -1962,7 +1962,7 @@ void MainComponent::startSongExport (zynforge::songexport::Choice choice)
             self->lastExportFailures = juce::jmax (0, outcome.attempted - outcome.written);
             self->showStatus (sx::statusLine (outcome, "Export Files/Songs"));
         };
-    });
+    }, "Song Export");
 }
 
 void MainComponent::exportShowHandoff()
@@ -2091,7 +2091,7 @@ void MainComponent::startHandoffCopy (const juce::File& source, const juce::File
                 self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
                                   + " -- " + result.message);
         };
-    });
+    }, "Show Handoff");
 }
 
 void MainComponent::relocateActiveSession()
@@ -2202,7 +2202,7 @@ void MainComponent::completeRelocate (const juce::File& oldDir, const juce::File
                         : (carried ? "Session moved to " : "Session moved, without its unsaved changes, to ")
                             + newDir.getFullPathName());
                 };
-        });
+        }, "Session Move");
     };
 
     if (saveSessionStateTo (oldDir) || ! engine.mixerBelongsTo (oldDir)) { moveSession (false); return; }
