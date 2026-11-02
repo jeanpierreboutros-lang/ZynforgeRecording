@@ -338,6 +338,9 @@ namespace zynforge
                 mix.file = path;
                 mix.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
                                  (w, mixWriterThread, 32768);
+                // JUCE writes the header at open and close unless told, and a
+                // crash would leave all this audio behind a length of zero.
+                mix.writer->setFlushInterval ((int) (sr * 5.0));
             }
             else
             {

@@ -804,9 +804,46 @@ namespace zynforge
             }
         }
 
+        void testCrashRemains()
+        {
+            beginTest ("StereoMix.wav shows its length while it records, so a crash leaves it readable");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                const auto root = tempDir ("mix");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                AudioEngine engine;
+                engine.setStripCount (1);
+                engine.prepareForTests (kRate, kBlock);
+                auto& track = engine.getRecorder().getTrack (0);
+                track.armed.store (true);
+                track.streamSend.store (true);
+                engine.setStreamOutputs (-1, -1);
+                engine.setRecordStereoMix (true);
+                expect (engine.startRecording (root));
+                std::vector<float> input ((size_t) kBlock, 0.25f), left ((size_t) kBlock), right ((size_t) kBlock);
+                const float* inputs[] { input.data() };
+                float* outputs[] { left.data(), right.data() };
+                const juce::AudioIODeviceCallbackContext context {};
+                for (int b = 0; b < (int) (6.0 * kRate) / kBlock; ++b)
+                    engine.audioDeviceIOCallbackWithContext (inputs, 1, outputs, 2, kBlock, context);
+                const auto mix = root.getChildFile ("Export Files/StereoMix.wav");
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                const auto length = [&]
+                {
+                    const std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (mix));
+                    return reader != nullptr ? reader->lengthInSamples : (juce::int64) 0;
+                };
+                expect (pumpUntil ([&] { return length() > 0; }, 5000), "the mix read as empty while it recorded");
+                engine.setRecordStereoMix (false);
+                engine.stopRecording();
+                engine.clearAllStripOverrides();
+            }
+        }
+
         void runTest() override
         {
             const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
+            testCrashRemains();
             testDaemonDevice();
             AudioEngine::setTestModeSkipAudioInit (true);
             testCopiesFollowStrips();
