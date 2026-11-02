@@ -69,7 +69,6 @@ namespace zynforge
                 auto& t = e.getRecorder().getTrack (i);
                 t.gainDb.store (0.0f); t.pan.store (0.0f); t.muted.store (false); t.soloed.store (false);
                 t.isStereo.store (false); t.setNameThreadSafe ("Strip " + juce::String (i + 1));
-                e.setTrackVcaGroup (i, -1);
             }
         }
 

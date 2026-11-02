@@ -119,7 +119,6 @@ namespace zynforge
                 auto& r = e.getRecorder().getTrack (1);
                 e.setTrackMuted (0, true);
                 e.setTrackGainDb (0, -10.0f);
-                e.setTrackVcaGroup (0, 2);
                 e.setTrackEditGroup (0, 1);
                 e.setTrackArmed (0, true);
                 e.setTrackInputRouting (0, 4);
@@ -132,7 +131,6 @@ namespace zynforge
                 e.setTrackStereo (0, true);
                 expect (r.muted.load(), "R stayed audible under a muted pair");
                 expectWithinAbsoluteError (r.gainDb.load(), -10.0f, 0.001f, "R kept its own fader");
-                expectEquals (r.vcaGroup.load(), 2, "R does not follow the pair's VCA");
                 expectEquals (r.editGroup.load(), 1);
                 expect (r.armed.load(), "R is unarmed in an armed pair");
                 expect (r.monitor.load() && r.outputMuted.load() && r.streamSend.load());
@@ -292,7 +290,7 @@ namespace zynforge
                 auto& t = e.getRecorder().getTrack (i);
                 t.monitor.store (i == strip); t.armed.store (false);
                 t.muted.store (false); t.soloed.store (false);
-                t.gainDb.store (0.0f); t.pan.store (0.0f); t.vcaGroup.store (-1);
+                t.gainDb.store (0.0f); t.pan.store (0.0f);
             }
             juce::AudioBuffer<float> in (numInputs, block), out (2, block);
             in.clear(); out.clear();

@@ -466,24 +466,6 @@ MainComponent::MainComponent()
     masterStrip = std::make_unique<zynforge::MasterStrip> (engine);
     addAndMakeVisible (*masterStrip);
 
-    vcaPanel = std::make_unique<zynforge::VcaPanel> (engine);
-    addChildComponent (*vcaPanel);   // hidden by default; VCA button toggles
-
-    vcaToggleButton.setColour (juce::TextButton::buttonColourId,
-                                brand::sink (brand::featureEngaged, 0.55f));
-    vcaToggleButton.setColour (juce::TextButton::textColourOffId,
-                                brand::lift (brand::featureEngaged, 0.10f));
-    vcaToggleButton.setTooltip ("Toggle the 8-bus VCA fader panel -- group faders for "
-                                 "drums / vocals / etc. Strips opt in via right-click > Assign to VCA.");
-    vcaToggleButton.onClick = [this]
-    {
-        showVcaPanel = ! showVcaPanel;
-        if (vcaPanel != nullptr) vcaPanel->setVisible (showVcaPanel);
-        resized();
-        requestUILayoutSave();
-    };
-    addAndMakeVisible (vcaToggleButton);
-
     setWantsKeyboardFocus (true);
     addKeyListener (this);
 
@@ -496,7 +478,7 @@ MainComponent::MainComponent()
     startTimerHz (10);  // poll for input-channel count + transport position
 
     // If the previous run had a session pinned, rehydrate its setlist
-    // AND its UI layout (view, strip width, VCA panel, EDIT zoom).
+    // AND its UI layout (view, strip width, EDIT zoom).
     loadSetlistFromActiveSession();
     juce::Component::SafePointer<MainComponent> startupSelf (this);
     juce::Timer::callAfterDelay (50, [startupSelf]
@@ -830,18 +812,6 @@ void MainComponent::rebuildStrips()
         s->setMenuCallbacks (std::move (deleteCb),
                              std::move (addCb),
                              std::move (linkStereoCb));
-
-        // VCA assignment from the strip's right-click menu -- the
-        // ChannelStrip sets state.vcaGroup directly for immediate
-        // audio-thread effect; this callback persists the choice
-        // through appProps so a relaunch restores it. For stereo
-        // pairs both halves must persist, otherwise R loses its
-        // assignment on relaunch even though it ran with L in-memory.
-        s->onVcaGroupChanged = [this, i, step] (int vcaIdx)
-        {
-            engine.setTrackVcaGroup (i, vcaIdx);
-            if (step == 2) engine.setTrackVcaGroup (i + 1, vcaIdx);
-        };
 
         s->onEditGroupChanged = [this, i, step] (int groupId)
         {

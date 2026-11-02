@@ -20,41 +20,25 @@ namespace zynforge
 
         void runTest() override
         {
-            using mix::VcaGate;
-
-            beginTest ("Solo / mute / VCA gate follows console rules");
+            beginTest ("Solo / mute gate follows console rules");
             {
-                const VcaGate none;
-                const VcaGate vca      { true, false, false };
-                const VcaGate vcaMuted { true, true,  false };
-                const VcaGate vcaSolo  { true, false, true  };
-
-                expect (  mix::audible (false, false, none, false, false));
-                expect (! mix::audible (true,  false, none, false, false), "strip mute");
-                expect (! mix::audible (false, false, none, true,  false), "someone else soloed");
-                expect (  mix::audible (true,  true,  none, true,  false), "solo beats the strip's own mute");
-                expect (! mix::audible (false, true,  vcaMuted, true, false), "a muted VCA beats a strip solo");
-                expect (! mix::audible (false, false, vca,  false, true), "another VCA is soloed");
-                expect (  mix::audible (false, false, vcaSolo, false, true));
-                expect (! mix::audible (false, false, none, false, true), "ungrouped strips drop under a VCA solo");
-                expect (! mix::audible (true,  false, vcaSolo, false, true), "VCA solo keeps the strip's mute");
+                expect (mix::audible (false, false, false));
+                expect (! mix::audible (true, false, false), "the strip's mute");
+                expect (! mix::audible (false, false, true), "another strip is soloed");
+                expect (mix::audible (false, true, true));
             }
 
             beginTest ("Solo gets a muted strip heard; every other strip stays out");
             {
-                expect (mix::audible (true, true, {}, true, false), "solo beats the strip's own mute");
-                expect (! mix::audible (true, false, {}, false, false));
-                expect (! mix::audible (false, false, {}, true, false));
+                expect (mix::audible (true, true, true), "solo beats the strip's own mute");
+                expect (! mix::audible (true, false, false));
+                expect (! mix::audible (false, false, true));
             }
 
             beginTest ("The stream bus takes mutes and ignores solo");
             {
-                expect (mix::streamAudible (false, {}));
-                expect (! mix::streamAudible (true, {}));
-                mix::VcaGate soloedVca  { true, false, true };
-                mix::VcaGate mutedVca   { true, true,  false };
-                expect (mix::streamAudible (false, soloedVca));
-                expect (! mix::streamAudible (false, mutedVca));
+                expect (mix::streamAudible (false));
+                expect (! mix::streamAudible (true));
             }
 
             beginTest ("Trim-Follow offset: a real move, limited; no reference, none");
@@ -105,16 +89,12 @@ namespace zynforge
                                            juce::Decibels::decibelsToGain (-6.0), 1.0e-12);
             }
 
-            beginTest ("A fader or VCA at the -60 dB floor is off; above it they sum");
+            beginTest ("A fader at the -60 dB floor is off");
             {
-                auto gain = [] (float fader, float vca) { return juce::Decibels::decibelsToGain (mix::stripDb (fader, vca), -60.0f); };
-                expectEquals (gain (-60.0f, 12.0f), 0.0f);
-                expectEquals (gain (12.0f, -60.0f), 0.0f);
-                expectEquals (gain (-60.0f, 0.0f), 0.0f);
+                expectEquals (juce::Decibels::decibelsToGain (mix::stripDb (-60.0f), -60.0f), 0.0f);
                 // Even a trim added afterwards (trim-follow) stays off.
-                expect (mix::stripDb (-60.0f, 12.0f) + 24.0f < mix::kFaderFloorDb);
-                expectWithinAbsoluteError (mix::stripDb (-6.0f, 3.0f), -3.0f, 1.0e-6f);
-                expectWithinAbsoluteError (mix::stripDb (-59.0f, 12.0f), -47.0f, 1.0e-6f);
+                expect (mix::stripDb (-60.0f) + 24.0f < mix::kFaderFloorDb);
+                expectWithinAbsoluteError (mix::stripDb (-6.0f), -6.0f, 1.0e-6f);
             }
         }
     };

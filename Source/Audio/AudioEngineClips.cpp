@@ -978,7 +978,7 @@ namespace zynforge
     {
         if (startSample < 0 || endSample <= startSample) return false;
         // The MIXER is authoritative for the stereo mix: every loop below reads
-        // a TrackState (solo / mute / gain / pan / VCA), so the bound MUST be
+        // a TrackState (solo / mute / gain / pan), so the bound MUST be
         // the recorder's track count. It used to be jmax(recorder, player),
         // which indexed `recorder.getTrack()` -- an unchecked `*tracks[i]` --
         // past the end whenever the session had more Track_NN files on disk
@@ -991,7 +991,7 @@ namespace zynforge
         // Everything the mix reads from a strip is SNAPSHOTTED here, under a
         // BRIEF structure lock, and the windows below render from the
         // snapshot alone. The render used to keep a pointer to each strip's
-        // TrackState and re-read mute/VCA every window, so the caller
+        // TrackState and re-read mute every window, so the caller
         // had to hold the structure lock for the WHOLE bounce -- and the UI
         // timer's captureStatus() takes that lock, freezing the app until the
         // bounce finished. The snapshot is also the honest semantic: the file
@@ -1002,14 +1002,14 @@ namespace zynforge
             int track {};
             bool audible {};
             ArrangementSource src;
-            float baseDb {}, basePan {}, vcaDb {};
+            float baseDb {}, basePan {};
         };
         std::vector<std::unique_ptr<TrackCtx>> live;
         int nTracks = 0;
         {
             const juce::ScopedLock structure (recorder.getStructureLock());
             // The MIXER is authoritative for the stereo mix: every strip read
-            // below is a TrackState (solo / mute / gain / pan / VCA), so the
+            // below is a TrackState (solo / mute / gain / pan), so the
             // bound MUST be the recorder's track count. It used to be
             // jmax(recorder, player), which indexed `recorder.getTrack()` --
             // an unchecked `*tracks[i]` -- past the end whenever the session
@@ -1021,28 +1021,16 @@ namespace zynforge
             bool anySolo = false;
             for (int i = 0; i < nTracks; ++i)
                 if (recorder.getTrack (i).soloed.load (std::memory_order_relaxed)) { anySolo = true; break; }
-            bool anyVcaSolo = false;
-            for (const auto& v : vcas)
-                if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
 
             for (int t = 0; t < nTracks; ++t)
             {
                 const auto& ts = recorder.getTrack (t);
-                const int grp = ts.vcaGroup.load (std::memory_order_relaxed);
-                const bool inVca = grp >= 0 && grp < kNumVcas;
-                mix::VcaGate vca;
-                if (inVca)
-                    vca = { true, vcas[(size_t) grp].muted.load (std::memory_order_relaxed),
-                                  vcas[(size_t) grp].soloed.load (std::memory_order_relaxed) };
-
                 auto ctx = std::make_unique<TrackCtx>();
                 ctx->audible  = mix::audible (ts.muted.load (std::memory_order_relaxed),
-                                              ts.soloed.load (std::memory_order_relaxed),
-                                              vca, anySolo, anyVcaSolo);
+                                              ts.soloed.load (std::memory_order_relaxed), anySolo);
                 ctx->track    = t;
                 ctx->baseDb   = ts.gainDb.load (std::memory_order_relaxed);
                 ctx->basePan  = ts.pan.load (std::memory_order_relaxed);
-                ctx->vcaDb    = inVca ? vcas[(size_t) grp].gainDb.load (std::memory_order_relaxed) : 0.0f;
                 live.push_back (std::move (ctx));
             }
         }
@@ -1080,7 +1068,7 @@ namespace zynforge
             for (auto& cp : live)
             {
                 if (! cp->audible) continue;
-                const double gain = juce::Decibels::decibelsToGain ((double) mix::stripDb (cp->baseDb, cp->vcaDb), -60.0);
+                const double gain = juce::Decibels::decibelsToGain ((double) mix::stripDb (cp->baseDb), -60.0);
                 const auto [gL, gR] = mix::constantPowerPan (gain, cp->basePan);
                 const auto* s = raw.getReadPointer (cp->track);
                 for (int k = 0; k < winLen; ++k)
@@ -1222,8 +1210,7 @@ namespace zynforge
         const juce::ScopedLock structure (recorder.getStructureLock());
         for (int t = 0; t < recorder.getNumTracks(); ++t)
             if (recorder.getTrack (t).soloed.load (std::memory_order_relaxed)) return true;
-        return std::any_of (vcas.begin(), vcas.end(), [] (const auto& vca)
-                            { return vca.soloed.load (std::memory_order_relaxed); });
+        return false;
     }
 
     juce::String AudioEngine::exportRefusal() const
@@ -1261,13 +1248,6 @@ namespace zynforge
                 strip.pan        = ts.pan.load (std::memory_order_relaxed);
                 strip.muted      = ts.muted.load (std::memory_order_relaxed);
 
-                const int group = ts.vcaGroup.load (std::memory_order_relaxed);
-                if (group >= 0 && group < kNumVcas)
-                {
-                    strip.vcaAssigned = true;
-                    strip.vcaDb    = vcas[(size_t) group].gainDb.load (std::memory_order_relaxed);
-                    strip.vcaMuted = vcas[(size_t) group].muted.load (std::memory_order_relaxed);
-                }
                 if (t < (int) trackClips.size())
                     strip.clips = trackClips[(size_t) t];
                 input.strips.push_back (std::move (strip));

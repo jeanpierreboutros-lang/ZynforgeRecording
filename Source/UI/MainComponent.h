@@ -30,7 +30,6 @@
 #include "../Audio/SettingsFile.h"
 #include "Toast.h"
 #include "PlaceholderView.h"
-#include "VcaPanel.h"
 #include "TransportBar.h"
 #include "ClipEditTargets.h"
 
@@ -530,7 +529,7 @@ private:
     // dir and opens it in the default browser (engineer prints from
     // there, or saves as PDF via the browser's print dialog).
     void  printSetlist();
-    // Restore UI layout (view / strip width / VCA panel / EDIT zoom)
+    // Restore UI layout (view / strip width / EDIT zoom)
     // from the active session's .zfproj. Called after loadSession so
     // the engineer reopens their show with their layout intact.
     void  loadUILayoutFromActiveSession();
@@ -704,9 +703,6 @@ private:
     zynforge::PlaceholderView mixerPlaceholder;   // MIXER empty-state overlay
     std::unique_ptr<zynforge::EditPage>     editPage;
     std::unique_ptr<zynforge::MasterStrip>  masterStrip;
-    std::unique_ptr<zynforge::VcaPanel>     vcaPanel;
-    zynforge::IconButton vcaToggleButton  { zynforge::icons::Glyph::Mix, "VCA" };
-    bool                 showVcaPanel { false };
 
     juce::TooltipWindow tooltipWindow { this, 500 };
 

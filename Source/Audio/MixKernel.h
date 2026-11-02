@@ -3,10 +3,9 @@
 // The mixing RULES shared by the real-time callback (AudioEngine.cpp) and the
 // offline stereo bounce (AudioEngineClips.cpp).
 //
-// Both paths used to carry their own copy of the solo / mute / VCA gate and
-// the pan law. A fix in one (a VCA reaching the monitor) then
-// had to be found and repeated by hand in the other, and a bounce could
-// silently stop matching what the engineer heard. Each rule now
+// Both paths used to carry their own copy of the solo / mute gate and the pan
+// law. A fix in one then had to be found and repeated by hand in the other, and
+// a bounce could silently stop matching what the engineer heard. Each rule now
 // has exactly one definition, here. AudioCallbackTests renders one session
 // both ways and compares them sample for sample, and the invariants gate
 // ("mix rules live only in MixKernel.h") refuses a second copy.
@@ -20,51 +19,28 @@
 
 namespace zynforge::mix
 {
-    // The VCA a strip belongs to, as the solo / mute gate sees it.
-    struct VcaGate
+    // Console solo / mute gate: a strip solo passes only soloed strips (solo
+    // beats the strip's own mute); otherwise the strip's mute decides.
+    constexpr bool audible (bool muted, bool soloed, bool anySolo) noexcept
     {
-        bool assigned { false };
-        bool muted    { false };
-        bool soloed   { false };
-    };
-
-    // Console solo / mute gate: a muted VCA silences its strips; a VCA solo
-    // drops every other VCA's strips AND the ungrouped ones; then a strip
-    // solo passes only soloed strips (solo beats the strip's own mute);
-    // otherwise the strip's mute decides.
-    constexpr bool audible (bool muted, bool soloed, VcaGate vca,
-                            bool anySolo, bool anyVcaSolo) noexcept
-    {
-        if (vca.assigned)
-        {
-            if (vca.muted) return false;
-            if (anyVcaSolo && ! vca.soloed) return false;
-        }
-        else if (anyVcaSolo)
-        {
-            return false;
-        }
         return anySolo ? soloed : ! muted;
     }
 
     // The stream bus and StereoMix.wav are a record of the mix, and solo is a
     // monitoring tool: it must not strip the show out of the file because the
     // engineer checked a mic. Only a mute removes a strip here.
-    constexpr bool streamAudible (bool muted, VcaGate vca) noexcept
+    constexpr bool streamAudible (bool muted) noexcept
     {
-        return audible (muted, false, vca, false, false);
+        return ! muted;
     }
 
-    // A strip's fader and its VCA meet in dB, and either one
-    // at its -60 dB floor is OFF, as on a console. Summing first left a strip
-    // pulled to the floor at -48 dB under a VCA at +12, and a VCA at the floor
-    // still passed strips set above 0 dB. `vcaDb` is 0 for an unassigned
-    // strip. kOffDb stays far below the floor even after a trim is added.
+    // A strip's fader at its -60 dB floor is OFF, as on a console. kOffDb stays
+    // far below the floor even after a trim is added.
     inline constexpr float kFaderFloorDb = -60.0f;
     inline constexpr float kOffDb        = -200.0f;
-    constexpr float stripDb (float faderDb, float vcaDb) noexcept
+    constexpr float stripDb (float faderDb) noexcept
     {
-        return (faderDb <= kFaderFloorDb || vcaDb <= kFaderFloorDb) ? kOffDb : faderDb + vcaDb;
+        return faderDb <= kFaderFloorDb ? kOffDb : faderDb;
     }
 
     // Trim-Follow: the desk's preamp move since the take was captured, added

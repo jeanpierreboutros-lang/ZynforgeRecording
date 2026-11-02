@@ -472,15 +472,6 @@ namespace zynforge
                                   "the selected strips swapped with each other");
                     expect (main.selectedLogical == std::set<int> { 0, 1 });
 
-                    beginTest ("LOCK also locks the VCA panel");
-                    if (main.vcaPanel != nullptr)
-                    {
-                        main.onLockToggled();
-                        expect (! main.vcaPanel->isEnabled(), "the VCA panel stayed live under LOCK");
-                        main.onLockToggled();
-                        expect (main.vcaPanel->isEnabled());
-                    }
-
                     beginTest ("Layout changes during a session job wait instead of failing");
                     const auto active = tempDir ("active");
                     active.getChildFile ("Audio Files").createDirectory();

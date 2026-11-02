@@ -32,7 +32,7 @@ namespace zynforge
             ZF_COPY_FIELD(armed) ZF_COPY_FIELD(monitor) ZF_COPY_FIELD(muted) ZF_COPY_FIELD(soloed)
             ZF_COPY_FIELD(gainDb) ZF_COPY_FIELD(pan) ZF_COPY_FIELD(liveInputGainDb) ZF_COPY_FIELD(captureInputGainDb)
             ZF_COPY_FIELD(liveInputGainKnown) ZF_COPY_FIELD(captureInputGainKnown)
-            ZF_COPY_FIELD(outputMuted) ZF_COPY_FIELD(vcaGroup) ZF_COPY_FIELD(editGroup)
+            ZF_COPY_FIELD(outputMuted) ZF_COPY_FIELD(editGroup)
             ZF_COPY_FIELD(inputRouting) ZF_COPY_FIELD(outputRouting) ZF_COPY_FIELD(streamSend)
             ZF_COPY_FIELD(isStereo) ZF_COPY_FIELD(colourARGB)
             ZF_COPY_FIELD(referenceMedia)
@@ -84,19 +84,11 @@ namespace zynforge
         // physical output only; muted continues to gate the monitor sum.
         std::atomic<bool> outputMuted { false };
 
-        // VCA group assignment. -1 = unassigned; 0..7 = VCA bus index.
-        // The audio thread sums the VCA bus's gain (post-fader) onto
-        // this strip's gain when it routes the player output, so a
-        // single VCA fader can ride a group of strips. The VCA's
-        // muted flag also gates the strip's output.
-        std::atomic<int> vcaGroup { -1 };
-
         // Edit Group -- Pro Tools-style "linked editing" affordance.
         // Strips sharing the same editGroup id receive broadcast
         // edits: when one strip's gain / pan / mute / solo / arm
         // changes via a user gesture, every other strip in the same
-        // group gets the same change applied. -1 = unlinked. Edit
-        // groups are independent of VCA assignment.
+        // group gets the same change applied. -1 = unlinked.
         std::atomic<int> editGroup { -1 };
 
         // Routing. -1 = unrouted (no input captured / no output played).

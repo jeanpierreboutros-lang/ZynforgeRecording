@@ -89,7 +89,6 @@ namespace zynforge
                 t.gainDb.store (0.0f); t.pan.store (0.0f); t.muted.store (false); t.soloed.store (false);
                 t.isStereo.store (false); t.setNameThreadSafe ("Strip " + juce::String (i + 1));
                 t.colourARGB.store (0);
-                e.setTrackVcaGroup (i, -1);
             }
         }
 
@@ -388,26 +387,23 @@ namespace zynforge
                         "DAWproject has no clip gain field and must say so");
             }
 
-            beginTest ("Track fader folds the VCA in; floors and mutes stay off");
+            beginTest ("Track fader, floors and mutes reach the project");
             {
                 ix::StripInput strip;
-                strip.faderDb = -6.0f;
-                strip.vcaAssigned = true;
-                strip.vcaDb = 6.0f;
+                strip.faderDb = 0.0f;
                 ix::SessionInput in;
                 in.strips.push_back (strip);
                 strip.faderDb = -60.0f;
                 strip.pan = 0.5f;
                 in.strips.push_back (strip);
                 strip.faderDb = 0.0f;
-                strip.vcaMuted = true;
+                strip.muted = true;
                 in.strips.push_back (strip);
                 const auto r = ix::resolve (in, noCancel);
                 expect (r.ok(), r.error);
                 expectWithinAbsoluteError (r.project.tracks[0].gain, 1.0, 1.0e-6);
-                expectEquals (r.project.tracks[1].gain, 0.0, "a fader at its floor is off whatever the VCA says");
-                expect (r.project.tracks[2].muted, "a muted VCA mutes the track");
-                expect (r.project.notes.joinIntoString (" ").contains ("VCA"));
+                expectEquals (r.project.tracks[1].gain, 0.0, "a fader at its floor is off");
+                expect (r.project.tracks[2].muted);
 
                 const auto rpp = rppFor (r.project, juce::File ("/tmp/Show.RPP"));
                 expect (rpp.contains ("PANMODE 3"), "a mono track is in balance mode");

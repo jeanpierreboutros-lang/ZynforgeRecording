@@ -796,7 +796,7 @@ namespace zynforge
                 for (auto& s : w.main.strips) expect (s->isEnabled());
             }
 
-            beginTest ("LOCK stops the right-click menus on strips, setlist and VCAs");
+            beginTest ("LOCK stops the right-click menus on strips and the setlist");
             {
                 Window w;
                 w.main.rebuildStrips();
@@ -806,9 +806,6 @@ namespace zynforge
                 w.main.onLockToggled();
                 expect (! rightClickOpensMenu (strip), "a strip menu opened under LOCK");
                 expect (! rightClickOpensMenu (w.main.setlistBar), "a setlist menu opened under LOCK");
-                if (w.main.vcaPanel != nullptr)
-                    for (auto* child : w.main.vcaPanel->getChildren())
-                        expect (! rightClickOpensMenu (*child), "a VCA menu opened under LOCK");
                 w.main.onLockToggled();
             }
 

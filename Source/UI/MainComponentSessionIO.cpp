@@ -794,7 +794,6 @@ juce::var MainComponent::captureUILayoutJson() const
                     : stripWidthPreset == StripWidth::S  ? "S"
                     : stripWidthPreset == StripWidth::L  ? "L"
                                                          : "M");
-    ui->setProperty ("vcaPanel",     showVcaPanel);
     ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
     return juce::var (ui.get());
 }
@@ -2342,10 +2341,6 @@ void MainComponent::loadUILayoutFromActiveSession()
     else if (sw == "S")  setStripWidthPreset (StripWidth::S);
     else if (sw == "L")  setStripWidthPreset (StripWidth::L);
     else if (sw == "M")  setStripWidthPreset (StripWidth::M);
-
-    // VCA panel visibility.
-    showVcaPanel = (bool) ui->getProperty ("vcaPanel");
-    if (vcaPanel != nullptr) vcaPanel->setVisible (showVcaPanel);
 
     // EDIT zoom level.
     if (editPage != nullptr)

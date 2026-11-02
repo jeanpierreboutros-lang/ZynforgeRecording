@@ -196,8 +196,6 @@ void MainComponent::resized()
 
     patchButton    .setBounds (row2.removeFromRight (90).reduced (0, 2));
     row2.removeFromRight (brand::space::md);
-    vcaToggleButton.setBounds (row2.removeFromRight (68).reduced (0, 2));
-    row2.removeFromRight (brand::space::md);
     vscButton      .setBounds (row2.removeFromRight (70).reduced (0, 2));
     row2.removeFromRight (brand::space::md);
     editViewButton .setBounds (row2.removeFromRight (60).reduced (0, 2));
@@ -276,24 +274,10 @@ void MainComponent::resized()
             auto masterArea = viewportArea.removeFromRight (masterW);
             viewportArea.removeFromRight (brand::space::md);
             masterStrip->setBounds (masterArea);
-
-            if (vcaPanel != nullptr && showVcaPanel)
-            {
-                auto vcaArea = viewportArea.removeFromRight (540);
-                viewportArea.removeFromRight (brand::space::md);
-                vcaPanel->setBounds (vcaArea);
-                vcaPanel->setVisible (true);
-            }
-            else if (vcaPanel != nullptr)
-            {
-                vcaPanel->setBounds ({});
-                vcaPanel->setVisible (false);
-            }
         }
         else
         {
             masterStrip->setBounds ({});
-            if (vcaPanel != nullptr) { vcaPanel->setBounds ({}); vcaPanel->setVisible (false); }
         }
     }
 

@@ -58,21 +58,9 @@ namespace zynforge
                     t.soloed  .store (false);
                     t.armed   .store (false);
                     t.monitor .store (false);
-                    t.vcaGroup.store (-1);   // unassigned
                     t.isStereo.store (false);
                     engine.setTrackInputRouting  (i, juce::jlimit (-1, numInputs - 1, i));
                     engine.setTrackOutputRouting (i, -1);   // master-only
-                    engine.setTrackVcaGroup      (i, -1);   // also wipes appProps key
-                }
-                // Reset every VCA to a clean baseline so leftover
-                // gain/mute/solo from a prior test doesn't leak.
-                for (int v = 0; v < AudioEngine::kNumVcas; ++v)
-                {
-                    auto& vca = engine.getVca (v);
-                    vca.gainDb.store (0.0f);
-                    vca.muted .store (false);
-                    vca.soloed.store (false);
-                    vca.rampSamplesRemaining.store (0);
                 }
                 inBuf .clear();
                 outBuf.clear();
@@ -119,7 +107,7 @@ namespace zynforge
         };
 
         // ── Playback-feed helpers ─────────────────────────────────────
-        // The VCA-gain paths all read from
+        // The gain paths all read from
         // `playerScratch`, which is empty unless a real session is
         // loaded. These helpers record a known signal to disk via the
         // real capture path, then let a fixture play it back so the
@@ -347,134 +335,22 @@ namespace zynforge
                 expect (f.peakOut (0, 256) > 0.20f);
             }
 
-            // ─── VCA groups ──────────────────────────────────────────
-            beginTest ("VCA group assignment round-trips through the audio thread");
+            beginTest ("A fader at its -60 dB floor is off");
             {
-                // Design note: VCA *gain* applies only on the per-strip
-                // output-routing path (effectiveGainDb, summed at the
-                // FOH-style strip-out stage) -- NOT on the engineer's
-                // monitor sum, which uses the strip's gainDb directly.
-                // VCA *mute* and *solo* gate via channelAudible, which
-                // DOES feed the monitor sum (see the next two tests).
-                // Exercising VCA gain end-to-end needs a loaded session
-                // (playerScratch must have data), which is out of scope
-                // for these headless tests. We round-trip the state to
-                // confirm the atomics + API wiring at least.
-                CallbackFixture f (2, 2, 4);
-                f.engine.setTrackVcaGroup (0, 3);
-                f.engine.setTrackVcaGroup (1, 3);
-                f.engine.getVca (3).gainDb.store (-12.0f);
-                expectEquals (f.engine.getRecorder().getTrack (0).vcaGroup.load(), 3);
-                expectEquals (f.engine.getRecorder().getTrack (1).vcaGroup.load(), 3);
-                expectWithinAbsoluteError (f.engine.getVca (3).gainDb.load(), -12.0f, 0.001f);
-                // Process a block; nothing should crash.
-                f.writeInput (0, 0.5f, 256);
-                f.process (256);
-            }
-
-            beginTest ("VCA mute gates every strip assigned to that bus");
-            {
-                CallbackFixture f (2, 2, 2);
-                for (int i = 0; i < 2; ++i)
-                {
-                    auto& t = f.engine.getRecorder().getTrack (i);
-                    t.armed.store (true); t.monitor.store (true);
-                    f.engine.setTrackVcaGroup (i, 0);
-                }
-                f.engine.getVca (0).muted.store (true);
-                f.engine.setMasterOutputs (0, 1);
-                f.writeInput (0, 0.5f, 256);
-                f.writeInput (1, 0.5f, 256);
-                f.process (256);
-                expectEquals (f.peakOut (0, 256), 0.0f);
-                expectEquals (f.peakOut (1, 256), 0.0f);
-            }
-
-            beginTest ("VCA gain attenuates the monitor sum (not just routed outputs)");
-            {
-                // Regression: VCA fader moves were applied only on the routed
-                // per-strip output path (effectiveGainDb); the monitor sum
-                // used the strip's own gainDb directly, so pulling the VCA
-                // master down left the monitored audio at full level.
-                CallbackFixture f (2, 2, 2);
-                for (int i = 0; i < 2; ++i)
-                {
-                    auto& t = f.engine.getRecorder().getTrack (i);
-                    t.armed.store (true); t.monitor.store (true);
-                    f.engine.setTrackVcaGroup (i, 0);
-                }
-                f.engine.setMasterOutputs (0, 1);
-
-                // VCA at unity -> the monitored input is audible.
-                f.engine.getVca (0).gainDb.store (0.0f);
-                f.writeInput (0, 0.5f, 256);
-                f.writeInput (1, 0.5f, 256);
-                f.process (256);
-                expect (f.peakOut (0, 256) > 0.1f);
-
-                // Pull the VCA master fully down -> monitor sum drops to ~silence.
-                f.engine.getVca (0).gainDb.store (-60.0f);
-                f.writeInput (0, 0.5f, 256);
-                f.writeInput (1, 0.5f, 256);
-                f.process (256);
-                expect (f.peakOut (0, 256) < 0.02f);
-            }
-
-            beginTest ("VCA solo silences ungrouped strips");
-            {
-                CallbackFixture f (3, 3, 2);
-                for (int i = 0; i < 3; ++i)
-                {
-                    auto& t = f.engine.getRecorder().getTrack (i);
-                    t.armed.store (true); t.monitor.store (true);
-                }
-                // Strip 0 -> VCA 0 (soloed). Strips 1 + 2 ungrouped.
-                f.engine.setTrackVcaGroup (0, 0);
-                f.engine.getVca (0).soloed.store (true);
-                f.engine.getVca (0).gainDb.store (0.0f);
-                f.engine.setMasterOutputs (0, 1);
-                f.writeInput (0, 0.5f, 256);
-                f.writeInput (1, 0.5f, 256);
-                f.writeInput (2, 0.5f, 256);
-                // Let any soft-takeover ramps settle.
-                for (int n = 0; n < 8; ++n) f.process (256);
-                // Only strip 0 (VCA-soloed) passes; 1 + 2 drop out.
-                // Result is ~ one strip's worth on the monitor bus
-                // (constant 0.5 input * constant-power 0.707 = 0.353).
-                const float pk = f.peakOut (0, 256);
-                expect (pk > 0.20f);
-                expect (pk < 0.50f);
-            }
-
-            beginTest ("A fader or VCA at its -60 dB floor is off, whatever the other one says");
-            {
-                // Strip and VCA dB are summed: a strip pulled to the floor
-                // under a VCA at +12 played at -48 dB, and a VCA pulled to
-                // the floor still passed strips set above 0 dB.
                 CallbackFixture f (1, 1, 2);
                 auto& t = f.engine.getRecorder().getTrack (0);
                 t.monitor.store (true);
                 f.engine.setMasterOutputs (0, 1);
-                f.engine.setTrackVcaGroup (0, 0);
 
                 t.gainDb.store (-60.0f);
-                f.engine.getVca (0).gainDb.store (12.0f);
                 f.writeInput (0, 0.5f, 256);
                 f.process (256);
-                expectEquals (f.peakOut (0, 256), 0.0f, "strip fader at the floor is audible under a +12 dB VCA");
-
-                t.gainDb.store (12.0f);
-                f.engine.getVca (0).gainDb.store (-60.0f);
-                f.writeInput (0, 0.5f, 256);
-                f.process (256);
-                expectEquals (f.peakOut (0, 256), 0.0f, "VCA at the floor passes a strip set to +12 dB");
+                expectEquals (f.peakOut (0, 256), 0.0f, "a strip fader at the floor is audible");
 
                 t.gainDb.store (-6.0f);
-                f.engine.getVca (0).gainDb.store (3.0f);
                 f.writeInput (0, 0.5f, 256);
                 f.process (256);
-                expect (f.peakOut (0, 256) > 0.2f, "above the floor the two still sum");
-                f.engine.setTrackVcaGroup (0, -1);
+                expect (f.peakOut (0, 256) > 0.1f, "above the floor the strip plays");
             }
 
             // ─── Stereo-pair summing ─────────────────────────────────
@@ -2103,7 +1979,7 @@ namespace zynforge
                 expect (f.peakOut (1, 256) > 0.20f);
             }
 
-            // ─── Playback feed: VCA gain ──────────────────────────────
+            // ─── Playback feed ────────────────────────────────────────
             // These exercise the paths that were impossible to test
             // without a loaded playerScratch feed (see the round-4 gap
             // list in tasks.md). Each records a real WAV, plays it back,
@@ -2166,28 +2042,6 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
-            beginTest ("VCA gain attenuates playback end-to-end on the monitor sum");
-            {
-                const auto dir = recordTestSession (1, 0.5f);
-                {
-                    CallbackFixture f (1, 1, 2);
-                    f.engine.getPlayer().loadSession (dir);
-                    f.engine.setTrackVcaGroup (0, 2);          // strip 0 -> VCA 2
-                    f.engine.getVca (2).gainDb.store (0.0f);
-                    f.engine.startPlayback();
-                    const float unity = fillPlaybackBuffer (f);
-                    expect (unity > 0.20f);
-
-                    // Pull the VCA master down 40 dB -> playback ~silenced.
-                    f.engine.getVca (2).gainDb.store (-40.0f);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    const float pulled = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
-                    expect (pulled < unity * 0.1f);
-                }
-                dir.deleteRecursively();
-            }
-
             beginTest ("Trim-follow shifts soundcheck playback by the console gain delta");
             {
                 const auto dir = recordTestSession (1, 0.5f);
@@ -2223,40 +2077,13 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
-            beginTest ("VCA gain attenuates a routed hardware output during playback");
-            {
-                const auto dir = recordTestSession (1, 0.5f);
-                {
-                    CallbackFixture f (1, 1, 4);               // 4 outs -> route to Out 2
-                    f.engine.getPlayer().loadSession (dir);
-                    f.engine.setTrackOutputRouting (0, 2);     // strip 0 -> Out 2
-                    f.engine.setTrackVcaGroup (0, 1);
-                    f.engine.getVca (1).gainDb.store (0.0f);
-                    f.engine.startPlayback();
-                    // Buffer fills via the monitor sum -- the strip still
-                    // sums there even when routed to a hardware output.
-                    expect (fillPlaybackBuffer (f) > 0.20f);
-
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    const float unityOut = f.peakOut (2, 256);
-                    expect (unityOut > 0.20f);
-
-                    f.engine.getVca (1).gainDb.store (-40.0f);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    expect (f.peakOut (2, 256) < unityOut * 0.1f);
-                }
-                dir.deleteRecursively();
-            }
-
             beginTest ("Live playback and the offline bounce mix the same session identically");
             {
                 // MixKernel.h is the one definition of the mix rules. Render
                 // one session through BOTH of its users -- the audio callback
                 // and renderStereoMix -- and compare them sample for sample.
-                // Every rule is in play: fader, pan, VCA, a stereo pair, a mute,
-                // the master fader, and then a solo.
+                // Every rule is in play: fader, pan, a stereo pair, a mute, the
+                // master fader, and then a solo.
                 const auto dir = recordTestSession (3, 0.5f);   // Track_01..03, 49152 samples
                 {
                     CallbackFixture f (3, 3, 2);
@@ -2270,9 +2097,6 @@ namespace zynforge
                     rec.getTrack (1).gainDb.store (-3.0f);
                     rec.getTrack (0).pan.store (-0.6f);
                     rec.getTrack (1).pan.store ( 0.6f);
-                    f.engine.setTrackVcaGroup (0, 0);
-                    f.engine.setTrackVcaGroup (1, 0);
-                    f.engine.getVca (0).gainDb.store (-2.0f);
                     rec.getTrack (2).gainDb.store (-4.0f);
                     rec.getTrack (2).pan.store (-0.7f);
                     f.engine.getMasterState().gainDb.store (-2.0f);

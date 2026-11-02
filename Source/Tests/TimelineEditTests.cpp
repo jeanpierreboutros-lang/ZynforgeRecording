@@ -328,10 +328,10 @@ public:
             expect (songexport::mixRenderWarning (false, false).isEmpty());
 
             expect (! e.isAnySoloActive());
-            e.setVcaSoloed (0, true);
-            expect (e.isAnySoloActive(), "a soloed VCA shapes the mix like a soloed strip");
-            expect (e.captureInterchange().anySolo, "a DAW export must note a VCA solo");
-            e.setVcaSoloed (0, false);
+            e.setTrackSoloed (0, true);
+            expect (e.isAnySoloActive());
+            expect (e.captureInterchange().anySolo, "a DAW export must note a solo");
+            e.setTrackSoloed (0, false);
 
             songexport::Outcome outcome;
             outcome.attempted = outcome.written = 2;

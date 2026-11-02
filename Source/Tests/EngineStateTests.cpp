@@ -112,21 +112,19 @@ namespace zynforge
                 expectWithinAbsoluteError (eng.getRecorder().getTrack (0).gainDb.load(), 0.0f, 0.001f);
             }
 
-            beginTest ("freshly-grown strips don't inherit a previous layout's edit group / VCA");
+            beginTest ("freshly-grown strips don't inherit a previous layout's edit group");
             {
                 AudioEngine eng;
                 eng.setStripCount (2);
                 eng.setTrackEditGroup (0, 1);   // persists strip_editgroup_0
-                eng.setTrackVcaGroup  (1, 3);   // persists strip_vca_1
                 expectEquals (eng.getTrackEditGroup (0), 1);
 
                 // Empty out (as on an empty-on-open relaunch) then add strips
                 // back. The new strips must come up CLEAN -- the old edit
-                // group / VCA assignments must not revive by array position.
+                // group assignments must not revive by array position.
                 eng.setStripCount (0);
                 eng.setStripCount (2);
                 expectEquals (eng.getTrackEditGroup (0), -1);
-                expectEquals (eng.getRecorder().getTrack (1).vcaGroup.load(), -1);
             }
 
             beginTest ("snapSampleToGrid -- Off mode is identity");
@@ -176,16 +174,6 @@ namespace zynforge
                 expectEquals ((int) eng.getStripsInEditGroup (1).size(), 2);
             }
 
-            beginTest ("VCA group assignment + reset");
-            {
-                AudioEngine eng;
-                eng.setStripCount (4);
-                eng.setTrackVcaGroup (0, 3);
-                expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), 3);
-                eng.setTrackVcaGroup (0, -1);
-                expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), -1);
-            }
-
             beginTest ("Full strip mix state round-trips through the session file (per-session, not global)");
             {
                 auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
@@ -202,8 +190,6 @@ namespace zynforge
                 eng.getRecorder().getTrack (3).soloed.store (true);
                 eng.getRecorder().getTrack (1).outputMuted.store (true);
                 eng.getRecorder().getTrack (2).streamSend.store (true);
-                eng.setTrackVcaGroup (0, 2);
-                eng.setTrackVcaGroup (1, 2);
                 eng.setTrackEditGroup (3, 1);
                 eng.claimMixerFor (tmp);
                 eng.saveSessionMixTo (tmp);
@@ -215,7 +201,6 @@ namespace zynforge
                 eng.getRecorder().getTrack (2).muted.store (false);
                 eng.getRecorder().getTrack (1).outputMuted.store (false);
                 eng.getRecorder().getTrack (2).streamSend.store (false);
-                eng.setTrackVcaGroup (2, 5);
 
                 eng.setStripCount (7); // simulate the previously-open larger session
                 expect (eng.loadSessionMixFrom (tmp));
@@ -228,10 +213,7 @@ namespace zynforge
                 expect (eng.getRecorder().getTrack (3).soloed.load());
                 expect (eng.getRecorder().getTrack (1).outputMuted.load());
                 expect (eng.getRecorder().getTrack (2).streamSend.load());
-                expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), 2);
                 expectEquals (eng.getTrackEditGroup (3), 1);
-                // Strip 2 was ungrouped in the file -> the leaked VCA 5 is overwritten.
-                expectEquals (eng.getRecorder().getTrack (2).vcaGroup.load(), -1);
 
                 eng.clearSessionState();
                 expect (! eng.getRecorder().getTrack (1).outputMuted.load(),

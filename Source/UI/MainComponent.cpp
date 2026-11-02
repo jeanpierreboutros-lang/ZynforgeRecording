@@ -1084,7 +1084,6 @@ void MainComponent::applyLockState()
         if (auto* tools = editPage->getEditToolsBar()) tools->setEnabled (e);
     }
     // Floating panels that change the mix or the patch lock with the rest.
-    if (vcaPanel != nullptr) vcaPanel->setEnabled (e);
     if (patchDialog != nullptr) patchDialog->setEnabled (e);
     if (deviceDialog != nullptr) deviceDialog->setEnabled (e);
     if (twinDialog != nullptr) twinDialog->setEnabled (e);

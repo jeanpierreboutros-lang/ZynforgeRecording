@@ -74,11 +74,6 @@ namespace zynforge
         // the host's job). Used as the Tab-rename destination.
         void beginRename() { openRenameDialog(); }
 
-        // Fired when the engineer assigns this strip to a VCA bus via
-        // the right-click menu. The host should persist by calling
-        // engine.setTrackVcaGroup so the assignment survives relaunch.
-        IntCallback onVcaGroupChanged;
-
         // Fired when the engineer assigns this strip to an Edit
         // Group (-1 = unlinked). Host wires to engine.setTrackEditGroup
         // so the assignment persists.
@@ -115,7 +110,7 @@ namespace zynforge
 
     private:
         bool hovered { false };
-        // Tracks whether a VCA / edit-group badge is currently shown so
+        // Tracks whether an edit-group badge is currently shown so
         // the slow poll can re-lay-out the name label (which reserves room for
         // the badge) the moment an assignment changes. -1 = uninitialised.
         int  lastBadgeShown { -1 };

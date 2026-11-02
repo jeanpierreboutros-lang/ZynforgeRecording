@@ -90,7 +90,7 @@ namespace zynforge
             t.soloed  .store (false, std::memory_order_relaxed);
             t.monitor .store (false, std::memory_order_relaxed);
             t.isStereo.store (false, std::memory_order_relaxed);
-            t.vcaGroup.store (-1); t.editGroup.store (-1);
+            t.editGroup.store (-1);
             t.outputMuted.store (false); t.streamSend.store (false);
             t.liveInputGainDb.store (0); t.captureInputGainDb.store (0);
             t.liveInputGainKnown.store (false); t.captureInputGainKnown.store (false);
@@ -1136,7 +1136,6 @@ namespace zynforge
             o->setProperty ("referenceMedia", t.referenceMedia.load());
             o->setProperty ("captureInputGainDb", (double) t.captureInputGainDb.load());
             o->setProperty ("captureInputGainKnown", t.captureInputGainKnown.load());
-            o->setProperty ("vcaGroup",  t.vcaGroup .load (std::memory_order_relaxed));
             o->setProperty ("editGroup", t.editGroup.load (std::memory_order_relaxed));
             arr.add (juce::var (o.get()));
         }
@@ -1148,16 +1147,6 @@ namespace zynforge
         root->setProperty ("formatVersion", 2);
         root->setProperty ("trackCount", recorder.getNumTracks());
         root->setProperty ("strips", arr);
-        juce::Array<juce::var> vcaState;
-        for (const auto& v : vcas)
-        {
-            auto* o = new juce::DynamicObject();
-            o->setProperty ("gainDb", (double) v.gainDb.load());
-            o->setProperty ("muted", v.muted.load());
-            o->setProperty ("soloed", v.soloed.load());
-            vcaState.add (juce::var (o));
-        }
-        root->setProperty ("vcas", vcaState);
 
         root->setProperty ("chaseStartTimecode", getChaseStartTimecode());
         root->setProperty ("streamOutL", streamOutL.load (std::memory_order_relaxed));
@@ -1180,20 +1169,6 @@ namespace zynforge
         const auto parsed = juce::JSON::parse (f);
         auto* root = parsed.getDynamicObject();
         if (root == nullptr || ! root->hasProperty ("trackCount")) return false;
-
-        for (auto& v : vcas)
-        {
-            v.gainDb.store (0); v.muted.store (false); v.soloed.store (false);
-            v.rampSamplesRemaining.store (0); v.rampTargetGainDb.store (0);
-        }
-        if (auto* saved = root->getProperty ("vcas").getArray())
-            for (int i = 0; i < juce::jmin (saved->size(), kNumVcas); ++i)
-                if (auto* o = (*saved)[i].getDynamicObject())
-                {
-                    setVcaGainDb (i, (float) (double) o->getProperty ("gainDb"));
-                    setVcaMuted (i, (bool) o->getProperty ("muted"));
-                    setVcaSoloed (i, (bool) o->getProperty ("soloed"));
-                }
 
         // The saved session is authoritative in both directions.  Growing only
         // left channels from the previous, larger session alive and exposed
@@ -1254,7 +1229,6 @@ namespace zynforge
                     // Until a new desk reading arrives, reopening has no trim delta.
                     t.liveInputGainDb.store (t.captureInputGainDb.load());
                     t.liveInputGainKnown.store (false);
-                    setTrackVcaGroup  (idx, o->hasProperty ("vcaGroup")  ? (int) o->getProperty ("vcaGroup")  : -1);
                     setTrackEditGroup (idx, o->hasProperty ("editGroup") ? (int) o->getProperty ("editGroup") : -1);
 
                     // mute / solo / monitor / arm have no dedicated engine
@@ -1367,7 +1341,6 @@ namespace zynforge
                 const auto suffix = juce::String (i);
                 appProps->removeValue ("strip_stereo_"    + suffix);
                 appProps->removeValue ("strip_uid_"       + suffix);
-                appProps->removeValue ("strip_vca_"       + suffix);
                 appProps->removeValue ("strip_editgroup_" + suffix);
                 appProps->removeValue ("strip_outmute_"   + suffix);
             }
@@ -1395,7 +1368,6 @@ namespace zynforge
             t.armed   .store (false, std::memory_order_relaxed);
             t.monitor .store (false, std::memory_order_relaxed);
             t.isStereo.store (false, std::memory_order_relaxed);
-            t.vcaGroup.store (-1,    std::memory_order_relaxed);
             t.colourARGB.store (0,   std::memory_order_relaxed);
             t.stripId.clear();
         }
@@ -1418,7 +1390,6 @@ namespace zynforge
                 const auto suffix = juce::String (i);
                 appProps->removeValue ("strip_stereo_"    + suffix);
                 appProps->removeValue ("strip_uid_"       + suffix);
-                appProps->removeValue ("strip_vca_"       + suffix);
                 appProps->removeValue ("strip_editgroup_" + suffix);
                 appProps->removeValue ("strip_outmute_"   + suffix);
             }
@@ -1444,7 +1415,7 @@ namespace zynforge
         recorder.setTrackCount (n);
         // Freshly-added strips must NOT inherit a previous session's per-index
         // metadata that lingers in appProps -- names, colours, and especially
-        // edit-group / VCA assignments. Edit groups + VCAs are stored globally
+        // edit-group assignments. Edit groups are stored globally
         // by array position (not in the .zfproj), so without this, adding a
         // channel (or a fresh session re-adding strips after the empty-on-open
         // start) silently revived last gig's edit-group links -- strips showed
@@ -1507,14 +1478,14 @@ namespace zynforge
                 t.stripId = uid;
             }
 
-            // VCA group and edit group are NOT read here.
-            // Both live in session_mix.json (loadSessionMixFrom) and are
+            // The edit group is NOT read here.
+            // It lives in session_mix.json (loadSessionMixFrom) and is
             // applied there. Reading an index-keyed *global* appProps copy
             // would (a) leak the previous session's grouping into
             // this one, and (b) clobber the freshly-loaded value on a device
             // restart, which re-runs this function. (The appProps copies were
             // also never swapped by swapTracks, so they went stale after any
-            // reorder anyway.) loadSessionMixFrom sets vca / editGroup
+            // reorder anyway.) loadSessionMixFrom sets editGroup
             // authoritatively for every strip on session open; new strips
             // default to "ungrouped / normal channel" via TrackState
             // construction.
@@ -1563,7 +1534,7 @@ namespace zynforge
         // Linking makes the pair ONE strip in every view, and that strip
         // shows and edits the L half -- so bring the R half onto it now.
         // Otherwise R kept playing (and recording) by its own mute, fader,
-        // VCA, arm and routing until each control happened to be touched.
+        // arm and routing until each control happened to be touched.
         // Pan stays per channel: that is the stereo image.
         if (isStereoPair && ! wasStereo)
         {
@@ -1573,7 +1544,6 @@ namespace zynforge
                                &TrackState::monitor, &TrackState::outputMuted, &TrackState::streamSend })
                 (r.*flag).store ((l.*flag).load (std::memory_order_relaxed), std::memory_order_relaxed);
             setTrackGainDb   (channelIndex + 1, l.gainDb.load (std::memory_order_relaxed));
-            setTrackVcaGroup (channelIndex + 1, l.vcaGroup.load (std::memory_order_relaxed));
             setTrackEditGroup (channelIndex + 1, l.editGroup.load (std::memory_order_relaxed));
             const int in  = l.inputRouting .load (std::memory_order_relaxed);
             const int out = l.outputRouting.load (std::memory_order_relaxed);
@@ -1744,7 +1714,7 @@ namespace zynforge
                 setTrackName (i, t.getNameThreadSafe()); setTrackColour (i, juce::Colour (t.colourARGB.load()));
                 setTrackGainDb (i, t.gainDb.load()); setTrackPan (i, t.pan.load());
                 setTrackInputRouting (i, t.inputRouting.load()); setTrackOutputRouting (i, t.outputRouting.load());
-                setTrackStereo (i, t.isStereo.load()); setTrackVcaGroup (i, t.vcaGroup.load());
+                setTrackStereo (i, t.isStereo.load());
                 setTrackEditGroup (i, t.editGroup.load());
             }
             if (appProps != nullptr)
@@ -1937,18 +1907,6 @@ namespace zynforge
                 DBG ("AudioDeviceManager init: " << err);
         }
 
-        // Restore persisted VCA names + colours so a relaunch shows the
-        // engineer's "DRUMS" / "VOX" labels instead of "VCA 1..8".
-        for (int i = 0; i < kNumVcas; ++i)
-        {
-            const auto nameKey = "vca_" + juce::String (i) + "_name";
-            const auto colKey  = "vca_" + juce::String (i) + "_colour";
-            const auto n  = appProps->getValue (nameKey, "VCA " + juce::String (i + 1));
-            const auto cc = (juce::uint32) appProps->getDoubleValue (colKey, 0.0);
-            vcas[(size_t) i].name = n;
-            vcas[(size_t) i].colourARGB.store (cc, std::memory_order_relaxed);
-        }
-
         if (! s_testSkipAudioInit.load (std::memory_order_acquire))
             deviceManager.addAudioCallback (this);
     }
@@ -2118,11 +2076,6 @@ namespace zynforge
         resetAllStripState();
         setStreamOutputs (-1, -1);
         chaseStartLabel.store (0, std::memory_order_relaxed);
-        for (auto& v : vcas)
-        {
-            v.gainDb.store (0); v.muted.store (false); v.soloed.store (false);
-            v.rampTargetGainDb.store (0); v.rampSamplesRemaining.store (0);
-        }
         markers.clearContext();
         editCursorSample.store (-1, std::memory_order_release);
         claimMixerFor ({});
@@ -2271,76 +2224,6 @@ namespace zynforge
         stripGains.setPan (channelIndex, pan);
     }
 
-    void AudioEngine::setVcaGainDb (int idx, float dB)
-    {
-        if (idx < 0 || idx >= kNumVcas) return;
-        dB = juce::jlimit (-60.0f, 12.0f, dB);
-        vcas[(size_t) idx].gainDb.store (dB, std::memory_order_relaxed);
-        vcas[(size_t) idx].rampTargetGainDb.store (dB, std::memory_order_relaxed);
-        vcas[(size_t) idx].rampSamplesRemaining.store (0, std::memory_order_relaxed);
-    }
-
-    void AudioEngine::setVcaGainDbRamped (int idx, float dB, double seconds)
-    {
-        if (idx < 0 || idx >= kNumVcas) return;
-        dB = juce::jlimit (-60.0f, 12.0f, dB);
-        const auto sr = deviceSampleRate.load (std::memory_order_relaxed);
-        const juce::int64 samples = sr > 0.0
-            ? (juce::int64) (sr * juce::jmax (0.0, seconds))
-            : 0;
-        vcas[(size_t) idx].rampTargetGainDb.store (dB, std::memory_order_relaxed);
-        vcas[(size_t) idx].rampSamplesRemaining.store (samples, std::memory_order_relaxed);
-        if (samples == 0)
-            vcas[(size_t) idx].gainDb.store (dB, std::memory_order_relaxed);
-    }
-
-    void AudioEngine::setVcaMuted (int idx, bool muted)
-    {
-        if (idx < 0 || idx >= kNumVcas) return;
-        vcas[(size_t) idx].muted.store (muted, std::memory_order_relaxed);
-    }
-
-    void AudioEngine::setVcaSoloed (int idx, bool soloed)
-    {
-        if (idx < 0 || idx >= kNumVcas) return;
-        vcas[(size_t) idx].soloed.store (soloed, std::memory_order_relaxed);
-    }
-
-    void AudioEngine::setVcaName (int idx, const juce::String& name)
-    {
-        if (idx < 0 || idx >= kNumVcas) return;
-        vcas[(size_t) idx].name = name;
-        if (appProps != nullptr)
-        {
-            reloadAppPropsBeforeWrite();
-            appProps->setValue ("vca_" + juce::String (idx) + "_name", name);
-            appProps->saveIfNeeded();
-        }
-    }
-
-    void AudioEngine::setVcaColour (int idx, juce::Colour c)
-    {
-        if (idx < 0 || idx >= kNumVcas) return;
-        vcas[(size_t) idx].colourARGB.store (c.getARGB(), std::memory_order_relaxed);
-        if (appProps != nullptr)
-        {
-            reloadAppPropsBeforeWrite();
-            appProps->setValue ("vca_" + juce::String (idx) + "_colour",
-                                (juce::int64) c.getARGB());
-            appProps->saveIfNeeded();
-        }
-    }
-
-    void AudioEngine::setTrackVcaGroup (int channelIndex, int vcaIdx)
-    {
-        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
-        const int clamped = (vcaIdx < 0 || vcaIdx >= kNumVcas) ? -1 : vcaIdx;
-        recorder.getTrack (channelIndex).vcaGroup.store (clamped, std::memory_order_relaxed);
-        // VCA group is authoritative in session_mix.json -- not written to
-        // global appProps (an index-keyed global copy leaked across sessions
-        // and went stale after a reorder).
-    }
-
     juce::int64 AudioEngine::snapSampleToGrid (juce::int64 sample)
     {
         const auto mode = getSnapMode();
@@ -2364,7 +2247,8 @@ namespace zynforge
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         recorder.getTrack (channelIndex).editGroup.store (groupId, std::memory_order_relaxed);
         // Edit group is authoritative in session_mix.json -- not written to
-        // global appProps (same leak/stale-on-reorder class as VCA).
+        // global appProps (an index-keyed global copy leaked across sessions
+        // and went stale after a reorder).
     }
 
     int AudioEngine::getTrackEditGroup (int channelIndex) noexcept
@@ -2387,29 +2271,6 @@ namespace zynforge
     void AudioEngine::tickRamps (int numSamples) noexcept
     {
         if (numSamples <= 0) return;
-
-        // VCA gain ramps -- same per-block linear step as the strip ramps.
-        for (auto& vca : vcas)
-        {
-            const juce::int64 remaining = vca.rampSamplesRemaining.load (std::memory_order_relaxed);
-            if (remaining <= 0) continue;
-            const float curG = vca.gainDb.load (std::memory_order_relaxed);
-            const float tgtG = vca.rampTargetGainDb.load (std::memory_order_relaxed);
-            const juce::int64 denom = juce::jmax ((juce::int64) numSamples, remaining);
-            const float frac = (float) numSamples / (float) denom;
-            const float newG = curG + (tgtG - curG) * frac;
-            const juce::int64 next = remaining - (juce::int64) numSamples;
-            if (next <= 0)
-            {
-                vca.gainDb.store (tgtG, std::memory_order_relaxed);
-                vca.rampSamplesRemaining.store (0, std::memory_order_relaxed);
-            }
-            else
-            {
-                vca.gainDb.store (newG, std::memory_order_relaxed);
-                vca.rampSamplesRemaining.store (next, std::memory_order_relaxed);
-            }
-        }
 
         const int n = recorder.getNumTracks();
         for (int i = 0; i < n; ++i)
@@ -2537,7 +2398,7 @@ namespace zynforge
         // dashboard polls audioLoadPct at 4 Hz to drive the LED.
         const auto cbStart = juce::Time::getHighResolutionTicks();
 
-        // 64-bit output accumulator -- every per-strip / VCA / stream
+        // 64-bit output accumulator -- every per-strip / stream
         // sum lands here in double precision; the final cast to the
         // device's float buffers happens at the end of the callback.
         // Cheap to ensure the size every block -- JUCE no-ops when
@@ -2646,16 +2507,12 @@ namespace zynforge
                                       t.captureInputGainDb.load (std::memory_order_relaxed));
         };
 
-        // Strip's effective dB = its own gain + its VCA bus gain. Defined
-        // once here so every consumer below (per-channel mix, stream bus)
-        // shares one definition instead of re-deriving it.
+        // Strip's effective dB. Defined once here so every consumer below
+        // (per-channel mix, stream bus) shares one definition instead of
+        // re-deriving it.
         const auto effectiveGainDb = [this, &trimFollowDb] (int i) noexcept -> float
         {
-            auto& t = recorder.getTrack (i);
-            const int g = t.vcaGroup.load (std::memory_order_relaxed);
-            const float dB = mix::stripDb (t.gainDb.load (std::memory_order_relaxed),
-                                           g >= 0 && g < kNumVcas
-                                               ? vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : 0.0f);
+            const float dB = mix::stripDb (recorder.getTrack (i).gainDb.load (std::memory_order_relaxed));
             // Trim-follow: track the console's input-gain change since capture
             // so soundcheck preamp moves shift the recorded track like a live mic.
             return dB + trimFollowDb (i);
@@ -2708,28 +2565,11 @@ namespace zynforge
             if (recorder.getTrack (i).soloed.load (std::memory_order_relaxed))
             { anySolo = true; break; }
 
-        // Any VCA bus soloed? Solo'd VCAs follow the same "only soloed
-        // passes" rule, applied across all strips assigned to that bus.
-        bool anyVcaSolo = false;
-        for (const auto& v : vcas)
-            if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
-
-        const auto vcaGateFor = [this] (const TrackState& t) noexcept
-        {
-            mix::VcaGate vca;
-            const int g = t.vcaGroup.load (std::memory_order_relaxed);
-            if (g >= 0 && g < kNumVcas)
-                vca = { true, vcas[(size_t) g].muted.load (std::memory_order_relaxed),
-                              vcas[(size_t) g].soloed.load (std::memory_order_relaxed) };
-            return vca;
-        };
-
         auto channelAudible = [&] (int i) -> bool
         {
             auto& t = recorder.getTrack (i);
             return mix::audible (t.muted.load (std::memory_order_relaxed),
-                                 t.soloed.load (std::memory_order_relaxed),
-                                 vcaGateFor (t), anySolo, anyVcaSolo);
+                                 t.soloed.load (std::memory_order_relaxed), anySolo);
         };
 
         // Mix the routed track scratch onto the device outputs honoring
@@ -2812,7 +2652,7 @@ namespace zynforge
             {
                 auto& t = recorder.getTrack (i);
                 if (! t.streamSend.load (std::memory_order_relaxed)) continue;
-                if (! mix::streamAudible (t.muted.load (std::memory_order_relaxed), vcaGateFor (t)))
+                if (! mix::streamAudible (t.muted.load (std::memory_order_relaxed)))
                     continue;
 
                 const float dB   = effectiveGainDb (i);
@@ -2886,14 +2726,7 @@ namespace zynforge
             auto& t = recorder.getTrack (ch);
             if (! channelAudible (ch)) continue;
 
-            // VCA group gain. The monitor sum was applying ONLY the strip's
-            // own fader, so pulling a VCA master down did nothing here even
-            // though it worked on the routed outputs (which go through
-            // effectiveGainDb). Fold the VCA gain in so the monitor matches.
-            const int vgrp = t.vcaGroup.load (std::memory_order_relaxed);
-            const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxed),
-                                                     vgrp >= 0 && vgrp < kNumVcas
-                                                         ? vcas[(size_t) vgrp].gainDb.load (std::memory_order_relaxed) : 0.0f);
+const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxed));
             const double gain = juce::Decibels::decibelsToGain (dB, -60.0);
             const auto [gL, gR] = mix::constantPowerPan (gain, t.pan.load (std::memory_order_relaxed));
 
@@ -3037,7 +2870,7 @@ namespace zynforge
 
         // Final downcast: the 64-bit accumulator → device-output float
         // buffers. Done in one place at the very end so per-strip /
-        // VCA / stream / monitor sums all stayed at double precision.
+        // stream / monitor sums all stayed at double precision.
         // NEON-vectorised on Apple Silicon; scalar fallback elsewhere.
         for (int ch = 0; ch < numOutputs; ++ch)
         {

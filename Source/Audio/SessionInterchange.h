@@ -32,9 +32,6 @@ namespace zynforge::interchange
         float faderDb    { 0.0f };
         float pan        { 0.0f };
         bool  muted      { false };
-        float vcaDb      { 0.0f };          // 0 = no VCA
-        bool  vcaAssigned { false };
-        bool  vcaMuted   { false };
         // nullopt: never given a clip list, so it plays its whole file. An
         // empty list is different: the engineer deleted every clip, and the
         // strip stays silent however much media sits on disk.
@@ -79,7 +76,7 @@ namespace zynforge::interchange
         juce::String name;
         juce::uint32 colourArgb { 0 };
         int    channels { 1 };              // 2 = one stereo track from a pair
-        double gain { 1.0 };                // linear, with the VCA folded in
+        double gain { 1.0 };                // linear
         float  pan { 0.0f };                // mono tracks
         float  panLeft { -1.0f }, panRight { 1.0f };   // stereo tracks, per side
         bool   muted { false };
@@ -328,9 +325,9 @@ namespace zynforge::interchange
             Track track;
             track.name       = cleanText (strip.name);
             track.colourArgb = strip.colourArgb;
-            track.gain  = juce::Decibels::decibelsToGain ((double) mix::stripDb (strip.faderDb, strip.vcaDb), -60.0);
+            track.gain  = juce::Decibels::decibelsToGain ((double) mix::stripDb (strip.faderDb), -60.0);
             track.pan   = strip.pan;
-            track.muted = strip.muted || strip.vcaMuted;
+            track.muted = strip.muted;
             return track;
         }
 
@@ -357,13 +354,12 @@ namespace zynforge::interchange
         if (! audioDir.isDirectory()) audioDir = in.sessionDir;
 
         MediaCache media;
-        int approximatedFades = 0, splitPairs = 0, vcas = 0;
+        int approximatedFades = 0, splitPairs = 0;
         const int count = (int) in.strips.size();
         for (int index = 0; index < count; ++index)
         {
             if (cancel.load (std::memory_order_relaxed)) { result.error = "Cancelled"; return result; }
             const auto& strip = in.strips[(size_t) index];
-            vcas       += strip.vcaAssigned ? 1 : 0;
 
             // A pair's right half travels with its left.
             if (index > 0 && in.strips[(size_t) index - 1].stereoLeft) continue;
@@ -414,9 +410,6 @@ namespace zynforge::interchange
         }
 
         auto& notes = project.notes;
-        if (vcas > 0)
-            notes.add ("VCA groups are not exported: " + plural (vcas, "strip")
-                       + " carry the VCA level in the track fader.");
         if (approximatedFades > 0)
             notes.add (plural (approximatedFades, "fade") + " cut by a split or a file boundary"
                        " became ordinary fades on the piece that reaches silence.");

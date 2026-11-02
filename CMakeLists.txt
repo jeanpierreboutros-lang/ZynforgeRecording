@@ -286,7 +286,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TwinLinkHostTests.cpp
     Source/Tests/MixKernelTests.cpp
     Source/Tests/TransportBarAccessibilityTests.cpp
-    Source/Tests/VcaPanelAccessibilityTests.cpp
 )
 
 target_compile_definitions(ZynforgeRecordingTests PRIVATE

@@ -363,9 +363,9 @@ report "UI workers never hold the structure lock across a render" \
        "$HITS"
 
 # The mix rules have ONE definition, Source/Audio/MixKernel.h, shared by the
-# audio callback and the offline bounce. A pan law or VCA-solo gate re-derived
-# in either file is how the two drifted.
-HITS=$(grep -nE 'MathConstants<double>::halfPi|anyVcaSolo && !' \
+# audio callback and the offline bounce. A pan law, solo gate, fader floor or
+# master gain re-derived in either file is how the two drifted.
+HITS=$(grep -nE 'MathConstants<double>::halfPi|anySolo *\?|kFaderFloorDb|decibelsToGain.*masterState' \
        Source/Audio/AudioEngine.cpp Source/Audio/AudioEngineClips.cpp 2>/dev/null \
        | grep -vE '^[^:]+:[0-9]+: *//')
 report "mix rules live only in MixKernel.h" \

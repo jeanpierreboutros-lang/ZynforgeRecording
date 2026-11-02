@@ -4,7 +4,6 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "Markers.h"
-#include "VcaBus.h"
 #include "../Network/RemoteControl.h"
 
 #include <array>
@@ -260,7 +259,7 @@ namespace zynforge
         int  loadSession (const juce::File& sessionDir, bool preserveEdits = false, bool appendRecordedAudio = false);
 
         // Per-SESSION strip mix state: name, colour, gain, pan, mute, solo,
-        // monitor, arm, input/output routing, stereo flag, VCA + edit group.
+        // monitor, arm, input/output routing, stereo flag, edit group.
         // These otherwise live only in global appProps keyed by strip index,
         // so they'd leak between different sessions opened at the same
         // positions. saveSessionMixTo writes them all into session_mix.json
@@ -290,21 +289,6 @@ namespace zynforge
             player.start();
         }
         void stopPlayback() { player.stop(); }
-
-        // ── VCA buses ─────────────────────────────────────────────
-        // 8 group "ghost faders". Strips opt-in via setTrackVcaGroup
-        // and inherit the bus's gainDb / muted. Set with ramping to
-        // avoid clicks when a cue snapshot recalls a different value.
-        static constexpr int kNumVcas = 8;
-        VcaBus&  getVca (int idx) noexcept { return vcas[(size_t) juce::jlimit (0, kNumVcas - 1, idx)]; }
-        const VcaBus&  getVca (int idx) const noexcept { return vcas[(size_t) juce::jlimit (0, kNumVcas - 1, idx)]; }
-        void  setVcaGainDb  (int idx, float dB);
-        void  setVcaGainDbRamped (int idx, float dB, double seconds);
-        void  setVcaMuted   (int idx, bool muted);
-        void  setVcaSoloed  (int idx, bool soloed);
-        void  setVcaName    (int idx, const juce::String& name);
-        void  setVcaColour  (int idx, juce::Colour c);
-        void  setTrackVcaGroup (int channelIndex, int vcaIdx);  // -1 = unassigned
 
         // Snap mode -- shared between the host (which sets it from
         // the Edit menu / '4' hotkey) and the edit operations that
@@ -576,7 +560,7 @@ namespace zynforge
                                      juce::int64 totalSamples);
         // Render the whole edited arrangement summed to a stereo mix --
         // each track's clip render (above) through its gain / pan / mute /
-        // solo + VCA, then master gain.
+        // solo, then master gain.
         // Offline; call from a background thread.
         bool renderStereoMix (juce::AudioBuffer<float>& outStereo, juce::int64 totalSamples);
 
@@ -634,7 +618,7 @@ namespace zynforge
         // What Detect Songs listens to: one voice per logical strip, as the
         // arrangement plays it.
         std::vector<songs::Voice> songScanVoices();
-        // Any strip or VCA soloed. A mix render follows solo, so its file
+        // Any strip soloed. A mix render follows solo, so its file
         // holds only what is soloed, and the engineer must be told.
         bool isAnySoloActive();
         // Plain copies of everything a DAW project carries. Message thread:
@@ -982,7 +966,6 @@ namespace zynforge
         bool              punchLoopWasEnabled { false };
 
         std::atomic<bool> controlsLocked { false };
-        std::array<VcaBus, kNumVcas> vcas;
         RemoteControl remotes { *this };   // OSC, desk macros, control surface
         std::unique_ptr<juce::PropertiesFile> appProps;
         RemoteTransportHandler remoteTransportHandler;
@@ -1158,7 +1141,7 @@ namespace zynforge
         }
 
         // Wipe every persisted per-strip override (name, colour, gain, pan,
-        // routing, stereo, edit group, VCA, UUID) for the
+        // routing, stereo, edit group, UUID) for the
         // half-open index range [firstIndex, lastIndexExclusive). Used to
         // give freshly-added strips a clean slate so they don't inherit a
         // previous session's layout by array position.

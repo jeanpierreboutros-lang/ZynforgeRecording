@@ -176,19 +176,12 @@ public:
             expectEquals ((int) e.clipsFor (0).size(), 1);
             e.setClipLocked (0, 0, false); expect (e.consolidateRange (0, 0, 4800));
         }
-        beginTest ("Fresh sessions reset the previous mixer and saved VCA state round-trips");
+        beginTest ("Fresh sessions reset the previous mixer");
         {
-            Folder f; AudioEngine e; setup (e);
-            e.setVcaGainDb (0, -18); e.setVcaMuted (0, true); e.setVcaSoloed (0, true);
-            e.claimMixerFor (f.dir);
-            expect (e.saveSessionMixTo (f.dir));
+            AudioEngine e; setup (e);
             e.getRecorder().getTrack (0).muted = true;
             e.clearSessionState();
             expect (! e.getRecorder().getTrack (0).muted.load());
-            expectWithinAbsoluteError (e.getVca (0).gainDb.load(), 0.0f, 0.0001f);
-            expect (e.loadSessionMixFrom (f.dir));
-            expectWithinAbsoluteError (e.getVca (0).gainDb.load(), -18.0f, 0.0001f);
-            expect (e.getVca (0).muted.load() && e.getVca (0).soloed.load());
             e.clearAllStripOverrides();
         }
         beginTest ("Stopped daemon device loss remains visible");

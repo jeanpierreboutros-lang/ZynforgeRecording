@@ -379,7 +379,7 @@ namespace zynforge
 
         // Colour mirror -- only push to LookAndFeel if the resolved
         // colour ARGB actually changed (engineer recoloured the strip,
-        // VCA group was reassigned, etc.). JUCE's setColour calls
+        // etc.). JUCE's setColour calls
         // mark the slider as dirty whether or not the value changed,
         // so guarding here prevents a 10 Hz repaint storm.
         const auto resolved = getResolvedColour();
@@ -397,10 +397,9 @@ namespace zynforge
             dirty = true;
         }
 
-        // If a VCA / edit-group badge just appeared or disappeared,
+        // If an edit-group badge just appeared or disappeared,
         // re-lay-out so the name label reclaims or yields the badge's space.
-        const int badgeNow = (state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                           || state.editGroup.load (std::memory_order_relaxed) >= 0) ? 1 : 0;
+        const int badgeNow = state.editGroup.load (std::memory_order_relaxed) >= 0 ? 1 : 0;
         if (badgeNow != lastBadgeShown)
         {
             lastBadgeShown = badgeNow;
@@ -522,17 +521,6 @@ namespace zynforge
         menu.addItem (6, outMuted ? "Unmute physical output" : "Mute physical output (FOH only)",
                       true, outMuted);
 
-        // VCA assignment submenu. Engineer picks a bus index 1..8 or
-        // "None" to detach. Persisted on engine; mute / gain inherited
-        // from the bus.
-        juce::PopupMenu vcaMenu;
-        const int curVca = state.vcaGroup.load (std::memory_order_relaxed);
-        vcaMenu.addItem (700, "None", true, curVca < 0);
-        for (int i = 0; i < 8; ++i)
-            vcaMenu.addItem (701 + i, "VCA " + juce::String (i + 1),
-                             true, curVca == i);
-        menu.addSubMenu (isStereo ? "Assign to VCA (L+R)" : "Assign to VCA", vcaMenu);
-
         // Edit Group submenu. Group ids 1..8 (1-based for menu
         // readability; engine stores raw int). -1 = unlinked.
         // Gain / pan / mute / solo / arm broadcast to every other
@@ -589,17 +577,8 @@ namespace zynforge
                          break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
                 default:
-                    // VCA assignment: 700 = None, 701..708 = VCA 1..8.
-                    if (chosen == 700 || (chosen >= 701 && chosen <= 708))
-                    {
-                        const int v = (chosen == 700) ? -1 : (chosen - 701);
-                        state.vcaGroup.store (v, std::memory_order_relaxed);
-                        if (pairState)
-                            pairState->vcaGroup.store (v, std::memory_order_relaxed);
-                        if (onVcaGroupChanged) onVcaGroupChanged (v);
-                    }
                     // Edit group assignment: 900 = None, 901..908 = group 0..7.
-                    else if (chosen == 900 || (chosen >= 901 && chosen <= 908))
+                    if (chosen == 900 || (chosen >= 901 && chosen <= 908))
                     {
                         const int g = (chosen == 900) ? -1 : (chosen - 901);
                         state.editGroup.store (g, std::memory_order_relaxed);
@@ -968,7 +947,7 @@ namespace zynforge
     void ChannelStrip::paint (juce::Graphics& g)
     {
         // Condemned strip (invalidate() called, TrackState about to be / already
-        // freed) -- paint reads state.armed / vcaGroup / colourARGB etc, so don't
+        // freed) -- paint reads state.armed / colourARGB etc, so don't
         // touch it. detach() only made the meter paint safe; this covers
         // the strip's own paint on an external repaint (hover) in the pre-rebuild
         // window. Just fill the body so it isn't a visual hole.
@@ -1011,9 +990,8 @@ namespace zynforge
             steel::drawSpine       (g, r, armedNow, armPulse); // ① structural orange spine (pulses when armed)
             if (getWidth() >= 78)                               // ② deboss channel number
                 steel::drawDebossNumber (g, { 15, 7, 30, 17 }, stripIndex + 1);
-            // ④ forge-mark top-right, only where no VCA/EG chip sits
-            const bool badgeHere = state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                                || state.editGroup.load (std::memory_order_relaxed) >= 0;
+            // ④ forge-mark top-right, only where no EG chip sits
+            const bool badgeHere = state.editGroup.load (std::memory_order_relaxed) >= 0;
             if (! badgeHere)
                 steel::drawForgeMark (g, { r.getRight() - 18.0f, r.getY() + 3.0f, 13.0f, 13.0f }, armedNow);
         }
@@ -1055,46 +1033,16 @@ namespace zynforge
             g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::xl, 2.5f);
         }
 
-        // VCA badge -- small chip in the top-right of the strip so the
-        // engineer can see at a glance which group every strip is on,
-        // without right-clicking each one.
-        const int vca = state.vcaGroup.load (std::memory_order_relaxed);
-        if (vca >= 0 && vca < 8)
-        {
-            const juce::String label = "VCA " + juce::String (vca + 1);
-            // Prominent VCA indicator: a filled bright-teal pill with bold
-            // text PLUS a teal underline along the top edge, so a grouped
-            // strip reads unmistakably at a glance. The old chip used a
-            // dimmed fill + caption font and was easy to miss.
-            const float topY = r.getY() + 1.0f;
-            g.setColour (brand::featureEngaged.withAlpha (zynforge::brand::alpha::bold));
-            g.fillRoundedRectangle (r.getX() + 4.0f, topY, r.getWidth() - 8.0f, 3.0f,
-                                    brand::radius::sm);
-
-            auto badge = juce::Rectangle<float> (r.getRight() - 42.0f, topY + 4.0f, 38.0f, 15.0f);
-            g.setColour (brand::featureEngaged);
-            g.fillRoundedRectangle (badge, brand::radius::sm);
-            g.setColour (brand::lift (brand::featureEngaged, 0.60f));
-            g.drawRoundedRectangle (badge, brand::radius::sm, 1.0f);
-            g.setColour (brand::onSignal (brand::featureEngaged));
-            g.setFont (brand::type::ui (10.5f, true));
-            g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
-        }
-
-        // Edit Group badge -- second chip stacked below the VCA
-        // chip (or in the same slot if no VCA). Pro Tools shows
-        // group names per strip so engineers can see at a glance
+        // Edit Group badge. Pro Tools shows group names per strip
+        // so engineers can see at a glance
         // which strips will move together. "EG N" matches the
         // context-menu labels (Edit Group 1..8).
         const int eg = state.editGroup.load (std::memory_order_relaxed);
         if (eg >= 0 && eg < 8)
         {
             const juce::String label = "EG" + juce::String (eg + 1);
-            // Stack underneath the (now taller) VCA pill when both are
-            // present; share the top slot otherwise.
-            const float yOffset = (vca >= 0 && vca < 8) ? 23.0f : 4.0f;
             auto badge = juce::Rectangle<float> (r.getRight() - 26.0f,
-                                                  r.getY() + yOffset, 22.0f, 12.0f);
+                                                  r.getY() + 4.0f, 22.0f, 12.0f);
             g.setColour (brand::sink (brand::accentVS, 0.30f));
             g.fillRoundedRectangle (badge, brand::radius::sm);
             g.setColour (brand::lift (brand::accentVS, 0.40f));
@@ -1130,8 +1078,7 @@ namespace zynforge
         auto nameRow = r.removeFromTop (22);
         const bool wideHdr  = getWidth() >= 78;
         const bool veryWide = getWidth() >= 150;   // L preset -- name on its OWN row
-        const bool hasBadge = state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                           || state.editGroup.load (std::memory_order_relaxed) >= 0;
+        const bool hasBadge = state.editGroup.load (std::memory_order_relaxed) >= 0;
         if (veryWide)
         {
             // L view: the NAME sits INSIDE the black steel header plate,
