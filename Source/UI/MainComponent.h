@@ -533,6 +533,8 @@ private:
     void updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing);
     void updateCaptureWarnings (const zynforge::EngineStatus& status);
     void updateBackupButton (const zynforge::EngineStatus& status);
+    bool deviceLossLatched { false };     // as of the last status
+    bool deviceLossForgotten { false };   // that loss belonged to a session that has gone
     std::unique_ptr<zynforge::VolumeProbe> backupProbe;
     juce::File backupProbeFolder;
     // The loud row: every standing alarm, and a refused RECORD until it times out.

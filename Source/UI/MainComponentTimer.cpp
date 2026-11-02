@@ -478,11 +478,16 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
 {
     constexpr int kRecordTimeNoticeMinutes = 30, kRecordTimeDangerMinutes = 10;
     const bool rec = status.recording;
+    // The recorder holds this until the next take, but it belongs to the
+    // session it happened in.
+    if (rec || ! status.captureDeviceLost) deviceLossForgotten = false;
+    deviceLossLatched = status.captureDeviceLost;
+    const bool deviceLost = status.captureDeviceLost && ! deviceLossForgotten;
     // Live show-day warnings -- only while recording, refreshed at the
     // timer cadence. Both flags clear automatically when the condition
     // recovers (e.g. swap drives + the new primary write succeeds, or
     // disk catches back up). Status bar is the engineer's first read.
-    if (rec || status.captureDeviceLost || (useCaptureDaemon && engine.isRecording()))
+    if (rec || deviceLost || (useCaptureDaemon && engine.isRecording()))
     {
         const bool primFail   = status.primaryFailed;
         const bool backupFail = status.backupFailed;
@@ -506,14 +511,14 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int minutesLeft = rec ? status.minutesRemaining : 0;   // 0 = no estimate
         const bool timeRunningOut = minutesLeft > 0 && minutesLeft <= kRecordTimeDangerMinutes;
         const bool timeShort      = minutesLeft > kRecordTimeDangerMinutes && minutesLeft <= kRecordTimeNoticeMinutes;
-        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
+        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || deviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
             || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort)
         {
             // Most serious first: the banner shares its row with the header
             // buttons, and a long list can run out of room at the far end.
             juce::String warn;
-            if (status.captureDeviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
+            if (deviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";

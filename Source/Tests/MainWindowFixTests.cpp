@@ -1296,6 +1296,26 @@ namespace zynforge
 
         void smallRepairs()
         {
+            beginTest ("A device lost in one session doesn't follow into the next");
+            {
+                Window w;
+                EngineStatus lost;
+                lost.captureDeviceLost = true;
+                w.main.updateCaptureWarnings (lost);
+                expect (w.main.alarmBanner.getText().contains ("CAPTURE DEVICE STOPPED"));
+                w.main.forgetSessionUiState();
+                w.main.updateCaptureWarnings (lost);
+                expect (! w.main.alarmBanner.isVisible(), "the alarm followed the engineer out of the session");
+
+                EngineStatus rolling;
+                rolling.recording = true;
+                rolling.captureDeviceLost = true;
+                w.main.updateCaptureWarnings (rolling);
+                expect (w.main.alarmBanner.getText().contains ("CAPTURE DEVICE STOPPED"),
+                        "a device lost in a new take has to show");
+                w.main.updateCaptureWarnings (EngineStatus());
+            }
+
             beginTest ("A PATCH drag gives every strip its own channels");
             {
                 using Targets = std::vector<std::pair<int, int>>;

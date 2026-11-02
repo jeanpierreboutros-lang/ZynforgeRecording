@@ -1144,6 +1144,7 @@ void MainComponent::forgetSessionUiState()
     lastCaptureFinalizationError.clear();
     recordRefusal.clear();
     recordPressHeldAtMs = 0;   // that press meant the session that just left
+    deviceLossForgotten = deviceLossLatched;
     cues.clear();
     currentCueIndex = -1;
     setlistBar.setCues (cues, currentCueIndex);
