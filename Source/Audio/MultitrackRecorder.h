@@ -176,6 +176,11 @@ namespace zynforge
                                                int* recovered = nullptr,
                                                bool* leadInsOwed = nullptr);
 
+        // A track still owes its silence. The marker names it by number, so its
+        // number has to stand until then: a marker that outlived a strip move
+        // would write that silence over another channel's file.
+        static bool leadInsPending (const juce::File& audioDir);
+
         // Next continuation file for a take: Track_NN.<ext> is part 1, then
         // Track_NN_part02, _part03 ... Returns the path to write next + its part
         // number (1 when no take exists yet -> a normal first recording).

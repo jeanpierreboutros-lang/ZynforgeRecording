@@ -1633,7 +1633,8 @@ namespace zynforge
         // are its mixer, and emptying a saved mixer is not a save we allow.
         if (activeSession.isDirectory()
             && (! mixerBelongsTo (activeSession)
-                || (order.empty() && sessionmix::stripCountIn (activeSession) > 0)))
+                || (order.empty() && sessionmix::stripCountIn (activeSession) > 0)
+                || MultitrackRecorder::leadInsPending (activeSession.getChildFile ("Audio Files"))))
             return false;
         const int n = recorder.getNumTracks();
         std::vector<int> destination ((size_t) n, -1);

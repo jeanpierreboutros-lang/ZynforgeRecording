@@ -1883,6 +1883,12 @@ namespace zynforge
         return true;
     }
 
+    bool MultitrackRecorder::leadInsPending (const juce::File& audioDir)
+    {
+        return ! audioDir.getChildFile ("Pending Lead-ins").findChildFiles (
+            juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "*.json").isEmpty();
+    }
+
     bool MultitrackRecorder::recoverPendingLeadIns (const juce::File& audioDir)
     {
         const auto folder = audioDir.getChildFile ("Pending Lead-ins");

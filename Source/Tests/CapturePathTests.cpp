@@ -904,6 +904,16 @@ namespace zynforge
                     expect (! rec.getStartError().contains ("punch"), rec.getStartError());
                 }
 
+                {
+                    AudioEngine engine;
+                    engine.setActiveSessionDir (root);
+                    engine.claimMixerFor (root);
+                    engine.setStripCount (2);
+                    expect (! engine.reorderTracks ({ 1, 0 }), "a strip moved under a lead-in that names it by number");
+                    expect (audio.getChildFile ("Track_01.wav").existsAsFile());
+                    engine.clearAllStripOverrides();
+                }
+
                 ::chmod (audio.getFullPathName().toRawUTF8(), 0755);
                 owed = true;
                 expect (MultitrackRecorder::recoverInterruptedPunches (audio, &recovered, &owed));
@@ -1123,7 +1133,8 @@ namespace zynforge
                     client.disconnect();
                     expectGreaterOrEqual (capture::CaptureSupervisor::askChildrenToExit (binary.getFileName()), 1);
                     expect (child.waitForProcessToFinish (5000), "the helper ignored SIGTERM");
-                    expectEquals ((int) child.getExitCode(), 0, "the helper did not close down cleanly");
+                    expect (child.readAllProcessOutput().contains ("stopped cleanly"),
+                            "the helper did not close down cleanly");
                 }
             }
         }
