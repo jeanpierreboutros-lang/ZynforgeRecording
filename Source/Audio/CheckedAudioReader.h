@@ -47,6 +47,9 @@ namespace zynforge
 
         bool setPosition (juce::int64 position) override
         {
+            // JUCE's FLAC reader passes a seek through an int, so past 2 GiB it
+            // arrives here negative, on takes that can reach 3.9 GiB.
+            if (position < 0) position += (juce::int64) 1 << 32;
             const bool ok = stream->setPosition (position);
             if (! ok && watching) failed = true;
             return ok;

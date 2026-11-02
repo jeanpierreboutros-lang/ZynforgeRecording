@@ -698,18 +698,19 @@ namespace zynforge
                     return refused (t, "no clip plays here, so the punch would go unheard into the take");
             }
 
-            // The same file audio can also sound somewhere else: a duplicate,
-            // or a clip pasted to another strip. A punch would change it there.
+            // The same file audio can also sound at another place on the
+            // timeline: a duplicate, or a clip pasted to another strip. A punch
+            // would change it there. One playing it right here hears the punch
+            // where it was played, on whichever strip.
             for (size_t other = 0; other < trackClips.size(); ++other)
                 for (const auto& c : trackClips[other])
                 {
-                    const bool ownClip = (int) other == t;
-                    const bool readsTake = c.audioFile == juce::File() ? ownClip
+                    const bool readsTake = c.audioFile == juce::File() ? (int) other == t
                                                                        : take != juce::File() && c.audioFile == take;
-                    if (! readsTake || c.fileStartSamples >= last
-                        || c.fileStartSamples + c.fileLengthSamples <= start) continue;
-                    if (ownClip && c.timelineStartSamples == c.fileStartSamples) continue;
-                    return refused (t, "this audio also plays from another clip, which the punch would change");
+                    if (! readsTake || c.timelineStartSamples == c.fileStartSamples
+                        || c.fileStartSamples >= last || c.fileStartSamples + c.fileLengthSamples <= start)
+                        continue;
+                    return refused (t, "this audio also plays elsewhere on the timeline, which the punch would change");
                 }
         }
         return {};

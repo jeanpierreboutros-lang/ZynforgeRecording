@@ -295,6 +295,15 @@ namespace zynforge
                 expect (s.engine().punchRefusal (kCutEnd, kCutEnd + 100).isEmpty());
             }
 
+            beginTest ("A clip on another strip playing the audio right there is no reason to refuse");
+            {
+                Session s (main);
+                expect (s.engine().pasteClip (1, kCutStart, kCutStart, 4000, 0, 0, 0.0f, "in place",
+                                              s.engine().getTrackAudioFile (0), 0) >= 0);
+                expect (s.engine().punchRefusal (kCutStart + 10, kCutStart + 20).isEmpty(),
+                        s.engine().punchRefusal (kCutStart + 10, kCutStart + 20));
+            }
+
             beginTest ("A clip on the armed strip that plays another strip's file refuses");
             {
                 Session s (main);
@@ -611,6 +620,7 @@ namespace zynforge
         // Noise, so FLAC cannot shrink it to nothing and silence is obvious.
         static void writeAudio (const juce::File& file, int samples = kSamples, int channels = 1, int seed = 1)
         {
+            file.getParentDirectory().createDirectory();
             std::unique_ptr<juce::AudioFormat> format;
             const auto extension = file.getFileExtension().toLowerCase();
             if      (extension == ".flac") format = std::make_unique<juce::FlacAudioFormat>();
@@ -754,6 +764,29 @@ namespace zynforge
                     expectEquals (stream->read (bytes, sizeof (bytes)), 0);
                     expect (stream->hasFailed(), "a read error went unnoticed");
                     expect (stream->isExhausted(), "a stream that failed must end, or a decoder spins on it");
+                }
+            }
+
+            beginTest ("A seek past 2 GiB arrives through an int, and still lands");
+            {
+                // A sparse file: nothing near this size is really written.
+                const auto file = f.audio ("sparse.bin");
+                constexpr juce::int64 kPlace = 2500000000LL;
+                {
+                    juce::FileOutputStream out (file);
+                    expect (out.openedOk() && out.setPosition (kPlace) && out.writeByte (42));
+                }
+                auto stream = CheckedInputStream::open (file);
+                expect (stream != nullptr);
+                if (stream != nullptr)
+                {
+                    stream->watchAudio (false);
+                    expect (stream->setPosition ((int) kPlace), "a seek past 2 GiB failed");
+                    expectEquals (stream->getPosition(), kPlace);
+                    char byte = 0;
+                    expectEquals (stream->read (&byte, 1), 1);
+                    expectEquals ((int) byte, 42);
+                    expect (! stream->hasFailed());
                 }
             }
 
