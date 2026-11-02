@@ -9,6 +9,7 @@
 #include "MultiPartReader.h"
 #include "PreflightProbes.h"
 #include "TrackOrderLog.h"
+#include "WavRepair.h"
 #include "../Network/CaptureIdentity.h"
 
 #include <juce_cryptography/juce_cryptography.h>
@@ -589,6 +590,7 @@ namespace zynforge
         // file and the next open tries again.
         aiffrepair::repairTakeFolder (audioDir);
         flacrepair::repairTakeFolder (audioDir);
+        wavrepair::repairTakeFolder (audioDir);
         // A take interrupted before STOP may still owe a copy its silent
         // lead-in (see PendingLeadIn); without it the new audio sits early.
         if (! recoverPendingLeadIns (audioDir)) return false;

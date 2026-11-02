@@ -9,6 +9,7 @@
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Audio/TrackOrderLog.h"
+#include "../Audio/WavRepair.h"
 #include "../Capture/CaptureDaemon.h"
 #include "../Capture/DeviceState.h"
 #include "../UI/MainComponent.h"
@@ -804,8 +805,169 @@ namespace zynforge
             }
         }
 
+        // ── What a crash leaves ────────────────────────────────────────────
+        // A finished WAV as a crash leaves it: the last header write older than
+        // the audio behind it.
+        static void ageHeader (const juce::File& file, juce::int64 framesInHeader)
+        {
+            juce::MemoryBlock bytes;
+            file.loadFileAsData (bytes);
+            auto* data = static_cast<char*> (bytes.getData());
+            juce::int64 at = 12;
+            int blockAlign = 0;
+            while (at + 8 < (juce::int64) bytes.getSize())
+            {
+                const juce::String chunk (data + at, 4);
+                const auto length = (juce::int64) (juce::uint32) juce::ByteOrder::littleEndianInt (data + at + 4);
+                if (chunk == "fmt ") blockAlign = juce::ByteOrder::littleEndianShort (data + at + 8 + 12);
+                if (chunk == "data")
+                {
+                    const auto audio = framesInHeader * blockAlign;
+                    juce::MemoryOutputStream patch;
+                    patch.writeInt ((int) audio);
+                    std::memcpy (data + at + 4, patch.getData(), 4);
+                    juce::MemoryOutputStream riff;
+                    riff.writeInt ((int) (at + 8 - 8 + audio));
+                    std::memcpy (data + 4, riff.getData(), 4);
+                    break;
+                }
+                at += 8 + length + (length & 1);
+            }
+            file.replaceWithData (bytes.getData(), bytes.getSize());
+        }
+
+        static void writeWav (const juce::File& file, int channels, int bits, int frames)
+        {
+            std::unique_ptr<juce::OutputStream> out (file.createOutputStream());
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> writer (
+                wav.createWriterFor (out.get(), kRate, (unsigned int) channels, bits, {}, 0));
+            out.release();
+            juce::AudioBuffer<float> audio (channels, frames);
+            audio.clear();
+            writer->writeFromAudioSampleBuffer (audio, 0, frames);
+        }
+
         void testCrashRemains()
         {
+            beginTest ("A WAV a crash left gets its last seconds back, on every copy, and only once");
+            {
+                const auto root = tempDir ("wav");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (kRate, kBlock, 2);
+                    rec.getTrack (0).armed.store (true);
+                    rec.getTrack (1).armed.store (true);
+                    rec.getTrack (0).isStereo.store (true);
+                    expect (rec.startRecording (session));
+                    Ramp ramp { rec };
+                    std::vector<float> left ((size_t) kBlock, 0.25f), right ((size_t) kBlock, -0.25f);
+                    const float* inputs[] { left.data(), right.data() };
+                    for (int b = 0; b < 40; ++b) { rec.processBlock (inputs, 2, kBlock); rec.drainPendingForTests(); }
+                    rec.stopRecording();
+                }
+                const auto file = session.getChildFile ("Audio Files/Track_01.wav");
+                const auto whole = file.getSize();
+                constexpr juce::int64 kFrames = 40 * kBlock;
+                for (const juce::int64 inHeader : { (juce::int64) 0, kFrames / 2 })
+                {
+                    ageHeader (file, inHeader);
+                    juce::AudioFormatManager fm; fm.registerBasicFormats();
+                    {
+                        std::unique_ptr<juce::AudioFormatReader> stale (fm.createReaderFor (file));
+                        expect (stale != nullptr);
+                        if (stale != nullptr) expectEquals (stale->lengthInSamples, inHeader);
+                    }
+                    expect (wavrepair::repairStaleHeader (file) == wavrepair::Result::repaired);
+                    std::unique_ptr<juce::AudioFormatReader> fixed (fm.createReaderFor (file));
+                    expect (fixed != nullptr);
+                    if (fixed != nullptr)
+                    {
+                        expectEquals (fixed->lengthInSamples, kFrames, "the tail stayed hidden");
+                        expectEquals ((int) fixed->numChannels, 2);
+                    }
+                    expectEquals (file.getSize(), whole, "repair changed the file's length");
+                    expect (wavrepair::repairStaleHeader (file) == wavrepair::Result::untouched);
+                }
+            }
+
+            beginTest ("WAV repair stops at the last whole frame and leaves other files alone");
+            {
+                const auto root = tempDir ("wav-shape");
+                const juce::ScopeGuard cleanUp { [&] { root.deleteRecursively(); } };
+                const auto file = root.getChildFile ("Track_01.wav");
+                writeWav (file, 1, 24, 1000);
+                ageHeader (file, 100);
+                {
+                    juce::FileOutputStream torn (file);
+                    torn.writeByte (7);    // a frame cut off part way
+                }
+                expect (wavrepair::repairStaleHeader (file) == wavrepair::Result::repaired);
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+                expect (reader != nullptr);
+                if (reader != nullptr) expectEquals (reader->lengthInSamples, (juce::int64) 1000);
+
+                const auto finished = root.getChildFile ("finished.wav");
+                writeWav (finished, 2, 16, 500);
+                juce::MemoryBlock before;
+                finished.loadFileAsData (before);
+                expect (wavrepair::repairStaleHeader (finished) == wavrepair::Result::untouched);
+                juce::MemoryBlock after;
+                finished.loadFileAsData (after);
+                expect (before == after, "a finished take was rewritten");
+
+                // Another writer's chunk after the audio is not this shape.
+                const auto foreign = root.getChildFile ("foreign.wav");
+                writeWav (foreign, 1, 16, 500);
+                {
+                    juce::FileOutputStream extra (foreign);
+                    extra.write ("LIST", 4);
+                    extra.writeInt (4);
+                    extra.write ("abcd", 4);
+                    extra.flush();
+                    extra.setPosition (4);
+                    extra.writeInt ((int) foreign.getSize() - 8);
+                }
+                expect (wavrepair::repairStaleHeader (foreign) == wavrepair::Result::untouched);
+                const auto text = root.getChildFile ("Track_02.wav");
+                expect (text.replaceWithText ("this is not audio, whatever its name says, and it is long enough to read"));
+                expect (wavrepair::repairStaleHeader (text) == wavrepair::Result::untouched);
+            }
+
+            beginTest ("A take past 4 GiB whose header never said so comes back as RF64");
+            {
+                // Sparse files need the system volume: a test home on exFAT would
+                // write all 4 GiB.
+                const auto root = juce::File ("/tmp").getChildFile ("zf-rf64-" + juce::Uuid().toString());
+                root.createDirectory();
+                const juce::ScopeGuard cleanUp { [&] { root.deleteRecursively(); } };
+                const auto file = root.getChildFile ("Track_01.wav");
+                writeWav (file, 2, 24, 1000);
+                ageHeader (file, 1000);
+                constexpr juce::int64 kPast = ((juce::int64) 1 << 32) + 6000;
+                {
+                    // Sparse: the length is what matters, not the bytes.
+                    juce::FileOutputStream grown (file);
+                    expect (grown.setPosition (kPast));
+                    grown.write ("0123456", 6);
+                }
+                const auto size = file.getSize();
+                expect (size > kPast);
+                expect (wavrepair::repairStaleHeader (file) == wavrepair::Result::repaired);
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    expectGreaterThan (reader->lengthInSamples, (juce::int64) 700000000, "the RF64 sizes did not read back");
+                    expectEquals ((int) reader->sampleRate, (int) kRate);
+                }
+                expect (wavrepair::repairStaleHeader (file) == wavrepair::Result::untouched);
+            }
+
             beginTest ("StereoMix.wav shows its length while it records, so a crash leaves it readable");
             {
                 AudioEngine::setTestModeSkipAudioInit (true);

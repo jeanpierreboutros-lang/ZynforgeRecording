@@ -17,6 +17,7 @@
 #include "RecordPosition.h"
 #include "../Audio/AudioImport.h"
 #include "../Audio/AiffRepair.h"
+#include "../Audio/WavRepair.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/PathSafety.h"
@@ -158,6 +159,8 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     const auto audioDirForRecovery = dir.getChildFile ("Audio Files");
     zynforge::aiffrepair::repairTakeFolder (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
                                             &repairedHeaders, &unrepairedHeaders);
+    zynforge::wavrepair::repairTakeFolder (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
+                                           &repairedHeaders, &unrepairedHeaders);
     if (! zynforge::MultitrackRecorder::recoverInterruptedPunches (
             audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
             &interruptedPunches))
@@ -202,10 +205,10 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         warnIfSampleRateMismatch();
     }
     if (unrepairedHeaders > 0)
-        toast.show (zynforge::counted (unrepairedHeaders, "AIFF take file") + " from a crash could not be repaired;"
+        toast.show (zynforge::counted (unrepairedHeaders, "take file") + " from a crash could not be repaired;"
                     " they read short until the drive is writable", Toast::Kind::Warning);
     else if (repairedHeaders > 0)
-        toast.show ("Repaired " + zynforge::counted (repairedHeaders, "AIFF take file") + " a crash left unfinished",
+        toast.show ("Repaired " + zynforge::counted (repairedHeaders, "take file") + " a crash left unfinished",
                     Toast::Kind::Warning);
     if (interruptedPunches > 0)
         toast.show ("Recovered " + zynforge::counted (interruptedPunches, "interrupted punch file") + "; partial audio is in Session File Backups",

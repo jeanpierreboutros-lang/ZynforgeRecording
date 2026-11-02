@@ -113,7 +113,8 @@ report "TrackState::name written only via setNameThreadSafe" \
 # FLAC/AIFF sessions in the timeline CSV and the Crop
 # multi-part guard. And Track_NN.punchbase.<ext> matches a bare Track_* glob --
 # SessionPlayer stitched a crash-orphaned sidecar into the take as part 1.
-HITS=$(grep -rn '"Track_\*\.wav"' $SCOPE 2>/dev/null)
+# WavRepair.h repairs the WAV header and nothing else, as its AIFF and FLAC twins do theirs.
+HITS=$(grep -rn '"Track_\*\.wav"' $SCOPE 2>/dev/null | grep -v 'Source/Audio/WavRepair.h')
 report "no .wav-only Track_* globs" \
        "match .wav;.flac;.aif;.aiff -- takes are not always WAV" \
        "$HITS"
