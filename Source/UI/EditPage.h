@@ -276,6 +276,7 @@ namespace zynforge
 
         int        lastTrackCount  { -1 };
         int        lastTrackGen    { -1 };   // rebuild on a stereo link/unlink (count unchanged, generation bumps)
+        bool       rowsCondemned   { false };   // condemnAllRows ran; only a rebuild revives the rows
         bool       lastLoaded      { false };
         bool       lastRecording   { false };
         bool       lastFinalizing  { false };   // async STOP still finalizing on the last tick

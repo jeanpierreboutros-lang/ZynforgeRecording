@@ -779,8 +779,9 @@ namespace zynforge
         // count, but a strip moved past a stereo pair changes WHERE the pair
         // sits while keeping both counts.
         const auto layout = trackorder::logicalBlocks (trackorder::stereoFlags (engine.getRecorder()));
-        if (n != lastTrackCount || ! list->matchesLayout (layout))
+        if (rowsCondemned || n != lastTrackCount || ! list->matchesLayout (layout))
         {
+            rowsCondemned = false;
             list->rebuild (n);
             lastTrackCount = n;
             resized();
@@ -875,6 +876,7 @@ namespace zynforge
     void EditPage::condemnAllRows()
     {
         if (list != nullptr) list->condemnAllRows();
+        rowsCondemned = true;
     }
 
     int EditPage::updateReorderPreview (juce::Point<int> pointInPage)
@@ -990,7 +992,10 @@ namespace zynforge
         // Rebuild on a track-count change OR a generation bump. A stereo
         // link/unlink (e.g. from the PATCH page) changes no count but bumps the
         // generation, and EDIT must re-collapse the pair like MIXER + PATCH do.
-        if (n != lastTrackCount || gen != lastTrackGen)
+        // A condemned row never comes back, and nothing else here notices: a
+        // session of the same size changes neither number, and a delete the
+        // engine refused changes nothing at all.
+        if (n != lastTrackCount || gen != lastTrackGen || rowsCondemned)
         {
             lastTrackGen = gen;
             refresh();

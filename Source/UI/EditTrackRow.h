@@ -2539,6 +2539,7 @@ namespace zynforge
         juce::String getInputRoutingTextForTests()  const { return inputCombo.getText(); }
         juce::String getOutputRoutingTextForTests() const { return outputCombo.getText(); }
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
+        bool         isArmShownForTests()    const { return armButton.getToggleState(); }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
         int          getOverviewBuildsForTests() const noexcept { return overviewBuilds; }
         int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }
