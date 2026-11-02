@@ -7,6 +7,7 @@
 
 #include "../UI/AudioDeviceDialog.h"
 #include "../UI/MainComponent.h"
+#include "../UI/MixerSnapshot.h"
 #include "../Audio/CallbackWatchdog.h"
 #include "../Audio/DeviceChoice.h"
 #include "../Audio/OscRemote.h"
@@ -203,6 +204,7 @@ namespace zynforge
             trimFollowHearsThePatch();
             stereoFileStaysTogether();
             takeIntoANewFolder();
+            undoReachesTheLink();
         }
 
     private:
@@ -399,6 +401,64 @@ namespace zynforge
             engine.stopRecording();
             engine.setActiveSessionDir (dir);
             engine.claimMixerFor (dir);
+        }
+
+        void undoReachesTheLink()
+        {
+            beginTest ("Undo after linking a pair takes the link back, and redo puts it on again");
+            {
+                MainComponent main;
+                main.stopTimer();
+                main.setSize (1320, 820);
+                auto& engine = main.engine;
+                engine.clearAllStripOverrides();
+                engine.prepareForTests (kRate, kBlock);
+                engine.setStripCount (2);
+                engine.setTrackGainDb (1, -9.0f);
+                engine.setTrackInputRouting (0, 0);
+                engine.setTrackInputRouting (1, 5);
+
+                const auto settle = [&main]
+                {
+                    for (int i = 0; i < 6; ++i) main.pollMixerUndo();
+                };
+                settle();
+                expect (main.setStereoLink (0, true));
+                settle();
+                auto& left = engine.getRecorder().getTrack (0);
+                auto& right = engine.getRecorder().getTrack (1);
+                expect (left.isStereo.load());
+
+                main.editUndo();
+                expect (! left.isStereo.load(), "undo left the pair linked");
+                expectWithinAbsoluteError (left.pan.load(), 0.0f, 0.001f);
+                expectWithinAbsoluteError (right.gainDb.load(), -9.0f, 0.001f, "R did not get its own fader back");
+                expectEquals (right.inputRouting.load(), 5, "R did not get its own patch back");
+
+                main.editRedo();
+                expect (left.isStereo.load(), "redo did not link the pair again");
+                expectWithinAbsoluteError (left.pan.load(), -1.0f, 0.001f);
+                expectWithinAbsoluteError (right.pan.load(), 1.0f, 0.001f);
+                expectEquals (right.inputRouting.load(), 1);
+
+                settle();
+                expect (main.setStereoLink (0, false));
+                engine.clearAllStripOverrides();
+                engine.setStripCount (0);
+            }
+
+            beginTest ("A strip paste can't link strips");
+            {
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.prepareForTests (kRate, kBlock);
+                engine.setStripCount (4);
+                engine.setTrackStereo (0, true);
+                const auto copied = mixersnapshot::snapshotStrip (engine, 0);
+                mixersnapshot::restoreStrip (engine, 2, copied);
+                expect (! engine.getRecorder().getTrack (2).isStereo.load(), "a paste linked the target");
+                engine.clearAllStripOverrides();
+            }
         }
 
         void takeIntoANewFolder()

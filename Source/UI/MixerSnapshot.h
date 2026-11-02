@@ -27,9 +27,9 @@ namespace zynforge::mixersnapshot
 
     // Names go through getNameThreadSafe(): network surfaces (console link,
     // OSC) rename strips from other threads, so a raw `name` read can tear.
-    inline const std::array<Field, 13>& fields()
+    inline const std::array<Field, 14>& fields()
     {
-        static const std::array<Field, 13> table {{
+        static const std::array<Field, 14> table {{
             { "name",    [] (const TrackState& t) { return juce::var (t.getNameThreadSafe()); } },
             { "colour",  [] (const TrackState& t) { return juce::var ((int) t.colourARGB.load (std::memory_order_relaxed)); } },
             { "gainDb",  [] (const TrackState& t) { return juce::var ((double) t.gainDb.load (std::memory_order_relaxed)); } },
@@ -43,6 +43,7 @@ namespace zynforge::mixersnapshot
             { "solo",    [] (const TrackState& t) { return juce::var (t.soloed.load (std::memory_order_relaxed)); } },
             { "mon",     [] (const TrackState& t) { return juce::var (t.monitor.load (std::memory_order_relaxed)); } },
             { "rec",     [] (const TrackState& t) { return juce::var (t.armed.load (std::memory_order_relaxed)); } },
+            { "stereo",  [] (const TrackState& t) { return juce::var (t.isStereo.load (std::memory_order_relaxed)); } },
         }};
         return table;
     }
@@ -86,6 +87,21 @@ namespace zynforge::mixersnapshot
         t.soloed     .store ((bool) obj->getProperty ("solo"),    std::memory_order_relaxed);
         t.monitor    .store ((bool) obj->getProperty ("mon"),     std::memory_order_relaxed);
         if (! eng.isRecording()) t.armed.store ((bool) obj->getProperty ("rec"), std::memory_order_relaxed);
+    }
+
+    // A link is layout, not a strip's setting, so restoreStrip leaves it alone
+    // and a paste can't link anything. Undo and redo put the layout back first:
+    // unlinks before links, or a link could find its neighbour still taken.
+    inline void restoreLinks (AudioEngine& eng, const juce::var& strips)
+    {
+        auto* all = strips.getArray();
+        if (all == nullptr) return;
+        for (const bool linked : { false, true })
+            for (int i = 0; i < all->size() && i < eng.getRecorder().getNumTracks(); ++i)
+                if (auto* obj = (*all)[i].getDynamicObject())
+                    if ((bool) obj->getProperty ("stereo") == linked
+                        && eng.getRecorder().getTrack (i).isStereo.load (std::memory_order_relaxed) != linked)
+                        eng.setTrackStereo (i, linked);
     }
 
     // 64-bit FNV-1a over every field of every strip, plus the strip count.
