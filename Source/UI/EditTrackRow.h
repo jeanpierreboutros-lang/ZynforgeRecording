@@ -439,6 +439,19 @@ namespace zynforge
             if (outputCombo.getSelectedId() != wantOut) outputCombo.setSelectedId (wantOut, juce::dontSendNotification);
         }
 
+        // A clip keeps its file-stem name on disk and in the session ("Track_03",
+        // "Track_03 continued", "Track_03 (a)"). On screen that stem reads as the
+        // channel; a name the engineer gave a clip stays as it is.
+        juce::String clipDisplayName (const Clip& c) const
+        {
+            const auto name = c.name.isNotEmpty() ? c.name
+                                                  : engine.getTakeName (index, engine.getActiveTakeIdx (index));
+            const auto stem = name.upToFirstOccurrenceOf (" ", false, false);
+            if (stem.startsWith ("Track_") && stem.substring (6).containsOnly ("0123456789"))
+                return nameLabel.getText() + name.substring (stem.length());
+            return name;
+        }
+
         // Make sure `id` exists in `box`; if not, append a correctly-labelled
         // entry for device channel `dev` so an off-grid routing still shows.
         void ensureRoutingItem (juce::ComboBox& box, int id, int dev, const char* prefix)
@@ -1338,12 +1351,9 @@ namespace zynforge
                             g.fillRect (headRect);
                             if (block.getWidth() > 26)
                             {
-                                const auto clipName = c.name.isNotEmpty()
-                                    ? c.name
-                                    : engine.getTakeName (index, engine.getActiveTakeIdx (index));
                                 g.setColour (brand::onSignal (clipTint));
                                 g.setFont (brand::type::micro());
-                                g.drawText (clipName, headRect.reduced (5, 0),
+                                g.drawText (clipDisplayName (c), headRect.reduced (5, 0),
                                             juce::Justification::centredLeft, false);
                             }
                         }
