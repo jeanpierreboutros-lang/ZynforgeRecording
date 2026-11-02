@@ -510,8 +510,10 @@ void MainComponent::showRecordRefusal (const juce::String& reason)
 {
     recordRefusal = reason;
     recordRefusalShownMs = juce::Time::getMillisecondCounter();
-    showStatus (reason);
     refreshAlarmBanner();
+    // The banner is the one place for this. Only something more urgent holding
+    // it sends the reason to the status line instead: a press never goes unanswered.
+    if (alarmBanner.getText() != reason) showStatus (reason);
 }
 
 // Query SMART health for the session + backup volumes on a BACKGROUND thread.
