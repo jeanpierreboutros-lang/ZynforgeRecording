@@ -81,7 +81,8 @@ namespace
                                       "Rename / Colour / Stereo / Stream send / Output-mute" },
                 }},
                 { "Edit view", {
-                    { "Right-click row",  "Row size" },
+                    { "Right-click channel name", "Lane shows waveform or markers / Row size / Delete Channel" },
+                    { "Right-click empty lane",   "Lane shows waveform or markers / Row size" },
                     { "Right-click clip", "Mute / Lock / Duplicate / Delete / Gain / Fade in & out" },
                     { "Drag swatch",      "Reorder strip (paused only)" },
                 }},
@@ -293,7 +294,8 @@ void MainComponent::showUserGuide()
         "EDIT VIEW\n"
         "  Waveform of each Track_NN.wav. Edit tools palette top-right: "
         "Smart / Selector / Trim / Grabber / Fade. "
-        "Right-click a row for size; right-click a clip for "
+        "Right-click a channel's name or an empty part of its lane to choose "
+        "what the lane shows and the row size; right-click a clip for "
         "mute / lock / duplicate / delete / gain / fades. "
         "Wheel scrolls tracks; Shift+wheel or a horizontal trackpad gesture "
         "pans time. Cmd+wheel zooms time; Cmd+Shift+wheel zooms waveform "

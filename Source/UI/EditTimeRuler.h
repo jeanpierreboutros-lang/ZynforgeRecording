@@ -232,9 +232,7 @@ namespace zynforge
                        ? player.getPositionSamples()
                        : engine.getRecordTimelineSamples()) : 0;
             const auto total = player.getTotalLengthSamples();
-            const double sr  = engine.getDeviceSampleRate() > 0.0
-                ? engine.getDeviceSampleRate()
-                : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+            const double sr  = timelineRate();
             const double totalSec = recording ? (double) recordingTimelineSpanSamples (recSamples, total, sr) / sr
                                               : (total > 0 ? (double) total / sr : kNotionalEmptyLaneSec);
             const double pxPerSec = rulerPxPerSec (totalSec);
@@ -441,6 +439,21 @@ namespace zynforge
         }
 
     public:
+        // Samples per second of what the labels describe. A take is written at
+        // the device's rate; anything already loaded runs at the session's, as
+        // the lanes' grid and this ruler's own hit-tests do, and with the two
+        // apart (reviewing a 44.1 kHz session on a 48 kHz device) the labels
+        // would read short of file time.
+        double timelineRate() const
+        {
+            const auto& player = engine.getPlayer();
+            if (! engine.isRecording() && player.isLoaded() && player.getSampleRate() > 0.0)
+                return player.getSampleRate();
+            return engine.getDeviceSampleRate() > 0.0
+                ? engine.getDeviceSampleRate()
+                : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+        }
+
         // Everything the ruler draws while the transport is idle.
         juce::int64 idleSignature() const
         {

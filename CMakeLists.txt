@@ -228,6 +228,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/DialogAuditTests.cpp
     Source/Tests/EditIntegrityTests.cpp
     Source/Tests/EditPageAccessibilityTests.cpp
+    Source/Tests/EditRowFixTests.cpp
     Source/Tests/EditRulerScrollTests.cpp
     Source/Tests/EditToolsBarAccessibilityTests.cpp
     Source/Tests/EditTrackRowTests.cpp
