@@ -503,6 +503,94 @@ public:
         }
     }
 
+    void testBackupsAreFound()
+    {
+        const auto snapshot = [] (const juce::File& session, const juce::String& name, int strips = 2)
+        {
+            const auto folder = session.getChildFile ("Session File Backups").getChildFile (name);
+            folder.createDirectory();
+            juce::Array<juce::var> list;
+            for (int i = 0; i < strips; ++i) list.add (juce::var (new juce::DynamicObject()));
+            auto* root = new juce::DynamicObject();
+            root->setProperty ("trackCount", strips);
+            root->setProperty ("strips", list);
+            folder.getChildFile ("session_mix.json").replaceWithText (juce::JSON::toString (juce::var (root)));
+            return folder;
+        };
+        constexpr auto seq = "_0000000000000000000";
+
+        beginTest ("A backup made under the session's earlier name is offered");
+        {
+            Folder f ("Renamed");
+            const auto older = snapshot (f.dir, juce::String ("Old Name_2026-10-01_10-00-00") + seq);
+            expect (sessionrepair::newestBackupOf (f.dir, "session_mix.json") == older);
+        }
+
+        beginTest ("The newest backup wins by its time, not by the name it carries");
+        {
+            Folder f ("Renamed");
+            snapshot (f.dir, juce::String ("Zebra_2026-09-01_10-00-00") + seq);
+            const auto newest = snapshot (f.dir, juce::String ("Alpha_2026-10-01_10-00-00") + seq);
+            snapshot (f.dir, juce::String ("Renamed_2026-08-01_10-00-00") + seq);
+            expect (sessionrepair::newestBackupOf (f.dir, "session_mix.json") == newest);
+        }
+
+        beginTest ("A comma or semicolon in the folder name does not hide its backups");
+        for (const auto* name : { "Late, Show", "Late; Show" })
+        {
+            Folder f (name);
+            const auto good = snapshot (f.dir, juce::String (name) + "_2026-10-01_10-00-00" + seq);
+            expect (sessionrepair::newestBackupOf (f.dir, "session_mix.json") == good, name);
+        }
+
+        beginTest ("A timed session name and the older backup names still sort by the snapshot's own time");
+        {
+            Folder f ("Session_2026-01-01_00-00-00");
+            snapshot (f.dir, juce::String ("Session_2026-12-31_23-59-59_2026-02-01_10-00-00") + seq);
+            const auto newest = snapshot (f.dir, "Session_2026-01-01_00-00-00_2026-03-01_10-00-00(2)");
+            expect (sessionrepair::newestBackupOf (f.dir, "session_mix.json") == newest);
+        }
+
+        beginTest ("Same second, higher sequence is newer");
+        {
+            Folder f ("Show");
+            snapshot (f.dir, "Show_2026-10-01_10-00-00_0000000000000000001");
+            const auto later = snapshot (f.dir, "Show_2026-10-01_10-00-00_0000000000000000002");
+            expect (sessionrepair::newestBackupOf (f.dir, "session_mix.json") == later);
+        }
+
+        beginTest ("Only real snapshots count: a journal or the kept originals are never offered");
+        {
+            Folder f ("Show");
+            snapshot (f.dir, "reorder_" + juce::Uuid().toString());
+            snapshot (f.dir, "Before Feature Removal");
+            snapshot (f.dir, "Interrupted Punch");
+            snapshot (f.dir, "Unspliced Punch 2026-10-01 10-00-00");
+            expect (sessionrepair::newestBackupOf (f.dir, "session_mix.json") == juce::File());
+        }
+
+        beginTest ("A backup with no strips is passed over for the one before it");
+        {
+            Folder f ("Show");
+            const auto good = snapshot (f.dir, juce::String ("Other_2026-09-01_10-00-00") + seq);
+            snapshot (f.dir, juce::String ("Show_2026-10-01_10-00-00") + seq, 0);
+            expect (sessionrepair::newestBackupOf (f.dir, "session_mix.json") == good);
+        }
+
+        beginTest ("A damaged mix after a rename is restored from a backup under the old name");
+        {
+            Folder f ("Renamed"); writeSavedShow (f, 2);
+            const auto good = snapshot (f.dir, juce::String ("Old Name_2026-10-01_10-00-00") + seq);
+            const auto mix = f.dir.getChildFile ("session_mix.json");
+            expect (mix.replaceWithText ("{ damaged"));
+            const auto damaged = sessionrepair::quarantineDamagedFiles (f.dir);
+            expectEquals ((int) damaged.size(), 1);
+            expect (damaged[0].backup == good);
+            expect (sessionrepair::restoreFromBackups (f.dir, damaged).isEmpty());
+            expectEquals (mix.loadFileAsString(), good.getChildFile ("session_mix.json").loadFileAsString());
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -517,6 +605,7 @@ public:
         testCopiesThatDoNotOpen();
         testCopyChecksTheFile();
         testUnloadedSession();
+        testBackupsAreFound();
     }
 };
 
