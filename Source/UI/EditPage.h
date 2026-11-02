@@ -75,6 +75,12 @@ namespace zynforge
         // session UI layout into .zfproj.
         std::function<void (float)> onZoomChanged;
 
+        // Each strip's row height and lane, kept in the session's UI layout.
+        // onRowViewChanged fires when a gesture that changed one has ended.
+        std::function<void()> onRowViewChanged;
+        juce::var captureRowViews() const;
+        void      restoreRowViews (const juce::var& saved);
+
         // Channel selection, shared with the MIXER. A header click on a
         // track row calls onRowSelect(physicalTrackIndex, additive) so the
         // host can fold it into the same selection set the MIXER uses

@@ -94,6 +94,9 @@ namespace zynforge
         // only when s == Size::Custom. Wired by TrackList.
         std::function<void (Size /*s*/, int /*customPx*/)> onApplyToAllRows;
 
+        // A gesture that changed this row's height or lane has ended.
+        std::function<void (TrackRow&)> onViewChanged;
+
         // Tab / Shift+Tab in the name field: ask the TrackList to commit
         // and open the next / previous row's name editor (shiftDown =
         // previous). Wired by TrackList so it can resolve sibling rows.
@@ -197,6 +200,7 @@ namespace zynforge
                 meter.setStereoPartner (&engine.getRecorder().getTrack (index + 1));
 
             auto& s = engine.getRecorder().getTrack (index);
+            stripKey = s.stripId;
 
             nameLabel.setText (s.name, juce::dontSendNotification);
             nameLabel.setJustificationType (juce::Justification::centredLeft);
@@ -2453,6 +2457,7 @@ namespace zynforge
             const bool timelineLocked = ! isEnabled() || (lockPage != nullptr && lockPage->isTimelineReadOnly());
 
             const bool wasDraggingClip    = (draggingClipIdx >= 0 || draggingXfadeAIdx >= 0);
+            const bool wasResizing        = dragging;
             // A click that armed a clip-body grab but never dragged = a
             // selection click. Capture the clip + whether the mouse moved
             // before the resets below wipe draggingClipIdx.
@@ -2472,6 +2477,7 @@ namespace zynforge
             if (wasDraggingClip)
                 if (auto* page = findParentComponentOfClass<EditPage>())
                     page->commitClipEdit ("Edit clip");
+            if (wasResizing && onViewChanged) onViewChanged (*this);
 
             // Reorder finishes here. If the user clicked the swatch
             // but never crossed the 8 px threshold, fall through to
@@ -2554,6 +2560,8 @@ namespace zynforge
         int  getHeaderWidth() const noexcept { return headerW; }
         int  getTrackIndex()  const noexcept { return index; }
         bool isStereoPair()   const noexcept { return stereo; }
+        // The strip this row was built for: its TrackState::stripId.
+        const juce::String& getStripKey() const noexcept { return stripKey; }
 
         // Stands in for the clip's popup: a test has no menu to answer.
         std::function<void (int)> clipMenuForTests;
@@ -2990,7 +2998,10 @@ namespace zynforge
             {
                 if (auto* page = findParentComponentOfClass<EditPage>(); page != nullptr && page->onRowDelete)
                     page->onRowDelete (index);
+                return;
             }
+            else return;
+            if (onViewChanged) onViewChanged (*this);
         }
 
     private:
@@ -3072,6 +3083,7 @@ namespace zynforge
         static constexpr int meterW  = 12;
 
         int                       index;
+        juce::String              stripKey;
         AudioEngine&              engine;
         juce::AudioFormatManager& formats;       // for building multi-part thumbnail readers
         juce::AudioThumbnailCache& thumbCache;   // shared; used to drop stale thumbs

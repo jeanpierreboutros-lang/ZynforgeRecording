@@ -824,6 +824,7 @@ juce::var MainComponent::captureUILayoutJson() const
                     : stripWidthPreset == StripWidth::L  ? "L"
                                                          : "M");
     ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
+    if (editPage != nullptr) ui->setProperty ("editRows", editPage->captureRowViews());
     return juce::var (ui.get());
 }
 
@@ -2367,9 +2368,12 @@ void MainComponent::loadUILayoutFromActiveSession()
     else if (sw == "L")  setStripWidthPreset (StripWidth::L);
     else if (sw == "M")  setStripWidthPreset (StripWidth::M);
 
-    // EDIT zoom level.
+    // EDIT zoom level, and each strip's row height and lane.
     if (editPage != nullptr)
+    {
         editPage->setZoom ((float) (double) ui->getProperty ("editZoom"));
+        editPage->restoreRowViews (ui->getProperty ("editRows"));
+    }
 
     resized();
 }

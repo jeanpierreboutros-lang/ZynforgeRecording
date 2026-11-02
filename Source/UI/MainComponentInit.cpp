@@ -408,6 +408,7 @@ MainComponent::MainComponent()
     {
         if (! engine.isRecording()) requestUILayoutSave();
     };
+    editPage->onRowViewChanged = [this] { if (! engine.isRecording()) requestUILayoutSave(); };
 
     // EDIT-view channel selection feeds the SAME shared selection set the
     // MIXER uses, so a click in either view drives Option+R bulk arm and

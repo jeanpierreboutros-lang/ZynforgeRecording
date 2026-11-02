@@ -158,6 +158,7 @@ namespace zynforge
             theMouseTakesWhatItCanSee();
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
+            rowsKeepTheirView (main);
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -418,6 +419,81 @@ namespace zynforge
             for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
                 items.add (it.getItem().text);
             return items;
+        }
+
+        void rowsKeepTheirView (MainComponent& main)
+        {
+            const auto viewOf = [] (Row& r)
+            {
+                return juce::String ((int) r.getRowSize()) + (r.laneMode == Row::LaneMode::Markers ? " markers" : " waveform");
+            };
+            const auto large = juce::String ((int) Row::Size::Large) + " markers";
+            const auto plain = juce::String ((int) Row::Size::Small) + " waveform";
+
+            beginTest ("A row's height and lane outlive a rebuild");
+            {
+                Session s (2, { kRate, kRate });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                auto rows = rowsOf (page);
+                expect (rows.size() == 2, "setup: two rows");
+                rows[0]->applyRowMenuChoice (5);
+                rows[0]->applyRowMenuChoice (Row::kMenuLaneMarkers);
+
+                s.engine.addOneStrip();
+                expect (pumpUntil ([&] { return rowsOf (page).size() == 3; }), "the new strip never got a row");
+                rows = rowsOf (page);
+                expectEquals (viewOf (*rows[0]), large, "adding a channel reset the row");
+                expectEquals (viewOf (*rows[2]), plain, "a new row takes the default");
+                expectEquals (rows[0]->getHeight(), Row::pixelsFor (Row::Size::Large), "the height did not reach the layout");
+            }
+
+            beginTest ("A row's height and lane follow the strip through a move that keeps the layout");
+            {
+                Session s (2, { kRate, kRate });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                auto rows = rowsOf (page);
+                expect (rows.size() == 2, "setup: two rows");
+                rows[0]->applyRowMenuChoice (5);
+                rows[0]->applyRowMenuChoice (Row::kMenuLaneMarkers);
+
+                expect (s.engine.reorderTracks ({ 1, 0 }));
+                page.refresh();   // what the host's onTracksReordered handler does
+                rows = rowsOf (page);
+                expect (rows.size() == 2, "the layout did not change");
+                if (rows.size() == 2)
+                {
+                    expectEquals (viewOf (*rows[0]), plain, "the view stayed at the position");
+                    expectEquals (viewOf (*rows[1]), large, "the view did not follow the strip");
+                }
+            }
+
+            beginTest ("A row's height and lane save with the session");
+            {
+                Show show (main);
+                const auto first = show.session ({ "KICK", "SNARE" }, false, false);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                auto rows = rowsOf (show.page());
+                rows[1]->applyRowMenuChoice (5);
+                rows[1]->applyRowMenuChoice (Row::kMenuLaneMarkers);
+                expect (pumpUntil ([&] { return main.pendingMetadataSaves == 0; }), "the layout save never ended");
+
+                show.session ({ "OTHER" }, false, false);
+                expect (pumpUntil ([&] { return show.rowsReadLive() && rowsOf (show.page()).size() == 1; }), "setup: other session");
+                expect (pumpUntil ([&] { return main.pendingMetadataSaves == 0; }), "the save never ended");
+
+                main.openSessionFolder (first, true);
+                expect (pumpUntil ([&] { return show.rowsReadLive() && rowsOf (show.page()).size() == 2; }), "reopen");
+                rows = rowsOf (show.page());
+                if (rows.size() == 2)
+                {
+                    expectEquals (viewOf (*rows[0]), plain);
+                    expectEquals (viewOf (*rows[1]), large, "the row's view did not come back with the session");
+                }
+            }
         }
 
         void theRowMenuIsReachable()

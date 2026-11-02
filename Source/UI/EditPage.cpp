@@ -11,6 +11,7 @@
 #include "../Audio/TrackOrder.h"
 
 #include <algorithm>
+#include <map>
 
 namespace zynforge
 {
@@ -68,7 +69,63 @@ namespace zynforge
                 r->setRowSize (s);
                 if (s == TrackRow::Size::Custom && customPx > 0)
                     r->setCustomHeight (customPx);
+                noteRowView (*r);
             }
+            resized();
+        }
+
+        // A row's height and lane belong to its strip, not to its position, so
+        // they outlive a rebuild and go where a move takes the strip.
+        std::function<void()> onRowViewChanged;
+
+        void noteRowView (const TrackRow& r)
+        {
+            if (r.getStripKey().isNotEmpty())
+                rowViews[r.getStripKey()] = { r.getRowSize(), r.getCustomHeight(), r.laneMode };
+        }
+
+        void applyRowView (TrackRow& r) const
+        {
+            const auto saved = rowViews.find (r.getStripKey());
+            if (saved == rowViews.end()) return;
+            r.setRowSize (saved->second.size);
+            r.setCustomHeight (saved->second.height);
+            r.laneMode = saved->second.lane;
+        }
+
+        // By the recorder's strips, not the rows: a save can land between a
+        // session swap and the rebuild, and the rows would name the old session.
+        juce::var rowViewsJson() const
+        {
+            juce::Array<juce::var> out;
+            auto& rec = engine.getRecorder();
+            for (int i = 0; i < rec.getNumTracks(); ++i)
+            {
+                const auto saved = rowViews.find (rec.getTrack (i).stripId);
+                if (saved == rowViews.end()
+                    || (saved->second.size == TrackRow::Size::Small && saved->second.lane == TrackRow::LaneMode::Waveform))
+                    continue;
+                juce::DynamicObject::Ptr view (new juce::DynamicObject());
+                view->setProperty ("uid",    saved->first);
+                view->setProperty ("size",   (int) saved->second.size);
+                view->setProperty ("height", saved->second.height);
+                view->setProperty ("lane",   saved->second.lane == TrackRow::LaneMode::Markers ? "markers" : "waveform");
+                out.add (juce::var (view.get()));
+            }
+            return out;
+        }
+
+        void restoreRowViews (const juce::var& saved)
+        {
+            rowViews.clear();
+            if (const auto* views = saved.getArray())
+                for (const auto& v : *views)
+                    if (const auto uid = v.getProperty ("uid", {}).toString(); uid.isNotEmpty())
+                        rowViews[uid] = { (TrackRow::Size) juce::jlimit (0, (int) TrackRow::Size::Custom, (int) v.getProperty ("size", 2)),
+                                          juce::jlimit (TrackRow::kMinRowH, TrackRow::kMaxRowH, (int) v.getProperty ("height", 80)),
+                                          v.getProperty ("lane", {}).toString() == "markers" ? TrackRow::LaneMode::Markers
+                                                                                             : TrackRow::LaneMode::Waveform };
+            for (auto& r : rows) applyRowView (*r);
             resized();
         }
 
@@ -109,7 +166,13 @@ namespace zynforge
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
                 r->onTabRename  = [this] (TrackRow& from, bool shift) { tabRename (from, shift); };
                 r->onApplyToAllRows = [this] (TrackRow::Size s, int customPx) { applySizeToAll (s, customPx); };
+                r->onViewChanged = [this] (TrackRow& row)
+                {
+                    noteRowView (row);
+                    if (onRowViewChanged) onRowViewChanged();
+                };
                 r->toolsBar               = sharedToolsBar;
+                applyRowView (*r);
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
                 i += stereo ? 2 : 1;
@@ -385,16 +448,18 @@ namespace zynforge
 
         int rowCount() const { return (int) rows.size(); }
 
-        // True when the rows were built for exactly this logical layout. A
-        // count check alone misses a block move that keeps both the track and
-        // row counts ([mono, stereo] -> [stereo, mono]) and would leave rows
-        // drawing the wrong strip as a pair.
+        // True when the rows were built for exactly this logical layout, strip
+        // for strip. A count check alone misses a block move that keeps both the
+        // track and row counts ([mono, stereo] -> [stereo, mono]) and would leave
+        // rows drawing the wrong strip as a pair.
         bool matchesLayout (const trackorder::Blocks& blocks) const
         {
             if (blocks.size() != rows.size()) return false;
+            auto& rec = engine.getRecorder();
             for (size_t k = 0; k < rows.size(); ++k)
                 if (rows[k]->getTrackIndex() != blocks[k].front()
-                    || rows[k]->isStereoPair() != (blocks[k].size() == 2))
+                    || rows[k]->isStereoPair() != (blocks[k].size() == 2)
+                    || rows[k]->getStripKey() != rec.getTrack (blocks[k].front()).stripId)
                     return false;
             return true;
         }
@@ -475,6 +540,8 @@ namespace zynforge
         juce::AudioFormatManager&                 formats;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>>& thumbCaches;
         std::vector<std::unique_ptr<TrackRow>>    rows;
+        struct RowView { TrackRow::Size size; int height; TrackRow::LaneMode lane; };
+        std::map<juce::String, RowView>           rowViews;   // by TrackState::stripId
         juce::File waveformSession;   // the folder the rows last resolved against
         int                                       viewportHeight { 480 };
         int                                       reorderLineY { -1 };   // swatch-drag drop line; -1 = none
@@ -504,6 +571,7 @@ namespace zynforge
 
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCaches);
         list->sharedToolsBar = toolsBar.get();
+        list->onRowViewChanged = [this] { if (onRowViewChanged) onRowViewChanged(); };
         viewport.setViewedComponent (list.get(), false);
         // Vertical scrollbar visible; horizontal scrollbar hidden BUT
         // horizontal scrolling still enabled (4th arg = allow horizontal
@@ -874,6 +942,9 @@ namespace zynforge
         if (list != nullptr) list->repaintRows();
         repaint();
     }
+
+    juce::var EditPage::captureRowViews() const { return list->rowViewsJson(); }
+    void      EditPage::restoreRowViews (const juce::var& saved) { list->restoreRowViews (saved); }
 
     void EditPage::condemnAllRows()
     {
