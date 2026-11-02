@@ -10,6 +10,10 @@ ZF_EXPORT_FIXTURE_DIR is set, then:
      and note back through REAPER's scripting API;
   3. with --schemas DIR (holding Project.xsd and MetaData.xsd from
      github.com/bitwig/dawproject), validates the .dawproject with xmllint.
+     Without it the .dawproject is not checked, and the verdict says so.
+
+Exit code 0 = everything verified, 1 = a check failed, 2 = what ran passed but
+the .dawproject was not validated.
 
 REAPER runs from a private resource folder, in the background, and quits itself.
 The owner's settings are never read or written, and nothing here signals a
@@ -265,6 +269,14 @@ def validate_dawproject(path, schemas):
         return ok
 
 
+def verdict(ok, dawproject_checked):
+    if not ok:
+        return "NOT VERIFIED", 1
+    if not dawproject_checked:
+        return "RPP VERIFIED; DAWPROJECT NOT VALIDATED (no --schemas)", 2
+    return "ALL VERIFIED", 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("fixture", help="ZF_EXPORT_FIXTURE_DIR of the test run")
@@ -284,8 +296,9 @@ def main():
     ok = read_back(project, res, options.work) and ok
     if options.schemas:
         ok = validate_dawproject(dawproject, options.schemas) and ok
-    print("ALL VERIFIED" if ok else "NOT VERIFIED")
-    return 0 if ok else 1
+    text, status = verdict(ok, bool(options.schemas))
+    print(text)
+    return status
 
 
 if __name__ == "__main__":
