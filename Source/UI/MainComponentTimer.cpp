@@ -361,9 +361,11 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     // Capture locks timeline mutations, but navigation must remain available
     // to inspect a rolling take or a pending metadata save. Media jobs still
     // own the entire editor; metadata persistence only locks its mutations.
+    // JUCE delivers mouse events to a disabled component, so a job needs the
+    // read-only lock as well: it is what makes the rows click-through.
     if (editPage != nullptr)
     {
-        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0
+        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || sessionIoBusy.load()
                                              || captureMetadataPending || sessionLocked);
         const bool enableEditor = (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending) && ! sessionLocked;
         if (editPage->isEnabled() != enableEditor)

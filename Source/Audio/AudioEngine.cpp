@@ -1439,6 +1439,7 @@ namespace zynforge
 
     void AudioEngine::addOneStrip()
     {
+        if (isSessionTransitionActive()) return;
         setStripCount (recorder.getNumTracks() + 1);
     }
 
@@ -2147,7 +2148,7 @@ namespace zynforge
     {
         if (auto* d = deviceManager.getCurrentAudioDevice())
             return d->getActiveOutputChannels().countNumberOfSetBits();
-        return 0;
+        return testDeviceOutputs.load (std::memory_order_relaxed);
     }
 
     void AudioEngine::setTrackInputRouting (int channelIndex, int deviceCh)
@@ -2173,9 +2174,16 @@ namespace zynforge
         // PATCH page + the per-strip dropdowns stay in lockstep. The input
         // side is refused during a take, so the output must be too, or the
         // link breaks for the next virtual soundcheck.
-        if (isRecording()) return;
+        if (isRecording() || isCaptureFinalizing()) return;
         setTrackInputRouting  (channelIndex, deviceCh);
         setTrackOutputRouting (channelIndex, deviceCh);
+    }
+
+    void AudioEngine::sendStripToMaster (int channelIndex, bool stereoPair)
+    {
+        if (isRecording() || isCaptureFinalizing()) return;
+        setTrackOutputRouting (channelIndex, -1);
+        if (stereoPair) setTrackOutputRouting (channelIndex + 1, -1);
     }
 
     void AudioEngine::setTrackGainDb (int channelIndex, float dB)

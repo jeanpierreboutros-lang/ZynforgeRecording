@@ -32,6 +32,20 @@ namespace zynforge
     // sessions can use the full zoom range without the growth multiplier.
     inline constexpr float kMaxRecordingTimelineZoom = 16.0f;
 
+    // Whether to repaint the lanes this tick: while a waveform scan runs, and
+    // once after. A scan that ends between two ticks has drawn nothing of its
+    // last chunk, and a row's held live envelope lets go only in paint.
+    struct ScanRepaint
+    {
+        bool tick (bool scanning) noexcept
+        {
+            const bool repaint = scanning || wasScanning;
+            wasScanning = scanning;
+            return repaint;
+        }
+        bool wasScanning { false };
+    };
+
     inline juce::int64 notionalEmptyLaneSamples (double sampleRate) noexcept
     {
         return (juce::int64) (juce::jmax (8000.0, sampleRate) * kNotionalEmptyLaneSec);

@@ -23,6 +23,20 @@ namespace zynforge
         // shiftDown == true means "go to the previous channel".
         std::function<void (bool /*shiftDown*/)> onTabKey;
 
+        // A Label takes a right-click and passes nothing to its parent, so a
+        // name field over a row's header would swallow the row's own menu.
+        std::function<void (juce::Point<int> /*screenPos*/)> onPopupMenu;
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (onPopupMenu != nullptr && e.mods.isPopupMenu())
+            {
+                onPopupMenu (e.getScreenPosition());
+                return;
+            }
+            juce::Label::mouseDown (e);
+        }
+
     protected:
         void editorShown (juce::TextEditor* ed) override
         {
