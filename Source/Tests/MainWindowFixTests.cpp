@@ -1297,6 +1297,16 @@ namespace zynforge
         void smallRepairs()
         {
 
+            beginTest ("A PATCH drag gives every strip its own channels");
+            {
+                using Targets = std::vector<std::pair<int, int>>;
+                expect (PatchPage::dragTargets ({ false, false, false }, 0, 0, 2, 8) == Targets ({ { 0, 0 }, { 1, 1 }, { 2, 2 } }));
+                expect (PatchPage::dragTargets ({ true, true, true }, 0, 0, 4, 8) == Targets ({ { 0, 0 }, { 1, 2 }, { 2, 4 } }),
+                        "a pair's R and the next pair's L landed on one input");
+                expect (PatchPage::dragTargets ({ false, true, false }, 2, 5, -3, 8) == Targets ({ { 2, 5 }, { 1, 3 }, { 0, 2 } }));
+                expect (PatchPage::dragTargets ({ true, true }, 0, 5, 3, 8) == Targets ({ { 0, 5 } }),
+                        "a pair ran off the last row");
+            }
 
 
 

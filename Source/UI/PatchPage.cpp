@@ -423,15 +423,10 @@ namespace zynforge
                 if (dr == dragLastDr) return;
                 dragLastDr = dr;
 
-                const int sign = (dr >= 0) ? 1 : -1;
-                for (int i = 0; i <= std::abs (dr); ++i)
-                {
-                    const int targetCol = dragStartCol + i * sign;
-                    const int targetRow = dragStartRow + i * sign;
-                    if (targetCol < 0 || targetCol >= numStrips) break;
-                    if (targetRow < 0 || targetRow >= numHw)     break;
+                std::vector<bool> stereo;
+                for (const auto& ls : logical) stereo.push_back (ls.stereo);
+                for (const auto& [targetCol, targetRow] : PatchPage::dragTargets (stereo, dragStartCol, dragStartRow, dr, numHw))
                     setRoutingLogical (logical[(std::size_t) targetCol], targetRow);
-                }
                 repaint();
             }
 
@@ -540,6 +535,27 @@ namespace zynforge
         private:
             juce::TabbedComponent tabs;
         };
+    }
+
+    std::vector<std::pair<int, int>> PatchPage::dragTargets (const std::vector<bool>& stripIsStereo,
+                                                             int startCol, int startRow,
+                                                             int rowsDragged, int numRows)
+    {
+        std::vector<std::pair<int, int>> targets;
+        const int numCols = (int) stripIsStereo.size();
+        const int sign = rowsDragged >= 0 ? 1 : -1;
+        int col = startCol, row = startRow;
+        while (col >= 0 && col < numCols && row >= 0 && row < numRows
+               && std::abs (row - startRow) <= std::abs (rowsDragged))
+        {
+            if (stripIsStereo[(size_t) col] && row + 1 >= numRows && ! targets.empty()) break;
+            targets.emplace_back (col, row);
+            const int width = stripIsStereo[(size_t) col] ? 2 : 1;
+            col += sign;
+            if (sign > 0)                         row += width;
+            else if (col >= 0 && col < numCols)   row -= stripIsStereo[(size_t) col] ? 2 : 1;
+        }
+        return targets;
     }
 
     juce::DialogWindow* PatchPage::launch (AudioEngine& engine)
