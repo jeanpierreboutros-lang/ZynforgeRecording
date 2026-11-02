@@ -341,8 +341,9 @@ void MainComponent::adoptDaemonTakeSession (const zynforge::EngineStatus& status
     keepRemovedFeatureData (dir);
 
     // A session opened before the daemon was found still holds unsaved work.
-    if (const auto held = engine.getMixerSession(); held.isDirectory())
-        saveSessionStateTo (held);
+    if (const auto held = engine.getMixerSession(); held.isDirectory() && ! saveSessionStateTo (held))
+        showStatus ("! Unsaved changes in " + held.getFileName() + " could not be saved before the rolling take's"
+                    " session replaced them: " + lastMetadataSaveError);
 
     condemnAllStrips();
     engine.stopPlayback();

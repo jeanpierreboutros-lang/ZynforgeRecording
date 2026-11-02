@@ -268,6 +268,8 @@ private:
     void importChannelNamesFromCsv();
     // Create a brand-new session sized + named from a channel CSV.
     void createSessionFromCsv();
+    void completeSessionFromCsv (const juce::File& csv);
+    juce::String notSavedWarning (bool saved) const;
     // Request channel names from a DiGiCo console, then build a session from
     // what comes back (the bidirectional console link).
     void createSessionFromConsole();

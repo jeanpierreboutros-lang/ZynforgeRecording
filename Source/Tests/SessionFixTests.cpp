@@ -651,6 +651,64 @@ public:
         }
     }
 
+    void testFirstSaveIsReported()
+    {
+        beginTest ("A CSV or console session whose first save failed says so");
+        {
+            Folder root ("Sessions", false), input ("Input", false);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            auto* props = host.engine.getAppProps();
+            props->setValue ("sessionsRoot", root.dir.getFullPathName());
+            props->saveIfNeeded();
+            const juce::ScopeGuard restoreRoot { [&]
+            {
+                props->removeValue ("sessionsRoot");
+                props->saveIfNeeded();
+                forget (host);
+            } };
+            const auto csv = input.dir.getChildFile ("Channels.csv");
+            expect (csv.replaceWithText ("Kick\nSnare\n"));
+
+            host.completeSessionFromCsv (csv);
+            expect (! host.statusLabel.getText().contains ("WARNING"), host.statusLabel.getText());
+            expect (host.statusLabel.getText().contains ("from Channels.csv"), host.statusLabel.getText());
+
+            // An autosave still pending from before the chooser closed.
+            host.pendingMetadataSaves = 1;
+            host.completeSessionFromCsv (csv);
+            host.pendingMetadataSaves = 0;
+            expect (host.statusLabel.getText().contains ("was not saved"), host.statusLabel.getText());
+            expect (host.statusLabel.getText().contains ("another save is still finishing"), host.statusLabel.getText());
+
+            host.pendingMetadataSaves = 1;
+            host.buildSessionFromConsole ({ { 1, "Kick" } }, {}, 0, "Console ");
+            host.pendingMetadataSaves = 0;
+            expect (host.statusLabel.getText().contains ("was not saved"), host.statusLabel.getText());
+
+            host.buildSessionFromConsole ({ { 1, "Kick" } }, {}, 0, "Second ");
+            expect (! host.statusLabel.getText().contains ("WARNING"), host.statusLabel.getText());
+        }
+
+        beginTest ("Work that could not be saved before a rolling take took over is reported");
+        {
+            Folder held, take ("Take"); writeSavedShow (held); writeSavedShow (take);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (held.dir), 0);
+            EngineStatus status;
+            status.source = "daemon";
+            status.recording = true;
+            status.sessionPath = take.dir.getFullPathName();
+            status.sampleRate = 48000.0;
+
+            host.pendingMetadataSaves = 1;
+            host.adoptDaemonTakeSession (status);
+            host.pendingMetadataSaves = 0;
+            expect (host.statusLabel.getText().contains ("could not be saved"), host.statusLabel.getText());
+            expect (host.statusLabel.getText().contains (held.dir.getFileName()), host.statusLabel.getText());
+            forget (host);
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -667,6 +725,7 @@ public:
         testUnloadedSession();
         testBackupsAreFound();
         testOpeningAFolderThatIsNoSession();
+        testFirstSaveIsReported();
     }
 };
 
