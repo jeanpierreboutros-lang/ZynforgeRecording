@@ -135,31 +135,24 @@ namespace zynforge
 
         auto r = getLocalBounds().toFloat();
 
-        // Background -- gradient fill in the state-tinted colour so the
-        // hero panel reads as a glassy plate rather than a flat block.
-        // While recording, the red tint breathes at 1 Hz so the engineer
-        // can read 'rolling' from across the room without looking at
-        // the timer value.
+        // A rolling take must be unmistakable from across the room: the whole
+        // plate turns record red and breathes at 1 Hz, with white type on it.
+        const bool  rolling = mode == Mode::Recording;
+        const bool  rm      = brand::reduceMotion();
+        const float pulse   = rm ? 0.5f : 0.5f + 0.5f * std::sin (pulsePhase);   // 0..1 (static under reduced-motion)
+        const float ignite  = rm ? 1.0f : igniteLevel;                          // full heat, no ramp
+
         juce::Colour bg = brand::bgPanel;
-        const bool  rm     = brand::reduceMotion();
-        const float pulse  = rm ? 0.5f : 0.5f + 0.5f * std::sin (pulsePhase);   // 0..1 (static under reduced-motion)
-        const float ignite = rm ? 1.0f : igniteLevel;                          // full heat, no ramp
-        if (mode == Mode::Recording)
-            bg = brand::meterEmber.withAlpha ((0.14f + 0.10f * pulse) * ignite); // ember, breathing + igniting
+        if (rolling)                    bg = bg.interpolatedWith (brand::takePlate, (0.80f + 0.20f * pulse) * ignite);
         else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (zynforge::brand::alpha::edgeSoft);
         auto bgRect = r.reduced (2.0f);
         g.setColour (bg);   // FLAT: solid plate (bg already breathes via pulse); no gradient
         g.fillRoundedRectangle (bgRect, brand::radius::lg);
 
-        // Forge ember while recording -- a flat, breathing wash, not a glow gradient.
-        if (mode == Mode::Recording)
-        {
-            g.setColour (brand::meterHot.withAlpha ((0.08f + 0.06f * pulse) * ignite));
-            g.fillRoundedRectangle (bgRect, brand::radius::lg);
-        }
+        g.setColour (rolling ? brand::accentRecord : brand::edge);
+        g.drawRoundedRectangle (bgRect, brand::radius::lg, rolling ? 2.0f : 1.0f);
 
-        g.setColour (brand::edge);
-        g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 1.0f);
+        const auto labelCol = rolling ? brand::textPrimary : brand::textSecondary;
 
         // This row is short, so it is laid out for reading from the mix position:
         // state, time and record time left are large; the rest gives way first.
@@ -172,7 +165,7 @@ namespace zynforge
             // Armed and waiting is a lamp, not a frame: bright is for the take.
             juce::Colour lamp = armedReady ? brand::signalArmedReady() : brand::textMuted;
             juce::String label = armedReady ? "ARMED" : "IDLE";
-            if (mode == Mode::Recording) { lamp = brand::accentRecord; label = "REC"; }
+            if (rolling)                    { lamp = brand::textPrimary; label = "REC"; }
             else if (mode == Mode::Playing) { lamp = brand::accentPlay;  label = "PLAY"; }
 
             const float lampSize = 14.0f;
@@ -180,7 +173,7 @@ namespace zynforge
             g.fillEllipse (left.withWidth (lampSize).withSizeKeepingCentre (lampSize, lampSize));
 
             g.setColour (brand::textPrimary);
-            g.setFont (brand::type::ui (brand::type::h_subhead, true));
+            g.setFont (brand::type::ui (rolling && tall ? brand::type::h_display : brand::type::h_subhead, true));
             g.drawText (label, left.withTrimmedLeft (lampSize + (float) brand::space::md),
                         juce::Justification::centredLeft, false);
         }
@@ -201,7 +194,7 @@ namespace zynforge
             // With a copy's drive not answering the time left is the primary's
             // alone, so the label says that instead of implying the whole rig.
             auto block = right.removeFromLeft (juce::jmin (124.0f, right.getWidth()));
-            g.setColour (copyStale ? brand::alertAmber : brand::textSecondary);
+            g.setColour (copyStale ? brand::alertAmber : labelCol);
             g.setFont (brand::type::caption());
             g.drawText (copyStale ? "PRIMARY TIME LEFT" : "RECORD TIME LEFT",
                         block.removeFromTop (14.0f), juce::Justification::centredLeft, false);
@@ -216,12 +209,11 @@ namespace zynforge
         // isn't drawn.
         const float rowH = 13.0f;
         auto drawRow = [&] (const char* label, const juce::String& value,
-                            juce::Colour labelCol = brand::textSecondary,
-                            juce::Colour rowValueCol = brand::textPrimary)
+                            juce::Colour rowLabelCol, juce::Colour rowValueCol = brand::textPrimary)
         {
             if (right.getHeight() < rowH || right.getWidth() < 120.0f) return;
             auto line = right.removeFromTop (rowH);
-            g.setColour (labelCol);
+            g.setColour (rowLabelCol);
             g.setFont (brand::type::caption());
             g.drawText (label, line, juce::Justification::centredLeft, false);
             g.setColour (rowValueCol);
@@ -233,31 +225,31 @@ namespace zynforge
                  primaryStale ? juce::String ("STALE")
                               : freeGB < 0.0 ? juce::String ("--")
                                              : juce::String::formatted ("%.1f GB", freeGB),
-                 brand::textSecondary, valueCol);
+                 labelCol, valueCol);
+        // On the record plate a miss has to be white to read at all.
+        const auto missCol = rolling ? brand::textPrimary : brand::accentRecord;
         drawRow (missed > 0 ? "MISSED SAMPLES" : "NO MISSED WRITES",
                  missed > 0 ? juce::String (missed) : juce::String(),
-                 missed > 0 ? brand::accentRecord : brand::textSecondary,
-                 missed > 0 ? brand::accentRecord : brand::textPrimary);
-        drawRow ("LAST WRITE", juce::String (lastWriteMs) + " ms");
-        drawRow ("MARKERS", juce::String (markerCount));
+                 missed > 0 ? missCol : labelCol,
+                 missed > 0 ? missCol : brand::textPrimary);
+        drawRow ("LAST WRITE", juce::String (lastWriteMs) + " ms", labelCol);
+        drawRow ("MARKERS", juce::String (markerCount), labelCol);
 
         // Master loudness (BS.1770). Integrated program loudness + true-peak;
         // true-peak turns red as it approaches 0 dBTP.
         auto lufsStr = [] (float v)
         { return v <= -119.0f ? juce::String ("--") : juce::String (v, 1) + " LUFS"; };
-        drawRow ("LOUDNESS (I)", lufsStr (lufsIntegrated));
-        drawRow ("MOMENTARY",    lufsStr (lufsMomentary));
+        drawRow ("LOUDNESS (I)", lufsStr (lufsIntegrated), labelCol);
+        drawRow ("MOMENTARY",    lufsStr (lufsMomentary), labelCol);
         const bool tpHot = truePeakDb > -1.0f;
         drawRow ("TRUE PEAK",
                  truePeakDb <= -119.0f ? juce::String ("--") : juce::String (truePeakDb, 1) + " dBTP",
-                 tpHot ? brand::accentRecord : brand::textSecondary,
-                 tpHot ? brand::accentRecord : brand::textPrimary);
+                 tpHot ? missCol : labelCol,
+                 tpHot ? missCol : brand::textPrimary);
 
-        const auto timerCol = mode == Mode::Recording ? brand::accentRecord
-                            : mode == Mode::Playing   ? brand::accentPlay
-                                                      : brand::textSecondary;
         g.setFont (timerFont);
-        g.setColour (mode == Mode::Recording ? brand::lift (timerCol, brand::tint::hover) : timerCol);
+        g.setColour (rolling ? brand::textPrimary
+                             : mode == Mode::Playing ? brand::accentPlay : brand::textSecondary);
         g.drawText (elapsedText, inner, juce::Justification::centred, false);
     }
 }

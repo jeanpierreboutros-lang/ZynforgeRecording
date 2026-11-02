@@ -66,6 +66,10 @@ namespace zynforge::brand
     // the family token source gains it.
     inline const auto selectFill = juce::Colour (0xffb35a3e);
 
+    // The clock plate while a take rolls: deep enough for white digits at 8:1,
+    // and a whole plate of it reads from across the room.
+    inline const auto takePlate = juce::Colour (0xff8f1d1d);
+
     // A choice that isn't selected: clean and available, lifted off the surface
     // it sits on, so OFF never reads as disabled.
     inline const auto controlOff = juce::Colour (forge::controlBgDown);
