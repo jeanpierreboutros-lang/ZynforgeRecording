@@ -290,7 +290,7 @@ namespace zynforge::brand
     }
     inline juce::Colour clipWave (juce::Colour track) noexcept
     {
-        return track.withBrightness (juce::jmax (track.getBrightness(), 0.88f));
+        return track.withBrightness (juce::jmax (track.getBrightness(), 0.72f));
     }
 
     // ── Personality wash colours -- INS 1-8 ────────────────────────────────
