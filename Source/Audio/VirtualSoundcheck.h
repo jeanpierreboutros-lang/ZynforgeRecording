@@ -35,6 +35,22 @@ namespace zynforge::vsc
         return input == -2 ? index : input;
     }
 
+    // Strips whose input channel has no output on this device, or that have no
+    // input at all: the patch holds, and nothing reaches the desk from them.
+    // Counted from the patch itself, so the question can say it before the press.
+    inline int stripsWithNoOutput (AudioEngine& engine)
+    {
+        auto& recorder = engine.getRecorder();
+        const int outputs = engine.getCurrentDeviceOutputCount();
+        int silent = 0;
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            const int output = soundcheckOutput (recorder.getTrack (i), i);
+            if (output < 0 || output >= outputs) ++silent;
+        }
+        return silent;
+    }
+
     // Returns the number of strips repatched. Pressed again it does nothing,
     // or the second press would save the soundcheck patch as the show patch.
     inline int repatch (AudioEngine& engine)

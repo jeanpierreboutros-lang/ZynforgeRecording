@@ -510,6 +510,7 @@ private:
     double      takeClockRate (double deviceRate);
     double      shownTakeRate { 48000.0 };   // asked once a tick, by the big clock; a daemon take asks the helper
     void restoreOutputPatch();
+    juce::String vscReachText (int moved);
     void updateNextCueCountdown();
     void syncStripsWithEngine();
     void surfaceAsyncReportFailure();

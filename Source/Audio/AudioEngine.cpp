@@ -622,6 +622,11 @@ namespace zynforge
             notice << (notice.isEmpty() ? "" : "; ")
                    << "Stream bus is off " << outs (getStreamOutputL(), getStreamOutputR())
                    << ": a strip is patched there";
+        const int outputs = getCurrentDeviceOutputCount();
+        if (outputs > 0 && getStreamOutputL() >= 0 && juce::jmax (getStreamOutputL(), getStreamOutputR()) >= outputs)
+            notice << (notice.isEmpty() ? "" : "; ")
+                   << "Stream bus has no output: this device stops before "
+                   << outs (getStreamOutputL(), getStreamOutputR());
         return notice;
     }
 
@@ -1559,6 +1564,10 @@ namespace zynforge
             const int out = l.outputRouting.load (std::memory_order_relaxed);
             if (in  != -2) setTrackInputRouting  (channelIndex + 1, in  >= 0 ? in  + 1 : -1);
             if (out != -2) setTrackOutputRouting (channelIndex + 1, out >= 0 ? out + 1 : -1);
+            // What Restore brings back is one stereo strip too.
+            const int saved = l.outputBeforeVsc.load (std::memory_order_relaxed);
+            if (saved != -2)
+                r.outputBeforeVsc.store (saved >= 0 ? saved + 1 : saved, std::memory_order_relaxed);
         }
         // Bump the track generation so EVERY view (MIXER, EDIT, and the
         // meterbridge) rebuilds and re-collapses the pair -- a stereo link from

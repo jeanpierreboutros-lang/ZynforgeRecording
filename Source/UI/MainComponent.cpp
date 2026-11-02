@@ -1145,10 +1145,10 @@ void MainComponent::onVscClicked()
         const int moved = zynforge::vsc::repatch (self->engine);
         self->commitMixerUndo ("Virtual Soundcheck", before);
         self->lastTrackCount = -1;
-        self->showStatus ("Virtual Soundcheck -- " + zynforge::counted (moved, "strip")
-                          + " repatched: outputs now match inputs");
+        self->showStatus ("Virtual Soundcheck -- " + self->vscReachText (moved));
     };
     if (confirmForTests) { confirmForTests (repatch); return; }
+    const int silent = zynforge::vsc::stripsWithNoOutput (engine);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::QuestionIcon)
@@ -1156,10 +1156,24 @@ void MainComponent::onVscClicked()
             .withMessage ("Repatch " + zynforge::counted (strips, "strip")
                           + " so each output matches its input? Playback then reaches the desk "
                             "on the live input channels.\n\n"
-                            "The current output patch is kept. Press VSC ON to go back to it.")
+                          + (silent > 0 ? zynforge::counted (silent, "strip") + " will reach nothing: "
+                                          "this device has no output for "
+                                          + (silent == 1 ? "its input" : "their inputs") + ".\n\n"
+                                        : juce::String())
+                          + "The current output patch is kept. Press VSC ON to go back to it.")
             .withButton ("Repatch")
             .withButton ("Cancel"),
         [repatch] (int result) { if (result == 1) repatch(); });
+}
+
+// What a soundcheck patch reaches, in one sentence for the status line.
+juce::String MainComponent::vscReachText (int moved)
+{
+    const int silent = zynforge::vsc::stripsWithNoOutput (engine);
+    if (silent == 0) return zynforge::counted (moved, "strip") + " repatched: outputs now match inputs";
+    return zynforge::counted (moved, "strip") + " repatched, but " + zynforge::counted (silent, "strip")
+         + " reach nothing: this device has no output for "
+         + (silent == 1 ? "its input" : "their inputs");
 }
 
 void MainComponent::restoreOutputPatch()
@@ -1633,7 +1647,13 @@ void MainComponent::showPreflightChecklist()
     if (consoleLink.isConnected() || consoleLink.isOnSoundcheckPatch())
         rows.push_back (deskPatchRow());
     if (zynforge::vsc::hasSavedPatch (engine))
-        rows.push_back ({ Row::Status::warning, "Output patch", "on Virtual Soundcheck" });
+    {
+        const int silent = zynforge::vsc::stripsWithNoOutput (engine);
+        rows.push_back ({ Row::Status::warning, "Output patch",
+                          "on Virtual Soundcheck" + (silent > 0 ? ", " + zynforge::counted (silent, "strip")
+                                                                  + " with no output on this device"
+                                                                : juce::String()) });
+    }
 
     if (device != nullptr)
     {

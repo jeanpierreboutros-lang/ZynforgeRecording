@@ -206,6 +206,7 @@ namespace zynforge
             cuesKeepTheShowPatch (main);
             aRemoteCannotStartOrLandInAPunch (main);
             aDeskThatGoesAway (main);
+            remoteLeftovers (main);
             deskWithNoSoundcheckState (main);
             restoreIsConfirmedByTheDesk();
             gainsAreConfirmedByTheDesk();
@@ -563,6 +564,25 @@ namespace zynforge
                 main.consoleLink.setMessageHook (nullptr);
                 main.consoleLink.disconnect();
                 main.consoleLink.setProfile (ConsoleProfile::Kind::BehringerX32);
+            }
+        }
+
+        // ── Small things a remote did quietly ──────────────────────────────
+
+        void remoteLeftovers (MainComponent& main)
+        {
+            beginTest ("Linking strips during VSC keeps Restore's outputs one stereo strip");
+            {
+                Bench b (main);
+                b.engine().setTrackInputRouting (0, 2);
+                b.engine().setTrackInputRouting (1, 7);
+                b.engine().setTrackOutputRouting (0, 4);
+                b.engine().setTrackOutputRouting (1, 9);
+                vsc::repatch (b.engine());
+                b.engine().setTrackStereo (0, true);
+                vsc::restore (b.engine());
+                expectEquals (b.track (0).outputRouting.load(), 4);
+                expectEquals (b.track (1).outputRouting.load(), 5, "R came back on its old output");
             }
         }
 
