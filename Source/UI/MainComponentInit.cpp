@@ -816,7 +816,7 @@ void MainComponent::rebuildStrips()
                         : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
                         : "Could not remove strip safely");
         };
-        auto addCb        = [this] { if (! sessionLocked) engine.addOneStrip(); };
+        auto addCb        = [this] { if (! sessionLocked && ! sessionIoBusy.load()) engine.addOneStrip(); };
         auto linkStereoCb = [this, i]
         {
             if (i + 1 < engine.getRecorder().getNumTracks())

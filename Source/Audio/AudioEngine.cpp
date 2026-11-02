@@ -1439,6 +1439,7 @@ namespace zynforge
 
     void AudioEngine::addOneStrip()
     {
+        if (isSessionTransitionActive()) return;
         setStripCount (recorder.getNumTracks() + 1);
     }
 

@@ -12,7 +12,6 @@
 #include "../UI/MainComponent.h"
 #include "../UI/PatchPage.h"
 
-#include <atomic>
 #include <cmath>
 #include <functional>
 #include <CoreFoundation/CoreFoundation.h>
@@ -156,6 +155,7 @@ namespace zynforge
             rowsFollowTheSession (main);
             theMasterIsNotAChannel (main);
             theMouseTakesWhatItCanSee();
+            aSessionJobOwnsTheEditor (main);
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -410,6 +410,84 @@ namespace zynforge
             }
         }
 
+        void aSessionJobOwnsTheEditor (MainComponent& main)
+        {
+            beginTest ("A session job refuses clip edits and a new strip at the engine");
+            {
+                Session s (1, { kRate });
+                expect (s.engine.splitTrackAtSample (0, 24000));
+                s.engine.setSessionTransitionActive (true);
+                expect (s.engine.isArrangementFrozen(), "a job leaves the arrangement open to edits");
+                expect (! s.engine.editClip (0, 1, AudioEngine::ClipEdit::Move, 480), "a clip moved under a job");
+                expect (! s.engine.setClipFades (0, 0, 480, 0), "a fade changed under a job");
+                expect (! s.engine.setClipGainDb (0, 0, -3.0f), "a clip gain changed under a job");
+                s.engine.addOneStrip();
+                expectEquals (s.engine.getRecorder().getNumTracks(), 1, "a strip was added under a job");
+                s.engine.setSessionTransitionActive (false);
+                expect (s.engine.editClip (0, 1, AudioEngine::ClipEdit::Move, 480), "edits stay available afterwards");
+            }
+
+            beginTest ("A disabled EDIT page takes no drag and no double-click");
+            {
+                Session s (1, { kRate });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                auto rows = rowsOf (page);
+                expect (rows.size() == 1, "setup: one row");
+                if (rows.size() == 1)
+                {
+                    auto& row = *rows[0];
+                    const auto lane0 = row.getHeaderWidth() + 4;
+                    const auto laneW = row.getWidth() - row.getHeaderWidth() - 8;
+                    const juce::Point<int> body (lane0 + laneW / 2, 30);
+
+                    page.setEnabled (false);
+                    drag (row, body, body + juce::Point<int> (120, 0));
+                    expectEquals (s.clips (0)[0].timelineStartSamples, (juce::int64) 0,
+                                  "a drag landed while a job held the editor");
+                    expectEquals (s.engine.getEditCursorSample(), (juce::int64) -1,
+                                  "the click moved the edit cursor under a job");
+
+                    // A drag already in flight when the job takes the page.
+                    page.setEnabled (true);
+                    row.mouseDown (mouseAt (row, body, body, false));
+                    page.setEnabled (false);
+                    for (int dx = 4; dx <= 120; dx += 4)
+                        row.mouseDrag (mouseAt (row, body + juce::Point<int> (dx, 0), body, true));
+                    row.mouseUp (mouseAt (row, body + juce::Point<int> (120, 0), body, true));
+                    expectEquals (s.clips (0)[0].timelineStartSamples, (juce::int64) 0,
+                                  "a drag in flight kept editing under a job");
+
+                    auto* list = row.getParentComponent();
+                    const juce::Point<int> below (lane0, list->getHeight() - 4);
+                    list->mouseDoubleClick (mouseAt (*list, below, below, false));
+                    expectEquals (s.engine.getRecorder().getNumTracks(), 1, "the double-click added a strip");
+
+                    page.setEnabled (true);
+                    list->mouseDoubleClick (mouseAt (*list, below, below, false));
+                    expectEquals (s.engine.getRecorder().getNumTracks(), 2, "setup: the double-click adds a strip");
+                }
+            }
+
+            beginTest ("The host locks EDIT's rows while a job holds the session");
+            {
+                Show show (main);
+                show.session ({ "ONE" }, false, false);
+                expect (pumpUntil ([&] { return main.pendingMetadataSaves == 0; }), "the save never ended");
+                main.updateHeaderFromStatus (show.engine.captureStatus(), false);
+                expect (! show.page().isTimelineReadOnly(), "setup: rows open");
+                main.sessionIoBusy.store (true);
+                main.updateHeaderFromStatus (show.engine.captureStatus(), false);
+                expect (show.page().isTimelineReadOnly(), "a job left EDIT's rows taking clicks");
+                expect (! show.page().isEnabled(), "a job left the editor enabled");
+                main.sessionIoBusy.store (false);
+                main.updateHeaderFromStatus (show.engine.captureStatus(), false);
+                expect (! show.page().isTimelineReadOnly());
+                expect (show.page().isEnabled());
+            }
+        }
+
         void theMasterIsNotAChannel (MainComponent& main)
         {
             beginTest ("-> Master in the MIXER keeps the strip's input, on both halves of a pair");
@@ -419,24 +497,24 @@ namespace zynforge
                 main.rebuildStrips();
                 expectEquals ((int) main.strips.size(), 2, "setup: a pair and a mono strip");
 
-                show.engine.setTrackLinkedRouting (2, 6);
                 auto* mono = outputComboOf (*main.strips[1]);
                 expect (mono != nullptr, "setup: the mono strip's output combo");
                 if (mono != nullptr)
                 {
+                    mono->setSelectedId (8, juce::sendNotificationSync);    // Out 7
+                    expectEquals (patchOf (show.engine, 2), juce::String ("6/6"), "a real channel stays linked");
                     mono->setSelectedId (1, juce::sendNotificationSync);
                     expectEquals (patchOf (show.engine, 2), juce::String ("6/-1"),
                                   "the master took the strip's input with it");
-                    mono->setSelectedId (8, juce::sendNotificationSync);    // Out 7
-                    expectEquals (patchOf (show.engine, 2), juce::String ("6/6"), "a real channel stays linked");
                 }
 
-                show.engine.setTrackLinkedRouting (0, 4);
-                show.engine.setTrackLinkedRouting (1, 5);
                 auto* pair = outputComboOf (*main.strips[0]);
                 expect (pair != nullptr, "setup: the pair's output combo");
                 if (pair != nullptr)
                 {
+                    pair->setSelectedId (6, juce::sendNotificationSync);    // Out 5-6
+                    expectEquals (patchOf (show.engine, 0), juce::String ("4/4"), "a real channel stays linked on L");
+                    expectEquals (patchOf (show.engine, 1), juce::String ("5/5"), "a real channel stays linked on R");
                     pair->setSelectedId (1, juce::sendNotificationSync);
                     expectEquals (patchOf (show.engine, 0), juce::String ("4/-1"), "L lost its input");
                     expectEquals (patchOf (show.engine, 1), juce::String ("5/-1"), "R lost its input");
@@ -494,42 +572,6 @@ namespace zynforge
                     expectEquals (patchOf (show.engine, 2), juce::String ("-1/-1"),
                                   "an input cleared by hand clears both, as before");
                 }
-            }
-
-            beginTest ("-> Master is refused during a take and its finalization");
-            {
-                const auto dir = tempDir ("take");
-                expect (dir.createDirectory().wasOk());
-                {
-                    AudioEngine engine;
-                    engine.clearAllStripOverrides();
-                    engine.setStripCount (1);
-                    engine.prepareForTests ((double) kRate, 256);
-                    engine.getRecorder().getTrack (0).armed.store (true);
-                    engine.setTrackLinkedRouting (0, 5);
-                    engine.setActiveSessionDir (dir);
-                    engine.claimMixerFor (dir);
-                    expect (engine.startRecording (dir));
-                    engine.sendStripToMaster (0, false);
-                    expectEquals (patchOf (engine, 0), juce::String ("5/5"), "the output moved under a take");
-
-                    juce::WaitableEvent entered, release;
-                    std::atomic<bool> completed { false };
-                    engine.getRecorder().beforeFinalizationForTests = [&] { entered.signal(); release.wait (5000); };
-                    const juce::ScopeGuard releaseWorker { [&] { release.signal(); } };
-                    expect (engine.stopRecordingAsync ([&] (bool) { completed = true; }));
-                    expect (entered.wait (2000), "STOP never reached finalization");
-                    engine.sendStripToMaster (0, false);
-                    expectEquals (patchOf (engine, 0), juce::String ("5/5"), "the output moved while the take finalized");
-                    engine.setTrackLinkedRouting (0, 2);
-                    expectEquals (patchOf (engine, 0), juce::String ("5/5"),
-                                  "half a linked patch landed while the take finalized");
-                    release.signal();
-                    expect (pumpUntil ([&] { return completed.load(); }, 10000), "STOP did not complete");
-                    engine.clearAllStripOverrides();
-                }
-                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
-                dir.deleteRecursively();
             }
         }
     };

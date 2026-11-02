@@ -1786,6 +1786,10 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // JUCE delivers mouse events to a disabled component, and a session
+            // job holds the page disabled until the host's next tick locks it.
+            if (! isEnabled()) return;
+
             // Mark this row as the active row. Reset by clicking on a
             // different row.
             if (auto* page = findParentComponentOfClass<EditPage>())
@@ -2205,7 +2209,7 @@ namespace zynforge
             // a remote / LTC-chase / R-key start. Click-through stops NEW
             // gestures, not one already in flight, so refuse the rest of it.
             if (auto* page = findParentComponentOfClass<EditPage>();
-                page != nullptr && page->isTimelineReadOnly())
+                ! isEnabled() || (page != nullptr && page->isTimelineReadOnly()))
                 return;
 
             // Crossfade midpoint drag. Convert the mouse x to a
@@ -2458,7 +2462,7 @@ namespace zynforge
         {
             // A gesture released after the timeline locked commits nothing.
             const auto* lockPage = findParentComponentOfClass<EditPage>();
-            const bool timelineLocked = lockPage != nullptr && lockPage->isTimelineReadOnly();
+            const bool timelineLocked = ! isEnabled() || (lockPage != nullptr && lockPage->isTimelineReadOnly());
 
             const bool wasDraggingClip    = (draggingClipIdx >= 0 || draggingXfadeAIdx >= 0);
             // A click that armed a clip-body grab but never dragged = a

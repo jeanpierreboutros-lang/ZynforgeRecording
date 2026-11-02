@@ -237,10 +237,12 @@ namespace zynforge
         void invalidateExternalCaptureStatus();
         void setSessionTransitionActive (bool active) noexcept
         { sessionTransitionActive.store (active, std::memory_order_release); }
-        // True from the moment a take rolls until its files are final. Every
-        // clip and take setter refuses then: the UI lock stops new gestures, but
-        // not a menu or dialog already open, and not a remote start under it.
-        bool isArrangementFrozen() const noexcept { return isRecording() || isCaptureFinalizing(); }
+        // True from the moment a take rolls until its files are final, and while
+        // a session job owns the session. Every clip and take setter refuses
+        // then: the UI lock stops new gestures, but not a menu or dialog already
+        // open, and not a remote start under it. A job reads the arrangement as
+        // it goes, and a Save As or Move reopens the copy it took.
+        bool isArrangementFrozen() const noexcept { return isRecording() || isSessionTransitionActive(); }
         bool isSessionTransitionActive() const noexcept
         { return sessionTransitionActive.load (std::memory_order_acquire) || isCaptureFinalizing(); }
 

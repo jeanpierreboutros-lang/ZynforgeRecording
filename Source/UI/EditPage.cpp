@@ -126,7 +126,9 @@ namespace zynforge
             // which means the engineer hit empty space. Right-click is left
             // alone for a potential future "Add multiple..." menu.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown()) return;
-            if (engine.getRecorder().isRecording()) return;   // safety
+            if (auto* page = findParentComponentOfClass<EditPage>();
+                ! isEnabled() || engine.isRecording() || (page != nullptr && ! page->canEditTimeline()))
+                return;
             engine.addOneStrip();
         }
 

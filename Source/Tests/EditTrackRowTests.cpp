@@ -659,6 +659,48 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("A strip's routing holds through a take and its finalization");
+            {
+                const auto patch = [] (AudioEngine& e)
+                {
+                    const auto& state = e.getRecorder().getTrack (0);
+                    return juce::String (state.inputRouting.load()) + "/" + juce::String (state.outputRouting.load());
+                };
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-editaudit-routing-" + juce::Uuid().toString());
+                expect (dir.createDirectory().wasOk());
+                {
+                    AudioEngine engine;
+                    engine.clearAllStripOverrides();
+                    engine.setStripCount (1);
+                    engine.prepareForTests (48000, 256);
+                    engine.getRecorder().getTrack (0).armed.store (true);
+                    engine.setTrackLinkedRouting (0, 5);
+                    engine.setActiveSessionDir (dir);
+                    engine.claimMixerFor (dir);
+                    expect (engine.startRecording (dir));
+                    engine.sendStripToMaster (0, false);
+                    expectEquals (patch (engine), juce::String ("5/5"), "the output moved under a take");
+
+                    juce::WaitableEvent entered, release;
+                    std::atomic<bool> completed { false };
+                    engine.getRecorder().beforeFinalizationForTests = [&] { entered.signal(); release.wait (5000); };
+                    const juce::ScopeGuard releaseWorker { [&] { release.signal(); } };
+                    expect (engine.stopRecordingAsync ([&] (bool) { completed = true; }));
+                    expect (entered.wait (2000), "STOP never reached finalization");
+                    engine.sendStripToMaster (0, false);
+                    expectEquals (patch (engine), juce::String ("5/5"), "the output moved while the take finalized");
+                    engine.setTrackLinkedRouting (0, 2);
+                    expectEquals (patch (engine), juce::String ("5/5"),
+                                  "half a linked patch landed while the take finalized");
+                    release.signal();
+                    expect (pumpUntil ([&] { return completed.load(); }, 10000), "STOP did not complete");
+                    engine.clearAllStripOverrides();
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+                dir.deleteRecursively();
+            }
+
             // ── #8: a clip dragged past the session end follows the mouse ────
             beginTest ("Dragging a clip past the session end moves it at the scale it was grabbed at");
             {
