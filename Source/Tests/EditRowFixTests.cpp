@@ -159,6 +159,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            fadeToolGrabs();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -419,6 +420,39 @@ namespace zynforge
             for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
                 items.add (it.getItem().text);
             return items;
+        }
+
+        void fadeToolGrabs()
+        {
+            beginTest ("The Fade tool's squares drag, and a click on the clip opens its menu");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                EditToolsBar tools;
+                tools.setTool (EditToolsBar::Tool::Fade);
+                row.toolsBar = &tools;
+                int opened = -1;
+                row.clipMenuForTests = [&opened] (int clip) { opened = clip; };
+                const int top = brand::space::sm + 2;
+
+                drag (row, { laneX (row, 0.0) + 2, top }, { laneX (row, 0.0) + 52, top });
+                expect (s.clips (0)[0].fadeInSamples > 0, "the fade-in square did not drag");
+                drag (row, { laneX (row, 1.0) - 2, top }, { laneX (row, 1.0) - 52, top });
+                expect (s.clips (0)[0].fadeOutSamples > 0, "the fade-out square did not drag");
+                expectEquals (opened, -1, "a press on a square opened the menu");
+
+                const auto fadeIn = s.clips (0)[0].fadeInSamples;
+                drag (row, { laneX (row, 0.0) + 52, top }, { laneX (row, 0.0) + 102, top });
+                expect (s.clips (0)[0].fadeInSamples > fadeIn, "an existing fade's square did not drag");
+
+                const juce::Point<int> body (laneX (row, 0.5), 50);
+                row.mouseDown (mouseAt (row, body, body, false));
+                row.mouseUp   (mouseAt (row, body, body, false));
+                expectEquals (opened, 0, "a click on the clip did not open its menu");
+                expectEquals (s.clips (0)[0].timelineStartSamples, (juce::int64) 0, "the Fade tool moved a clip");
+                row.toolsBar = nullptr;
+            }
         }
 
         void rowsKeepTheirView (MainComponent& main)

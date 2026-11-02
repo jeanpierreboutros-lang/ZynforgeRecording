@@ -1648,6 +1648,26 @@ namespace zynforge
             return order;
         }
 
+        // The fade grab squares: the top stripe of the lane, at the end of each
+        // fade. An edge with no fade has its square at the clip's edge.
+        static constexpr int kFadeGripZonePx = 8;
+        bool isFadeGripAt (juce::Point<int> p) const
+        {
+            const auto* clips = engine.tryClipsFor (index);
+            const auto& player = engine.getPlayer();
+            const juce::int64 total = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+            if (clips == nullptr || total <= 0) return false;
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
+            if (p.y - inner.getY() >= kFadeGripZonePx) return false;
+            const auto lane = TimelineMapper::forLane (inner, total);
+            return std::any_of (clips->begin(), clips->end(), [&] (const Clip& c)
+            {
+                const auto end = c.timelineStartSamples + c.fileLengthSamples;
+                return std::abs (p.x - lane.toX (c.timelineStartSamples + c.fadeInSamples)) <= kFadeGripZonePx
+                    || std::abs (p.x - lane.toX (end - c.fadeOutSamples)) <= kFadeGripZonePx;
+            });
+        }
+
         // Draws the swatch column, header panel, divider and selection highlight
         // at x = hx (the horizontal scroll offset). Called at
         // the very end of paint() so it sits on top of the waveform; the
@@ -1925,7 +1945,13 @@ namespace zynforge
                                       ? toolsBar->getTool()
                                       : EditToolsBar::Tool::None;
 
-            if (laneMode == LaneMode::Waveform && inWavePane (e.x)
+            // A press on a painted grab square drags it, below. The tool's click
+            // is for the rest of the clip.
+            const bool onFadeGrip = activeTool == EditToolsBar::Tool::Fade
+                                 && laneMode == LaneMode::Waveform && inWavePane (e.x)
+                                 && isFadeGripAt (e.getPosition());
+
+            if (laneMode == LaneMode::Waveform && inWavePane (e.x) && ! onFadeGrip
                 && (activeTool == EditToolsBar::Tool::Selector
                  || activeTool == EditToolsBar::Tool::Fade))
             {
@@ -2025,7 +2051,7 @@ namespace zynforge
                         // sit in the top-edge stripe and are visually
                         // distinct dots.
                         const int hitZone = kTrimZonePx;
-                        const int fadeHandleZone = 8;
+                        const int fadeHandleZone = kFadeGripZonePx;
                         const int laneTop = inner.getY();
                         dragTimelineSamples = totalSamples;   // drag scale, fixed at the grab
                         const bool smartTool = activeTool == EditToolsBar::Tool::Smart
@@ -2076,6 +2102,7 @@ namespace zynforge
                                 dragStartFadeOut    = c.fadeOutSamples;
                                 return;
                             }
+                            if (fadeToolActive) continue;   // this tool grabs nothing else
 
                             // Clip-gain handle grab (Smart / Grabber): the
                             // bottom-left fader corner rides the clip's level.
