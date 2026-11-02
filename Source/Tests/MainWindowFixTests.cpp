@@ -178,6 +178,7 @@ namespace zynforge
             questionsKeepTheirSession();
             gridKeepsItsFaders();
             headerKeepsItsWarnings();
+            recordTimeWarns();
         }
 
     private:
@@ -1120,6 +1121,59 @@ namespace zynforge
                 expectGreaterOrEqual (w.main.alarmBanner.getWidth(), 500);
                 w.main.setSize (1320, 820);
                 w.main.resized();
+            }
+        }
+
+        void recordTimeWarns()
+        {
+            beginTest ("Record time running out reaches the banner: amber at 30 minutes, danger at 10");
+            {
+                Window w;
+                const auto withMinutes = [&w] (int minutes, bool rolling = true)
+                {
+                    EngineStatus status;
+                    status.recording = rolling;
+                    status.minutesRemaining = minutes;
+                    w.main.updateCaptureWarnings (status);
+                };
+                withMinutes (31);
+                expect (! w.main.alarmBanner.isVisible(), "31 minutes is not a warning yet");
+                withMinutes (30);
+                expect (w.main.alarmBanner.isVisible());
+                expect (w.main.alarmBanner.getLevel() == Level::Notice, "30 minutes is a notice");
+                expect (w.main.alarmBanner.getText().contains ("0h30m"), w.main.alarmBanner.getText());
+                withMinutes (11);
+                expect (w.main.alarmBanner.getLevel() == Level::Notice);
+                withMinutes (10);
+                expect (w.main.alarmBanner.getLevel() == Level::Danger, "10 minutes is a danger");
+                withMinutes (1);
+                expect (w.main.alarmBanner.getLevel() == Level::Danger);
+                withMinutes (0);
+                expect (! w.main.alarmBanner.isVisible(), "no estimate is not an alarm");
+                withMinutes (5, false);
+                expect (! w.main.alarmBanner.isVisible(), "this is about a take, not an idle drive");
+            }
+
+            beginTest ("The last minute still reads as a time, not as no estimate");
+            {
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.volumeProbePeriodMs = 10;
+                rec.volumeReaderForTests = [] (const juce::File&)
+                {
+                    VolumeProbe::Reading reading;
+                    reading.freeBytes = 1000;
+                    reading.totalBytes = 1 << 30;
+                    reading.volumeId = 1;
+                    return reading;
+                };
+                auto dir = tempDir ("last-minute");
+                expect (rec.startRecording (dir));
+                expect (pumpUntil ([&rec] { return rec.readDiskEstimate().primaryFreeBytes >= 0; }));
+                expectEquals (rec.readDiskEstimate().minutes, 1);
+                rec.stopRecording();
+                dir.deleteRecursively();
             }
         }
 

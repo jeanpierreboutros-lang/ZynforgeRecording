@@ -448,6 +448,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
 
 void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
 {
+    constexpr int kRecordTimeNoticeMinutes = 30, kRecordTimeDangerMinutes = 10;
     const bool rec = status.recording;
     // Live show-day warnings -- only while recording, refreshed at the
     // timer cadence. Both flags clear automatically when the condition
@@ -473,9 +474,13 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int mirrorsSkipped = status.mirrorsSkipped;
         const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
         const bool primaryNotAnswering = status.primaryDiskStale && status.source != "daemon-unavailable";
+        // RECORD only asks for 30 minutes of room, so a long show can get here.
+        const int minutesLeft = rec ? status.minutesRemaining : 0;   // 0 = no estimate
+        const bool timeRunningOut = minutesLeft > 0 && minutesLeft <= kRecordTimeDangerMinutes;
+        const bool timeShort      = minutesLeft > kRecordTimeDangerMinutes && minutesLeft <= kRecordTimeNoticeMinutes;
         if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
-            || ! status.copyProblems.isEmpty())
+            || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort)
         {
             // Most serious first: the banner shares its row with the header
             // buttons, and a long list can run out of room at the far end.
@@ -485,6 +490,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";
             if (samplesMissed) warn << "! " << status.missedSamples << " SAMPLES MISSED -- the take has gaps  ";
+            if (timeRunningOut) warn << "! " << recordTimeText (minutesLeft * 60.0) << " OF RECORD TIME LEFT -- a drive is nearly full  ";
+            if (timeShort) warn << recordTimeText (minutesLeft * 60.0) << " of record time left  ";
             warn << inputAlarms;
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
             if (backupFail)  warn << "! BACKUP WRITE FAILED -- primary recording continues  ";
