@@ -448,7 +448,7 @@ void MainComponent::editCutSelected (bool cut)
     for (int logical : selectedLogical)
     {
         const int phys = physicalFromLogical (engine, logical);
-        arr.add (snapshotStrip (engine, phys));
+        arr.add (zynforge::mixersnapshot::copyStrip (engine, phys));
     }
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("strips", juce::var (arr));
@@ -480,7 +480,7 @@ void MainComponent::editPasteSelected()
     for (int logical : selectedLogical)
     {
         const int phys = physicalFromLogical (engine, logical);
-        restoreStrip (engine, phys, (*arr)[i % arr->size()]);
+        zynforge::mixersnapshot::pasteStrip (engine, phys, (*arr)[i % arr->size()]);
         ++i;
     }
     commitMixerUndo ("Paste strip settings", before);

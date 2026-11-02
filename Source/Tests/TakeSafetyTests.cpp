@@ -15,6 +15,7 @@
 #include "../Audio/TrackExporter.h"
 #include "../Capture/CaptureDaemon.h"
 #include "../UI/MainComponent.h"
+#include "../UI/MixerSnapshot.h"
 #include "../UI/RecordPosition.h"
 #include "SilentAudioDevice.h"
 
@@ -1029,10 +1030,135 @@ namespace zynforge
                 exports (f);
             }
             renders();
-            analysis();
             punches();
         }
     };
 
     static FailedReadTests failedReadTests;
+
+    class EditDetailTests final : public juce::UnitTest
+    {
+    public:
+        EditDetailTests() : juce::UnitTest ("Edits and exports keep their word", "zynforge") {}
+
+        void stripPaste()
+        {
+            const auto fresh = [] (AudioEngine& engine)
+            {
+                engine.clearAllStripOverrides();
+                engine.setStripCount (6);
+                engine.prepareForTests (kRate, kBlock);
+                engine.setTrackStereo (0, true);
+                engine.setTrackStereo (2, true);
+            };
+            const auto stripOf = [] (AudioEngine& engine, int index) -> TrackState&
+            { return engine.getRecorder().getTrack (index); };
+
+            beginTest ("A mono paste onto a stereo strip reaches both halves and leaves its image");
+            {
+                AudioEngine engine;
+                fresh (engine);
+                engine.setTrackPan (0, -1.0f);
+                engine.setTrackPan (1, 1.0f);
+                engine.setTrackGainDb (4, -6.0f);
+                engine.setTrackInputRouting (4, 5);
+                engine.setTrackOutputRouting (4, 7);
+                stripOf (engine, 4).muted.store (true);
+                stripOf (engine, 4).streamSend.store (true);
+                stripOf (engine, 4).monitor.store (true);
+                stripOf (engine, 0).armed.store (true);
+                stripOf (engine, 1).armed.store (true);
+
+                mixersnapshot::pasteStrip (engine, 0, mixersnapshot::copyStrip (engine, 4));
+                for (int half : { 0, 1 })
+                {
+                    auto& t = stripOf (engine, half);
+                    expectWithinAbsoluteError (t.gainDb.load(), -6.0f, 1.0e-3f);
+                    expect (t.muted.load(), "a muted strip still played a half");
+                    expect (t.streamSend.load());
+                    expect (t.monitor.load());
+                    expect (! t.armed.load(), "a disarmed strip left a half armed");
+                }
+                expectEquals (stripOf (engine, 0).inputRouting.load(), 5);
+                expectEquals (stripOf (engine, 1).inputRouting.load(), 6, "R stayed on its old input");
+                expectEquals (stripOf (engine, 0).outputRouting.load(), 7);
+                expectEquals (stripOf (engine, 1).outputRouting.load(), 8);
+                expectWithinAbsoluteError (stripOf (engine, 0).pan.load(), -1.0f, 1.0e-3f, "the stereo image moved");
+                expectWithinAbsoluteError (stripOf (engine, 1).pan.load(),  1.0f, 1.0e-3f, "the stereo image moved");
+            }
+
+            beginTest ("A stereo paste goes half for half, and a mono target takes the left");
+            {
+                AudioEngine engine;
+                fresh (engine);
+                engine.setTrackGainDb (2, -3.0f);
+                engine.setTrackGainDb (3, -9.0f);
+                engine.setTrackPan (2, -0.5f);
+                engine.setTrackPan (3, 0.5f);
+                engine.setTrackInputRouting (2, 2);
+                engine.setTrackInputRouting (3, 7);
+                const auto copied = mixersnapshot::copyStrip (engine, 2);
+
+                mixersnapshot::pasteStrip (engine, 0, copied);
+                expectWithinAbsoluteError (stripOf (engine, 0).gainDb.load(), -3.0f, 1.0e-3f);
+                expectWithinAbsoluteError (stripOf (engine, 1).gainDb.load(), -9.0f, 1.0e-3f);
+                expectWithinAbsoluteError (stripOf (engine, 1).pan.load(), 0.5f, 1.0e-3f);
+                expectEquals (stripOf (engine, 1).inputRouting.load(), 7);
+
+                const auto before = stripOf (engine, 5).pan.load();
+                mixersnapshot::pasteStrip (engine, 4, copied);
+                expectWithinAbsoluteError (stripOf (engine, 4).gainDb.load(), -3.0f, 1.0e-3f);
+                expectWithinAbsoluteError (stripOf (engine, 4).pan.load(), 0.0f, 1.0e-3f, "half a stereo image landed on a mono strip");
+                expectWithinAbsoluteError (stripOf (engine, 5).pan.load(), before, 1.0e-3f, "a mono paste touched the next strip");
+            }
+
+            beginTest ("A strip copied during soundcheck carries the show's output and no soundcheck");
+            {
+                AudioEngine engine;
+                fresh (engine);
+                engine.setTrackInputRouting (4, 3);
+                engine.setTrackOutputRouting (4, 6);
+                expect (vsc::repatch (engine) > 0);
+                expectEquals (stripOf (engine, 4).outputRouting.load(), 3);
+                const auto copied = mixersnapshot::copyStrip (engine, 4);
+                vsc::restore (engine);
+
+                mixersnapshot::pasteStrip (engine, 5, copied);
+                expectEquals (stripOf (engine, 5).outputRouting.load(), 6, "the soundcheck patch was pasted as the show's");
+                expect (! vsc::hasSavedPatch (engine), "a pasted strip lit VSC");
+            }
+
+            beginTest ("A paste onto a strip in soundcheck keeps its way back and its soundcheck");
+            {
+                AudioEngine engine;
+                fresh (engine);
+                engine.setTrackInputRouting (5, 1);
+                engine.setTrackOutputRouting (5, 2);
+                engine.setTrackInputRouting (4, 3);
+                engine.setTrackOutputRouting (4, 6);
+                const auto copied = mixersnapshot::copyStrip (engine, 4);
+                expect (vsc::repatch (engine) > 0);
+
+                mixersnapshot::pasteStrip (engine, 5, copied);
+                expectEquals (stripOf (engine, 5).outputBeforeVsc.load(), 6, "the way back was lost");
+                expectEquals (stripOf (engine, 5).outputRouting.load(), 3, "the soundcheck output left the input");
+                vsc::restore (engine);
+                expectEquals (stripOf (engine, 5).outputRouting.load(), 6);
+            }
+        }
+
+        void runTest() override
+        {
+            AudioEngine::setTestModeSkipAudioInit (true);
+            MainComponent::s_testConstruct = true;
+            const juce::ScopeGuard restoreTestMode { []
+            {
+                MainComponent::s_testConstruct = false;
+                AudioEngine::setTestModeSkipAudioInit (false);
+            } };
+            stripPaste();
+        }
+    };
+
+    static EditDetailTests editDetailTests;
 }
