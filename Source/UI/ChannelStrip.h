@@ -66,6 +66,13 @@ namespace zynforge
         bool isSelected() const noexcept { return selected; }
         int  getStripIndex() const noexcept { return stripIndex; }
         bool isStereo()     const noexcept { return pairState != nullptr; }
+        // Every control, and a fader tall enough to be moved. Below kStackBelowW
+        // the buttons stack, which takes another 54 px.
+        static constexpr int kStackBelowW = 78;
+        static constexpr int heightNeededAt (int width) noexcept
+        {
+            return (width < kStackBelowW ? kHeightAboveFader + 54 : kHeightAboveFader) + kMinFaderH;
+        }
         // Asks the host; the strip stays live until the answer comes.
         void requestDelete() { if (deleteCb) deleteCb(); }
         std::function<void (bool /*additive*/)> onToggleSelection;
@@ -120,6 +127,8 @@ namespace zynforge
         static constexpr int kHeaderH  = kIdRowH + kNameRowH + 8;
         static constexpr int kFaderValueH = 14;
         static constexpr int kMinFaderW   = 18;
+        static constexpr int kMinFaderH   = 110;
+        static constexpr int kHeightAboveFader = 265;
 
         juce::Rectangle<int> contentArea() const;
         juce::Rectangle<int> numberBounds() const;

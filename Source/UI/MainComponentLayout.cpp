@@ -308,7 +308,10 @@ void MainComponent::resized()
         const int cols  = 12;
         const int rows  = (total + cols - 1) / cols;
         const int gridW = (pageW - (cols - 1) * gap) / cols;
-        const int rowH  = juce::jmax (200, (viewportArea.getHeight() - gap) / 2);
+        // Two rows when they fit. On a smaller window a row keeps what a strip
+        // needs, and the viewport scrolls to the rest.
+        const int rowH  = juce::jmax (zynforge::ChannelStrip::heightNeededAt (gridW),
+                                      (viewportArea.getHeight() - gap) / 2);
         const int containerH = rows * rowH + (rows - 1) * gap;
 
         stripsViewport.setScrollBarsShown (true, false);   // vertical scroll

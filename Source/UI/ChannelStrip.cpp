@@ -1079,7 +1079,7 @@ namespace zynforge
         // than 78 px so each toggle gets full width (~70+ px) at the
         // cost of one extra row of height. Engineers running at XS for
         // density still get a usable hit zone.
-        const bool stack = getWidth() < 78;
+        const bool stack = getWidth() < kStackBelowW;
 
         if (stack)
         {

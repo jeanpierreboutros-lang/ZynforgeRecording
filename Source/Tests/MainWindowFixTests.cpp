@@ -176,6 +176,7 @@ namespace zynforge
             combosFollowTheDevice();
             pairsTakeTwoChannels();
             questionsKeepTheirSession();
+            gridKeepsItsFaders();
         }
 
     private:
@@ -1029,6 +1030,54 @@ namespace zynforge
                 w.main.addChannelButton.onClick();
                 expectEquals (modalCount(), 0, "Add tracks opened under LOCK");
                 w.main.onLockToggled();
+            }
+        }
+
+        static juce::Slider* faderOf (zynforge::ChannelStrip& strip)
+        {
+            for (auto* child : strip.getChildren())
+                if (auto* slider = dynamic_cast<juce::Slider*> (child))
+                    if (slider->isVertical()) return slider;
+            return nullptr;
+        }
+
+        static juce::Button* muteOf (zynforge::ChannelStrip& strip)
+        {
+            for (auto* child : strip.getChildren())
+                if (auto* button = dynamic_cast<juce::Button*> (child))
+                    if (button->getButtonText() == "M" || button->getButtonText() == "MUTE") return button;
+            return nullptr;
+        }
+
+        void gridKeepsItsFaders()
+        {
+            beginTest ("GRID keeps a fader and a Mute button at every window size");
+            {
+                Window w (24);
+                const auto gridWas = w.main.mixerGridView;
+                w.main.mixerGridView = true;
+                w.main.rebuildStrips();
+                for (const auto& [width, height] : { std::pair (1120, 700), std::pair (1320, 820) })
+                {
+                    w.main.setSize (width, height);
+                    w.main.resized();
+                    for (auto& strip : w.main.strips)
+                    {
+                        auto* fader = faderOf (*strip);
+                        expect (fader != nullptr);
+                        if (fader != nullptr)
+                            expectGreaterOrEqual (fader->getHeight(), 100, "no fader to move at width " + juce::String (width));
+                        auto* mute = muteOf (*strip);
+                        expect (mute != nullptr);
+                        if (mute != nullptr)
+                            expectGreaterOrEqual (mute->getHeight(), 20, "the Mute button is a sliver at width " + juce::String (width));
+                    }
+                    expect (w.main.stripsContainer.getHeight() >= w.main.strips.back()->getBottom(),
+                            "the last row can't be scrolled to");
+                }
+                w.main.mixerGridView = gridWas;
+                w.main.setSize (1320, 820);
+                w.main.resized();
             }
         }
 
