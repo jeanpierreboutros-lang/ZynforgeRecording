@@ -1296,7 +1296,6 @@ namespace zynforge
 
         void smallRepairs()
         {
-
             beginTest ("A PATCH drag gives every strip its own channels");
             {
                 using Targets = std::vector<std::pair<int, int>>;
