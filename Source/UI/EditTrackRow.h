@@ -1984,7 +1984,10 @@ namespace zynforge
                         {
                             if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();
                         }
-                        else if (pg->onRowSelect)
+                        // Shift adds. It must not toggle a track already in the
+                        // range off: an empty selection means every track.
+                        else if (pg->onRowSelect
+                                 && ! (e.mods.isShiftDown() && pg->isTrackSelected && pg->isTrackSelected (index)))
                             pg->onRowSelect (index, e.mods.isShiftDown());
                     }
                     dragStartX          = e.x;

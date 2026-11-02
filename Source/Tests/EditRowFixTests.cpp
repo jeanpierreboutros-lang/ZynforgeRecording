@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <functional>
+#include <set>
 #include <CoreFoundation/CoreFoundation.h>
 
 namespace zynforge
@@ -159,6 +160,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            shiftRangeAdds();
             rangeBandSitsOnTheLane();
             liveEnvelopeMeetsThePlayhead();
             scanRepaintsOnceMore();
@@ -545,6 +547,39 @@ namespace zynforge
                     }
                 expectEquals (first, laneX (row, 0.90), "the band's left edge is off the lane's mapping");
                 expectEquals (last,  laneX (row, 0.95), "the band's right edge is off the lane's mapping");
+            }
+        }
+
+        void shiftRangeAdds()
+        {
+            beginTest ("Shift+range on a selected track keeps it selected");
+            {
+                Session s (2, { kRate, kRate });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                std::set<int> selected;
+                page.onRowSelect = [&selected] (int track, bool additive)
+                {
+                    if (! additive) { selected = { track }; return; }
+                    if (! selected.erase (track)) selected.insert (track);
+                };
+                page.isTrackSelected = [&selected] (int track) { return selected.count (track) > 0; };
+                page.getEditToolsBar()->setTool (EditToolsBar::Tool::Selector);
+                const auto rows = rowsOf (page);
+                expect (rows.size() == 2, "setup: two rows");
+                if (rows.size() == 2)
+                {
+                    const juce::Point<int> a (rows[0]->getHeaderWidth() + 200, 30), b = a + juce::Point<int> (100, 0);
+                    const int shiftDrag = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::shiftModifier;
+                    drag (*rows[0], a, b);
+                    expect (selected == std::set<int> { 0 }, "setup: the range selects its track");
+                    drag (*rows[0], a, b, shiftDrag);
+                    expect (selected == std::set<int> { 0 }, "Shift+range turned the track off: the range now covers every track");
+                    drag (*rows[1], a, b, shiftDrag);
+                    expect (selected == std::set<int> ({ 0, 1 }), "Shift+range no longer adds a track");
+                }
+                page.getEditToolsBar()->setTool (EditToolsBar::Tool::Smart);
             }
         }
 
