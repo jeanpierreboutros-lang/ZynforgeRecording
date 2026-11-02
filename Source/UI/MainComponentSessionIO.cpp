@@ -218,6 +218,7 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         toast.show ("A track's silent lead-in could not be written; it plays early until the drive has room",
                     Toast::Kind::Warning);
     if (! damaged.empty()) reportDamagedFiles (dir, damaged);
+    zynforge::MultitrackRecorder::resumeReportHashes (dir);
     return n;
 }
 

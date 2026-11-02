@@ -3135,6 +3135,7 @@ namespace zynforge
         report->setProperty ("passPreRollCutSamples", passPreRollCut);
         report->setProperty ("captureDeviceLost", reportedDeviceLoss);
         report->setProperty ("backupActive",   backupWasRunning);
+        if (backupWasRunning) report->setProperty ("backupRoot", bDir.getFullPathName());
         report->setProperty ("backupFailed",   reportedBackupFailure);
         report->setProperty ("primaryFailed",  reportedPrimaryFailure);
         report->setProperty ("punchSpliceFailed", reportedPunchFailure);
@@ -3380,6 +3381,97 @@ namespace zynforge
         const std::lock_guard<std::mutex> lock (state->publication);
         outGeneration = state->generation.fetch_add (1, std::memory_order_acq_rel) + 1;
         return { state, &state->generation };
+    }
+
+    // A quit ends the hash thread, in this process or the daemon's, and the
+    // report would stay pending for good. Opening the session picks it up from
+    // the file names the report holds. A take into this session cancels it, and
+    // a report that changed meanwhile is left as it is.
+    void MultitrackRecorder::resumeReportHashes (const juce::File& sessionDir,
+                                                 const std::function<void()>& finishedForTests,
+                                                 const std::function<void()>& beforePublishForTests)
+    {
+        const auto state = sessionReportState (sessionDir);
+        const auto file = sessionDir.getChildFile ("session.report.json");
+        if (state->runningScans.load (std::memory_order_acquire) > 0 || ! file.existsAsFile()) return;
+        const auto report = juce::JSON::parse (file);
+        if (! (bool) report.getProperty ("sha256Pending", false)) return;
+        const auto stoppedAt = report.getProperty ("stoppedAt", "").toString();
+        juce::int64 generation = 0;
+        const auto token = claimReportGeneration (sessionDir, generation);
+
+        state->runningScans.fetch_add (1, std::memory_order_acq_rel);
+        juce::Thread::launch ([state, token, generation, report, stoppedAt, sessionDir,
+                               finishedForTests, beforePublishForTests]
+        {
+            const juce::ScopeGuard done { [&]
+            {
+                state->runningScans.fetch_sub (1, std::memory_order_acq_rel);
+                if (finishedForTests) finishedForTests();
+            } };
+           #if JUCE_MAC
+            pthread_set_qos_class_self_np (QOS_CLASS_BACKGROUND, 0);
+           #endif
+            const auto current = [&] { return token->load (std::memory_order_acquire) == generation; };
+            hashing::ReadPolicy policy { current, 50 };
+            std::map<juce::String, juce::String> hashes;
+            bool failed = false;
+            const auto hashFolder = [&] (const juce::File& folder, const juce::var& names)
+            {
+                if (auto* list = names.getArray())
+                    for (const auto& name : *list)
+                    {
+                        if (! current()) return;
+                        const auto target = folder.getChildFile (name.toString());
+                        hashes[target.getFullPathName()] = hashing::fileSha256 (target, nullptr, policy);
+                        failed = failed || hashes[target.getFullPathName()].isEmpty();
+                    }
+            };
+            const auto copyAudio = [&sessionDir] (const juce::File& root)
+            { return root.getChildFile (sessionDir.getFileName()).getChildFile ("Audio Files"); };
+            const auto backupRoot = report.getProperty ("backupRoot", "").toString();
+            auto* tracks = report.getProperty ("tracks", {}).getArray();
+            if (tracks != nullptr)
+                for (const auto& track : *tracks)
+                {
+                    hashFolder (sessionDir.getChildFile ("Audio Files"), track.getProperty ("files", {}));
+                    if (backupRoot.isNotEmpty())
+                        hashFolder (copyAudio (juce::File (backupRoot)), track.getProperty ("backupFiles", {}));
+                    if (auto* mirrors = track.getProperty ("mirrors", {}).getArray())
+                        for (const auto& mirror : *mirrors)
+                            hashFolder (copyAudio (juce::File (mirror.getProperty ("root", "").toString())),
+                                        mirror.getProperty ("files", {}));
+                }
+            if (! current() || tracks == nullptr) return;
+            if (beforePublishForTests) beforePublishForTests();
+
+            const auto fill = [&] (juce::DynamicObject& owner, const juce::File& folder, const char* names, const char* shas)
+            {
+                juce::Array<juce::var> filled;
+                if (auto* list = owner.getProperty (names).getArray())
+                    for (const auto& name : *list)
+                        filled.add (hashes[folder.getChildFile (name.toString()).getFullPathName()]);
+                owner.setProperty (shas, filled);
+            };
+            editSessionReport (sessionDir, [&] (juce::DynamicObject& live)
+            {
+                if (live.getProperty ("stoppedAt").toString() != stoppedAt) return;
+                if (auto* liveTracks = live.getProperty ("tracks").getArray())
+                    for (auto& track : *liveTracks)
+                    {
+                        auto* t = track.getDynamicObject();
+                        if (t == nullptr) continue;
+                        fill (*t, sessionDir.getChildFile ("Audio Files"), "files", "sha256");
+                        if (backupRoot.isNotEmpty()) fill (*t, copyAudio (juce::File (backupRoot)), "backupFiles", "backupSha256");
+                        if (auto* mirrors = t->getProperty ("mirrors").getArray())
+                            for (auto& mirror : *mirrors)
+                                if (auto* m = mirror.getDynamicObject())
+                                    fill (*m, copyAudio (juce::File (m->getProperty ("root").toString())), "files", "sha256");
+                    }
+                live.setProperty ("sha256Pending", false);
+                live.setProperty ("sha256Failed", failed);
+            });
+        });
     }
 
     bool MultitrackRecorder::editSessionReport (const juce::File& sessionDir,

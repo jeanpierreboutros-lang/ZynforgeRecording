@@ -812,6 +812,9 @@ namespace zynforge
 
         // Cancel obsolete report jobs and exclude their publication while a
         // caller removes an idle session. Caller must first guard active capture.
+        static void resumeReportHashes (const juce::File& sessionDir,
+                                        const std::function<void()>& finishedForTests = {},
+                                        const std::function<void()>& beforePublishForTests = {});
         static bool deleteSessionAfterCancellingReports (const juce::File& sessionDir);
         // Runs `remove` once no report for this session can still be published.
         static bool removeSessionAfterCancellingReports (const juce::File& sessionDir,

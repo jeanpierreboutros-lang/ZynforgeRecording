@@ -1348,6 +1348,89 @@ namespace zynforge
                 expectEquals (main.engine.getMarkers().getSessionDir().getFullPathName(), before.getFullPathName());
             }
 
+            beginTest ("Hashes a quit cut short are finished when the session next opens");
+            {
+                const auto root = tempDir ("hashes");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                const auto mirror = root.getChildFile ("mirror");
+                const auto backup = root.getChildFile ("backup");
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (kRate, kBlock, 1);
+                    rec.getTrack (0).armed.store (true);
+                    rec.setBackupDirectory (backup);
+                    expect (rec.setMirrors ({ { mirror, CaptureFormat::Wav24 } }));
+                    expect (rec.startRecording (session));
+                    rec.waitForCopiesOpenForTests();
+                    Ramp ramp { rec };
+                    for (int b = 0; b < 8; ++b) { ramp.block(); rec.drainPendingForTests(); }
+                    rec.stopRecording();
+                }
+                std::atomic<bool> stop { false };
+                expect (MultitrackRecorder::waitForReportHashes (session, stop, true));
+
+                // The report as a quit leaves it.
+                const auto file = session.getChildFile ("session.report.json");
+                auto report = juce::JSON::parse (file);
+                const auto finished = report["tracks"][0]["sha256"][0].toString();
+                const auto backupHash = report["tracks"][0]["backupSha256"][0].toString();
+                const auto mirrorHash = report["tracks"][0]["mirrors"][0]["sha256"][0].toString();
+                expect (finished.isNotEmpty() && backupHash.isNotEmpty() && mirrorHash.isNotEmpty());
+                expect (MultitrackRecorder::editSessionReport (session, [] (juce::DynamicObject& live)
+                {
+                    live.setProperty ("sha256Pending", true);
+                    if (auto* tracks = live.getProperty ("tracks").getArray())
+                        for (auto& track : *tracks)
+                        {
+                            track.getDynamicObject()->setProperty ("sha256", juce::Array<juce::var>());
+                            track.getDynamicObject()->setProperty ("backupSha256", juce::Array<juce::var>());
+                            if (auto* mirrors = track.getProperty ("mirrors", {}).getArray())
+                                for (auto& one : *mirrors)
+                                    one.getDynamicObject()->setProperty ("sha256", juce::Array<juce::var>());
+                        }
+                }));
+
+                auto done = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder::resumeReportHashes (session, [done] { done->signal(); });
+                expect (done->wait (10000), "the hashes never finished");
+                report = juce::JSON::parse (file);
+                expect (! (bool) report["sha256Pending"]);
+                expect (! (bool) report["sha256Failed"]);
+                expectEquals (report["tracks"][0]["sha256"][0].toString(), finished);
+                expectEquals (report["tracks"][0]["backupSha256"][0].toString(), backupHash);
+                expectEquals (report["tracks"][0]["mirrors"][0]["sha256"][0].toString(), mirrorHash);
+            }
+
+            beginTest ("A report that changed under a resumed scan is left as it is");
+            {
+                const auto root = tempDir ("hash-race");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (kRate, kBlock, 1);
+                    rec.getTrack (0).armed.store (true);
+                    expect (rec.startRecording (session));
+                    Ramp ramp { rec };
+                    for (int b = 0; b < 8; ++b) { ramp.block(); rec.drainPendingForTests(); }
+                    rec.stopRecording();
+                }
+                std::atomic<bool> stop { false };
+                expect (MultitrackRecorder::waitForReportHashes (session, stop, true));
+                expect (MultitrackRecorder::editSessionReport (session, [] (juce::DynamicObject& live)
+                { live.setProperty ("sha256Pending", true); }));
+                auto done = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder::resumeReportHashes (session, [done] { done->signal(); }, [session]
+                {
+                    MultitrackRecorder::editSessionReport (session, [] (juce::DynamicObject& live)
+                    { live.setProperty ("stoppedAt", "a later take"); });
+                });
+                expect (done->wait (10000));
+                expect ((bool) juce::JSON::parse (session.getChildFile ("session.report.json"))["sha256Pending"],
+                        "a scan published over a newer report");
+            }
+
             beginTest ("A take file that closes short is a failed write, not a clean STOP");
             {
                 const auto root = tempDir ("short-close");
