@@ -8,7 +8,7 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 `main` adds Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus a full round of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). Automated results are in [testing.md](testing.md). **None of this work is installed on either Mac**, and none of it has been tried on real hardware: not on a real interface, a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
-Installed builds: the development Mac has `fffab44` (2026-11-02), which is this
+Installed builds: the development Mac has `d4a9a57` (2026-11-02), which is this
 README apart from later changes in `main`. It passes **1219 test groups in Release,
 ASan/UBSan, TSan and CI**, and has not run on real hardware. The Mac mini and the
 [universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg) still have

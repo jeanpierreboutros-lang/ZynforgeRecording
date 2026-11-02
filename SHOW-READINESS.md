@@ -2,7 +2,7 @@
 
 ## Decision as of 2026-11-02
 
-`main` is now the recorder and virtual soundcheck alone (see *Removed* in [CHANGELOG.md](CHANGELOG.md)). It carries the market-moves work (Scene Follow, desk macros, timestamped BWF, the dead-channel alarm, clock source in pre-flight, DAW and song export, the Twin Recorder link, Mac packaging) and a full round of punch, capture, session, editing, EDIT, network and playback fixes. **It is installed on the development Mac only (`fffab44`), and none of it has run on real hardware.** The mini and the current DMG are still `281c6c0` / protocol 4, and the decision below stands for that build, which has none of this.
+`main` is now the recorder and virtual soundcheck alone (see *Removed* in [CHANGELOG.md](CHANGELOG.md)). It carries the market-moves work (Scene Follow, desk macros, timestamped BWF, the dead-channel alarm, clock source in pre-flight, DAW and song export, the Twin Recorder link, Mac packaging) and a full round of punch, capture, session, editing, EDIT, network and playback fixes. **It is installed on the development Mac only (`d4a9a57`), and none of it has run on real hardware.** The mini and the current DMG are still `281c6c0` / protocol 4, and the decision below stands for that build, which has none of this.
 
 Do not take the new source to a show until it has been installed on purpose and has passed the hardware steps in *2026-11-02 cut*, *2026-11-01 fix-pass acceptance* and *Market-moves acceptance* in [FIELD-TEST.md](FIELD-TEST.md). The per-copy writers, the dead-channel alarm and the BWF patch all touch the capture path, and none of them has seen a real interface. The automated results in [testing.md](testing.md) say nothing about a real desk, a real stream loss or two real Macs.
 
