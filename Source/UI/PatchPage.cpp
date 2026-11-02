@@ -254,8 +254,7 @@ namespace zynforge
 
                             const auto& ls     = logical[(std::size_t) c];
                             const int trackIdx = ls.trackIndex;
-                            const int routed   = currentRoutingForTrack (trackIdx);
-                            const bool active  = holdsRow (ls, routed, row);
+                            const bool active  = holdsRow (ls, row);
                             if (active)
                             {
                                 auto& t = engine.getRecorder().getTrack (trackIdx);
@@ -263,8 +262,10 @@ namespace zynforge
                                                       ? juce::Colour ((juce::uint32) t.colourARGB.load())
                                                       : brand::stripColour (trackIdx);
                                 g.setColour (stripCol);
-                                // A pair's two dots are joined: one strip, two channels.
-                                if (ls.stereo && row == routed && row + 1 < numHw)
+                                // A pair's two dots are joined: one strip, two
+                                // channels. Dots a wrap has parted stay apart.
+                                if (ls.stereo && row + 1 < numHw && currentRoutingForTrack (trackIdx) == row
+                                    && currentRoutingForTrack (trackIdx + 1) == row + 1)
                                     g.fillRect (dot.getCentreX() - 4.0f, dot.getCentreY(), 8.0f, (float) L.rowH);
                                 g.fillEllipse (dot);
                                 g.setColour (brand::onSignal (stripCol));
@@ -365,28 +366,18 @@ namespace zynforge
                     if (col < 0 || col >= numStrips) return;
                     const auto& ls = logical[(std::size_t) col];
                     const int totalTracks = engine.getRecorder().getNumTracks();
-                    // setTrackStereo refuses during a take; the pans below must
-                    // not move then either (monitor and stream hear them).
-                    if (engine.isRecording()) { dragActive = false; return; }
+                    dragActive = false;
                     if (! ls.stereo)
                     {
                         // Going mono → stereo. Need a right partner.
                         if (ls.trackIndex + 1 >= totalTracks) return;
                         if (engine.getRecorder().getTrack (ls.trackIndex + 1).isStereo.load()) return;
-                        engine.setTrackStereo (ls.trackIndex, true);
-                        // Hard-pan L/R for the full stereo image. Matches the
-                        // mixer + import.
-                        engine.setTrackPan (ls.trackIndex,     -1.0f);
-                        engine.setTrackPan (ls.trackIndex + 1,  1.0f);
                     }
-                    else
+                    if (engine.linkStereoPair (ls.trackIndex, ! ls.stereo) && ! ls.stereo)
                     {
-                        engine.setTrackStereo (ls.trackIndex, false);
-                        // Back to mono -> recentre both halves.
-                        engine.setTrackPan (ls.trackIndex,     0.0f);
-                        engine.setTrackPan (ls.trackIndex + 1, 0.0f);
+                        const auto wrapped = engine.pairWrapNotice (ls.trackIndex);
+                        if (wrapped.isNotEmpty()) engine.getRemotes().showHostStatus (wrapped);
                     }
-                    dragActive = false;
                     repaint();
                     return;
                 }
@@ -402,8 +393,7 @@ namespace zynforge
                 if (row < 0 || row >= numHw)     { dragActive = false; return; }
 
                 const auto& ls = logical[(std::size_t) col];
-                const int current = currentRoutingForTrack (ls.trackIndex);
-                const int newVal  = holdsRow (ls, current, row) ? -1 : row;
+                const int newVal = holdsRow (ls, row) ? -1 : row;
                 setRoutingLogical (ls, newVal);
 
                 dragActive   = (newVal >= 0);
@@ -451,7 +441,7 @@ namespace zynforge
             {
                 // A stereo strip lights both of its rows, as it does its dots.
                 for (auto& ls : logical)
-                    if (holdsRow (ls, currentRoutingForTrack (ls.trackIndex), row)) return true;
+                    if (holdsRow (ls, row)) return true;
                 return false;
             }
 
@@ -486,11 +476,12 @@ namespace zynforge
                 hscroll.setVisible (contentW > viewW);
             }
 
-            // Whether a strip routed to `routed` occupies this row. Both channels
-            // of a pair do: the second is as taken as the first.
-            static bool holdsRow (const LogicalStrip& ls, int routed, int row) noexcept
+            // Whether a strip occupies this row. Both halves of a pair do, each
+            // where it really is: R need not be the row after L.
+            bool holdsRow (const LogicalStrip& ls, int row) const
             {
-                return routed >= 0 && (routed == row || (ls.stereo && routed + 1 == row));
+                return currentRoutingForTrack (ls.trackIndex) == row
+                    || (ls.stereo && currentRoutingForTrack (ls.trackIndex + 1) == row);
             }
 
             int currentRoutingForTrack (int trackIndex) const
@@ -505,18 +496,7 @@ namespace zynforge
             {
                 // Linked: clicking a dot in either matrix patches both
                 // sides of the strip's I/O to the same hardware channel.
-                // For stereo: L → hwChannel, R → hwChannel + 1.
-                engine.setTrackLinkedRouting (ls.trackIndex, hwChannel);
-                if (ls.stereo)
-                {
-                    // R goes to hwChannel+1. If that's past the device's channel
-                    // count (L patched to the LAST row), leave R UNROUTED (-1)
-                    // instead of silently pointing it at a nonexistent channel.
-                    const int numHw = isInput ? engine.getCurrentDeviceInputCount()
-                                              : engine.getCurrentDeviceOutputCount();
-                    const int rHw = (hwChannel < 0 || hwChannel + 1 >= numHw) ? -1 : hwChannel + 1;
-                    engine.setTrackLinkedRouting (ls.trackIndex + 1, rHw);
-                }
+                engine.setStripLinkedRouting (ls.trackIndex, ls.stereo, hwChannel, numRows());
             }
 
             AudioEngine& engine;

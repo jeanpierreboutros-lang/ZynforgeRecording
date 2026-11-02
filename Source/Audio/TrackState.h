@@ -223,4 +223,11 @@ namespace zynforge
             return strip % numInputs;
         return requested;
     }
+
+    // A stereo pair takes two channels, so the last one can't start it: a pair
+    // sent there lands on the last two.
+    inline int pairStartChannel (int requested, int numChannels) noexcept
+    {
+        return numChannels >= 2 && requested == numChannels - 1 ? requested - 1 : requested;
+    }
 }

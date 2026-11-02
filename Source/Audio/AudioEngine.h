@@ -353,6 +353,15 @@ namespace zynforge
         // physical channel N on both sides. PATCH page + per-strip combos
         // both call this so input and output stay linked.
         void  setTrackLinkedRouting (int channelIndex, int deviceCh);
+        // A strip's whole patch from one view, `numChannels` being what that view
+        // lists. A pair's R is always L + 1, so no view has its own rule.
+        void  setStripLinkedRouting (int firstTrack, bool stereo, int deviceCh, int numChannels);
+        // Links or unlinks a pair with the pans that go with it. False, with the
+        // pans untouched, when the engine refused: they reach monitor and stream.
+        bool  linkStereoPair (int leftIndex, bool link);
+        // Non-empty when a linked pair's R isn't the input after its L here,
+        // because this device ends before it.
+        juce::String pairWrapNotice (int leftIndex);
 
         int   getCurrentDeviceInputCount()  const;
         int   getCurrentDeviceOutputCount() const;

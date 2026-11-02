@@ -767,15 +767,11 @@ void MainComponent::rebuildStrips()
         // Stereo routing: L → device[N], R → device[N+1].
         auto inCb = [this, i, step] (int dev)
         {
-            engine.setTrackLinkedRouting (i, dev);
-            if (step == 2)
-                engine.setTrackLinkedRouting (i + 1, (dev < 0) ? -1 : dev + 1);
+            engine.setStripLinkedRouting (i, step == 2, dev, engine.getCurrentDeviceInputCount());
         };
         auto outCb = [this, i, step] (int dev)
         {
-            engine.setTrackLinkedRouting (i, dev);
-            if (step == 2)
-                engine.setTrackLinkedRouting (i + 1, (dev < 0) ? -1 : dev + 1);
+            engine.setStripLinkedRouting (i, step == 2, dev, engine.getCurrentDeviceOutputCount());
         };
 
         auto s = std::make_unique<ChannelStrip> (i, tL,

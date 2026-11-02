@@ -647,15 +647,13 @@ bool MainComponent::setStereoLink (int i, bool link)
     if (i < 0 || i + 1 >= engine.getRecorder().getNumTracks()) return false;
     if (link && engine.getRecorder().getTrack (i + 1).isStereo.load())
     { showStatus ("Unlink the neighbouring stereo pair first"); return false; }
-    engine.setTrackStereo (i, link);
-    // The engine refuses while a take is live; then the pans must not move
-    // either (they reach the monitor and stream mid-show).
-    if (engine.getRecorder().getTrack (i).isStereo.load() != link)
+    if (! engine.linkStereoPair (i, link))
     { showStatus ("Stop recording before linking or unlinking a stereo pair"); return false; }
-    // Newly linked stereo -> hard-pan L/R for the full image; unlinked back to
-    // mono -> recentre both halves so a mono strip isn't left stuck hard-right.
-    engine.setTrackPan (i,     link ? -1.0f : 0.0f);
-    engine.setTrackPan (i + 1, link ?  1.0f : 0.0f);
+    if (link)
+    {
+        const auto wrapped = engine.pairWrapNotice (i);
+        if (wrapped.isNotEmpty()) showStatus (wrapped);
+    }
     // Trigger a full rebuild on the next timer tick.
     lastTrackCount = -1;
     return true;

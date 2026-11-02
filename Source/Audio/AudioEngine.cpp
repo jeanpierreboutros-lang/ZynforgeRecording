@@ -2222,6 +2222,35 @@ namespace zynforge
         setTrackOutputRouting (channelIndex, deviceCh);
     }
 
+    void AudioEngine::setStripLinkedRouting (int firstTrack, bool stereo, int deviceCh, int numChannels)
+    {
+        if (stereo) deviceCh = pairStartChannel (deviceCh, numChannels);
+        setTrackLinkedRouting (firstTrack, deviceCh);
+        if (stereo) setTrackLinkedRouting (firstTrack + 1, deviceCh < 0 ? -1 : deviceCh + 1);
+    }
+
+    bool AudioEngine::linkStereoPair (int leftIndex, bool link)
+    {
+        if (leftIndex < 0 || leftIndex + 1 >= recorder.getNumTracks()) return false;
+        setTrackStereo (leftIndex, link);
+        if (recorder.getTrack (leftIndex).isStereo.load() != link) return false;
+        // Linked: hard L/R for the full image. Unlinked: recentre both, so a
+        // mono strip isn't left stuck hard right.
+        setTrackPan (leftIndex,     link ? -1.0f : 0.0f);
+        setTrackPan (leftIndex + 1, link ?  1.0f : 0.0f);
+        return true;
+    }
+
+    juce::String AudioEngine::pairWrapNotice (int leftIndex)
+    {
+        if (leftIndex < 0 || leftIndex + 1 >= recorder.getNumTracks()) return {};
+        const int left  = getEffectiveInputRouting (leftIndex);
+        const int right = getEffectiveInputRouting (leftIndex + 1);
+        if (left < 0 || right < 0 || right == left + 1) return {};
+        return "This device has no input after In " + juce::String (left + 1)
+             + " -- the right half hears In " + juce::String (right + 1) + " here";
+    }
+
     void AudioEngine::setTrackGainDb (int channelIndex, float dB)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;

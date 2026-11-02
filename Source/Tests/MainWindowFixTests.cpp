@@ -173,6 +173,7 @@ namespace zynforge
             cuesDuringATake();
             stripDeleteAsks();
             combosFollowTheDevice();
+            pairsTakeTwoChannels();
         }
 
     private:
@@ -829,6 +830,77 @@ namespace zynforge
                 w.engine().setDeviceInputCountForTests (8);
                 w.main.syncStripsWithEngine();
                 expect (! comboText (*w.main.strips[6], 0).contains ("(off)"), "a live channel kept its (off)");
+            }
+        }
+
+        void pairsTakeTwoChannels()
+        {
+            beginTest ("A pair sent to the last channel lands on the last two, in every view");
+            {
+                Window w (4);
+                w.engine().setTrackStereo (0, true);
+                auto& left = w.recorder().getTrack (0);
+                auto& right = w.recorder().getTrack (1);
+                w.engine().setStripLinkedRouting (0, true, 7, 8);
+                expectEquals (left.inputRouting.load(), 6);
+                expectEquals (right.inputRouting.load(), 7, "R has to have a channel, or RECORD picks one for it");
+                expectEquals (right.outputRouting.load(), 7);
+
+                w.engine().setStripLinkedRouting (0, true, 3, 8);
+                expectEquals (right.inputRouting.load(), 4);
+                w.engine().setStripLinkedRouting (0, true, -1, 8);
+                expectEquals (left.inputRouting.load(), -1);
+                expectEquals (right.inputRouting.load(), -1);
+
+                // Fewer outputs than inputs: the output count speaks for both sides.
+                w.engine().setStripLinkedRouting (0, true, 1, 2);
+                expectEquals (left.inputRouting.load(), 0);
+                expectEquals (right.inputRouting.load(), 1, "an output click cleared a free input");
+            }
+
+            beginTest ("A mono strip keeps the last channel, and a one-channel device still patches");
+            {
+                Window w (2);
+                w.engine().setStripLinkedRouting (1, false, 7, 8);
+                expectEquals (w.recorder().getTrack (1).inputRouting.load(), 7);
+                expectEquals (pairStartChannel (0, 1), 0);
+                expectEquals (pairStartChannel (-1, 8), -1);
+            }
+
+            beginTest ("A link that runs off the device says what R really hears");
+            {
+                Window w (4);
+                w.engine().setTrackInputRouting (2, 7);      // the silent device has 8 inputs
+                expect (w.main.setStereoLink (2, true));
+                const auto notice = w.engine().pairWrapNotice (2);
+                expect (notice.contains ("In 8") && notice.contains ("In 4"), notice);
+                expect (w.main.statusLabel.getText().contains ("no input after"), w.main.statusLabel.getText());
+                expect (w.engine().pairWrapNotice (0).isEmpty());
+            }
+
+            beginTest ("A link the engine refuses moves no pan, finalizing included");
+            {
+                Window w (2);
+                w.arm ({ 0 });
+                w.engine().setTrackPan (0, 0.25f);
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording());
+                expect (! w.engine().linkStereoPair (0, true));
+                expectWithinAbsoluteError (w.recorder().getTrack (0).pan.load(), 0.25f, 1.0e-4f);
+
+                struct Gate { juce::WaitableEvent entered, release; };
+                auto gate = std::make_shared<Gate>();
+                w.recorder().beforeFinalizationForTests = [gate] { gate->entered.signal(); gate->release.wait (5000); };
+                w.main.onStopClicked();
+                w.main.onStopClicked();
+                expect (gate->entered.wait (3000));
+                expect (w.engine().isCaptureFinalizing());
+                expect (! w.engine().linkStereoPair (0, true), "the engine let a link through finalization");
+                expectWithinAbsoluteError (w.recorder().getTrack (0).pan.load(), 0.25f, 1.0e-4f,
+                                           "a refused link moved the pan");
+                gate->release.signal();
+                expect (w.stopped());
+                w.recorder().beforeFinalizationForTests = {};
             }
         }
 
