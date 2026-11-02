@@ -4,7 +4,7 @@
 
 ## Description
 
-Each row has a fixed-width header on the left (colour wash, name, R / MUTE / SOLO mirrors, lane-mode picker, size handle) and a scrollable content pane on the right (waveform, automation lane overlay, clip handles, fades, crossfades, transient ticks, edit cursor, playhead, marker ticks). Painted at 24 Hz when visible, gated off when neither visible nor recording.
+Each row has a fixed-width header on the left (colour wash, name, R / MUTE / SOLO mirrors, lane-mode picker, size handle) and a scrollable content pane on the right (waveform, clip handles, fades, crossfades, edit cursor, playhead, marker ticks). Painted at 24 Hz when visible, gated off when neither visible nor recording.
 
 The row and shared timeline mapping/constants were extracted from the former `EditPage.cpp` god file into `EditTrackRow.h`. It remains a nested class for access/layout compatibility, but its 4,000+ lines no longer obscure the owning page implementation.
 
@@ -24,7 +24,7 @@ TrackRow (int trackIndex, bool isStereoPair,
 |---|---|---|
 | `trackIndex` | `int` | 0-based physical track index |
 | `isStereoPair` | `bool` | True if this row represents a stereo L+R pair |
-| `engine` | `AudioEngine&` | All audio + automation + clip queries route through it |
+| `engine` | `AudioEngine&` | All audio + clip queries route through it |
 | `formatManager` / `thumbnailCache` | refs | Waveform thumbnail rendering |
 
 ## Lane modes
@@ -33,16 +33,12 @@ The right pane's content adapts to a per-row `LaneMode`:
 
 | Mode | Shows | Editable via |
 |---|---|---|
-| `Waveform` | Audio thumbnail + clip handles | Clip drag (Move / TrimL / TrimR / FadeIn / FadeOut / Crossfade-mid), Smart / Trim / Grabber / Fade / Scrubber / Selector tools |
-| `Volume` / `Pan` | Automation lane with points, curves, tension handles | Add / Delete tools, drag points, drag tension handles |
-| `Mute` | Automation lane (snapped to 0/1, Hold curves) | Add / Delete |
-| `Click` | Beat-overlay grid (when a click track exists) | Read-only |
-| `Tempo` | Tempo map points | Add / Delete tempo changes |
+| `Waveform` | Audio thumbnail + clip handles | Clip drag (Move / TrimL / TrimR / FadeIn / FadeOut / Crossfade-mid), Smart / Trim / Grabber / Fade / Selector tools |
 | `Markers` | Marker tick stripe | Read-only — markers live on the time ruler |
 
-Switching mode: per-row VIEW menu in the header. Since 2026-10-29 a row draws, labels and edits only the lane its own VIEW shows (`currentLaneParam()` reads `laneMode`); a Waveform, Markers or Click lane never adds, moves or deletes automation or writes the tempo map, whatever the toolbar's last pick.
+Switching mode: per-row VIEW menu in the header.
 
-Clip-menu and take/comp actions apply to both halves of a stereo row and to each edit-group peer's OWN clip under the clicked one (`peerClipTargets`, `stripTracks()`). Waveforms are drawn through `drawThumbnailVisible`, which reads only the visible columns, so deep zoom stays responsive. Crossfades pair clips in timeline order. While the timeline is read-only (recording or finalizing), drags already in flight stop editing.
+Clip-menu actions apply to both halves of a stereo row and to each edit-group peer's OWN clip under the clicked one (`peerClipTargets`). The Input and Output combos call `setTrackLinkedRouting` on both sides, as MIXER and PATCH do. Waveforms are drawn through `drawThumbnailVisible`, which reads only the visible columns, so deep zoom stays responsive. Crossfades pair clips in timeline order. While the timeline is read-only (recording or finalizing), drags already in flight stop editing.
 
 ## Height presets
 
@@ -64,9 +60,9 @@ Clip-menu and take/comp actions apply to both halves of a stereo row and to each
 
 Recording arm changes go through the engine and are refused during a take. Locked clips are protected from split/ripple/crop movement. Reordering delegates to the shared track transaction so stereo pairs and media/state move together; successful topology changes clear old index-based undo and clipboard state. Empty initialized arrangements stay silent after reload/export, and pasted clips retain source-file/channel identity even on previously unrecorded tracks. These behaviors are covered by the September engine regressions; mouse/hit-test workflows still require native UI checks.
 
-Normalize and per-clip Consolidate launch the engine's asynchronous arrangement workers. The row disables itself while work is active, applies undo only after a successful current-session result, and uses a `SafePointer` for completion. Main-menu Strip Silence/Consolidate follow the same contract. Local or daemon recording and an existing session-I/O job disable destructive editing.
+Per-clip Consolidate launches the engine's asynchronous arrangement worker. The row disables itself while work is active, applies undo only after a successful current-session result, and uses a `SafePointer` for completion. Main-menu Consolidate follows the same contract. Local or daemon recording and an existing session-I/O job disable destructive editing.
 
-Reads `EditToolsBar::getTool()` and `AutomationToolbar::getTool()` to bias hit-testing:
+Reads `EditToolsBar::getTool()` to bias hit-testing:
 
 | Tool | Behaviour |
 |---|---|
@@ -75,16 +71,12 @@ Reads `EditToolsBar::getTool()` and `AutomationToolbar::getTool()` to bias hit-t
 | Trim | Edge drag = trim, body click = no-op |
 | Grabber | Body drag = move, edges = no-op |
 | Fade | Click a clip = fade dialog |
-| Scrubber | Drag = playhead chases mouse |
-| Add Point | Automation lane click drops a point at (samplePos, value) |
-| Delete Point | Automation lane click removes nearest point |
-| Select | Drag automation point or tension handle |
 
 ## Source and group bounds
 
 Right trims stop at the referenced source's length, including cross-track clips. Group drags calculate one legal movement before changing any peer so a timeline-zero or source boundary cannot alter relative spacing. Snapped drags retain pointer movement until it crosses a snap step. Resolve peer indices before mutating source clips.
 
-Grouped clipboard operations preserve track/time offsets, source channel, fades, gain and mute; all paste destinations are checked before insertion. Healing requires compatible source/gain/mute/fade properties and an unfaded internal join. Automation copy/paste preserves curve and tension, and point dragging must retain both.
+Grouped clipboard operations preserve track/time offsets, source channel, fades, gain and mute; all paste destinations are checked before insertion. Healing requires compatible source/gain/mute/fade properties and an unfaded internal join.
 
 Read failures propagate through rendering and consolidation. A missing explicit source must not fall back to the destination track or silently produce a successful export. See [the October regressions](../history/AUDIT_FIXES_2026-10-03.md).
 
@@ -93,14 +85,12 @@ Read failures propagate through rendering and consolidation. A missing explicit 
 Only one drag-in-progress at a time:
 
 - `draggingClipIdx + draggingClipModeInt` — clip-edit drag (Move / TrimL/R / Fade)
-- `draggingPointIdx` — automation point drag
-- `draggingTensionSegIdx` — automation curve-bend drag
 - `draggingXfadeAIdx` — crossfade midpoint drag (the outgoing clip's index; incoming = +1)
 - `reorderArmed` + `reorderActive` — strip reorder via swatch column
 
 ## Tokens used
 
-- **Colours**: `brand::stripColour(index)` for the row's personality wash; the same colour `lift`ed → `waveBg` (the light Pro Tools-style clip-fill) and `sink`ed → `waveDark` (the DARK waveform body drawn on top); `brand::meterHot` for the live-capture record envelope (dims to the channel colour on stop); `brand::accentStatus` for fade lines + edit cursor; `brand::accentSolo` for split markers + selection edges; `brand::engagedAmber` for transient ticks; `brand::brandOrange` for marker ticks; `brand::shadow::elev3` for the automation point border
+- **Colours**: `brand::stripColour(index)` for the row's personality wash; the same colour `lift`ed → `waveBg` (the light Pro Tools-style clip-fill) and `sink`ed → `waveDark` (the DARK waveform body drawn on top); `brand::meterHot` for the live-capture record envelope (dims to the channel colour on stop); `brand::accentStatus` for fade lines + edit cursor; `brand::accentSolo` for split markers + selection edges; `brand::brandOrange` for marker ticks
 - **Typography**: `brand::type::caption()` for lane labels; `brand::type::sectionTitle()` for the row's strip name; `brand::type::mono(10.5f, true)` for the cursor time readout
 - **Alpha**: `brand::alpha::dimmed` for the waveform-base under non-Waveform lane modes; `brand::alpha::prominent` for playhead overlay; `brand::alpha::muted` for crossfade band fill
 
@@ -112,25 +102,12 @@ At long time scales, the overview combines a short-window median body with thin 
 |---|---|---|
 | Pro Tools-style clip waveform | Wave pane | Waveform lane mode — light `waveBg = lift(stripColour)` clip block + DARK `waveDark = sink(waveBg)` thumbnail on top, source-level waveform with bounded display gain; clip gain scales the waveform |
 | Live-capture envelope | Wave pane, `meterHot` | While the row is armed + recording (incl. continue / punch) — placed by timeline fraction; dims to the channel colour on stop |
-| Detected transient ticks | Top of wave pane, 6 px engagedAmber strokes | When `engine.getTransientsForTrack(index+1)` returns non-empty |
 | Crossfade visualisation | Overlap between adjacent clips (in timeline order), paints X-shape | Always when two clips overlap |
 | Partial fade ramp | Fade diagonal | A piece of a split fade draws only its part of the original ramp |
-| Curve-aware automation path | Lane area | When points are present, walks segments + applies curve interpolation matching `automationValueAt` |
-| Tension drag handle | Segment midpoints | Non-Hold segments, ≥18 px wide, non-flat (start != end) |
-| Take chip "TAKE N / M" | Header, top-right | When the track has > 1 take |
 | Loop-region overlay | Wave pane, translucent blue | When `player.hasLoopRegion()` |
-
-## Do's and Don'ts
-
-| ✅ Do | ❌ Don't |
-|---|---|
-| Use `currentLaneParam()` to resolve the active lane | Inline another `toolbar->getParam() switch` — they go out of sync |
-| Route automation edits through `automationEditWrapper` | Mutate engine.add/remove directly — breaks undo |
-| Pre-cache the click row index via `setClickTrackPresent` | Look up "is this the click row" per paint |
 
 ## Accessibility
 
-- Automation points support keyboard previous/next, value nudge, and delete through the EDIT focus model
 - Tooltips on the per-row VIEW menu
 - Edit cursor doubles as visual focus indicator when no audio is loaded (engineer can drop markers on an empty timeline)
 

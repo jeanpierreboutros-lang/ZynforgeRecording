@@ -19,15 +19,14 @@ own validation and operating limits.
 
 - [`ChannelStrip`](ChannelStrip.md) — per-channel vertical strip (MIXER view)
 - [`MasterStrip`](MasterStrip.md) — master fader + stereo/mono toggle
-- [`FineFader`](FineFader.md) — app-wide click-drag-only level fader (channel / VCA / bus / master)
+- [`FineFader`](FineFader.md) — app-wide click-drag-only level fader (channel / master)
 - [`LedMeter`](LedMeter.md) — segmented forge-heat level meter (mixer + EDIT)
 - [`DialogChrome`](DialogChrome.md) — shared dialog chrome + control-styling helpers (title badge, fields, buttons)
-- [`AutomationToolbar`](AutomationToolbar.md) — EDIT-view automation editing toolbar
-- [`EditToolsBar`](EditToolsBar.md) — Smart / Selector / Trim / Grabber / Fade / Scrubber tool palette
+- [`EditToolsBar`](EditToolsBar.md) — Smart / Selector / Trim / Grabber / Fade tool palette
 - [`BigClockPanel`](BigClockPanel.md) — transport state + timer + armed-ready indicator
 - [`TransportBar`](TransportBar.md) — record / play / stop / skip buttons
 - [`EditTimeRuler`](EditTimeRuler.md) — two-strip ruler (markers / Min:Secs)
-- [`EditPage::TrackRow`](EditPageTrackRow.md) — the per-track EDIT row with waveform, automation lane, clip-edit handles
+- [`EditPage::TrackRow`](EditPageTrackRow.md) — the per-track EDIT row with waveform and clip-edit handles
 - [`Toast`](Toast.md) — non-modal feedback pill
 - [`SessionRecoveryDialog`](SessionRecoveryDialog.md) — orphan-session recovery modal
 - [`WelcomeDialog`](WelcomeDialog.md) — first-launch and File ▸ New flow
@@ -38,7 +37,7 @@ own validation and operating limits.
 
 ### TODO
 
-Other component files are mostly internal helpers (MiniSpectrum, TimelineStrip, StripColourPicker, etc.) and modal dialogs for specific settings flows (ClickSettings, ExportDialog, etc.). Document on demand when an engineer extends one of them; no value in pre-emptively covering every helper class.
+Other component files are mostly internal helpers (StripColourPicker, etc.) and modal dialogs for specific settings flows (ExportDialog, BackupMirrorDialog, etc.). Document on demand when an engineer extends one of them; no value in pre-emptively covering every helper class.
 
 ## Style
 

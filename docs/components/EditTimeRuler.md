@@ -13,11 +13,11 @@ A `juce::Component` (header-only, with its own timer — 4 Hz idle, 30 Hz while 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-There is deliberately **no Bars|Beats** strip — this is a live recorder, not a DAW; engineers navigate by wall-clock + markers (tempo math still drives the click track + cue ramps, it just isn't visualised here). Both rows share one X-axis scale, derived from the player's total length and the EDIT-view's horizontal zoom, **minus the wave viewport's horizontal scroll** so ticks stay glued to the audio when zoomed in and scrolled.
+There is deliberately **no Bars|Beats** strip — this is a live recorder, not a DAW; engineers navigate by wall-clock + markers. Both rows share one X-axis scale, derived from the player's total length and the EDIT-view's horizontal zoom, **minus the wave viewport's horizontal scroll** so ticks stay glued to the audio when zoomed in and scrolled.
 
 ## When to use
 
-One instance per `EditPage`, sized to a 64 px row above the track list. The host doesn't push state — the ruler reads everything (markers, tempo map, punch range, total length) directly from the `AudioEngine` ref it was constructed with.
+One instance per `EditPage`, sized to a 64 px row above the track list. The host doesn't push state — the ruler reads everything (markers, total length) directly from the `AudioEngine` ref it was constructed with.
 
 ## Constructor
 
@@ -27,7 +27,7 @@ EditTimeRuler (AudioEngine& engine);
 
 | Param | Type | Notes |
 |---|---|---|
-| `engine` | `AudioEngine&` | Read for markers, tempo map, total length, punch range |
+| `engine` | `AudioEngine&` | Read for markers and total length |
 
 ## Public methods
 
@@ -49,10 +49,6 @@ Adaptive tick density: a 1-2-5 progression (`[0.1 … 7200]` s) picks the labell
 
 At deep zoom, tick iteration is bounded to the visible viewport plus edge padding. Finalized sessions support up to 512× timeline zoom; active recording remains capped at 16×. The ruler and waveform rows must share the same span, inset and scroll offset at either limit.
 
-## Punch range overlay
-
-Overlays the Min:Secs scale as a translucent band when the engine has an automation punch range set (`engine.getAutomationPunchIn() / Out()`). Band brightens when PUNCH is armed on the toolbar, dims when only the range is stored. Shift-drag on the time scale defines the range; shift-click without drag clears it. The host disables ruler edit interception while recording, leaving navigation and zoom available.
-
 ## Tokens used
 
 - **Colours**: `brand::brandOrange` for marker flags, `brand::textSecondary` for major ticks + labels, `brand::textMuted` for mid ticks, `brand::edge` for minor ticks + separator lines, `brand::accentPlay` / `accentRecord` for the playhead, `brand::textPrimary` for the edit cursor, `brand::accentEdit` for the loop band, `brand::accentStatus` for the punch band, `brand::bgDeep` for background
@@ -64,12 +60,10 @@ Overlays the Min:Secs scale as a translucent band when the engine has an automat
 
 | ✅ Do | ❌ Don't |
 |---|---|
-| Let the ruler read engine state itself — it manages its own refresh | Push markers / tempo changes via setters — engine is source of truth |
-| Use shift-drag for punch range; engineer learns this once | Add more interaction modes on the ruler — it's a status surface plus marker-rename, not an edit tool |
+| Let the ruler read engine state itself — it manages its own refresh | Push markers via setters — engine is source of truth |
 | Push `setScrollOffsetX` whenever the wave viewport scrolls so ticks stay aligned | Map time→x without the scroll offset — ticks drift right of the audio when zoomed in (the "ruler bug") |
 
 ## Accessibility
 
 - Double-click marker → rename dialog with name field auto-focused + select-all
-- Shift-drag and shift-click are the only mouse interactions
 - Tick numerals are tabular mono for stable layout under scrolling

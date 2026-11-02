@@ -4,7 +4,7 @@
 
 ## Description
 
-A `juce::Component` that paints the strip background wash, header (colour swatch, name, REC/MON/MUTE/SOLO toggles), routing combos, fader + dB ruler, pan knob(s), peak meter, mini spectrum, and any state badges (VCA, BUS, Edit Group, R/W LED, Safe LED). Mutates `TrackState` directly for fast state, and uses callbacks for actions that need engine-level effects (rename, colour, gain, pan, routing).
+A `juce::Component` that paints the strip background wash, header (colour swatch, name, REC/MON/MUTE/SOLO toggles), routing combos, fader + dB ruler, pan knob(s), peak meter and the Edit Group badge. Mutates `TrackState` directly for fast state, and uses callbacks for actions that need engine-level effects (rename, colour, gain, pan, routing).
 
 ## When to use
 
@@ -16,9 +16,7 @@ Always one per logical strip in the MIXER view. Stereo pairs use a single `Chann
 |---|---|---|
 | Mono | `pairState == nullptr` | Single pan knob centred under fader |
 | Stereo pair | `pairState != nullptr` | Two pan knobs (L + R), independent |
-| Bus track | `state.isBus.load()` returns `true` | "BUS" amber chip top-right; no R/MON buttons; no input combo |
-| VCA-grouped | `state.vcaGroup.load() >= 0` | "V N" teal chip top-right |
-| Edit-group member | `state.editGroup.load() >= 0` | "EG N" warm-amber chip below VCA slot |
+| Edit-group member | `state.editGroup.load() >= 0` | "EG N" warm-amber chip |
 
 ## Constructor
 
@@ -40,7 +38,7 @@ ChannelStrip (int index, TrackState& state,
 | `state` | `TrackState&` | yes | Strip's mutable state. Atomics read/written by both UI and audio thread |
 | `onColourPicked` | `std::function<void(Colour)>` | no | Fires when the engineer picks a colour in the swatch popup |
 | `onRename` | `std::function<void(String)>` | no | Fires when the inline name editor commits |
-| `onGainDb` | `std::function<void(float dB)>` | no | Fires on fader move. Host typically writes automation + broadcasts to edit-group peers |
+| `onGainDb` | `std::function<void(float dB)>` | no | Fires on fader move. Host typically broadcasts to edit-group peers |
 | `onPan` / `onPanR` | `std::function<void(float)>` | no | Pan -1..+1 |
 | `onInputRouted` / `onOutputRouted` | `std::function<void(int)>` | no | Hardware channel index, or -1 for unrouted |
 | `stereoPartner` | `TrackState*` | no | When set, treats this as a stereo pair |
@@ -54,12 +52,11 @@ ChannelStrip (int index, TrackState& state,
 | `refreshRoutingSelection()` | Re-reads `TrackState`'s routing atomics; called on the 10 Hz timer to mirror PATCH-view changes |
 | `refreshAppearance()` | Re-reads name + colour; cached against `lastAppliedColour` so repeat ticks are no-ops |
 | `setSelected(bool)` / `isSelected()` | Multi-select highlight. Engineer toggles via shift/cmd-click |
-| `setAutomationLed(bool writeArmed, bool safeOn)` | Updates the 6 px R/W LED in the strip header. Host polls every 10 Hz |
 | `onAfterArmedToggle` etc. | Optional callbacks fired AFTER local state mutation. Host uses them to broadcast to edit-group peers |
 
 ## States
 
-The host wires `canChangeArm` to recording eligibility. If a take is active (local or daemon), an arm click is refused and the toggle is restored to the actual state; `onAfterArmedToggle` is not a way to bypass this guard. The recorder independently freezes capture participation at take start. Before a mirror-driven track-count shrink, the host condemns strips, edit rows and floating meters before releasing `TrackState` references.
+The host wires `canChangeArm` to recording eligibility. If a take is active (local or daemon), an arm click is refused and the toggle is restored to the actual state; `onAfterArmedToggle` is not a way to bypass this guard. The recorder independently freezes capture participation at take start. Before a track-count shrink, the host condemns strips, edit rows and floating meters before releasing `TrackState` references.
 
 | State | Visual | Behaviour |
 |---|---|---|
@@ -70,22 +67,19 @@ The host wires `canChangeArm` to recording eligibility. If a take is active (loc
 | Monitoring | "I" button glows `accentPlay` | Drives meter when not playing/recording |
 | Muted | "M" button glows `brandOrange`; lane content dimmed | |
 | Soloed | "S" button glows `accentSolo` | Other strips' mute behaviour controlled by engine |
-| Edit-group writing | Red 6 px LED below colour swatch | Polled from `engine.isAutomationWriting()` + `engine.isTrackAutomationSafe()` |
-| Automation Safe | Amber 6 px LED, replaces the red | Engine refuses every write while on |
 
 ## Tokens used
 
-- **Colours**: `brand::stripColour(index)` for personality wash, `brand::accentRecord` / `accentPlay` / `accentSolo` / `brandOrange` for signal state, `brand::featureEngaged` for VCA chip, `brand::accentVS` for Edit Group chip, `brand::alertAmber` for BUS chip
+- **Colours**: `brand::stripColour(index)` for personality wash, `brand::accentRecord` / `accentPlay` / `accentSolo` / `brandOrange` for signal state, `brand::accentVS` for Edit Group chip
 - **Typography**: `brand::type::caption()` for label text, `brand::type::channelName()` for the strip name
 - **Spacing**: `brand::space::xs` / `sm` / `md` between buttons and groups; some literal pixels still in the layout (audit TODO)
 - **Radius**: `brand::radius::sm` for chips, `brand::radius::md` for the swatch
 - **Alpha**: `brand::alpha::dimmed` for the swatch outline sheen
 
-## Stereo, input detection and sends
+## Stereo and input detection
 
 Stereo-link requests go through the host/engine, which refuses overlapping pairs. Explicit input None (`-1`) survives session restore. Auto-arm uses `TrackState::inputPeak`, not the display meter's mixed input/playback peak; a signal on either stereo half arms both when capture and LOCK permit it. Fader changes, including MCU changes addressed to the right half, must use engine gain setters to keep linked behavior consistent.
 
-Live monitored inputs feed aux sends. Post-fader sends honor strip and VCA mute in live and offline paths; pre-fader sends remain independent of that mute gate. Capture gain references persist separately from live console gain so reopening and playback compensation remain stable.
 
 ## Undo and FFT ownership
 
@@ -94,13 +88,13 @@ initial action records the already-applied state without replaying every strip's
 persistent setters; real undo/redo still applies the snapshot. This is distinct
 from the strip's immediate value update.
 
-Mini-spectrum and classifier consumers run on the message thread. Classification
-requires an acquire-published `fftBlockReady` snapshot and leaves release to the
-spectrum consumer; reading the producer-owned buffer while false is invalid.
+The strip's 10 Hz timer releases `fftBlockReady` so the audio thread can publish
+its next snapshot. The soundcheck report reads that snapshot on the same thread,
+through `SpectrumBands.h`; reading the producer-owned buffer while false is invalid.
 
 ## Right-click menu
 
-Surfaces the per-strip actions that don't fit in the strip header: Rename, Add channel, Delete channel, Link/Unlink stereo pair, Change/Reset colour, Reset name, Send to STREAM bus, Mute physical output, Automation Safe toggle, Assign to VCA submenu, Assign to Edit Group submenu, Send to bus submenu. STREAM-send and physical-output-mute state are session-authoritative: they persist in `session_mix.json`, reset on session replacement, and participate in mixer undo like the visible fader/pan/mute controls.
+Surfaces the per-strip actions that don't fit in the strip header: Rename, Add channel, Delete channel, Link/Unlink stereo pair, Change/Reset colour, Reset name, Send to STREAM bus, Mute physical output, Assign to Edit Group submenu. STREAM-send and physical-output-mute state are session-authoritative: they persist in `session_mix.json`, reset on session replacement, and participate in mixer undo like the visible fader/pan/mute controls.
 
 ## Accessibility
 
@@ -113,5 +107,4 @@ Surfaces the per-strip actions that don't fit in the strip header: Rename, Add c
 |---|---|
 | Read `TrackState` atomics for fast UI mirroring | Block the audio thread by holding a UI lock while audio reads |
 | Wire `on*Toggle` callbacks for edit-group broadcast | Mutate `state.editGroup` from inside ChannelStrip (host owns persistence) |
-| Use `setAutomationLed` from a slow (10 Hz) host poll | Animate the LED at 60 Hz — it's a status indicator, not a meter |
 | Listen to `onToggleSelection (additive)` for shift/cmd-click | Implement multi-select inside the strip — host owns the selection set |
