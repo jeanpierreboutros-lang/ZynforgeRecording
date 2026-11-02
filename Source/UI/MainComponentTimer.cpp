@@ -357,9 +357,11 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     // Capture locks timeline mutations, but navigation must remain available
     // to inspect a rolling take or a pending metadata save. Media jobs still
     // own the entire editor; metadata persistence only locks its mutations.
+    // JUCE delivers mouse events to a disabled component, so a job needs the
+    // read-only lock as well: it is what makes the rows click-through.
     if (editPage != nullptr)
     {
-        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0
+        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || sessionIoBusy.load()
                                              || captureMetadataPending || sessionLocked);
         const bool enableEditor = (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending) && ! sessionLocked;
         if (editPage->isEnabled() != enableEditor)
@@ -457,9 +459,13 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int mirrorsSkipped = status.mirrorsSkipped;
         const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
         const bool primaryNotAnswering = status.primaryDiskStale && status.source != "daemon-unavailable";
+        // Only a desk that was answering. One that never did may simply not
+        // answer probes, and a notice that is always up teaches nothing.
+        const bool consoleSilent = consoleLink.isConnected()
+                                && consoleLink.getHealth() == zynforge::ConsoleLink::Health::Silent;
         if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
-            || ! status.copyProblems.isEmpty() || status.preRollNotice.isNotEmpty())
+            || ! status.copyProblems.isEmpty() || consoleSilent || status.preRollNotice.isNotEmpty())
         {
             // Most serious first: the banner shares its row with the header
             // buttons, and a long list can run out of room at the far end.
@@ -482,6 +488,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             if (status.copyDiskStale) warn << "! A COPY'S DRIVE IS NOT ANSWERING -- its free space is unknown  ";
             for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent  ";
+            if (consoleSilent) warn << "CONSOLE NOT ANSWERING -- scene markers have stopped  ";
             warn << status.preRollNotice;
             activeCaptureWarning = warn.trim();
             statusLabel.setText (activeCaptureWarning, juce::dontSendNotification);
@@ -745,6 +752,20 @@ void MainComponent::serviceTimecodeChase()
         chaseParked  = false;
         return;
     }
+
+    // LOCK holds the transport against every remote, chase included: it neither
+    // starts, locates nor stops anything until the session is unlocked. A
+    // session job owns the player, so chase waits for that a tick at a time.
+    if (engine.areControlsLocked())
+    {
+        if (! chaseParked)
+        {
+            chaseParked = true;
+            showStatus ("Chase is holding: session is locked");
+        }
+        return;
+    }
+    if (sessionIoBusy.load()) return;
 
     const bool live = engine.isChaseLive();
     const auto parkReason = live ? engine.getChaseParkReason() : juce::String();

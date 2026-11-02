@@ -186,6 +186,9 @@ namespace zynforge
     {
         if (oneBasedIndex >= 1 && consoleCapture.load (std::memory_order_relaxed))
             capturedConsoleNames[oneBasedIndex] = name;
+        // The other console path refuses everything under LOCK. Names have no
+        // reason to differ from it, unlike a scene that marks a locked take.
+        if (engine.areControlsLocked()) return;
         const int i = oneBasedIndex - 1;
         if (i >= 0 && i < engine.getRecorder().getNumTracks())
             engine.setTrackName (i, name);
@@ -225,6 +228,7 @@ namespace zynforge
         f.seekLocked   = engine.getPlayer().isSeekLocked();
         f.sessionBusy  = isSessionBusy();
         f.playerLoaded = engine.getPlayer().isLoaded();
+        f.punchRange   = engine.getPunchRange();
         return f;
     }
 
@@ -232,6 +236,21 @@ namespace zynforge
     {
         if (engine.isRecording()) return "capture is running";
         return scenefollow::locateRefusal (sceneFacts());
+    }
+
+    juce::String RemoteControl::deskLocateRefusal (juce::int64 target) const
+    {
+        if (const auto why = deskLocateRefusal(); why.isNotEmpty()) return why;
+        return engine.getPunchRange().contains (target) ? juce::String (scenefollow::kInsidePunchRange)
+                                                        : juce::String();
+    }
+
+    void RemoteControl::noteJogHeld()
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        if (now - lastJogNoticeMs < 1000) return;
+        lastJogNoticeMs = now;
+        showHostStatus ("Surface jog held -- " + juce::String (scenefollow::kInsidePunchRange));
     }
 
     void RemoteControl::locate (juce::int64 samplePosition)

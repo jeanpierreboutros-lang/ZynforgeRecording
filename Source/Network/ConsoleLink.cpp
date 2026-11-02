@@ -1,6 +1,7 @@
 #include "ConsoleLink.h"
 #include "ConsoleLog.h"
 #include "../Audio/AtomicFile.h"
+#include "../Audio/DisplayText.h"
 
 #include <cmath>
 
@@ -14,8 +15,9 @@ namespace zynforge
         if (k == profile.kind) return;
         disconnect();                       // addresses / port / transport all change
         profile = consoleProfileFor (k);
+        cancelDeskReads();
         stagePatch.clear();
-        deskOnCardReturns = false;
+        sessionsOnSoundcheck.clear();
         gains.clear();
         patch = Patch::Unknown;
         dialectConfirmed = false;
@@ -56,14 +58,21 @@ namespace zynforge
         host      = address;
         connectedPort = usePort;
         connected = true;
-        patch     = Patch::Unknown;
         dialectConfirmed = false;
+        deskAsked = false;
+        connectedAtMs = juce::Time::currentTimeMillis();
+        lastAnswerMs = 0;
+        reportedHealth = Health::NotAnswered;
+        neverAnsweredReported = false;
 
         // HANDSHAKE. Send the dialect's probe; a parseable reply confirms the
         // address model and unlocks the write tier. Nothing blocks on it -- the
         // link is immediately usable read-only either way.
         if (profile.dialect.probe)
+        {
             sendMessage (profile.dialect.probe());
+            nextProbeMs = connectedAtMs + kProbeMs;
+        }
         // Ask for pushed updates (names / scene changes) where supported.
         // Subscriptions EXPIRE (the X32's /xremote lasts ~10 s), so this is the
         // first of a repeating series -- see startHeartbeat.
@@ -75,8 +84,10 @@ namespace zynforge
         startHeartbeat();
 
         if (onStatus)
-            onStatus (profile.displayName + " link up: " + address + ":"
-                      + juce::String (usePort) + "  (" + transport->getName() + ")");
+            onStatus (profile.displayName + " link open to " + address + ":"
+                      + juce::String (usePort) + "  (" + transport->getName() + ") -- "
+                      + (profile.dialect.probe ? "waiting for the desk to answer"
+                                               : "this link can't tell whether a desk is there"));
         return true;
     }
 
@@ -93,10 +104,27 @@ namespace zynforge
         connected = false;
         dialectConfirmed = false;
         host.clear();
-        patch = Patch::Unknown;
-        pendingPatchQueries = 0;
-        patchDeadlineMs = gainDeadlineMs = nextSubscribeMs = 0;
+        cancelDeskReads();
+        nextSubscribeMs = nextProbeMs = lastAnswerMs = connectedAtMs = 0;
         stopTimer();
+    }
+
+    // Nothing is listening any more. A capture left open would finish later
+    // from pushed updates, and stands in the way of loading a saved one.
+    void ConsoleLink::cancelDeskReads()
+    {
+        patchRead = PatchRead::None;
+        deskRead.clear();
+        patchDeadlineMs = 0;
+        gainCheckPending = false;
+        gainReadBack.clear();
+        gainDeadlineMs = 0;
+        if (expectedGainReplies > 0)
+        {
+            expectedGainReplies = 0;
+            gains.clear();
+            gainCaptureComplete = false;
+        }
     }
 
     void ConsoleLink::sendMessage (const ConsoleMessage& m)
@@ -129,6 +157,16 @@ namespace zynforge
                       + ": " + what + " blocked -- the console didn't answer the "
                       "handshake, so its control dialect is unconfirmed. Read-only.");
         return false;
+    }
+
+    bool ConsoleLink::guardDeskChange (const char* what)
+    {
+        if (takeIsHoldingDesk())
+        {
+            if (onStatus) onStatus ("Console changes wait until the take has stopped");
+            return false;
+        }
+        return guardWrite (what);
     }
 
     void ConsoleLink::setSendHook (std::function<void (const juce::OSCMessage&)> hook)
@@ -192,33 +230,27 @@ namespace zynforge
                 : profile.displayName + ": repatch over the wire isn't supported.");
             return;
         }
-        if (! guardWrite ("repatch")) return;
+        if (! guardDeskChange ("repatch")) return;
 
-        // A reconnect cannot tell whether the desk still has card returns.
-        // Keep the saved show routing until it has explicitly been restored.
+        // Reading the card returns as a show patch is how the real one is lost.
         if (isOnSoundcheckPatch())
         {
-            if (onStatus) onStatus ("Saved stage patch retained -- restore STAGE before entering soundcheck again.");
+            if (onStatus) onStatus ("Saved stage patch retained -- go back to STAGE, or check the desk's "
+                                    "patch if it was put back by hand.");
             return;
         }
 
         // Phase 1: query the current routing of every block. The replies stash
         // the show patch; once all are in, phase 2 flips the blocks to card.
-        stagePatch.clear();
-        pendingPatchQueries = profile.numInBlocks;
-        for (int b = 0; b < profile.numInBlocks; ++b)
-            if (profile.dialect.queryInBlock)
-                sendMessage (profile.dialect.queryInBlock (b));
+        startPatchRead (PatchRead::Stash);
         if (onStatus) onStatus ("Reading console patch...");
-        patchDeadlineMs = juce::Time::currentTimeMillis() + kPatchTimeoutMs;
-        startHeartbeat();    // abort if a routing reply is lost
     }
 
     void ConsoleLink::exitSoundcheck()
     {
         if (! connected || ! profile.canRepatch) return;
-        if (! guardWrite ("repatch")) return;
-        if (stagePatch.size() < (size_t) profile.numInBlocks)
+        if (! guardDeskChange ("repatch")) return;
+        if (! hasStagePatch())
         {
             if (onStatus) onStatus ("No stashed stage patch -- enter soundcheck first.");
             return;
@@ -226,11 +258,141 @@ namespace zynforge
         for (const auto& [block, value] : stagePatch)
             if (profile.dialect.setInBlock)
                 sendMessage (profile.dialect.setInBlock (block, value));
+        // UDP gives no receipt, and a desk that isn't there looks exactly like
+        // one that took it. Only the desk's own answer ends SOUNDCHECK.
+        startPatchRead (PatchRead::Restore);
+        if (onStatus) onStatus ("Sent the STAGE patch -- waiting for the desk to confirm it...");
+    }
+
+    void ConsoleLink::checkDeskPatch()
+    {
+        if (! connected) return;
+        if (! profile.canRepatch)
+        {
+            if (onStatus) onStatus (profile.displayName + " cannot report its routing to this app.");
+            return;
+        }
+        deskAsked = true;
+        startPatchRead (PatchRead::Check);
+        if (onStatus) onStatus ("Reading the desk's patch...");
+    }
+
+    void ConsoleLink::startPatchRead (PatchRead kind)
+    {
+        patchRead = kind;
+        deskRead.clear();
+        for (int b = 0; b < profile.numInBlocks; ++b)
+            if (profile.dialect.queryInBlock)
+                sendMessage (profile.dialect.queryInBlock (b));
+        patchDeadlineMs = juce::Time::currentTimeMillis() + kPatchTimeoutMs;
+        startHeartbeat();    // abort if a routing reply is lost
+    }
+
+    void ConsoleLink::finishPatchRead()
+    {
+        const auto finished = patchRead;
+        patchRead = PatchRead::None;
+        patchDeadlineMs = 0;
+        switch (finished)
+        {
+            case PatchRead::Stash:   finishPatchStash();   break;
+            case PatchRead::Restore: finishPatchRestore(); break;
+            case PatchRead::Check:   finishPatchCheck();   break;
+            case PatchRead::None:    break;
+        }
+    }
+
+    // What the screen must keep saying is the state as it stands: nothing here
+    // moved it, because silence proves nothing about where a desk is.
+    void ConsoleLink::patchReadTimedOut()
+    {
+        const auto timedOut = patchRead;
+        const auto heard = juce::String ((int) deskRead.size()) + " of " + juce::String (profile.numInBlocks);
+        patchRead = PatchRead::None;
+        deskRead.clear();
+        if (! onStatus) return;
+        switch (timedOut)
+        {
+            case PatchRead::Stash:
+                onStatus ("Console patch read timed out (lost reply) -- try again.");
+                break;
+            case PatchRead::Restore:
+                onStatus ("The desk did not confirm STAGE (" + heard + " input blocks answered), so it still "
+                          "shows as on SOUNDCHECK. Check the connection and go back to STAGE again.");
+                break;
+            case PatchRead::Check:
+                onStatus ("The desk did not answer (" + heard + " input blocks), so its patch is not known"
+                          + (patch == Patch::Soundcheck ? ". It still shows as on SOUNDCHECK." : "."));
+                break;
+            case PatchRead::None:
+                break;
+        }
+    }
+
+    void ConsoleLink::finishPatchRestore()
+    {
+        int wrong = 0;
+        for (const auto& [block, value] : stagePatch)
+            if (deskRead[block] != value) ++wrong;
+        deskRead.clear();
+        if (wrong > 0)
+        {
+            if (onStatus) onStatus ("The desk did not take the STAGE patch on " + juce::String (wrong) + " of "
+                                    + juce::String (profile.numInBlocks) + " input blocks, so it still shows as "
+                                    "on SOUNDCHECK. Go back to STAGE again, or set the routing on the desk.");
+            return;
+        }
         patch = Patch::Stage;
-        deskOnCardReturns = false;
         const bool saved = persistPatch();
-        if (onStatus) onStatus (saved ? "Console repatched to STAGE (restored show patch)."
-                                      : "Console repatched to STAGE, but the session could not be updated.");
+        if (onStatus) onStatus (saved ? "Console back on STAGE, confirmed by the desk (restored show patch)."
+                                      : "Console back on STAGE, confirmed by the desk, but the session could not be updated.");
+    }
+
+    void ConsoleLink::finishPatchCheck()
+    {
+        // A show patch can use the card on purpose, so only a block that has
+        // moved away from the saved patch counts as a soundcheck.
+        int onCard = 0;
+        for (const auto& [block, value] : deskRead)
+        {
+            const auto saved = stagePatch.find (block);
+            if (value == profile.cardBlockFirst + block
+                && (saved == stagePatch.end() || saved->second != value))
+                ++onCard;
+        }
+        deskRead.clear();
+
+        const auto wasOnSoundcheck = patch == Patch::Soundcheck;
+        if (onCard == 0)
+        {
+            patch = Patch::Stage;
+            const bool saved = ! wasOnSoundcheck || persistPatch();
+            if (onStatus) onStatus (! wasOnSoundcheck ? juce::String ("The desk is on its stage inputs.")
+                                    : saved ? "The desk is on its stage inputs, so SOUNDCHECK is cleared. Nothing was written to it."
+                                            : "The desk is on its stage inputs, but the session could not be updated.");
+            return;
+        }
+        const auto blocks = juce::String (onCard) + " of " + juce::String (profile.numInBlocks) + " input blocks";
+        if (! hasStagePatch())
+        {
+            patch = Patch::Unknown;
+            if (onStatus) onStatus ("The desk has card returns on " + blocks + ", and this session has no show patch "
+                                    "to go back to. Open the session that saved it, or set the routing on the desk.");
+            return;
+        }
+        patch = Patch::Soundcheck;
+        if (! wasOnSoundcheck) persistPatch();
+        if (onStatus) onStatus ("The desk has card returns on " + blocks + ".");
+    }
+
+    juce::String ConsoleLink::deskPatchText() const
+    {
+        if (! profile.canRepatch)
+            return profile.hasNativeVsc ? "not visible here: check the console's own Virtual Soundcheck"
+                                        : "not visible here: this link reads no routing";
+        if (isOnSoundcheckPatch())  return "on SOUNDCHECK (card returns)";
+        if (patch == Patch::Stage)  return "stage inputs";
+        return "not read from the desk";
     }
 
     void ConsoleLink::captureGains (int numHeadamps)
@@ -247,6 +409,7 @@ namespace zynforge
 
         gains.clear();
         gainCaptureComplete = false;
+        gainCheckPending = false;
         expectedGainReplies = juce::jlimit (0, 128, numHeadamps);
         for (int i = 0; i < expectedGainReplies; ++i)
             if (profile.dialect.queryHeadAmp)
@@ -260,7 +423,7 @@ namespace zynforge
     void ConsoleLink::restoreGains()
     {
         if (! connected || ! profile.canCaptureGains) return;
-        if (! guardWrite ("head-amp restore")) return;
+        if (! guardDeskChange ("head-amp restore")) return;
         if (gains.empty())
         {
             if (onStatus) onStatus ("No captured gains to restore.");
@@ -274,8 +437,32 @@ namespace zynforge
         for (const auto& [idx, value] : gains)
             if (profile.dialect.setHeadAmp)
                 sendMessage (profile.dialect.setHeadAmp (idx, value));
-        if (onStatus) onStatus (juce::String ((int) gains.size())
-                                + " head-amp gains restored to show settings.");
+
+        // As with the patch: a restore counts when the desk reads it back.
+        gainReadBack.clear();
+        gainCheckPending = true;
+        for (const auto& entry : gains)
+            if (profile.dialect.queryHeadAmp)
+                sendMessage (profile.dialect.queryHeadAmp (entry.first));
+        gainDeadlineMs = juce::Time::currentTimeMillis() + kGainTimeoutMs;
+        startHeartbeat();
+        if (onStatus) onStatus ("Sent " + counted ((int) gains.size(), "head-amp gain")
+                                + " -- waiting for the desk to confirm them...");
+    }
+
+    void ConsoleLink::finishGainCheck()
+    {
+        gainCheckPending = false;
+        gainDeadlineMs = 0;
+        int wrong = 0;
+        for (const auto& [idx, value] : gainReadBack)
+            if (std::abs (gainToDb (value) - gainToDb (gains[idx])) > kGainMatchDb) ++wrong;
+        const int total = (int) gains.size();
+        gainReadBack.clear();
+        if (onStatus) onStatus (wrong == 0
+            ? counted (total, "head-amp gain") + " restored to show settings, confirmed by the desk."
+            : "The desk did not take " + juce::String (wrong) + " of " + counted (total, "head-amp gain")
+              + ". Restore again, or set them on the desk.");
     }
 
     void ConsoleLink::handleMessage (const ConsoleMessage& m)
@@ -289,6 +476,7 @@ namespace zynforge
                 return;
 
             case ConsoleEvent::Type::HandshakeOk:
+                lastAnswerMs = juce::Time::currentTimeMillis();
                 if (! dialectConfirmed)
                 {
                     dialectConfirmed = true;
@@ -313,13 +501,15 @@ namespace zynforge
             // ── WRITE-TIER REPLIES ───────────────────────────────────────
             case ConsoleEvent::Type::InputBlockRouting:
             {
-                if (pendingPatchQueries <= 0) return;
+                if (patchRead == PatchRead::None) return;
                 // Range-check the off-wire index, exactly like HeadAmpGain below.
                 // Without it a junk index became a stagePatch key, and
                 // exitSoundcheck later wrote that garbage back to the desk --
                 // the one thing the whole write-gate design exists to prevent.
-                if (ev.index < 0 || ev.index >= profile.numInBlocks) return;
-                stagePatch[ev.index] = ev.intValue;
+                // A value out of range is refused here rather than at the next
+                // load: the desk must not move on a way back that won't reload.
+                if (ev.index < 0 || ev.index >= profile.numInBlocks || ! isRoutingValue (ev.intValue)) return;
+                deskRead[ev.index] = ev.intValue;
                 // Completion is "every DISTINCT block is stashed", not "N replies
                 // arrived". We subscribe to pushed updates on connect, so an
                 // unsolicited routing message during the read window used to
@@ -328,26 +518,28 @@ namespace zynforge
                 // anyway, and exitSoundcheck then refused to restore -- leaving
                 // the desk on card returns with the show patch nowhere but in the
                 // engineer's head.
-                if ((int) stagePatch.size() >= profile.numInBlocks)
-                {
-                    pendingPatchQueries = 0;
-                    patchDeadlineMs = 0;
-                    finishPatchStash();
-                }
+                if ((int) deskRead.size() >= profile.numInBlocks) finishPatchRead();
                 return;
             }
 
             case ConsoleEvent::Type::HeadAmpGain:
             {
-                if (expectedGainReplies <= 0) return; // preserve the completed capture snapshot
-                // Only the headamps queried by this capture can complete it.
-                // Subscription updates for other headamps are not replies.
-                if (ev.index < 0 || ev.index >= expectedGainReplies) return;
                 // The raw wire value is normalised 0..1 and restoreGains sends
                 // it back to the desk verbatim. A NaN is no reading at all
                 // (the capture stays incomplete and cannot be restored);
                 // anything else is clamped to the wire range, as loadJson does.
                 if (! std::isfinite (ev.value)) return;
+                if (gainCheckPending)
+                {
+                    if (gains.count (ev.index) == 0) return;
+                    gainReadBack[ev.index] = juce::jlimit (0.0f, 1.0f, ev.value);
+                    if (gainReadBack.size() >= gains.size()) finishGainCheck();
+                    return;
+                }
+                if (expectedGainReplies <= 0) return; // preserve the completed capture snapshot
+                // Only the headamps queried by this capture can complete it.
+                // Subscription updates for other headamps are not replies.
+                if (ev.index < 0 || ev.index >= expectedGainReplies) return;
                 gains[ev.index] = juce::jlimit (0.0f, 1.0f, ev.value);
                 if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
                 {
@@ -366,24 +558,35 @@ namespace zynforge
     // disk: after a crash this file is all that knows the show patch.
     void ConsoleLink::finishPatchStash()
     {
+        // The read can land after RECORD, and a press said nothing about that.
+        if (! guardDeskChange ("repatch"))
+        {
+            deskRead.clear();
+            return;
+        }
+
         bool alreadyOnCard = true;
-        for (const auto& [block, value] : stagePatch)
+        for (const auto& [block, value] : deskRead)
             alreadyOnCard = alreadyOnCard && value == profile.cardBlockFirst + block;
         if (alreadyOnCard)
         {
             // Saving this as the show patch is how the real one gets lost for good.
+            deskRead.clear();
             stagePatch.clear();
+            patch = Patch::Unknown;
             if (onStatus) onStatus ("The console is already on card returns, so there is no show patch to save. "
                                     "Open the session that saved it, or set the routing on the desk.");
             return;
         }
 
-        deskOnCardReturns = true;
+        const auto stageBefore = patch;
+        stagePatch = std::move (deskRead);
+        deskRead.clear();
         patch = Patch::Soundcheck;
+        deskAsked = true;
         if (! persistPatch())
         {
-            deskOnCardReturns = false;
-            patch = Patch::Unknown;
+            patch = stageBefore;
             stagePatch.clear();
             if (onStatus) onStatus ("Could not save the show patch to the session -- console left as it was.");
             return;
@@ -432,23 +635,36 @@ namespace zynforge
             nextSubscribeMs = now + kResubscribeMs;
         }
 
+        // 4. Ask again, then say what the answers add up to. First, so a timed-out
+        //    restore below is the line left on screen.
+        if (nextProbeMs != 0 && now >= nextProbeMs)
+        {
+            sendMessage (profile.dialect.probe());
+            nextProbeMs = now + kProbeMs;
+        }
+        reportHealthChange (now);
+
         // 2. Reply-timeout watchdogs. A query is still outstanding past its
         //    deadline -> a reply was lost; abort cleanly so the UI doesn't sit
         //    forever on "Reading console patch..." / "Capturing head-amp gains".
         if (patchDeadlineMs != 0 && now >= patchDeadlineMs)
         {
             patchDeadlineMs = 0;
-            if (pendingPatchQueries > 0)
-            {
-                pendingPatchQueries = 0;
-                stagePatch.clear();
-                if (onStatus) onStatus ("Console patch read timed out (lost reply) -- try again.");
-            }
+            patchReadTimedOut();
         }
         if (gainDeadlineMs != 0 && now >= gainDeadlineMs)
         {
             gainDeadlineMs = 0;
-            if (expectedGainReplies > 0)
+            if (gainCheckPending)
+            {
+                gainCheckPending = false;
+                if (onStatus) onStatus ("The desk did not confirm the head-amp restore ("
+                                        + juce::String ((int) gainReadBack.size()) + " of "
+                                        + juce::String ((int) gains.size())
+                                        + " answered). Check the connection and restore again.");
+                gainReadBack.clear();
+            }
+            else if (expectedGainReplies > 0)
             {
                 const int got = (int) gains.size();
                 expectedGainReplies = 0;
@@ -458,8 +674,60 @@ namespace zynforge
             }
         }
 
+        // 3. A saved SOUNDCHECK is only a claim until this desk has been asked.
+        if (! deskAsked && patchRead == PatchRead::None)
+        {
+            deskAsked = true;
+            if (isOnSoundcheckPatch()) startPatchRead (PatchRead::Check);
+        }
+
         // The watchdog above beats for as long as the link is up, so the
         // timer only stops in disconnect().
+    }
+
+    ConsoleLink::Health ConsoleLink::getHealth() const
+    {
+        if (! profile.dialect.probe) return Health::CannotTell;
+        if (lastAnswerMs == 0)       return Health::NotAnswered;
+        return juce::Time::currentTimeMillis() - lastAnswerMs > kDeskSilentMs ? Health::Silent
+                                                                              : Health::Answering;
+    }
+
+    juce::String ConsoleLink::healthText() const
+    {
+        switch (getHealth())
+        {
+            case Health::CannotTell:  return "this link can't tell whether a desk is there";
+            case Health::NotAnswered: return "no answer from the desk yet";
+            case Health::Answering:   return "desk answering";
+            case Health::Silent:      return "desk not answering";
+        }
+        return {};
+    }
+
+    // Once per change: this runs every second for as long as a link is open.
+    void ConsoleLink::reportHealthChange (juce::int64 now)
+    {
+        const auto health = getHealth();
+        const auto who = profile.displayName + " at " + host;
+        if (health == Health::NotAnswered)
+        {
+            if (! neverAnsweredReported && connectedAtMs != 0 && now - connectedAtMs > kDeskSilentMs)
+            {
+                neverAnsweredReported = true;
+                if (onStatus) onStatus (who + " has not answered. Names and scene markers need a desk at "
+                                        "that address.");
+            }
+            return;
+        }
+        if (health == reportedHealth) return;
+        const auto previous = reportedHealth;
+        reportedHealth = health;
+        if (! onStatus) return;
+        if (health == Health::Silent)
+            onStatus (who + " stopped answering -- names and scene markers have stopped.");
+        else if (health == Health::Answering && previous == Health::Silent)
+            onStatus (who + " is answering again.");
     }
 
     // ── Persistence ─────────────────────────────────────────────────────
@@ -478,8 +746,8 @@ namespace zynforge
             patchArr.add (it != stagePatch.end() ? it->second : -1);
         }
         obj->setProperty ("stagePatch", patchArr);
-        if (patch == Patch::Stage)                             obj->setProperty ("deskPatch", "stage");
-        else if (patch == Patch::Soundcheck || deskOnCardReturns) obj->setProperty ("deskPatch", "soundcheck");
+        if (patch == Patch::Stage)           obj->setProperty ("deskPatch", "stage");
+        else if (patch == Patch::Soundcheck) obj->setProperty ("deskPatch", "soundcheck");
 
         juce::Array<juce::var> gainArr;
         for (const auto& [idx, value] : gains)
@@ -498,27 +766,28 @@ namespace zynforge
     {
         if (! v.isObject()) return false;
 
-        // What this run read off the desk outranks any file. The file's array
+        // What this run knows about the desk outranks any file. The file's array
         // is usually -1s (a capture with no repatch), so loading it over a live
         // stash used to erase the only record of the show patch.
         const auto* patchArr = v.getProperty ("stagePatch", {}).getArray();
-        if (! hasStagePatch() && pendingPatchQueries == 0
+        const auto deskPatch = v.getProperty ("deskPatch", "").toString();
+        if (! hasStagePatch() && patchRead == PatchRead::None && profile.numInBlocks > 0
             && patchArr != nullptr && patchArr->size() == profile.numInBlocks)
         {
             std::map<int, int> saved;
             for (int b = 0; b < patchArr->size(); ++b)
-                if ((int) (*patchArr)[b] >= 0)
-                    saved[b] = (int) (*patchArr)[b];
+                if (const auto& value = (*patchArr)[b]; value.isInt() && isRoutingValue ((int) value))
+                    saved[b] = (int) value;
             if ((int) saved.size() == profile.numInBlocks)
                 stagePatch = std::move (saved);
+            else if (deskPatch == "soundcheck" && onStatus)
+                onStatus ("This session says the desk is on SOUNDCHECK, but its saved show patch is damaged, "
+                          "so STAGE can't restore it. Set the routing on the desk.");
         }
+        // A file from before deskPatch has a stash only if a soundcheck began,
+        // and nothing says it ended.
         if (patch == Patch::Unknown && hasStagePatch())
-        {
-            const auto deskPatch = v.getProperty ("deskPatch", "").toString();
-            patch = deskPatch == "soundcheck" ? Patch::Soundcheck
-                  : deskPatch == "stage"      ? Patch::Stage
-                                              : Patch::Unknown;
-        }
+            patch = deskPatch == "stage" ? Patch::Stage : Patch::Soundcheck;
 
         const auto* gainArr = v.getProperty ("gains", {}).getArray();
         if (gains.empty() && expectedGainReplies == 0 && gainArr != nullptr)
@@ -550,20 +819,22 @@ namespace zynforge
             if (mayReadDisk && stateLoadPending)
             {
                 stateLoadPending = false;
-                if (dir.isDirectory()) loadFrom (dir);
+                loadSessionState (dir);
             }
             return;
         }
         sessionDir = dir;
 
-        // Gains and any saved patch belong to the session just left. A desk
-        // this run put on card returns is different: it is still there whatever
-        // session is open, and this stash is what brings it back.
+        // Gains and any saved patch belong to the session just left. A desk on
+        // card returns is different: it is still there whatever session is open,
+        // and this stash is what brings it back.
         gains.clear();
         gainCaptureComplete = false;
         expectedGainReplies = 0;
+        gainCheckPending = false;
+        gainReadBack.clear();
         gainDeadlineMs = 0;
-        if (deskOnCardReturns)
+        if (patch == Patch::Soundcheck)
         {
             if (onStatus) onStatus ("The console is still on SOUNDCHECK from the last session. "
                                     "Going back to STAGE restores that session's show patch.");
@@ -571,27 +842,62 @@ namespace zynforge
         else
         {
             stagePatch.clear();
-            pendingPatchQueries = 0;
+            patchRead = PatchRead::None;
+            deskRead.clear();
             patchDeadlineMs = 0;
             patch = Patch::Unknown;
         }
         stateLoadPending = ! mayReadDisk;
-        if (mayReadDisk && dir.isDirectory()) loadFrom (dir);
+        if (mayReadDisk) loadSessionState (dir);
+    }
+
+    void ConsoleLink::loadSessionState (const juce::File& dir)
+    {
+        const bool carried = patch == Patch::Soundcheck;
+        if (dir.isDirectory()) loadFrom (dir);
+        // A relaunch from here has only this file to go on.
+        if (carried) persistPatch();
     }
 
     // The patch half of the state file, written when the desk moves. Gains keep
     // their own rule (only a finished capture is saved), so an unfinished one
-    // here must not replace what the file holds.
-    bool ConsoleLink::persistPatch() const
+    // here must not replace what the file holds. During a take this stays off
+    // the thread that STOP runs on.
+    bool ConsoleLink::persistPatch()
     {
-        if (sessionDir == juce::File()) return true;
-        if (! sessionDir.isDirectory()) return false;
-        const auto state = toJson();
-        const auto f = sessionDir.getChildFile (kStateFileName);
-        if (! gainCaptureComplete)
-            if (auto* object = state.getDynamicObject())
-                object->setProperty ("gains", juce::JSON::parse (f).getProperty ("gains", juce::Array<juce::var>()));
-        return atomicfile::writeText (f, juce::JSON::toString (state));
+        const bool onSoundcheck = patch == Patch::Soundcheck;
+        juce::Array<juce::File> others;
+        if (! onSoundcheck)
+        {
+            others.swapWith (sessionsOnSoundcheck);
+            others.removeAllInstancesOf (sessionDir);
+        }
+
+        const auto save = [dir = sessionDir, state = toJson(), keepFileGains = ! gainCaptureComplete, others]
+        {
+            for (const auto& other : others)
+            {
+                const auto f = other.getChildFile (kStateFileName);
+                const auto saved = juce::JSON::parse (f);
+                if (auto* object = saved.getDynamicObject())
+                {
+                    object->setProperty ("deskPatch", "stage");
+                    atomicfile::writeText (f, juce::JSON::toString (saved));
+                }
+            }
+            if (dir == juce::File()) return true;
+            if (! dir.isDirectory()) return false;
+            const auto f = dir.getChildFile (kStateFileName);
+            if (keepFileGains)
+                if (auto* object = state.getDynamicObject())
+                    object->setProperty ("gains", juce::JSON::parse (f).getProperty ("gains", juce::Array<juce::var>()));
+            return atomicfile::writeText (f, juce::JSON::toString (state));
+        };
+
+        const bool saved = takeIsHoldingDesk() ? juce::Thread::launch (save) : save();
+        if (saved && onSoundcheck && sessionDir != juce::File())
+            sessionsOnSoundcheck.addIfNotAlreadyThere (sessionDir);
+        return saved;
     }
 
     bool ConsoleLink::saveTo (const juce::File& sessionDir) const
@@ -612,6 +918,12 @@ namespace zynforge
     {
         const auto f = sessionDir.getChildFile (kStateFileName);
         if (! f.existsAsFile()) return false;
-        return loadJson (juce::JSON::parse (f));
+        const bool loaded = loadJson (juce::JSON::parse (f));
+        if (patch == Patch::Soundcheck)
+        {
+            sessionsOnSoundcheck.addIfNotAlreadyThere (sessionDir);
+            deskAsked = false;
+        }
+        return loaded;
     }
 }

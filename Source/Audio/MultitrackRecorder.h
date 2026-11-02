@@ -161,6 +161,8 @@ namespace zynforge
         juce::int64 getRecordTimelineSamples() const noexcept
         { return recordBaseSamples + getSamplesSinceStart(); }
         juce::int64 getRecordBaseSamples() const noexcept { return recordBaseSamples; }
+        // Pre-roll written ahead of the first live sample of this take.
+        juce::int64 getPreRollHistorySamples() const noexcept { return preRollHistorySamples; }
 
         // True if the session's take for `trackIndex` was auto-split into
         // multiple parts (Track_NN_partXX) -- punch-in must refuse these.

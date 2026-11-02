@@ -503,6 +503,13 @@ namespace zynforge
             }
             void setRoutingLogical (const LogicalStrip& ls, int hwChannel)
             {
+                // Clearing an output's dot sends the strip back to the master,
+                // which is not a channel, so the input stays where it is.
+                if (! isInput && hwChannel < 0)
+                {
+                    engine.sendStripToMaster (ls.trackIndex, ls.stereo);
+                    return;
+                }
                 // Linked: clicking a dot in either matrix patches both
                 // sides of the strip's I/O to the same hardware channel.
                 // For stereo: L → hwChannel, R → hwChannel + 1.

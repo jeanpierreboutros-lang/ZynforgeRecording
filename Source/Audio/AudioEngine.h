@@ -93,6 +93,7 @@ namespace zynforge
         // Test-only: with no device open, report `n` active inputs, so the
         // smaller-device routing rules run without hardware.
         void setDeviceInputCountForTests (int n) noexcept { testDeviceInputs.store (n, std::memory_order_relaxed); }
+        void setDeviceOutputCountForTests (int n) noexcept { testDeviceOutputs.store (n, std::memory_order_relaxed); }
 
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
@@ -236,10 +237,12 @@ namespace zynforge
         void invalidateExternalCaptureStatus();
         void setSessionTransitionActive (bool active) noexcept
         { sessionTransitionActive.store (active, std::memory_order_release); }
-        // True from the moment a take rolls until its files are final. Every
-        // clip and take setter refuses then: the UI lock stops new gestures, but
-        // not a menu or dialog already open, and not a remote start under it.
-        bool isArrangementFrozen() const noexcept { return isRecording() || isCaptureFinalizing(); }
+        // True from the moment a take rolls until its files are final, and while
+        // a session job owns the session. Every clip and take setter refuses
+        // then: the UI lock stops new gestures, but not a menu or dialog already
+        // open, and not a remote start under it. A job reads the arrangement as
+        // it goes, and a Save As or Move reopens the copy it took.
+        bool isArrangementFrozen() const noexcept { return isRecording() || isSessionTransitionActive(); }
         bool isSessionTransitionActive() const noexcept
         { return sessionTransitionActive.load (std::memory_order_acquire) || isCaptureFinalizing(); }
 
@@ -275,19 +278,21 @@ namespace zynforge
         // another session.  Keeping this in AudioEngine makes non-UI entry
         // points obey the same boundary as File > Open/New.
         void clearSessionState();
-        void startPlayback()
+        // False when nothing started, so a remote can say so.
+        bool startPlayback()
         {
-            if (isCaptureFinalizing()) return;
+            if (isCaptureFinalizing()) return false;
             // Never play back on top of a live take. This is a recorder, not
             // a DAW -- summing the previous take into the monitor/master mid-
             // record is always wrong. The UI PLAY button guards this, but
             // network/remote entry points (OSC play, MCU Play) and timecode
             // chase reach here directly, so the guard belongs at the engine.
-            if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return;
+            if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return false;
             // Nothing to roll (no session, or parked at/after the end with no
             // loop to wrap): don't start.
-            if (! player.isPlaying() && ! player.hasAudioAhead()) return;
+            if (! player.isPlaying() && ! player.hasAudioAhead()) return false;
             player.start();
+            return true;
         }
         void stopPlayback() { player.stop(); }
 
@@ -349,6 +354,12 @@ namespace zynforge
         // physical channel N on both sides. PATCH page + per-strip combos
         // both call this so input and output stay linked.
         void  setTrackLinkedRouting (int channelIndex, int deviceCh);
+        // The master is not a channel. -1 on an output means the mix; -1 on an
+        // input means no signal, and RECORD repatches an armed strip with no
+        // input. So going back to the master moves the output alone, on both
+        // halves of a pair, and the input keeps its patch. A real channel
+        // stays linked: that is setTrackLinkedRouting.
+        void  sendStripToMaster (int channelIndex, bool stereoPair);
 
         int   getCurrentDeviceInputCount()  const;
         int   getCurrentDeviceOutputCount() const;
@@ -407,6 +418,15 @@ namespace zynforge
         // thread by MainComponent's timer polling getPunch* and
         // toggling startRecording / stopRecording / track.armed.
         bool isPunchModeOn()      const noexcept { return punchEnabled.load (std::memory_order_relaxed); }
+        // Rolling across this range opens a punch, and a punch is the host's to
+        // start: no remote may start the roll, and landing inside it from outside
+        // counts as crossing in. Empty unless PUNCH mode has a chosen range.
+        juce::Range<juce::int64> getPunchRange() const noexcept
+        {
+            return isPunchModeOn() && player.isRangeArmed()
+                       ? juce::Range<juce::int64>::between (player.getLoopStart(), player.getLoopEnd())
+                       : juce::Range<juce::int64>();
+        }
         // Turning it on holds loop-play off so a pass crosses the punch-out;
         // turning it off puts loop-play back. clearSessionState ends the mode.
         void setPunchModeOn (bool on) noexcept;
@@ -917,6 +937,7 @@ namespace zynforge
         TimecodeChase    timecodeChase;
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
         std::atomic<int> testDeviceInputs { 0 };  // see setDeviceInputCountForTests
+        std::atomic<int> testDeviceOutputs { 0 }; // see setDeviceOutputCountForTests
         std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
         std::atomic<bool> keepRollingOnSyncLoss { false };
         std::unique_ptr<juce::MidiInput> mtcInput;
