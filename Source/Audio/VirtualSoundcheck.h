@@ -27,6 +27,14 @@ namespace zynforge::vsc
         return saved != TrackState::kNoSavedOutput ? saved : track.outputRouting.load (std::memory_order_relaxed);
     }
 
+    // Where a strip's output sits on the soundcheck patch. An input of -2 is the
+    // identity default, so the output lands on the strip's own channel.
+    inline int soundcheckOutput (const TrackState& track, int index)
+    {
+        const int input = track.inputRouting.load (std::memory_order_relaxed);
+        return input == -2 ? index : input;
+    }
+
     // Returns the number of strips repatched. Pressed again it does nothing,
     // or the second press would save the soundcheck patch as the show patch.
     inline int repatch (AudioEngine& engine)
@@ -39,12 +47,26 @@ namespace zynforge::vsc
             auto& track = recorder.getTrack (i);
             track.outputBeforeVsc.store (track.outputRouting.load (std::memory_order_relaxed),
                                          std::memory_order_relaxed);
-            // -2 means the identity default, so the output lands on the strip's
-            // own channel.
-            const int input = track.inputRouting.load (std::memory_order_relaxed);
-            engine.setTrackOutputRouting (i, input == -2 ? i : input);
+            engine.setTrackOutputRouting (i, soundcheckOutput (track, i));
         }
         return strips;
+    }
+
+    // A stored mix (a cue) brings back a strip's show output. On the soundcheck
+    // patch that is what Restore will put back: the strip stays on its input's
+    // channel, or playback leaves the desk with VSC still lit and the master can
+    // drop onto a pair the strips have just left. Set the input first, because
+    // the strip follows it.
+    inline void recallOutput (AudioEngine& engine, int index, int output)
+    {
+        auto& track = engine.getRecorder().getTrack (index);
+        if (track.outputBeforeVsc.load (std::memory_order_relaxed) == TrackState::kNoSavedOutput)
+        {
+            engine.setTrackOutputRouting (index, output);
+            return;
+        }
+        track.outputBeforeVsc.store (output, std::memory_order_relaxed);
+        engine.setTrackOutputRouting (index, soundcheckOutput (track, index));
     }
 
     // Returns the number of strips put back. A strip added after the soundcheck

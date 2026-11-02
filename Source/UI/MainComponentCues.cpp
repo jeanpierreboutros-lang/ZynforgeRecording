@@ -8,6 +8,7 @@
 
 #include "MainComponent.h"
 #include "../Audio/AtomicFile.h"
+#include "../Audio/VirtualSoundcheck.h"
 #include "../Theme/DialogChrome.h"
 #include "SessionProjPath.h"
 
@@ -22,7 +23,7 @@ static zynforge::SetlistBar::StripSnapshot snapshotStrip (zynforge::TrackState& 
     s.gainDb       = t.gainDb       .load (std::memory_order_relaxed);
     s.pan          = t.pan          .load (std::memory_order_relaxed);
     s.inputRouting = t.inputRouting .load (std::memory_order_relaxed);
-    s.outputRouting= t.outputRouting.load (std::memory_order_relaxed);
+    s.outputRouting= zynforge::vsc::showOutput (t);   // the show's patch, even during VSC
     s.muted        = t.muted        .load (std::memory_order_relaxed);
     s.soloed       = t.soloed       .load (std::memory_order_relaxed);
     s.monitor      = t.monitor      .load (std::memory_order_relaxed);
@@ -224,7 +225,8 @@ void MainComponent::jumpToCue (int index)
     // must never change them mid-record -- a cue saved with a track disarmed
     // (or pointed at a different input) would silently stop / re-source capture
     // on that track for the rest of the take. Mix state (gain/pan/mute/solo/
-    // monitor/output) is always safe to move.
+    // monitor) is always safe to move. A cue's output is the show patch, so
+    // Virtual Soundcheck decides where it lands.
     const bool recording = engine.isRecording();
     const int n = (int) cue.strips.size();
     for (int i = 0; i < n; ++i)
@@ -235,9 +237,9 @@ void MainComponent::jumpToCue (int index)
 
         engine.setTrackGainDbRamped (target, s.gainDb, kCueRecallSeconds);
         engine.setTrackPanRamped    (target, s.pan,    kCueRecallSeconds);
-        engine.setTrackOutputRouting(target, s.outputRouting);
         if (! recording)
             engine.setTrackInputRouting (target, s.inputRouting);
+        zynforge::vsc::recallOutput (engine, target, s.outputRouting);
 
         auto& t = rec.getTrack (target);
         t.muted  .store (s.muted,   std::memory_order_relaxed);
