@@ -1,12 +1,29 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-11-01)
+# ZynForge Recording — Field-Test Checklist (updated 2026-11-02)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Both Macs and the current DMG have `281c6c0` / protocol 4, and `main` is ahead of that build: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak, which ends only when someone presses STOP twice: nothing stops it unattended. Tick boxes only after performing them; the failure column tells you when to stop and report. Both Macs and the current DMG have `281c6c0` / protocol 4, and `main` is ahead of that build: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
 **Severity legend:** 🟥 = data-loss class (stop, report immediately) · 🟧 = audio-path class (stop if reproducible) · 🟨 = UX / stage-readiness · ⬜ = cosmetic.
 
 ---
+
+## 2026-11-02 cut to recorder and virtual soundcheck — not yet performed
+
+None of this has been tried on real hardware, and it is not in the installed `281c6c0`: install a build from `main` on purpose before starting. Use disposable sessions.
+
+- [ ] Open Backup & Mirror Drives from File and from the BACKUP button. It is one dialog: backup first, with a format box, then the mirrors.
+- [ ] Set a FLAC backup on a WAV session and record, once locally and once in daemon mode. The backup is FLAC, the primary is WAV, and the format is still set after a relaunch. Pre-flight reports the backup as it did.
+- [ ] Leave a new install's backup format alone: it reads WAV 24.
+- [ ] Run File ▸ Export ▸ Export Audio three times: Raw takes in FLAC, Edited tracks and Stereo mix. Ticks apply to the first two, all on by default. The last two say plainly they are 24-bit WAV, and the files are.
+- [ ] Change a strip's Input or Output in the EDIT row. MIXER and PATCH show both sides moved, on both halves of a pair. The Output combo refuses during a take.
+- [ ] With a loop range set, Ctrl+Cmd+C opens the Crop prompt. Cmd+C only copies.
+- [ ] Press Tab outside a text field: nothing happens, and focus stays off the routing combos.
+- [ ] Open a session from an earlier build with several takes. It plays the active take, and a save keeps them all.
+- [ ] Open a session from an earlier build with automation, a VCA, a bus strip, a tempo map or a click row. It opens, plays and saves. The status line names `Session File Backups/Before Feature Removal`, and the folder holds the session's original documents. Opening it again says nothing and changes nothing.
+- [ ] Open a session with none of that data: no folder, no status line.
+- [ ] Recall a cue: nothing about the session changes but the playhead and the mix.
+- [ ] Start a long waveform scan, then run Save As and Show Handoff while it runs. Both finish. The worst case is a rescan in the copy. Make any other file in the session unreadable: the copy stops and says so.
 
 ## 2026-11-01 fix-pass acceptance — not yet performed
 
@@ -21,15 +38,15 @@ None of this has been tried on real hardware, and these fixes are not in the ins
 - [ ] With that question open, start playback from a remote, then answer. Nothing may record, and the banner must ask for RECORD again.
 - [ ] Turn on PUNCH mode with two strips armed, disarm one, arm another, roll through a selected range. Exactly the strips lit at punch-in get punched, on every copy.
 - [ ] With PUNCH on, open another session. The pill must go out and the menu tick must clear.
-- [ ] From the desk or companion, send RECORD with a cursor placed, with a range selected and while rolling. Each must be refused, with the reason in the main window and at the remote.
+- [ ] From the desk, send RECORD with a cursor placed, with a range selected and while rolling. Each must be refused, with the reason in the main window and at the remote.
 - [ ] Read the PUNCH pill from the mix position.
 
 ### Main window
 
-- [ ] With LOCK on, right-click a strip, the setlist bar and a VCA; click GRID and try a fader; try to edit in EDIT. Nothing may change.
+- [ ] With LOCK on, right-click a strip and the setlist bar; click GRID and try a fader; try to edit in EDIT. Nothing may change.
 - [ ] Pull the backup drive during a disposable take. The red banner must appear under the transport, readable from the mix position, and STOP must still work with it up.
 - [ ] Press RECORD with nothing armed. The banner shows why, then clears itself.
-- [ ] Start a noise or QC scan on a long session, then press RECORD. The take starts at once, the status says the scan stopped, and no report opens over the take.
+- [ ] Start a QC scan on a long session, then press RECORD. The take starts at once, the status says the scan stopped, and no report opens over the take.
 - [ ] Open Session Settings, set pre-roll to 5 s, record a fresh take, and confirm the audio before RECORD is there.
 - [ ] Start Generic OSC from Control Surfaces, copy the token from the panel, and drive RECORD from an OSC app.
 - [ ] Put the meterbridge on a second display, click in the main window, and confirm it stays. Open another session with the same track count and confirm its meters move.
@@ -58,14 +75,12 @@ Force-killing can wedge an audio device, so keep a recovery plan and stop if the
 - [ ] **Recovery dialog left open.** After an app crash during a disposable take, relaunch and leave the recovery dialog open past the auto-save interval. Status says auto-save skipped, and `session_mix.json` is unchanged on disk.
 - [ ] **Drive pulled while idle.** Open a session on an external drive, unplug it, wait one auto-save interval. A red AUTO-SAVE FAILED names the folder. Cmd+S and Save As refuse. Replug: the next auto-save works.
 - [ ] **Trash on exFAT.** Record a short take on an exFAT drive, then Remove Last Capture. The session goes to the Trash on that drive. If the volume has no Trash, nothing is removed and the status says so.
-- [ ] **Cloud upload from Finder.** Launch from Finder, not Terminal, with a Homebrew `rclone`. Status says started, then finished. With a bad remote it says FAILED with the exit code.
 
 ### Editing and export
 
 - [ ] Export a long session at another sample rate and note the time per track; compare the file by ear and in a DAW against the same export from the installed build. For scale, a 3-hour 56-channel file set took roughly 18 minutes under load.
 - [ ] Run Show Handoff to an exFAT destination with Finder open on it.
 - [ ] Fill a real disk during a bounce and confirm the status reports failure and no finished file appears. Only `RLIMIT_FSIZE` proved this; a full volume has not been tried.
-- [ ] Check the noise report's hum and floor readings against a known hum on a real channel; the -70 dBFS gate is a judgment value.
 
 ### EDIT on a real session
 
@@ -81,7 +96,6 @@ Force-killing can wedge an audio device, so keep a recovery plan and stop if the
 - [ ] **Yamaha SCP scene notifications (UNVERIFIED).** On a CL/QL/RIVAGE: connect, recall a scene during a take, and check that a marker drops. If no marker appears, the desk needs a read-only subscription we couldn't confirm from public documentation. Don't add `ssrecall_ex` back: it recalls scenes. Save Console Log and send it in.
 - [ ] **X32 show patch.** Connect, open a session, press SOUNDCHECK and confirm the desk moves to card returns. Force-quit the app. Relaunch, open the session, connect, and confirm the menu offers STAGE and restores the real patch.
 - [ ] **Console address pin.** With a real X32, confirm names and scene recalls still arrive. If the desk answers from a different address than the one dialled (a second network port), the log will show "ignored: not from the address this link is pinned to". Use the address the desk answers from.
-- [ ] **`/stream.wav` over real Wi-Fi.** Audition from a phone, walk out of range for a few seconds, come back, and confirm audio resumes with no press of play.
 - [ ] **MCU bank.** On a real surface, mute a strip and bank away: the button must go dark and a press there must toggle the strip now shown.
 - [ ] **Daemon + twin report.** On a short linked daemon take, confirm `verify_take.sh` passes and the report has both hashes and the `twin` block.
 - [ ] **Leader restart.** With a daemon take rolling, quit and relaunch the leader, open Twin Recorder, type the follower's code, press Connect, and confirm it re-links without touching the take.
@@ -89,14 +103,13 @@ Force-killing can wedge an audio device, so keep a recovery plan and stop if the
 ### Outputs, playback and sync
 
 - [ ] 1:1 patch on the real interface with every output a console return, master at default Out 1-2. Console channels 1 and 2 carry only their own tracks. Master strip reads MIX OFF, status line says why. Faders down first.
-- [ ] Same rig, master set to a spare pair: the mix is on that pair only. Master set to Off: nothing on any output from the mix, meters still move, companion stream still plays.
+- [ ] Same rig, master set to a spare pair: the mix is on that pair only. Master set to Off: nothing on any output from the mix, meters still move.
 - [ ] Laptop or 2-output interface: strips patched to Out 1-2, the whole mix still heard.
 - [ ] Trim-Follow on a desk (X32 first): take with the OSC listener on, reopen, listener on, Trim-Follow on, move a preamp 1 dB. The recorded channel moves 1 dB. Then a take recorded with the listener off: move a preamp, the channel does not move, and the status line names it. Faders down first.
 - [ ] Trim-Follow past the limit: raise a preamp more than 12 dB over its captured value. The channel stops at +12 and the status line says so.
 - [ ] Loop a region longer than 3 s on a 64-track session, on the show drive, for ten passes. No gap, no track late. Then FLAC.
 - [ ] Locate by marker during playback on 64 tracks, on the show drive. Measure the silence before the tracks enter, and confirm they enter together.
 - [ ] MTC from the real source, joined mid-stream at a minute boundary: the label never jumps back. LTC or MTC starting at 01:00:00:00 with the start timecode set: chase rolls from the right place. Without it: the status line says chase is holding, and locates stay put.
-- [ ] Drum machine on MIDI clock: locate while rolling and loop while rolling. It follows, within a 16th note. Enable the clock mid-play: no burst.
 - [ ] Solo a strip during a take with StereoMix on: the file keeps the full mix.
 
 ---
@@ -167,7 +180,7 @@ Nothing below has been tried on hardware. The recorder side is proven only again
 2. **Clock in the report.** Record a take; `clockSource` and `clockSourceKind` must match the row.
 3. **Timecode stamp.** With LTC locked, record, stop, and import into Reaper or Pro Tools using the BWF time. Measure against a hardware recorder or a slate on the same timecode. Record the offset: the label is read at RECORD and can be up to a frame old (two on MTC), and the code does not compensate for converter or driver latency, so expect up to a frame plus converter delay. Repeat with MTC, and with no chase (the Mac's clock).
 4. **Spotting.** Import a take into Pro Tools, Reaper and Cubase with "use BWF time". Confirm each spots to the stamped time and that the channel name appears where the DAW shows sTRK or description.
-5. **Real stream loss.** While recording from the MADI/Dante rig, pull the stream for 5 s. Expect one INPUT STREAM LOST alarm, on the status line and `/confidence`, clearing on restore, and one stream entry plus each channel in `session.report.json`. Then confirm what the driver delivered during the drop: the alarm only sees exact zeros, so a driver that repeats its last buffer or outputs a non-zero value will not alarm.
+5. **Real stream loss.** While recording from the MADI/Dante rig, pull the stream for 5 s. Expect one INPUT STREAM LOST alarm, on the status line, clearing on restore, and one stream entry plus each channel in `session.report.json`. Then confirm what the driver delivered during the drop: the alarm only sees exact zeros, so a driver that repeats its last buffer or outputs a non-zero value will not alarm.
 6. **Single channel.** Pull one mic or stagebox line. An analog input has a noise floor, so it should NOT alarm unless the path delivers digital zero. Then mute a channel's direct out at the console and note whether that alarms. If the console's direct outs are post-gate, expect a channel fault whenever a gate closes for 3 s.
 7. **RF64.** The patch has run on a synthetic RF64 file with JUCE's layout. On a real take over 4 GiB, run `tools/verify_take.sh` and check the stamp in the file.
 
@@ -202,7 +215,7 @@ Record the clock offset each panel shows; on a healthy LAN the two should be opp
 1. Store the credentials once (`xcrun notarytool store-credentials`), then run `tools/notarize.sh --check` and fix what it reports.
 2. Run `tools/notarize.sh`. Only a reported status of `Accepted` counts.
 3. Mount the DMG on a Mac that has never seen this app, install it, and confirm Gatekeeper opens it without a warning, the microphone prompt appears, and the Local Network prompt shows the app's own reason.
-4. Confirm `LICENSE` and `THIRD-PARTY-NOTICES.md` are in the DMG root, and that NDI still loads if the runtime is installed.
+4. Confirm `LICENSE` and `THIRD-PARTY-NOTICES.md` are in the DMG root.
 
 ## October 5 follow-up acceptance — `443c769`, not yet performed (repeat on the installed `281c6c0`)
 
@@ -215,13 +228,10 @@ contains automated evidence for all 21 defects.
 | ☐ Record 27 tracks with the intended interface and external drive; operate MIXER/EDIT and STOP. | Measure command response, STOP-to-capture-ended and STOP-to-finalized separately; no missing audio or falsely clean report. |
 | ☐ During a pending save, stop existing playback/capture with Space. | STOP remains available; normal capture still requires its second confirmation and LOCK still applies. |
 | ☐ Change one fader, undo/redo, reset a 27-track session, then reopen. | Values round-trip, controls respond and reset defaults are correct. |
-| ☐ Keep Session Info & Notes open, save newer cues/edits elsewhere, then save notes. | Newer session content survives and unsaved mixer changes are not marked clean. |
 | ☐ Open import/bounce chooser, start capture before selecting a file/destination. | Completion refuses the operation without importing or rendering into a live take. |
-| ☐ Reopen an ordinary recorded channel called Click; separately regenerate a generated click bed. | Recorded audio is unchanged; only the explicit reference bed is regenerated. |
 | ☐ Record/export/punch 32-bit float AIFF-C with primary and configured copies; open it in the intended DAW. | Float data, frame counts and channels match; any destination/finalization error stays visible. |
-| ☐ Analyze stereo audio with signal only on the right and an unreadable test file. | Right-channel issues are reported; the unreadable file is a failed analysis, never a clean result. |
-| ☐ Run the auto-stop helper on a disposable session with deliberately delayed finalization. | It waits for acknowledgment, pins the same session throughout retries, and fails on timeout/error. |
-| ☐ Test the actual console and mirror connections, including incomplete gain replies/reconnect. | Partial gains are not restored; bad mirror data preserves the existing layout. |
+| ☐ Run the post-show QC report on stereo audio with signal only on the right and on an unreadable test file. | Right-channel issues are reported; the unreadable file is reported as incomplete, never as a clean result. |
+| ☐ Test the actual console connection, including incomplete gain replies/reconnect. | Partial gains are not restored. |
 
 ## Long-run waveform check — record the installed build for each Mac
 
@@ -252,8 +262,6 @@ The first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a m
 | ☐ 2.1 | New Session named with a space and a special char (e.g. `Show — 2026/05/24`). | Folder created with safe-name (slashes replaced). `.zfproj` file inside. | Folder creation silently fails OR creates with literal slash. |
 | ☐ 2.2 | Add 4 channels, arm 2, record 30 s of real audio. | RECORD shape-distinct from PLAY, BigClock counting up, meters moving. | Meters frozen, no file growing. |
 | ☐ 2.3 | Stop. Open the session folder. | `Track_NN.wav` files present, each non-zero. `recording.session` marker gone. | Marker still there = recover-on-next-launch loop. |
-| ☐ 2.4 | Right-click a track → New take from current. Record more audio. | Take 2 entries replace clips. TAKE chip on EDIT row shows `TAKE 2 / 2`. | Take chip doesn't update. |
-| ☐ 2.5 | Switch back to Take 1 via right-click. Quit. Re-launch + open session. | Take 1 active on relaunch (round-trips through .zfproj). | Take 2 reactivates. |
 | ☐ 2.6 | Set capture format to FLAC/24 via Format & Recording dialog. Record. | New files are `.flac`, smaller than equivalent WAV. | Format ignored OR app crashes on switch. |
 
 ---
@@ -264,27 +272,8 @@ The first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a m
 |---|---|---|---|
 | ☐ 3.1 | Play back a recorded session. Listen at moderate level. | Clean playback, no clicks, no dropouts. PerfDashboard CPU < 5 %. | Any audible click, glitch, or dropout. |
 | ☐ 3.2 | While playing, move a fader. | Audio level follows instantly, no zipper noise. | Stepped / zippered audio. |
-| ☐ 3.3 | While playing, drag the EDIT view tension handle on a Volume segment. | Curve bends visually; you hear the bend on the next playback pass. | Audible click during the drag itself. |
 | ☐ 3.4 | While playing, press M to toggle a strip's mute. | Smooth fade to silence (not a hard cut). | Hard mute cut = pop. |
 | ☐ 3.5 | Stop playback. Switch sample rate via Format & Recording dialog. | Warning dialog appears if SR mismatches the loaded session. | Silent switch with no warning. |
-
----
-
-## 4. Automation surface (phases 5 + 6) 🟨
-
-| # | Gesture | Expect | Failure indicator |
-|---|---|---|---|
-| ☐ 4.1 | Switch toolbar Write dropdown to Touch. Start playback. Move a fader. | Points drop on the lane at ~50 ms intervals (thinned). | Either no points OR fan-out cloud of points per fader event. |
-| ☐ 4.2 | Switch Write to Off. Move fader during playback. | No points drop. Existing lane still plays back. | New points still appearing. |
-| ☐ 4.3 | Toggle SUSPEND on. Play. | Engine ignores every stored lane; fader sits at its current value. | Lane still drives the fader visually. |
-| ☐ 4.4 | Shift-drag on the EDIT time ruler to define a range. | Translucent green band appears spanning the drag. | No band, OR band painted at full alpha. |
-| ☐ 4.5 | Toggle PUNCH on. | Band brightens (dim → bright). | No visible state change. |
-| ☐ 4.6 | With Write=Touch and PUNCH on, play through the range. Move fader. | Points only drop inside the band. | Points outside the band. |
-| ☐ 4.7 | Right-click an automation point → curve picker. Pick Linear. | Tension resets to 0 (segment straightens). | Bend persists despite "Linear" pick. |
-| ☐ 4.8 | Drag a tension handle, hold Shift. | Snaps to 0 / ±0.25 / ±0.5 / ±0.75 / ±1. | Free-drag during shift. |
-| ☐ 4.9 | Right-click strip header → "Automation Safe — OFF" → toggle on. | Strip's R/W LED turns amber. Try to drop a point — should be blocked. | Point still drops. |
-| ☐ 4.10 | Cmd+Z three times after the above. Cmd+Y / Cmd+R to redo. | Each tension drag = one undo step, not N. | Multi-step undo on a single drag. |
-| ☐ 4.11 | Save, quit, re-open session. | All automation including tension AND Safe flag round-trips. | Bend or Safe flag lost. |
 
 ---
 
@@ -301,17 +290,6 @@ The first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a m
 
 ---
 
-## 6. Companion server (security) 🟧
-
-| # | Gesture | Expect | Failure indicator |
-|---|---|---|---|
-| ☐ 6.1 | Session → Start companion server. | Status bar: "Companion on (loopback-only) — URL copied to clipboard." | LAN address shown by default. |
-| ☐ 6.2 | Paste the URL into a browser tab on the SAME machine. | Companion UI loads. | 401 / connection refused. |
-| ☐ 6.3 | Try the same URL from your phone (same Wi-Fi). | Connection refused (loopback only). | Phone connects = LAN exposure regression. |
-| ☐ 6.4 | Visit `http://localhost:9000/state.json` WITHOUT `?t=<token>`. | 401 Unauthorized, plain-text body. | 200 OK = auth bypass. |
-
----
-
 ## 7. Visual / design polish ⬜
 
 | # | Gesture | Expect | Failure indicator |
@@ -319,8 +297,8 @@ The first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a m
 | ☐ 7.1 | Hover over a channel strip. | ~6 % brightness lift on the strip wash + brighter edge. | No hover state. |
 | ☐ 7.2 | At XS strip width (24 per page), look at the REC/MON/MUTE/SOLO buttons. | Stacked vertically as a 1×4 column. | Cramped 2×2 grid = touch targets too small. |
 | ☐ 7.3 | Clip a meter (drive a hot input). | Top PEAK tally bar pulses brand-red. Click clears it. | Tally doesn't latch / doesn't clear on click. |
-| ☐ 7.4 | Open every dialog: New Session, Add Tracks, Session Format & Recording, Session Info & Notes, Click Settings, Audio Device, Markers list, Noise Report (after Tools → Noise scan), Session Recovery. | All have the same orange-stripe DialogChrome top + flat solid body + footer divider. | Any dialog looks "raw JUCE" = chrome regression. |
-| ☐ 7.5 | Look at any saturated chip (VCA badge, BUS badge, TAKE chip, PatchPage strip number, active routing dot, active EditTools icon). | Text on coloured background reads cleanly (dark on bright, light on dark — `onSignal` does the right thing). | White-on-yellow or similar low-contrast pairs. |
+| ☐ 7.4 | Open every dialog: New Session, Add Tracks, Session Format & Recording, Session Info, Audio Device, Markers list, Backup & Mirror Drives, Export Audio, Session Recovery. | All have the same orange-stripe DialogChrome top + flat solid body + footer divider. | Any dialog looks "raw JUCE" = chrome regression. |
+| ☐ 7.5 | Look at any saturated chip (Edit Group badge, PatchPage strip number, active routing dot, active EditTools icon). | Text on coloured background reads cleanly (dark on bright, light on dark — `onSignal` does the right thing). | White-on-yellow or similar low-contrast pairs. |
 
 ---
 
@@ -329,7 +307,6 @@ The first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a m
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
 | ☐ 8.1 | Connect a console dialect via OSC. Change a channel name and recall a scene. | Strip name updates and a named marker drops; transport/arm/mute remain unchanged. | Missing metadata/marker, or unauthenticated state change. |
-| ☐ 8.2 | Enable MIDI clock out, pick a device. | Status pill in row 1: "MIDI ★ <device name>". External gear locks tempo. | Pill says enabled but external doesn't sync. |
 | ☐ 8.3 | Cue a setlist of 5+ cues. Press next-cue 5 times during playback. | Soft-takeover fade between each, no clicks. | Hard cuts = ramp engine broken. |
 
 ---
@@ -344,10 +321,10 @@ The first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a m
 | ☐ 9.4 | Relocate a session across volumes; separately simulate inability to remove the old folder after a complete copy. | New folder opens and is authoritative. Cleanup failure explicitly names the old folder instead of reporting total move failure. | Active path still points old, or successful copy is discarded/misreported. |
 | ☐ 9.5 | During Save As, relocation, stem bounce and stereo bounce, try Record, Play, +CH, delete/reorder, and a second file operation. | Every competing mutation refuses with a wait/busy message; the running job finishes or cancels cleanly. | Structure changes under the worker, crash, corrupt/short output. |
 | ☐ 9.6 | Save a default template. Create once from Welcome and once with File ▸ New Session; also choose New Session from Template while a show is open. | Default layout appears in both new sessions. Explicit template asks about the current show and creates a different session; it never overwrites the show. | Empty default session or template destructively changes current session. |
-| ☐ 9.7 | Open a 24-strip session, then a 4-strip session; repeat with missing and malformed `session_mix.json`. | Valid mix shrinks exactly to 4. Invalid/missing mix falls back to the audio count. No names/stereo/tempo/cues from the first session survive. | Extra ghost strips or previous-show state leaks. |
+| ☐ 9.7 | Open a 24-strip session, then a 4-strip session; repeat with missing and malformed `session_mix.json`. | Valid mix shrinks exactly to 4. Invalid/missing mix falls back to the audio count. No names/stereo/cues from the first session survive. | Extra ghost strips or previous-show state leaks. |
 | ☐ 9.8 | Build a continued take through `_part10`, `_part11`, and `_part100`; play/export/bounce/QC it. Then temporarily remove the last part. | Complete take is numerically ordered and sample-complete. Missing trailing part refuses instead of producing a plausible shorter result. | `part100` plays before `part11`, or truncated output is accepted. |
 | ☐ 9.9 | Start Generic OSC and note the shown token. Send a state-changing command without it, with a wrong token, then with the token as the final string argument. | First two do nothing; authenticated command works. Console-specific dialect messages may update names/markers/trim but cannot arm/mute/transport. | Tokenless UDP changes the session or console dialect starts recording. |
-| ☐ 9.10 | Companion: issue Record with no armed live input, then with a valid armed input. | First request returns a truthful conflict/error and does not roll; second returns success only after recording really starts. | `{ok:true}` with no take, or remote starts an unusable zero-input take. |
+| ☐ 9.10 | Generic OSC: send Record with no armed live input, then with a valid armed input. | The first does not roll and the status line says why; the second starts a real take. | A reported start with no take, or an unusable zero-input take. |
 | ☐ 9.11 | Quit with an active take using Stop & Quit; separately make the session destination unwritable before Save & Quit. | Stop & Quit stops and saves. Save failure cancels quit and leaves the app/session available. | App quits after failed save. |
 
 ---
@@ -408,20 +385,19 @@ Use disposable sessions and copies. These rows are not pre-passed by the automat
 
 | Check | Expected result |
 | --- | --- |
-| ☐ Generate a backing click longer than the intended take, record, reopen, then continue. | First capture starts at zero; continuation follows recorded media rather than the reference bed. Explicit cursor/rolling punches retain the chosen position. |
+| ☐ Open a session from an earlier build whose generated click bed is longer than its takes; record, reopen, then continue. | Continuation follows recorded media rather than the bed. Explicit cursor/rolling punches retain the chosen position. |
 | ☐ Link stereo channels, try an overlapping pair, then test with one physical input unavailable. | Overlap is refused before writing. The available stereo side records with silence on the missing side and equal frame counts. |
 | ☐ Rearm a track on a later take with primary and verified backup/mirror destinations; exercise pre-roll. | All copies align to the common capture start; pre-roll channels share a boundary. Inspect every copy independently. |
 | ☐ Select a foreign or legacy nonempty replica folder; try a layout/sample-rate change against an existing take. | Capture refuses without modifying existing audio; use a new empty destination or restore the original setup. |
 | ☐ Interrupt a local device while optional StereoMix is active; separately test daemon device loss. | Files finalize to the interrupted endpoint, errors remain visible, completed media reloads once, and repeated STOP preserves later edits. |
 | ☐ Save nonzero capture gain, reopen, and test a take whose reference is zero dB. | Capture and live references restore without a playback gain jump; a zero read from the desk is retained as a real reference. A take recorded with no desk reading shows no reference and does not follow. |
 | ☐ Enable input auto-arm during playback, then feed only the right input of a stereo pair. | Playback alone never arms; live right input arms the pair together when stopped/unlocked. |
-| ☐ Send live input to an aux; punch, then toggle VCA mute with pre/post-fader sends. | Live aux is audible without doubled punch input; VCA mute silences post-fader sends in playback/export while pre-fader behavior stays independent. |
 | ☐ Disconnect/reconnect a desk after entering virtual soundcheck. | The saved stage patch survives; restoration remains available when desk state is unknown. Direct re-entry does not replace the saved patch. |
 | ☐ Open delete confirmation, attempt capture/session replacement, then cancel or confirm on disposable material. | Session operations stay reserved; completion rechecks recording and the target session before deletion. |
 | ☐ Open mixed root/Audio Files media; paste adjacent cross-track clips, trim to EOF, and drag a group against timeline zero. | Modern files win per track, legacy tracks remain playable, rendered clips retain their source, and shared bounds preserve group spacing. Missing media makes export fail visibly. |
-| ☐ Exercise grouped cut/paste, locked consolidation, healing and curved automation copy/drag. | Locks, peer offsets, source channels, fades and curve/tension survive; incompatible healing or rendering fails without destructive replacement. |
-| ☐ Lock the session and send companion/OSC/MCU commands, including a fader move on either stereo half. | LOCK blocks prohibited commands; when unlocked, paired gain changes remain linked. |
-| ☐ Switch between sessions with different VCA/send/routing state and disconnect/reconnect a configured mirror. | No prior-session state leaks; explicit input None and configured offline destinations survive restore. |
+| ☐ Exercise grouped cut/paste, locked consolidation and healing. | Locks, peer offsets, source channels and fades survive; incompatible healing or rendering fails without destructive replacement. |
+| ☐ Lock the session and send OSC/MCU commands, including a fader move on either stereo half. | LOCK blocks prohibited commands; when unlocked, paired gain changes remain linked. |
+| ☐ Switch between sessions with different routing state and disconnect/reconnect a configured mirror. | No prior-session state leaks; explicit input None and configured offline destinations survive restore. |
 
 Also reopen the five-hour take and zoom to a few-minute span to observe the detailed waveform path. Repeat L.1/L.2 for live behavior.
 
@@ -430,9 +406,8 @@ Also reopen the five-hour take and zoom to a few-minute span to observe the deta
 ### 2026-09-30 capture-integrity delta (previous `672456d` package)
 
 - [x] Install and verify source build `c563b00` and matching helper on both Macs (2026-10-04). Hashes, signatures and startup checks passed; old app backups/installers were removed as requested. See [INSTALL.md](INSTALL.md). This completes installation only; the hardware checks below remain open.
-- [ ] During a disposable daemon continuation, send START again while rolling. It must refuse without moving the live playhead, changing the take's base position, or clearing any already-latched capture warning. STOP must remain responsive while a companion/status client is slow or disconnected.
+- [ ] During a disposable daemon continuation, send START again while rolling. It must refuse without moving the live playhead, changing the take's base position, or clearing any already-latched capture warning. STOP must remain responsive while a status client is slow or disconnected.
 - [ ] Finish a clean continuation after a take with a known capture warning. The final `session.report.json` must list and hash all earlier and new parts and retain the earlier warning. Run `verify_take.sh` on a clean continued session and on a deliberately gapped disposable copy; only the complete, warning-free copy should pass.
-- [ ] If using `tools/auto_stop.sh`, run it against a disposable live session with its companion token. Confirm it pins the intended session, performs the two-tap STOP, waits for a successful finalization acknowledgment, then confirms `recording:false` for the same session. Pending finalization must not count as success; the timeout or a terminal error must fail visibly. The success path passed on `TEST NEWWWWWW` on 2026-10-02; the real-device failure path remains untested. Never use an untested timer to stop show material.
 
 ### 2026-10-29 bug-hunt delta (`281c6c0` and later; disposable sessions only)
 
@@ -441,7 +416,7 @@ Also reopen the five-hour take and zoom to a few-minute span to observe the deta
 - [ ] Continue a long take with one newly armed track and with an empty backup drive added: RECORD must start at once (no freeze); after STOP the lead-in files appear and the take plays aligned. Quit the app hard only on a disposable copy mid-take, reopen, and confirm the lead-in is completed.
 - [ ] Open a session prepared on a laptop (fewer inputs) on the show interface: every strip must record its saved SD5 input, not a wrapped one.
 - [ ] LTC chase at 25 fps from the real source: LOCK only with timecode present, correct position, LOCK drops when timecode stops; program audio on the LTC strip must never LOCK.
-- [ ] Companion RECORD tapped twice during a take must not stop it. A Yamaha/A&H console link unplugged mid-session must show as lost.
+- [ ] A remote RECORD sent twice during a take must not stop it. A Yamaha/A&H console link unplugged mid-session must show as lost.
 - [ ] Split a clip inside a fade-in and inside a fade-out, play and bounce: no audible change at the split.
 
 ### 2026-09-24 punch and import delta (historical build; repeat applicable checks on the current DMG)
@@ -456,9 +431,9 @@ Also reopen the five-hour take and zoom to a few-minute span to observe the deta
 - [ ] With primary/backup roots aliased or overlapping, recording refuses before primary files are touched.
 - [ ] During local and daemon takes, arm/input/session replacement attempts leave capture unchanged; STOP completes only after acknowledgement.
 - [ ] Two daemon takes preserve the first audio and create correctly routed continuation parts; status/time and session path agree after GUI reattachment.
-- [ ] Move/delete mixed mono/stereo tracks; reopen and verify media, UUID-linked cues, sends, clips/takes and automation. Removed audio remains archived, and old undo/clipboard state is cleared.
-- [ ] Import into an edited session; verify splits/fades/comps and intentionally empty tracks survive. Paste a stereo source channel to an unrecorded track beyond the original duration; verify playback/export and missing-source silence.
-- [ ] Check locked split/ripple/crop behavior, earlier inactive-take deletion, empty automation restore, sorted marker naming and analysis menu commands.
+- [ ] Move/delete mixed mono/stereo tracks; reopen and verify media, UUID-linked cues and clips/takes. Removed audio remains archived, and old undo/clipboard state is cleared.
+- [ ] Import into an edited session; verify splits/fades and intentionally empty tracks survive. Paste a stereo source channel to an unrecorded track beyond the original duration; verify playback/export and missing-source silence.
+- [ ] Check locked split/ripple/crop behavior, sorted marker naming and analysis menu commands.
 - [ ] Reopen capture settings/sample rate and check recovery file counts. Exercise loop boundaries for audible gaps.
 - [ ] Follow the exact-rig rehearsal and backup checks in SHOW-READINESS.md. Record results; no checkbox is pre-passed by the automated suite.
 
@@ -469,10 +444,9 @@ Also reopen the five-hour take and zoom to a few-minute span to observe the deta
 - [ ] During a disposable take, disconnect a redundant drive. Primary capture must continue, the runtime failure must latch, and STOP/report must not claim clean redundancy. Reconnect and confirm the next take resets health only after writers open.
 - [ ] Put primary, backup, and mirrors on combinations of the same and separate physical volumes. Confirm minutes remaining reflects aggregate byte rate per volume and does not count failed/skipped copies.
 - [ ] Locally arm StereoMix, assign stream sends, leave physical stream outputs unassigned, and capture known signal. The StereoMix file must be audible. Remove all stream sends and confirm RECORD refuses the empty mix. Daemon mode must refuse StereoMix with a clear explanation.
-- [ ] While daemon recording is active, try Play from the toolbar, keyboard, MCU, OSC, Companion, and timecode chase. Every path must leave playback stopped. Strip Silence, Normalize, Consolidate, and transient rebuild/navigation must also refuse.
+- [ ] While daemon recording is active, try Play from the toolbar, keyboard, MCU, OSC and timecode chase. Every path must leave playback stopped. Consolidate must also refuse.
 - [ ] Force a daemon configuration error, correct it, then record. The callback must be restored and the valid configuration must capture. STOP must distinguish a completed take with a finalization warning from a take that may still be rolling.
-- [ ] On an edited stereo/multipart session with fades, gain, and cross-track clips, run Strip Silence and compare against the audible arrangement. Locked clips must remain unchanged; a fully silent unlocked track must become empty. The UI must remain responsive.
-- [ ] Run Normalize, Strip Silence, transient detection, and Consolidate on long material, then change session/source state before completion. Stale results must not apply. Pre-create `_999`; Consolidate must create `_1000` or later without replacement.
+- [ ] Run Consolidate on long material, then change session or source state before completion. Stale results must not apply. Pre-create `_999`; Consolidate must create `_1000` or later without replacement.
 - [ ] Change output mute and stream sends, Save/reopen, undo/redo, and then create/open another session. State must round-trip in the original and reset in the replacement.
 - [ ] Make one autosave metadata/snapshot destination fail. Confirm an immediate warning, no false clean marker, and a retry after about 15 seconds. A failed snapshot must not leave a partial backup folder.
 
