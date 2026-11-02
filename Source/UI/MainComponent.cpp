@@ -85,8 +85,45 @@ void MainComponent::onRecordClicked()
     if (handleRecordPressDuringTake()) return;
     RecordStartPlan plan;
     if (! prepareRecordStart (plan)) return;
+    if (plan.device.needed) { askBeforeDeviceRecord (plan); return; }
     if (cursorPunchNeedsAnswer (plan)) { askBeforeCursorPunch (plan); return; }
     runRecordPlan (plan);
+}
+
+// Meters move and files are good on the wrong device, so nothing later would
+// catch this. It is asked here because a whole show can't be taken back.
+void MainComponent::askBeforeDeviceRecord (const RecordStartPlan& plan)
+{
+    if (deviceRecordQuestion != nullptr) return;
+    auto* aw = new juce::AlertWindow ("Record from this device?", plan.device.text,
+                                      juce::MessageBoxIconType::NoIcon, this);
+    aw->addButton ("Record", 1);
+    // Return is the safe answer: a hurried press must not start this take.
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::returnKey),
+                   juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+    deviceRecordQuestion = aw;
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [self, aw, session = plan.deviceSession, device = plan.device.device] (int answer)
+    {
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (self != nullptr) self->answerDeviceRecord (answer, session, device);
+    }));
+}
+
+void MainComponent::answerDeviceRecord (int answer, const juce::String& session, const juce::String& device)
+{
+    if (answer == 0) return;
+    engine.getDeviceAnswers().add (session, device);
+    if (engine.isRecording())
+    { showRecordRefusal ("The transport moved while RECORD was asking -- press RECORD again"); return; }
+    // A rolling press means here, and here has gone by.
+    if (engine.getPlayer().isPlaying())
+    { showStatus ("Answered -- press RECORD again to record"); return; }
+    // A fresh press through every refusal, because anything can have moved
+    // while the question was open.
+    onRecordClicked();
 }
 
 // A cursor takes one click to place and can be left anywhere, so on a stopped
@@ -180,6 +217,8 @@ void MainComponent::runRecordPlan (RecordStartPlan& plan)
     // A punch edits this Mac's own take, so it is not a take the twin joins.
     // This Mac's capture is already running before the link hears of it.
     if (! punch && engine.isRecording()) twinLink.noteLocalTakeStarted();
+    if (plan.device.answered && engine.isRecording())
+        engine.getDeviceAnswers().move (plan.deviceSession, plan.dir.getFullPathName(), plan.device.device);
 }
 
 bool MainComponent::handleRecordPressDuringTake()
@@ -375,6 +414,18 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
                                + " GB free -- < 30 min headroom. Clear space before recording.");
             return false;
         }
+    }
+
+    // Last, so nobody is asked about a press that was going to be refused. Only
+    // this Mac can answer: nobody at a desk or a twin can see which device this is.
+    plan.deviceSession = activeSession.getFullPathName();
+    plan.device = engine.getRecordDeviceQuestion (plan.deviceSession);
+    if (plan.device.needed && (remoteStartInFlight || twinStartInFlight))
+    {
+        remoteDeviceRefusal = plan.device.refusal;
+        showRecordRefusal (juce::String (twinStartInFlight ? "Twin" : "Remote") + " RECORD refused -- "
+                           + plan.device.refusal);
+        return false;
     }
 
     return true;
@@ -1041,10 +1092,12 @@ std::optional<bool> MainComponent::handleRemoteTransport (
 
         const juce::ScopedValueSetter<bool> remoteStart (remoteStartInFlight, true);
         remotePunchRefused = false;
+        remoteDeviceRefusal.clear();
         onRecordClicked();
         if (engine.isRecording()) return true;
         error = recordPressHeldAtMs != 0 ? "a session save is finishing; RECORD starts when it ends"
               : remotePunchRefused ? "RECORD would punch into the take; clear the cursor or selection on the host"
+              : remoteDeviceRefusal.isNotEmpty() ? remoteDeviceRefusal
                                    : "recording could not start; check the host pre-flight message";
         return false;
     }
@@ -1585,8 +1638,11 @@ void MainComponent::showPreflightChecklist()
     };
 
     std::vector<Row> rows;
-    rows.push_back ({ chk (device != nullptr), "Audio device",
-                      device != nullptr ? device->getName() : juce::String ("(none)") });
+    const auto deviceState = engine.getDeviceState();
+    const auto wrongDevice = zynforge::devicechoice::wrongDeviceLine (deviceState);
+    rows.push_back ({ chk (device != nullptr && wrongDevice.isEmpty(), device != nullptr), "Audio device",
+                      wrongDevice.isNotEmpty() ? wrongDevice
+                          : device != nullptr ? deviceState.active : juce::String ("(none)") });
     rows.push_back ({ chk (sr > 0.0), "Sample rate",
                       juce::String ((int) sr) + " Hz, buffer " + juce::String (blockSize) + " samples" });
     rows.push_back ({ chk (numInputs > 0),  "Inputs",  juce::String (numInputs) + " active" });

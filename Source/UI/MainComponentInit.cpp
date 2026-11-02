@@ -134,6 +134,12 @@ MainComponent::MainComponent()
     transportLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (transportLabel);
 
+    deviceLabel.setFont (brand::type::caption());
+    deviceLabel.setColour (juce::Label::textColourId, brand::textTertiary);
+    deviceLabel.setJustificationType (juce::Justification::centred);
+    deviceLabel.setMinimumHorizontalScale (0.7f);
+    addAndMakeVisible (deviceLabel);
+
     deviceButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
     deviceButton.setColour (juce::TextButton::textColourOffId,   brand::textSecondary);
     deviceButton.onClick = [this] { onDeviceClicked(); };

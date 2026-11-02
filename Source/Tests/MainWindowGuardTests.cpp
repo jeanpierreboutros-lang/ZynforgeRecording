@@ -103,6 +103,7 @@ namespace zynforge
             setup.sampleRate = rate;
             setup.bufferSize = kBlock;
             manager.setAudioDeviceSetup (setup, false);
+            engine.noteChosenDevice();
         }
 
         juce::File tempDir (const juce::String& tag)

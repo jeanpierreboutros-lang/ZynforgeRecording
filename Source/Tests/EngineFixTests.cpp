@@ -1,0 +1,784 @@
+// The device a take records from, and the engine's other guards. The device
+// rules are pure and tested as data. The rest runs the real AudioDeviceManager
+// and RECORD's whole path on a fake rig, so nothing here reaches CoreAudio.
+// What only a real interface can prove is listed in FIELD-TEST.md.
+
+#include <juce_audio_formats/juce_audio_formats.h>
+
+#include "../UI/AudioDeviceDialog.h"
+#include "../UI/MainComponent.h"
+#include "../Audio/DeviceChoice.h"
+
+#include <functional>
+#include <map>
+#include <CoreFoundation/CoreFoundation.h>
+
+namespace zynforge
+{
+    namespace
+    {
+        constexpr double kRate = 48000.0;
+        constexpr int kBlock = 256;
+
+        // What is plugged in. The manager owns the device type, so the test
+        // keeps this and changes it, the way a cable would.
+        struct Rig
+        {
+            std::map<juce::String, int> inputs;   // device name -> its input count
+            juce::StringArray outputs { "Speakers" };
+            juce::String defaultInput { "Mic" };
+            juce::StringArray refusesToOpen;
+            int opens { 0 };
+
+            juce::StringArray inputNames() const
+            {
+                juce::StringArray names;
+                for (const auto& device : inputs) names.add (device.first);
+                return names;
+            }
+        };
+
+        class FakeDevice final : public juce::AudioIODevice
+        {
+        public:
+            FakeDevice (const juce::String& nameIn, Rig& rigIn)
+                : juce::AudioIODevice (nameIn, "Fake"), rig (rigIn),
+                  inputs (rig.inputs.count (nameIn) > 0 ? rig.inputs[nameIn] : 0) {}
+            ~FakeDevice() override { stop(); }
+
+            juce::StringArray getOutputChannelNames() override { return { "1", "2" }; }
+            juce::StringArray getInputChannelNames() override
+            {
+                juce::StringArray names;
+                for (int i = 0; i < inputs; ++i) names.add (juce::String (i + 1));
+                return names;
+            }
+            juce::Array<double> getAvailableSampleRates() override { return { kRate }; }
+            juce::Array<int> getAvailableBufferSizes() override { return { kBlock }; }
+            int getDefaultBufferSize() override { return kBlock; }
+            juce::String open (const juce::BigInteger&, const juce::BigInteger&, double, int) override
+            {
+                if (rig.refusesToOpen.contains (getName())) return "refused";
+                ++rig.opens;
+                opened = true;
+                return {};
+            }
+            void close() override { stop(); opened = false; }
+            bool isOpen() override { return opened; }
+            void start (juce::AudioIODeviceCallback* cb) override
+            {
+                callback = cb;
+                if (callback != nullptr) callback->audioDeviceAboutToStart (this);
+            }
+            void stop() override
+            {
+                if (auto* cb = std::exchange (callback, nullptr)) cb->audioDeviceStopped();
+            }
+            bool isPlaying() override { return callback != nullptr; }
+            juce::String getLastError() override { return {}; }
+            int getCurrentBufferSizeSamples() override { return kBlock; }
+            double getCurrentSampleRate() override { return kRate; }
+            int getCurrentBitDepth() override { return 24; }
+            int getOutputLatencyInSamples() override { return 0; }
+            int getInputLatencyInSamples() override { return 0; }
+            juce::BigInteger getActiveOutputChannels() const override { return 3; }
+            juce::BigInteger getActiveInputChannels() const override
+            {
+                juce::BigInteger bits;
+                bits.setRange (0, inputs, true);
+                return bits;
+            }
+
+        private:
+            Rig& rig;
+            int inputs;
+            bool opened { false };
+            juce::AudioIODeviceCallback* callback { nullptr };
+        };
+
+        class FakeType final : public juce::AudioIODeviceType
+        {
+        public:
+            explicit FakeType (Rig& rigIn) : juce::AudioIODeviceType ("Fake"), rig (rigIn) {}
+
+            void scanForDevices() override {}
+            juce::StringArray getDeviceNames (bool wantInputs) const override
+            { return wantInputs ? rig.inputNames() : rig.outputs; }
+            int getDefaultDeviceIndex (bool forInput) const override
+            { return forInput ? juce::jmax (0, rig.inputNames().indexOf (rig.defaultInput)) : 0; }
+            int getIndexOfDevice (juce::AudioIODevice*, bool) const override { return 0; }
+            bool hasSeparateInputsAndOutputs() const override { return true; }
+            juce::AudioIODevice* createDevice (const juce::String& output, const juce::String& input) override
+            { return new FakeDevice (input.isNotEmpty() ? input : output, rig); }
+            void listChanged() { callDeviceChangeListeners(); }
+
+        private:
+            Rig& rig;
+        };
+
+        // The engine has no device of its own in a test process, so this does
+        // what its constructor does outside one.
+        struct OnRig
+        {
+            AudioEngine& engine;
+            FakeType* type { nullptr };
+
+            OnRig (AudioEngine& engineIn, Rig& rig) : engine (engineIn)
+            {
+                auto owned = std::make_unique<FakeType> (rig);
+                type = owned.get();
+                manager().addAudioDeviceType (std::move (owned));
+                manager().setCurrentAudioDeviceType ("Fake", true);
+                engine.openChosenDevice();
+                manager().addAudioCallback (&engine);
+            }
+            ~OnRig()
+            {
+                manager().removeAudioCallback (&engine);
+                manager().closeAudioDevice();
+            }
+            juce::AudioDeviceManager& manager() { return engine.getDeviceManager(); }
+            juce::String input() { return manager().getAudioDeviceSetup().inputDeviceName; }
+            void choose (const juce::String& device)
+            {
+                auto setup = manager().getAudioDeviceSetup();
+                setup.inputDeviceName = device;
+                setup.useDefaultInputChannels = true;
+                manager().setAudioDeviceSetup (setup, true);
+                engine.noteChosenDevice();
+            }
+        };
+
+        void forgetChosenDevice (AudioEngine& engine)
+        {
+            updateSettings (engine.getAppProps(), [] (juce::PropertiesFile& props)
+            {
+                for (const auto* key : { "chosenInputDevice", "chosenOutputDevice", "chosenInputUid",
+                                         "chosenOutputUid", "chosenInputCount" })
+                    props.removeValue (key);
+            });
+        }
+
+        bool pumpUntil (const std::function<bool()>& done, int timeoutMs = 6000)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
+            while (! done() && juce::Time::getMillisecondCounterHiRes() < end)
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.01, true);
+            return done();
+        }
+
+        void feedCallback (AudioEngine& engine, int channels, int blocks)
+        {
+            juce::AudioBuffer<float> in (channels, kBlock), out (2, kBlock);
+            in.clear();
+            juce::AudioIODeviceCallbackContext context;
+            for (int b = 0; b < blocks; ++b)
+                engine.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), channels,
+                                                         out.getArrayOfWritePointers(), 2, kBlock, context);
+        }
+    }
+
+    class EngineFixTests final : public juce::UnitTest
+    {
+    public:
+        EngineFixTests() : juce::UnitTest ("Engine fixes", "zynforge") {}
+
+        void runTest() override
+        {
+            deviceRules();
+            AudioEngine::setTestModeSkipAudioInit (true);
+            MainComponent::s_testConstruct = true;
+            const juce::ScopeGuard restoreTestMode { []
+            {
+                MainComponent::s_testConstruct = false;
+                AudioEngine::setTestModeSkipAudioInit (false);
+            } };
+            chosenDeviceComesBack();
+            recordAsksAboutTheDevice();
+        }
+
+    private:
+        using Verdict = devicechoice::Verdict;
+
+        static devicechoice::Chosen rigChosen()
+        {
+            devicechoice::Chosen c;
+            c.saved = true;
+            c.input = "Rig";
+            c.output = "Rig";
+            c.inputUid = "uid-rig";
+            c.outputUid = "uid-rig";
+            c.inputs = 32;
+            return c;
+        }
+
+        void deviceRules()
+        {
+            using namespace devicechoice;
+            const DeviceList macOnly { { "Mic", "uid-mic" } };
+            const DeviceList withRig { { "Mic", "uid-mic" }, { "Rig", "uid-rig" } };
+
+            beginTest ("A saved device is found by its id under a new name, and never by a near name");
+            {
+                expectEquals (nameNow ("Rig", "uid-rig", withRig), juce::String ("Rig"));
+                expectEquals (nameNow ("Rig", "uid-rig", { { "Rig Pro", "uid-rig" } }), juce::String ("Rig Pro"));
+                expectEquals (nameNow ("Rig", "", { { "Rig", "" } }), juce::String ("Rig"));
+                expect (nameNow ("Rig", "uid-rig", macOnly).isEmpty());
+                expect (nameNow ("Rig", "", { { "Rig Pro", "" }, { "Rig (2)", "" } }).isEmpty(),
+                        "a near name passed for the chosen device");
+
+                // Two identical units: the id follows the unit when numbering swaps.
+                const DeviceList twins { { "Unit (1)", "uid-b" }, { "Unit (2)", "uid-a" } };
+                expectEquals (nameNow ("Unit (1)", "uid-a", twins), juce::String ("Unit (2)"));
+            }
+
+            beginTest ("What opens at launch: each side stands alone");
+            {
+                auto open = planOpen (rigChosen(), withRig, withRig, "Mic", "Speakers");
+                expectEquals (open.input, juce::String ("Rig"));
+                expectEquals (open.output, juce::String ("Rig"));
+
+                open = planOpen (rigChosen(), withRig, macOnly, "Mic", "Speakers");
+                expectEquals (open.input, juce::String ("Rig"), "a missing output cost the input");
+                expectEquals (open.output, juce::String ("Speakers"));
+
+                open = planOpen (rigChosen(), macOnly, macOnly, "Mic", "Speakers");
+                expectEquals (open.input, juce::String ("Mic"));
+
+                auto noInput = rigChosen();
+                noInput.input.clear();
+                noInput.inputUid.clear();
+                expect (planOpen (noInput, withRig, withRig, "Mic", "Speakers").input.isEmpty(),
+                        "a choice of no input came back as the Mac's default");
+            }
+
+            beginTest ("The verdict on the open device");
+            {
+                expect (assess ({}, "Mic", macOnly, 1).verdict == Verdict::nothingChosen);
+                expect (assess (rigChosen(), "Rig", withRig, 32).verdict == Verdict::onChosen);
+                expect (assess (rigChosen(), "Mic", macOnly, 1).verdict == Verdict::chosenMissing);
+                expect (assess (rigChosen(), "Mic", withRig, 1).verdict == Verdict::chosenNotOpen);
+                expect (assess (rigChosen(), "Rig Pro", { { "Rig Pro", "uid-rig" } }, 32).verdict == Verdict::onChosen,
+                        "a renamed device did not count as the chosen one");
+
+                auto noInput = rigChosen();
+                noInput.input.clear();
+                expect (assess (noInput, {}, macOnly, 0).verdict == Verdict::onChosen);
+
+                expect (! isWrongDevice (assess ({}, "Mic", macOnly, 1)),
+                        "a first launch lit the wrong-device warning");
+                expect (isWrongDevice (assess (rigChosen(), "Mic", macOnly, 1)));
+                expect (isWrongDevice (assess (rigChosen(), "Mic", withRig, 1)));
+                expect (! isWrongDevice (assess (rigChosen(), "Rig", withRig, 32)));
+                expect (labelText (assess (rigChosen(), "Mic", macOnly, 1)).startsWith ("! In: Mic"));
+                expect (labelText (assess (rigChosen(), "Rig", withRig, 32)).startsWith ("In: Rig"));
+            }
+
+            beginTest ("An aggregate that lost a member is not the device that was chosen");
+            {
+                const auto state = assess (rigChosen(), "Rig", withRig, 16);
+                expect (state.verdict == Verdict::onChosen);
+                expect (state.inputsShrank());
+                expect (isWrongDevice (state), "half the inputs gone looked fine");
+                expect (! assess (rigChosen(), "Rig", withRig, 64).inputsShrank(), "more inputs is no fault");
+
+                const auto question = recordQuestion (state, 0, {}, "show");
+                expect (question.needed);
+                expect (question.text.contains ("16"));
+                expect (question.text.contains ("32"));
+            }
+
+            beginTest ("Only strips that lose their patch count as wrapped");
+            {
+                expectEquals (stripsThroughWrap ({ { 0, 0 }, { 1, 1 } }, 2), 0);
+                expectEquals (stripsThroughWrap ({ { 0, 0 }, { 1, 0 } }, 2), 0);   // a split, on purpose
+                expectEquals (stripsThroughWrap ({ { 0, 8 }, { 1, 9 } }, 2), 2);
+                expectEquals (stripsThroughWrap ({ { 5, -2 } }, 8), 0);            // default routing
+                expectEquals (stripsThroughWrap ({ { 5, -2 }, { 6, -1 } }, 2), 2); // past the end
+                expectEquals (stripsThroughWrap ({ { 1, -1 } }, 2), 0);            // gets its own input
+                expectEquals (stripsThroughWrap ({ { 0, 8 } }, 0), 0);
+            }
+
+            beginTest ("RECORD asks, once per session and device");
+            {
+                const auto missing = assess (rigChosen(), "Mic", macOnly, 1);
+                Answers answers;
+
+                auto question = recordQuestion (missing, 0, answers, "show");
+                expect (question.needed);
+                expect (! question.answered);
+                expect (question.text.contains ("Rig"), "the question did not name the chosen device");
+                expect (question.text.contains ("Mic"), "the question did not name the open device");
+                expect (question.refusal.contains ("Rig"));
+                expect (question.refusal.contains ("Mic"));
+                expectEquals (question.device, juce::String ("Mic"));
+
+                answers.add ("show", "Mic");
+                question = recordQuestion (missing, 0, answers, "show");
+                expect (! question.needed, "an answered question came back");
+                expect (question.answered);
+
+                expect (recordQuestion (missing, 0, answers, "other").needed, "an answer crossed sessions");
+                const auto otherDevice = assess (rigChosen(), "Line In", macOnly, 2);
+                expect (recordQuestion (otherDevice, 0, answers, "show").needed, "an answer crossed devices");
+
+                expect (recordQuestion (assess ({}, "Mic", macOnly, 1), 0, {}, "show").needed,
+                        "a device nobody chose rolled without asking");
+
+                const auto onRig = assess (rigChosen(), "Rig", withRig, 32);
+                expect (! recordQuestion (onRig, 0, {}, "show").needed);
+                question = recordQuestion (onRig, 3, {}, "show");
+                expect (question.needed, "the wrap rolled on the chosen device without asking");
+                expect (question.text.contains ("3 armed strips"));
+
+                answers.move ("show", "take-folder", "Mic");
+                expect (answers.contains ("take-folder", "Mic"));
+                expect (! answers.contains ("show", "Mic"));
+            }
+
+            beginTest ("A reopen waits for quiet, and a failure backs off");
+            {
+                const auto waiting = assess (rigChosen(), "Mic", withRig, 1);
+                expect (shouldReopen (waiting, true));
+                expect (! shouldReopen (waiting, false), "a device was reopened under a take");
+                expect (! shouldReopen (assess (rigChosen(), "Mic", macOnly, 1), true));
+                expect (! shouldReopen (assess ({}, "Mic", macOnly, 1), true));
+
+                ReopenPacing pacing;
+                expect (pacing.due (5000));
+                pacing.failed (5000);
+                expect (! pacing.due (5500));
+                expect (pacing.due (7000));
+                pacing.failed (7000);
+                expect (! pacing.due (10000), "the wait did not grow");
+                expect (pacing.due (11000));
+                for (int i = 0; i < 12; ++i) pacing.failed (11000);
+                expect (pacing.due (11000 + 60000), "the wait grew past its limit");
+                pacing.reset();
+                expect (pacing.due (0));
+            }
+
+            beginTest ("A choice survives the settings file, and no choice stays none");
+            {
+                juce::PropertySet props;
+                expect (! load (props).saved);
+                save (props, rigChosen());
+                const auto back = load (props);
+                expect (back.saved);
+                expectEquals (back.input, juce::String ("Rig"));
+                expectEquals (back.outputUid, juce::String ("uid-rig"));
+                expectEquals (back.inputs, 32);
+
+                auto noInput = rigChosen();
+                noInput.input.clear();
+                juce::PropertySet none;
+                save (none, noInput);
+                expect (load (none).saved, "a choice of no input read as never chosen");
+            }
+        }
+
+        void chosenDeviceComesBack()
+        {
+            Rig rig;
+            rig.inputs = { { "Mic", 1 }, { "Rig", 32 } };
+
+            {
+                AudioEngine engine;
+                forgetChosenDevice (engine);
+            }
+
+            beginTest ("With nothing saved the Mac's default opens and RECORD still has to ask");
+            {
+                AudioEngine engine;
+                OnRig on (engine, rig);
+                expectEquals (on.input(), juce::String ("Mic"));
+                expect (engine.getDeviceState().verdict == Verdict::nothingChosen);
+                expect (! devicechoice::isWrongDevice (engine.getDeviceState()));
+            }
+
+            beginTest ("The chosen device comes back at launch, whatever the Mac's default is");
+            {
+                {
+                    AudioEngine engine;
+                    OnRig on (engine, rig);
+                    on.choose ("Rig");
+                }
+                AudioEngine engine;
+                OnRig on (engine, rig);
+                expectEquals (on.input(), juce::String ("Rig"), "the default device opened instead");
+                expect (engine.getDeviceState().verdict == Verdict::onChosen);
+                expect (engine.getDeviceManager().createStateXml() != nullptr,
+                        "a restored device left no state for the capture daemon");
+            }
+
+            beginTest ("A chosen device that is absent opens the default and never looks fine");
+            {
+                auto away = rig;
+                away.inputs.erase ("Rig");
+                AudioEngine engine;
+                OnRig on (engine, away);
+                expectEquals (on.input(), juce::String ("Mic"));
+                const auto state = engine.getDeviceState();
+                expect (state.verdict == Verdict::chosenMissing);
+                expect (devicechoice::isWrongDevice (state));
+                expect (engine.getChosenDevice().input == "Rig", "being absent lost the choice");
+
+                // A picker only accepted as it stood keeps the choice; a hand on it replaces it.
+                engine.noteChosenDevice (false);
+                expectEquals (engine.getChosenDevice().input, juce::String ("Rig"),
+                              "an accepted default replaced the interface for good");
+                engine.noteChosenDevice (true);
+                expectEquals (engine.getChosenDevice().input, juce::String ("Mic"));
+                on.choose ("Mic");
+            }
+
+            beginTest ("A chosen device that returns while idle is reopened, and what was accepted goes");
+            {
+                auto stage = rig;
+                stage.inputs.erase ("Rig");
+                AudioEngine engine;
+                OnRig on (engine, stage);
+                on.choose ("Mic");
+                stage.inputs["Rig"] = 32;
+                on.choose ("Rig");
+
+                stage.inputs.erase ("Rig");
+                on.type->listChanged();
+                expectEquals (on.input(), juce::String ("Mic"), "the device manager kept a device that left");
+                expect (engine.getDeviceState().verdict == Verdict::chosenMissing);
+                engine.getDeviceAnswers().add ("show", "Mic");
+
+                stage.inputs["Rig"] = 32;
+                on.type->listChanged();
+                expectEquals (on.input(), juce::String ("Mic"), "JUCE moved back by itself: the watch has no job");
+                expect (engine.getDeviceState().verdict == Verdict::chosenNotOpen);
+
+                juce::String error;
+                expect (engine.reopenChosenDevice (error), error);
+                expectEquals (on.input(), juce::String ("Rig"));
+                expect (engine.getDeviceState().verdict == Verdict::onChosen);
+                expect (! engine.getDeviceAnswers().contains ("show", "Mic"),
+                        "a prep answer outlived the rig coming back");
+            }
+
+            beginTest ("A reopen that fails leaves the stand-in open");
+            {
+                auto stage = rig;
+                AudioEngine engine;
+                OnRig on (engine, stage);
+                on.choose ("Rig");
+                stage.inputs.erase ("Rig");
+                on.type->listChanged();
+                stage.inputs["Rig"] = 32;
+                stage.refusesToOpen.add ("Rig");
+                on.type->listChanged();
+
+                juce::String error;
+                expect (! engine.reopenChosenDevice (error));
+                expect (error.isNotEmpty());
+                expectEquals (on.input(), juce::String ("Mic"), "a failed reopen left no device");
+                expect (engine.getDeviceManager().getCurrentAudioDevice() != nullptr);
+
+                stage.refusesToOpen.clear();
+                expect (engine.reopenChosenDevice (error), error);
+                expectEquals (on.input(), juce::String ("Rig"));
+            }
+
+            beginTest ("A device found under a new name opens and keeps that name");
+            {
+                {
+                    AudioEngine engine;
+                    engine.deviceIdsForTests = [] (bool)
+                    { return devicechoice::DeviceList { { "Mic", "uid-mic" }, { "Rig", "uid-rig" } }; };
+                    OnRig on (engine, rig);
+                    on.choose ("Rig");
+                    expectEquals (engine.getChosenDevice().inputUid, juce::String ("uid-rig"));
+                }
+                auto renamed = rig;
+                renamed.inputs.erase ("Rig");
+                renamed.inputs["Rig Pro"] = 32;
+                AudioEngine engine;
+                engine.deviceIdsForTests = [] (bool)
+                { return devicechoice::DeviceList { { "Mic", "uid-mic" }, { "Rig Pro", "uid-rig" } }; };
+                OnRig on (engine, renamed);
+                expectEquals (on.input(), juce::String ("Rig Pro"));
+                expect (engine.getDeviceState().verdict == Verdict::onChosen);
+                expectEquals (engine.getChosenDevice().input, juce::String ("Rig Pro"));
+            }
+
+            AudioEngine engine;
+            forgetChosenDevice (engine);
+        }
+
+        struct Show
+        {
+            MainComponent& main;
+            Rig& rig;
+            OnRig on;
+            juce::File session;
+
+            Show (MainComponent& mainIn, Rig& rigIn, int strips)
+                : main (mainIn), rig (rigIn), on (main.engine, rigIn),
+                  session (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getChildFile ("zf-engine-" + juce::Uuid().toString()))
+            {
+                session.createDirectory();
+                main.engine.setRecordStereoMix (false);   // an earlier suite may have left it on
+                main.engine.setStripCount (strips);
+                main.engine.prepareForTests (kRate, kBlock);
+                main.engine.setActiveSessionDir (session);
+                main.engine.claimMixerFor (session);
+            }
+
+            ~Show()
+            {
+                if (main.engine.isRecording()) main.stopActiveCaptureAsync (false);
+                pumpUntil ([this]
+                {
+                    return ! main.engine.isRecording() && ! main.captureMetadataPending
+                        && main.pendingMetadataSaves == 0;
+                });
+                main.engine.stopPlayback();
+                main.engine.clearSessionState();
+                main.forgetSessionUiState();
+                main.condemnAllStrips();
+                main.engine.setStripCount (0);
+                main.engine.clearAllStripOverrides();
+                main.lastTrackCount = -1;
+                session.deleteRecursively();
+            }
+
+            void arm (std::initializer_list<int> strips)
+            {
+                for (int t = 0; t < main.engine.getRecorder().getNumTracks(); ++t)
+                    main.engine.setTrackArmed (t, false);
+                for (int t : strips) main.engine.setTrackArmed (t, true);
+            }
+
+            void patchStraight()
+            {
+                for (int t = 0; t < main.engine.getRecorder().getNumTracks(); ++t)
+                    main.engine.setTrackInputRouting (t, t);
+            }
+
+            bool answer (int value)
+            {
+                if (main.deviceRecordQuestion == nullptr) return false;
+                main.deviceRecordQuestion->exitModalState (value);
+                return pumpUntil ([this] { return main.deviceRecordQuestion == nullptr; });
+            }
+
+            void stop()
+            {
+                main.stopActiveCaptureAsync (false);
+                pumpUntil ([this]
+                {
+                    return ! main.engine.isRecording() && ! main.captureMetadataPending
+                        && main.pendingMetadataSaves == 0;
+                });
+            }
+
+            // The poll runs once a second; a test need not wait for it.
+            void servicePoll()
+            {
+                main.nextDeviceCheckMs = juce::Time::getMillisecondCounter();
+                main.serviceChosenDevice();
+            }
+        };
+
+        void recordAsksAboutTheDevice()
+        {
+            MainComponent main;
+            main.setSize (1320, 820);
+            forgetChosenDevice (main.engine);
+            Rig rig;
+            rig.inputs = { { "Mic", 1 }, { "Rig", 8 } };
+
+            beginTest ("RECORD on a device that is not the chosen one asks, and Cancel starts nothing");
+            {
+                rig.inputs.erase ("Rig");
+                rig.inputs["Rig"] = 8;
+                Show show (main, rig, 2);
+                show.on.choose ("Rig");
+                rig.inputs.erase ("Rig");
+                show.on.type->listChanged();
+                expectEquals (show.on.input(), juce::String ("Mic"));
+                show.patchStraight();
+                show.arm ({ 0 });
+
+                main.onRecordClicked();
+                expect (! main.engine.isRecording(), "RECORD rolled on the wrong device");
+                expect (main.deviceRecordQuestion != nullptr, "RECORD did not ask");
+                const auto text = main.engine.getRecordDeviceQuestion (show.session.getFullPathName()).text;
+                expect (text.contains ("Rig"), text);
+                expect (text.contains ("Mic"), text);
+                expect (show.answer (0));
+                expect (! main.engine.isRecording(), "Cancel started a take");
+
+                main.onRecordClicked();
+                expect (main.deviceRecordQuestion != nullptr, "Cancel counted as an answer");
+                expect (show.answer (1));
+                expect (main.engine.isRecording(), main.statusLabel.getText());
+                show.stop();
+
+                main.onRecordClicked();
+                expect (main.deviceRecordQuestion == nullptr, "the same session and device asked twice");
+                expect (main.engine.isRecording(), main.statusLabel.getText());
+                show.stop();
+
+                rig.inputs["Rig"] = 8;
+                show.on.type->listChanged();
+            }
+
+            beginTest ("A remote or twin RECORD is refused with the reason, and nothing is asked");
+            {
+                Show show (main, rig, 2);
+                show.on.choose ("Rig");
+                rig.inputs.erase ("Rig");
+                show.on.type->listChanged();
+                show.patchStraight();
+                show.arm ({ 0 });
+
+                juce::String error;
+                const auto answer = main.handleRemoteTransport (AudioEngine::RemoteTransportAction::StartRecord, error);
+                expect (answer.has_value() && ! *answer, "a remote RECORD rolled on the wrong device");
+                expect (error.contains ("Rig"), "the remote was not told why: " + error);
+                expect (main.deviceRecordQuestion == nullptr, "a remote press opened a question here");
+
+                juce::String refusal;
+                expect (! main.twinStartRecord (refusal), "a twin RECORD rolled on the wrong device");
+                expect (refusal.contains ("Rig"), "the twin was not told why: " + refusal);
+                expect (main.deviceRecordQuestion == nullptr);
+                expect (! main.engine.isRecording());
+
+                rig.inputs["Rig"] = 8;
+                show.on.type->listChanged();
+            }
+
+            beginTest ("Armed strips past the device's inputs ask, even on the chosen device");
+            {
+                Show show (main, rig, 8);
+                show.on.choose ("Mic");
+                show.patchStraight();
+                show.arm ({ 0, 1, 2, 3 });
+                main.onRecordClicked();
+                expect (! main.engine.isRecording(), "RECORD rolled with strips sharing one input");
+                expect (main.deviceRecordQuestion != nullptr);
+                expect (show.answer (0));
+
+                show.arm ({ 0 });
+                main.onRecordClicked();
+                expect (main.deviceRecordQuestion == nullptr, "a strip with its own input was asked about");
+                expect (main.engine.isRecording(), main.statusLabel.getText());
+                show.stop();
+
+                show.on.choose ("Rig");
+            }
+
+            beginTest ("Laptop prep records after one answer");
+            {
+                Show show (main, rig, 8);
+                show.on.choose ("Mic");
+                show.patchStraight();
+                show.arm ({ 0, 1, 2, 3 });
+                main.onRecordClicked();
+                expect (show.answer (1));
+                expect (main.engine.isRecording(), main.statusLabel.getText());
+                show.stop();
+                main.onRecordClicked();
+                expect (main.deviceRecordQuestion == nullptr, "prep was asked again");
+                show.stop();
+
+                show.on.choose ("Rig");
+            }
+
+            beginTest ("With nothing chosen RECORD asks about the Mac's default");
+            {
+                Show show (main, rig, 1);
+                {
+                    const auto setup = show.on.manager().getAudioDeviceSetup();
+                    expectEquals (setup.inputDeviceName, juce::String ("Rig"));
+                }
+                forgetChosenDevice (main.engine);
+                main.engine.setChosenDeviceForTests ({});
+                show.arm ({ 0 });
+                main.onRecordClicked();
+                expect (! main.engine.isRecording(), "RECORD rolled on a device nobody chose");
+                expect (main.deviceRecordQuestion != nullptr);
+                expect (show.answer (0));
+                show.on.choose ("Rig");
+            }
+
+            beginTest ("A device that returns during a take waits for the take to end");
+            {
+                Show show (main, rig, 1);
+                show.on.choose ("Rig");
+                rig.inputs.erase ("Rig");
+                show.on.type->listChanged();
+                show.patchStraight();
+                show.arm ({ 0 });
+                main.onRecordClicked();
+                expect (show.answer (1));
+                expect (main.engine.isRecording(), main.statusLabel.getText());
+
+                rig.inputs["Rig"] = 8;
+                show.on.type->listChanged();
+                const int opensBefore = rig.opens;
+                show.servicePoll();
+                expect (main.engine.isRecording(), "the device was touched during a take");
+                expectEquals (rig.opens, opensBefore, "the device was touched during a take");
+                expectEquals (show.on.input(), juce::String ("Mic"));
+
+                show.stop();
+                show.servicePoll();
+                expectEquals (show.on.input(), juce::String ("Rig"), "it never came back after the take");
+            }
+
+            beginTest ("A device being tried in the DEVICE panel is left alone");
+            {
+                Show show (main, rig, 1);
+                show.on.choose ("Rig");
+                auto setup = show.on.manager().getAudioDeviceSetup();
+                setup.inputDeviceName = "Mic";
+                setup.useDefaultInputChannels = true;
+                show.on.manager().setAudioDeviceSetup (setup, true);
+                expect (main.engine.getDeviceState().verdict == Verdict::chosenNotOpen);
+
+                std::unique_ptr<juce::Component> panel;
+                auto* window = AudioDeviceDialog::launch (main.engine);
+                panel.reset (window);
+                show.servicePoll();
+                expectEquals (show.on.input(), juce::String ("Mic"), "the watch fought the panel");
+                panel.reset();
+                show.servicePoll();
+                expectEquals (show.on.input(), juce::String ("Rig"));
+            }
+
+            beginTest ("The input device stays on the main screen at the smallest window");
+            {
+                Show show (main, rig, 2);
+                show.on.choose ("Rig");
+                main.setSize (1120, 700);
+                main.switchView (MainComponent::View::Mix);
+                show.servicePoll();
+                expect (main.deviceLabel.isVisible());
+                expectGreaterOrEqual (main.deviceLabel.getWidth(), 140);
+                expectGreaterOrEqual (main.deviceLabel.getHeight(), 14);
+                expectEquals (main.deviceLabel.getText(), juce::String ("In: Rig"));
+
+                rig.inputs.erase ("Rig");
+                show.on.type->listChanged();
+                show.servicePoll();
+                expect (main.deviceLabel.getText().startsWith ("! In: Mic"), main.deviceLabel.getText());
+                expect (main.deviceLabel.findColour (juce::Label::textColourId) == brand::alertAmber);
+                main.setSize (1320, 820);
+                rig.inputs["Rig"] = 8;
+                show.on.type->listChanged();
+            }
+
+            forgetChosenDevice (main.engine);
+        }
+    };
+
+    static EngineFixTests engineFixTests;
+}

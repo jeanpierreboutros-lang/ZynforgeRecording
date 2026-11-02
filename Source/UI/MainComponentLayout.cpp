@@ -215,7 +215,13 @@ void MainComponent::resized()
     stripMButton .setToggleState (stripWidthPreset == StripWidth::M,  juce::dontSendNotification);
     stripLButton .setToggleState (stripWidthPreset == StripWidth::L,  juce::dontSendNotification);
     gridButton   .setToggleState (mixerGridView, juce::dontSendNotification);
-    transportLabel.setBounds (row2.removeFromLeft (140));
+    // Under the clock, which nothing on this row can squeeze: the session
+    // label beside it can be left with no room at all.
+    {
+        auto clockColumn = row2.removeFromLeft (140);
+        transportLabel.setBounds (clockColumn.removeFromTop (clockColumn.getHeight() - 18));
+        deviceLabel   .setBounds (clockColumn);
+    }
     punchPill.setBounds (punchPill.isVisible()
         ? row2.removeFromLeft (juce::jmin (176, row2.getWidth())).reduced (0, brand::space::sm)
         : juce::Rectangle<int>());

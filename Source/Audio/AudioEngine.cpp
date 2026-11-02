@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "ClockSource.h"
 #include "SettingsFile.h"
 #include "TrackFileTransaction.h"
 #include "AtomicFile.h"
@@ -1906,18 +1907,157 @@ namespace zynforge
         masterStereo.store (appProps->getBoolValue ("masterStereo", true),
                             std::memory_order_release);
 
-        // Open with up to 256 inputs / 64 outputs by default -- adjust later from UI.
+        chosenDevice = devicechoice::load (*appProps);
         if (! s_testSkipAudioInit.load (std::memory_order_acquire))
         {
-            auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
-                                                 /*savedState*/ nullptr,
-                                                 /*selectDefault*/ true);
-            if (err.isNotEmpty())
-                DBG ("AudioDeviceManager init: " << err);
-        }
-
-        if (! s_testSkipAudioInit.load (std::memory_order_acquire))
+            openChosenDevice();
             deviceManager.addAudioCallback (this);
+        }
+    }
+
+    // Names only, so the device keeps the rate it is running. A daemon can be
+    // rolling on this interface while the window relaunches, and a saved rate
+    // would pull the clock out from under its take.
+    void AudioEngine::openChosenDevice()
+    {
+        // Open with up to 256 inputs / 64 outputs by default -- adjust later from UI.
+        std::unique_ptr<juce::XmlElement> state;
+        if (chosenDevice.saved)
+        {
+            deviceManager.getAvailableDeviceTypes();   // scans
+            if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+            {
+                const auto open = devicechoice::planOpen (
+                    chosenDevice, listDevices (true), listDevices (false),
+                    type->getDeviceNames (true)[type->getDefaultDeviceIndex (true)],
+                    type->getDeviceNames (false)[type->getDefaultDeviceIndex (false)]);
+                state = std::make_unique<juce::XmlElement> ("DEVICESETUP");
+                state->setAttribute ("deviceType", type->getTypeName());
+                state->setAttribute ("audioInputDeviceName", open.input);
+                state->setAttribute ("audioOutputDeviceName", open.output);
+            }
+        }
+        const auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64, state.get(),
+                                                   /*selectDefault*/ true);
+        if (err.isNotEmpty())
+            DBG ("AudioDeviceManager init: " << err);
+
+        // Found under a new name: from here on that is its name.
+        const auto now = devicechoice::nameNow (chosenDevice.input, chosenDevice.inputUid, listDevices (true));
+        if (chosenDevice.saved && now.isNotEmpty() && now != chosenDevice.input)
+        {
+            chosenDevice.input = now;
+            updateSettings (appProps.get(), [this] (juce::PropertiesFile& p) { devicechoice::save (p, chosenDevice); });
+        }
+    }
+
+    devicechoice::DeviceList AudioEngine::listDevices (bool inputs)
+    {
+        auto* type = deviceManager.getCurrentDeviceTypeObject();
+        if (type == nullptr) return {};
+        const auto names = type->getDeviceNames (inputs);
+        auto& known = listedIds[inputs ? 1 : 0];
+        // A device that changes under a take can wait: nothing here may touch
+        // the HAL then, and nothing reopens until the take is over.
+        if (names != known.names && ! isRecording())
+        {
+            known.names = names;
+            known.ids.clear();
+            if (deviceIdsForTests != nullptr)
+                known.ids = deviceIdsForTests (inputs);
+            else if (type->getTypeName() == "CoreAudio")
+                for (const auto& id : clocksource::readDeviceIds (inputs, 250))
+                    known.ids.push_back ({ id.name, id.uid });
+        }
+        devicechoice::DeviceList listed;
+        for (const auto& name : names)
+        {
+            devicechoice::Listed device { name, {} };
+            for (const auto& id : known.ids)
+                if (id.name == name) device.uid = id.uid;
+            listed.push_back (device);
+        }
+        return listed;
+    }
+
+    juce::String AudioEngine::openInputDevice()
+    {
+        return deviceManager.getCurrentAudioDevice() != nullptr ? deviceManager.getAudioDeviceSetup().inputDeviceName
+                                                                : juce::String();
+    }
+
+    void AudioEngine::noteChosenDevice (bool pickedByHand)
+    {
+        if (deviceManager.getCurrentAudioDevice() == nullptr) return;   // nothing is open to choose
+        const auto setup = deviceManager.getAudioDeviceSetup();
+        if (! pickedByHand && chosenDevice.saved && setup.inputDeviceName != chosenDevice.input) return;
+
+        const auto uidOf = [] (const juce::String& name, const devicechoice::DeviceList& list)
+        {
+            for (const auto& device : list)
+                if (device.name == name) return device.uid;
+            return juce::String();
+        };
+        chosenDevice.saved     = true;
+        chosenDevice.input     = setup.inputDeviceName;
+        chosenDevice.output    = setup.outputDeviceName;
+        chosenDevice.inputUid  = uidOf (setup.inputDeviceName, listDevices (true));
+        chosenDevice.outputUid = uidOf (setup.outputDeviceName, listDevices (false));
+        chosenDevice.inputs    = getCurrentDeviceInputCount();
+        updateSettings (appProps.get(), [this] (juce::PropertiesFile& p) { devicechoice::save (p, chosenDevice); });
+        deviceAnswers.clear();
+    }
+
+    devicechoice::DeviceState AudioEngine::getDeviceState()
+    {
+        return devicechoice::assess (chosenDevice, openInputDevice(), listDevices (true), getCurrentDeviceInputCount());
+    }
+
+    devicechoice::RecordQuestion AudioEngine::getRecordDeviceQuestion (const juce::String& session)
+    {
+        // With nothing open there is no device to ask about, and RECORD refuses by itself.
+        if (deviceManager.getCurrentAudioDevice() == nullptr) return {};
+        std::vector<devicechoice::ArmedStrip> armed;
+        {
+            const juce::ScopedLock sl (recorder.getStructureLock());
+            for (int i = 0; i < recorder.getNumTracks(); ++i)
+            {
+                const auto& t = recorder.getTrack (i);
+                if (t.armed.load (std::memory_order_relaxed))
+                    armed.push_back ({ i, t.inputRouting.load (std::memory_order_relaxed) });
+            }
+        }
+        const auto state = getDeviceState();
+        return devicechoice::recordQuestion (state, devicechoice::stripsThroughWrap (armed, state.liveInputs),
+                                             deviceAnswers, session);
+    }
+
+    bool AudioEngine::reopenChosenDevice (juce::String& error)
+    {
+        if (isRecording() || isCaptureFinalizing()) { error = "a take is rolling"; return false; }
+        const auto state = getDeviceState();
+        if (state.chosenNow.isEmpty()) { error = "it is not connected"; return false; }
+
+        const auto before = deviceManager.getAudioDeviceSetup();
+        auto setup = before;
+        setup.inputDeviceName = state.chosenNow;
+        setup.useDefaultInputChannels = true;
+        const auto output = devicechoice::nameNow (chosenDevice.output, chosenDevice.outputUid, listDevices (false));
+        if (output.isNotEmpty())
+        {
+            setup.outputDeviceName = output;
+            setup.useDefaultOutputChannels = true;
+        }
+        error = deviceManager.setAudioDeviceSetup (setup, true);
+        if (error.isEmpty() && deviceManager.getCurrentAudioDevice() != nullptr)
+        {
+            // The rig is back, so whatever was accepted while it was away is over.
+            deviceAnswers.clear();
+            return true;
+        }
+        // JUCE has already closed what was open.
+        deviceManager.setAudioDeviceSetup (before, false);
+        return false;
     }
 
     AudioEngine::~AudioEngine()

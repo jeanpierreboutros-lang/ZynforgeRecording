@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include "ClipModel.h"
+#include "DeviceChoice.h"
 #include "DisplayText.h"
 #include "EngineStatus.h"
 #include "MultitrackRecorder.h"
@@ -95,6 +96,27 @@ namespace zynforge
         void setDeviceInputCountForTests (int n) noexcept { testDeviceInputs.store (n, std::memory_order_relaxed); }
 
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
+
+        // The device the engineer chose (DeviceChoice.h), kept in app settings.
+        // At launch it opens, each side on its own, or the Mac's default stands
+        // in and getDeviceState says so.
+        void openChosenDevice();
+        // On every explicit choice. `pickedByHand` is false for a picker that
+        // was only accepted as it stood: that keeps a choice that is merely
+        // away, or the stand-in would replace the interface for good.
+        void noteChosenDevice (bool pickedByHand = true);
+        const devicechoice::Chosen& getChosenDevice() const noexcept { return chosenDevice; }
+        devicechoice::DeviceState getDeviceState();
+        // What RECORD has to ask before this press rolls, for this session.
+        devicechoice::RecordQuestion getRecordDeviceQuestion (const juce::String& session);
+        devicechoice::Answers& getDeviceAnswers() noexcept { return deviceAnswers; }
+        // Opens the chosen device again. Refuses under a take, and any failure
+        // puts the stand-in back, so a bad attempt doesn't leave no device.
+        bool reopenChosenDevice (juce::String& error);
+        void setChosenDeviceForTests (const devicechoice::Chosen& chosen) { chosenDevice = chosen; }
+        // Test seam: what CoreAudio would say about the listed devices.
+        std::function<std::vector<devicechoice::Listed> (bool inputs)> deviceIdsForTests;
+
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
         SessionPlayer&            getPlayer()        noexcept { return player; }
         juce::PropertiesFile*     getAppProps()      noexcept       { return appProps.get(); }
@@ -896,6 +918,18 @@ namespace zynforge
         juce::uint64 captureStopSequence = 0;
         AsyncHandle asyncHandle;
         juce::AudioDeviceManager deviceManager;
+        devicechoice::Chosen     chosenDevice;
+        devicechoice::Answers    deviceAnswers;
+        // The ids go with a device list; the list changes far less often than
+        // it is read, and reading them is a HAL call.
+        struct ListedIds
+        {
+            juce::StringArray names;
+            devicechoice::DeviceList ids;
+        };
+        ListedIds listedIds[2];
+        devicechoice::DeviceList listDevices (bool inputs);
+        juce::String openInputDevice();
         MultitrackRecorder       recorder;
         SessionPlayer            player;
         MarkersManager           markers;

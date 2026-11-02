@@ -50,6 +50,53 @@ namespace zynforge::clocksource
             return text;
         }
 
+        juce::String deviceUidOf (AudioObjectID device)
+        {
+            CFStringRef uid = nullptr;
+            if (! getProperty (device, kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal, uid)
+                || uid == nullptr)
+                return {};
+            const auto text = juce::String::fromCFString (uid);
+            CFRelease (uid);
+            return text;
+        }
+
+        int channelsOf (AudioObjectID device, bool inputs)
+        {
+            const AudioObjectPropertyAddress address { kAudioDevicePropertyStreamConfiguration,
+                                                       inputs ? kAudioObjectPropertyScopeInput
+                                                              : kAudioObjectPropertyScopeOutput,
+                                                       kAudioObjectPropertyElementMain };
+            UInt32 size = 0;
+            if (AudioObjectGetPropertyDataSize (device, &address, 0, nullptr, &size) != noErr || size == 0)
+                return 0;
+            juce::HeapBlock<char> storage (size);
+            auto* list = reinterpret_cast<AudioBufferList*> (storage.get());
+            if (AudioObjectGetPropertyData (device, &address, 0, nullptr, &size, list) != noErr)
+                return 0;
+            int total = 0;
+            for (UInt32 i = 0; i < list->mNumberBuffers; ++i)
+                total += (int) list->mBuffers[i].mNumberChannels;
+            return total;
+        }
+
+        // The same walk and the same numbering as JUCE's device scan, so a
+        // listed name here is the name JUCE opens.
+        std::vector<DeviceId> listDeviceIds (bool inputs)
+        {
+            juce::StringArray names, uids;
+            for (const auto device : allDevices())
+            {
+                if (channelsOf (device, inputs) <= 0) continue;
+                names.add (deviceNameOf (device));
+                uids.add (deviceUidOf (device));
+            }
+            names.appendNumbersToDuplicates (false, true);
+            std::vector<DeviceId> ids;
+            for (int i = 0; i < names.size(); ++i) ids.push_back ({ names[i], uids[i] });
+            return ids;
+        }
+
         juce::String clockSourceName (AudioObjectID device, AudioObjectPropertyScope scope, UInt32 source)
         {
             CFStringRef name = nullptr;
@@ -91,7 +138,35 @@ namespace zynforge::clocksource
     }
    #else
     Reading readDevice (const juce::String&) { return {}; }
+    namespace { std::vector<DeviceId> listDeviceIds (bool) { return {}; } }
    #endif
+
+    std::vector<DeviceId> readDeviceIds (bool inputs, int timeoutMs)
+    {
+        struct Shared
+        {
+            std::mutex              lock;
+            std::condition_variable finished;
+            bool                    done { false };
+            std::vector<DeviceId>   ids;
+        };
+        // The thread owns its half, so it can outlive a caller that stopped waiting.
+        auto state = std::make_shared<Shared>();
+        if (! juce::Thread::launch ([state, inputs]
+            {
+                auto ids = listDeviceIds (inputs);
+                const std::lock_guard<std::mutex> guard (state->lock);
+                state->ids  = std::move (ids);
+                state->done = true;
+                state->finished.notify_all();
+            }))
+            return {};
+        std::unique_lock<std::mutex> guard (state->lock);
+        if (! state->finished.wait_for (guard, std::chrono::milliseconds (timeoutMs),
+                                        [&state] { return state->done; }))
+            return {};
+        return state->ids;
+    }
 
     Probe::Probe (Reader reader) : readerFn (std::move (reader)) {}
 

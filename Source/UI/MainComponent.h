@@ -37,7 +37,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; class EngineFixTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -86,6 +86,8 @@ private:
         int         numTracks { 0 }, armed { 0 }, autoRouted { 0 };
         bool        continueTake { false }, continueAppend { false };
         juce::int64 punchAt { -1 };
+        zynforge::devicechoice::RecordQuestion device;
+        juce::String deviceSession;   // the session a device answer is held under
     };
     bool handleRecordPressDuringTake();
     bool prepareRecordStart (RecordStartPlan&);
@@ -95,6 +97,10 @@ private:
     bool cursorPunchNeedsAnswer (const RecordStartPlan&);
     void askBeforeCursorPunch (const RecordStartPlan&);
     void answerCursorPunch (int answer);
+    void askBeforeDeviceRecord (const RecordStartPlan&);
+    void answerDeviceRecord (int answer, const juce::String& session, const juce::String& device);
+    void serviceChosenDevice();
+    void showDeviceState (const zynforge::devicechoice::DeviceState&);
     void runRecordPlan (RecordStartPlan&);
     void applyRecordAutoRouting (RecordStartPlan&);
     void startDaemonTake (const RecordStartPlan&);
@@ -576,6 +582,7 @@ private:
     bool twinStartInFlight { false };   // this RECORD arrived over the twin link
     bool remoteStartInFlight { false }; // this RECORD arrived from any remote surface
     bool remotePunchRefused { false };  // and it was refused because it would punch
+    juce::String remoteDeviceRefusal;   // or because nobody there can answer for the device
 
     friend class zynforge::CaptureDaemonLinkTests;
     friend class zynforge::MainTransportRegressionTests;
@@ -589,6 +596,7 @@ private:
     friend class zynforge::SessionInterchangeTests;
     friend class zynforge::SessionSafetyTests;
     friend class zynforge::MainWindowGuardTests;
+    friend class zynforge::EngineFixTests;
     friend class zynforge::EditIntegrityTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
@@ -614,6 +622,7 @@ private:
     juce::Label  soundcheckPill    { {}, "DESK ON SOUNDCHECK" };   // the desk is hearing card returns, not the stage
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
+    juce::Label  deviceLabel;        // the input a take would record from
     // Header chrome -- IconButton paints a glyph next to each label so
     // the chrome reads as icons + words instead of monospace SHOUTING.
     zynforge::IconButton deviceButton  { zynforge::icons::Glyph::Device, "DEVICE" };
@@ -668,6 +677,10 @@ private:
     bool manualPunchActive { false };
     bool cursorPunchAnswered { false };   // true only around the press that "Replace From Cursor" makes
     juce::Component::SafePointer<juce::AlertWindow> cursorPunchQuestion;
+    juce::Component::SafePointer<juce::AlertWindow> deviceRecordQuestion;
+    zynforge::devicechoice::ReopenPacing deviceReopenPacing;
+    juce::uint32 nextDeviceCheckMs { 0 };
+    juce::String deviceLineShown;    // the device trouble already on the status line
 
     // Per-session cue list -- populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.

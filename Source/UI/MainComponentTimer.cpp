@@ -4,6 +4,7 @@
 // scrolling past 5000 lines of menu / layout / setup code.
 
 #include "MainComponent.h"
+#include "AudioDeviceDialog.h"
 #include "../Audio/VirtualSoundcheck.h"
 #include "RecordPosition.h"
 
@@ -38,6 +39,7 @@ void MainComponent::timerCallback()
     syncFloatingPanelButtons();
     rebuildStripsIfLayoutChanged();
     updateStatusPills();
+    serviceChosenDevice();
     updatePunchPill();
     updateSoundcheckState();
     updateNextCueCountdown();
@@ -163,6 +165,52 @@ void MainComponent::rebuildStripsIfLayoutChanged()
     if (n != lastTrackCount
         || engine.getRecorder().getTrackGeneration() != lastTrackGen)
         rebuildStrips();
+}
+
+void MainComponent::serviceChosenDevice()
+{
+    const auto now = juce::Time::getMillisecondCounter();
+    if ((juce::int32) (now - nextDeviceCheckMs) < 0) return;
+    nextDeviceCheckMs = now + 1000;
+
+    const auto state = engine.getDeviceState();
+    showDeviceState (state);
+
+    const bool transportQuiet = ! engine.isRecording() && ! engine.isCaptureFinalizing() && ! engine.isPlaying()
+                             && ! punchSessionActive && ! sessionIoBusy.load()
+                             && ! zynforge::AudioDeviceDialog::isOpen() && deviceRecordQuestion == nullptr;
+    if (! zynforge::devicechoice::shouldReopen (state, transportQuiet) || ! deviceReopenPacing.due (now)) return;
+
+    juce::String error;
+    if (engine.reopenChosenDevice (error))
+    {
+        deviceReopenPacing.reset();
+        showDeviceState (engine.getDeviceState());
+        showStatus ("Back on " + state.chosenNow);
+    }
+    else
+    {
+        deviceReopenPacing.failed (now);
+        showStatus (state.chosenNow + " is connected but would not open: " + error);
+    }
+}
+
+void MainComponent::showDeviceState (const zynforge::devicechoice::DeviceState& state)
+{
+    using namespace zynforge::devicechoice;
+    const bool wrong = isWrongDevice (state);
+    deviceLabel.setText (labelText (state), juce::dontSendNotification);
+    deviceLabel.setColour (juce::Label::textColourId, wrong ? brand::alertAmber : brand::textTertiary);
+    const auto line = wrongDeviceLine (state);
+    deviceLabel.setTooltip (line.isNotEmpty() ? line + ". RECORD asks before it rolls."
+                                              : juce::String ("The input device a take records from."));
+    // Said once, when it happens. A rig left unplugged during prep stays amber
+    // above, but it must not keep taking the status line away.
+    if (line != deviceLineShown)
+    {
+        deviceLineShown = line;
+        if (line.isNotEmpty()) showStatus (line);
+    }
 }
 
 void MainComponent::updateStatusPills()
