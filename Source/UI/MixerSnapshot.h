@@ -4,6 +4,7 @@
 #include <juce_graphics/juce_graphics.h>
 
 #include "../Audio/AudioEngine.h"
+#include "../Audio/VirtualSoundcheck.h"
 
 #include <cstring>
 
@@ -63,8 +64,9 @@ namespace zynforge::mixersnapshot
         return juce::var (arr);
     }
 
-    // Restore goes through the engine setters (which mirror stereo pairs and
-    // persist) wherever one exists.
+    // Undo's restore, of ONE physical half: undo replays every strip, so this
+    // writes exactly what it is given, the soundcheck's way back included. A
+    // paste of one logical strip goes through pasteStrip instead.
     inline void restoreStrip (AudioEngine& eng, int physical, const juce::var& v)
     {
         if (physical < 0 || physical >= eng.getRecorder().getNumTracks()) return;
@@ -86,6 +88,102 @@ namespace zynforge::mixersnapshot
         t.soloed     .store ((bool) obj->getProperty ("solo"),    std::memory_order_relaxed);
         t.monitor    .store ((bool) obj->getProperty ("mon"),     std::memory_order_relaxed);
         if (! eng.isRecording()) t.armed.store ((bool) obj->getProperty ("rec"), std::memory_order_relaxed);
+    }
+
+    // What Copy Strip Settings carries. A stereo strip is one strip here, so it
+    // takes both halves. It carries the show's output and no soundcheck state:
+    // the way back belongs to the strip it was saved on.
+    inline juce::var copyStrip (AudioEngine& eng, int physical)
+    {
+        auto& rec = eng.getRecorder();
+        const auto half = [&] (int index)
+        {
+            auto copied = snapshotStrip (eng, index);
+            if (auto* obj = copied.getDynamicObject())
+            {
+                obj->setProperty ("out", vsc::showOutput (rec.getTrack (index)));
+                obj->removeProperty ("vscOut");
+            }
+            return copied;
+        };
+        auto copied = half (physical);
+        if (auto* obj = copied.getDynamicObject())
+            if (physical + 1 < rec.getNumTracks() && rec.getTrack (physical).isStereo.load (std::memory_order_relaxed))
+                obj->setProperty ("right", half (physical + 1));
+        return copied;
+    }
+
+    // Paste onto one logical strip. Both halves of a stereo target change: the
+    // strip shows L, so a paste that left R behind would play and record
+    // something the screen does not show. Stereo onto stereo pastes half for
+    // half. Mono onto stereo brings R onto L as linking does, and leaves the
+    // pans, because they are the pair's stereo image.
+    inline void pasteStrip (AudioEngine& eng, int physical, const juce::var& v)
+    {
+        auto& rec = eng.getRecorder();
+        if (physical < 0 || physical >= rec.getNumTracks()) return;
+        auto* obj = v.getDynamicObject();
+        if (obj == nullptr) return;
+
+        const auto patchInput = [&eng] (int strip, int in)
+        {
+            if (in != -2) eng.setTrackInputRouting (strip, in);
+        };
+        // The pasted output is a show output. On a strip in soundcheck it is
+        // where that strip goes back to, and the live output follows the input.
+        const auto patchOutput = [&] (int strip, int out)
+        {
+            auto& t = rec.getTrack (strip);
+            if (t.outputBeforeVsc.load (std::memory_order_relaxed) == TrackState::kNoSavedOutput)
+            {
+                if (out != -2) eng.setTrackOutputRouting (strip, out);
+                return;
+            }
+            if (out != -2) t.outputBeforeVsc.store (out, std::memory_order_relaxed);
+            const int in = t.inputRouting.load (std::memory_order_relaxed);
+            eng.setTrackOutputRouting (strip, in == -2 ? strip : in);
+        };
+        const auto flags = [&] (int strip, const juce::DynamicObject& from)
+        {
+            auto& t = rec.getTrack (strip);
+            eng.setTrackGainDb (strip, (float) (double) from.getProperty ("gainDb"));
+            t.outputMuted.store ((bool) from.getProperty ("outMute"), std::memory_order_relaxed);
+            t.streamSend .store ((bool) from.getProperty ("stream"),  std::memory_order_relaxed);
+            t.muted      .store ((bool) from.getProperty ("mute"),    std::memory_order_relaxed);
+            t.soloed     .store ((bool) from.getProperty ("solo"),    std::memory_order_relaxed);
+            t.monitor    .store ((bool) from.getProperty ("mon"),     std::memory_order_relaxed);
+            if (! eng.isRecording()) t.armed.store ((bool) from.getProperty ("rec"), std::memory_order_relaxed);
+        };
+
+        const bool targetStereo = physical + 1 < rec.getNumTracks()
+                               && rec.getTrack (physical).isStereo.load (std::memory_order_relaxed);
+        const auto* right = obj->getProperty ("right").getDynamicObject();
+        const juce::Colour colour ((juce::uint32) (int) obj->getProperty ("colour"));
+
+        eng.setTrackName   (physical, obj->getProperty ("name").toString());
+        eng.setTrackColour (physical, colour);
+        flags (physical, *obj);
+        const int in = (int) obj->getProperty ("in"), out = (int) obj->getProperty ("out");
+        patchInput  (physical, in);
+        patchOutput (physical, out);
+        if (targetStereo == (right != nullptr))
+            eng.setTrackPan (physical, (float) (double) obj->getProperty ("pan"));
+        if (! targetStereo) return;
+
+        const int r = physical + 1;
+        eng.setTrackColour (r, colour);
+        if (right != nullptr)
+        {
+            eng.setTrackName (r, right->getProperty ("name").toString());
+            eng.setTrackPan  (r, (float) (double) right->getProperty ("pan"));
+            flags (r, *right);
+            patchInput  (r, (int) right->getProperty ("in"));
+            patchOutput (r, (int) right->getProperty ("out"));
+            return;
+        }
+        flags (r, *obj);
+        patchInput  (r, in  >= 0 ? in  + 1 : in);
+        patchOutput (r, out >= 0 ? out + 1 : out);
     }
 
     // 64-bit FNV-1a over every field of every strip, plus the strip count.

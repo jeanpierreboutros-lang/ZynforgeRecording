@@ -5,6 +5,7 @@
 #include <limits>
 #include <vector>
 
+#include "CheckedFileStream.h"
 #include "MultiPartReader.h"   // ConcatReader -- multi-part base for the splice
 #include "FloatAiffWriter.h"
 
@@ -81,13 +82,16 @@ namespace zynforge
         const juce::int64 frameBytes = (juce::int64) chans * ((isFloat ? 32 : bits) / 8);
         const juce::int64 framesPerFile = juce::jmax ((juce::int64) 1, (maxBytesPerFile - 1) / frameBytes);
 
+        // A splice that loses its last buffer to a full disk must not look
+        // finished: the caller deletes the original when this returns true.
+        const auto closeFailed = CheckedFileStream::makeFailedFlag();
         std::unique_ptr<juce::AudioFormatWriter> w;
         juce::int64 room = 0;
-        const auto closeFile = [&w]
+        const auto closeFile = [&w, &closeFailed]
         {
             const bool closed = w == nullptr || flushFloatAiffBeforeClose (w.get());
             w.reset();
-            return closed;
+            return closed && ! closeFailed->load();
         };
         const auto nextFile = [&]
         {
@@ -97,7 +101,7 @@ namespace zynforge
                                           + juce::String::formatted ("%02d", (int) written.size() + 1)
                                           + outFile.getFileExtension());
             file.deleteFile();
-            std::unique_ptr<juce::FileOutputStream> os (file.createOutputStream());
+            auto os = CheckedFileStream::open (file, closeFailed);
             if (os == nullptr) return false;
             w.reset (isFloat && (ext == ".aif" || ext == ".aiff")
                          ? FloatAiffWriter::create (os.get(), baseR.sampleRate, (unsigned int) chans)

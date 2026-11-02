@@ -435,6 +435,12 @@ namespace zynforge
         // before the punch-in and after the punch-out is preserved). Forwarded
         // to the recorder; auto-cleared on stop. See MultitrackRecorder.
         void armPunchIn (juce::int64 punchInSample) noexcept { recorder.armPunchIn (punchInSample); }
+        // A punch writes into the take FILE at this position, so it may run only
+        // where the timeline is the file, on every strip it writes. Empty when
+        // it may; otherwise the strip's name and why. end < 0 means the punch
+        // runs until STOP. startRecording asks this for every punch, whatever
+        // started it; RECORD also asks first, so a refusal moves nothing.
+        juce::String punchRefusal (juce::int64 start, juce::int64 end);
         // A selection punch opens its writers before transport rolls, then the
         // audio callback admits only samples inside [start, end). This avoids
         // 10 Hz UI-timer quantisation and permits sub-block punch windows.
@@ -459,12 +465,15 @@ namespace zynforge
         juce::int64 getRecordTimelineSamples()
         {
             if (! externalRecording.load (std::memory_order_acquire))
-                return recorder.getRecordTimelineSamples();
+                return recorder.getRecordTimelineSamples() - continueShift.load (std::memory_order_acquire);
             const auto status = captureStatus();
             if (status.source == "daemon") return status.positionSamples;
             std::lock_guard<std::mutex> lock (externalStatusLock);
             return externalStatus.positionSamples;
         }
+        // Where this take began on the timeline.
+        juce::int64 getRecordBaseOnTimeline() const noexcept
+        { return recorder.getRecordBaseSamples() - continueShift.load (std::memory_order_acquire); }
         // The loop region from SessionPlayer doubles as the punch window
         // -- there's only ever one 'do this between A and B' selection.
 
@@ -613,9 +622,12 @@ namespace zynforge
         // `cancel` (optional) is polled per render window so a quit / a new
         // bounce can abort a multi-hour render promptly instead of hanging the
         // join. On cancel the partial file is deleted and false is returned.
+        // `peak`, when given, receives the render's sample peak: over 1.0 the
+        // 24-bit file came out flat-topped.
         bool bounceTrackArrangementToWav (int track, const juce::File& dest,
                                           juce::int64 totalSamples, double sampleRate,
-                                          const std::atomic<bool>* cancel = nullptr);
+                                          const std::atomic<bool>* cancel = nullptr,
+                                          float* peak = nullptr);
         // `peak`, when given, receives the render's sample peak.
         bool bounceStereoMixToWav (const juce::File& dest,
                                    juce::int64 totalSamples, double sampleRate,
@@ -629,7 +641,8 @@ namespace zynforge
         // Streamed window-by-window like the other bounces.
         bool bounceStereoPairToWav (int trackL, const juce::File& dest,
                                     juce::int64 totalSamples, double sampleRate,
-                                    const std::atomic<bool>* cancel = nullptr);
+                                    const std::atomic<bool>* cancel = nullptr,
+                                    float* peak = nullptr);
 
         // ── DAW interchange and song export ───────────────────────
         // Why a session export cannot run now, or empty when it can. Local
@@ -688,12 +701,15 @@ namespace zynforge
         // (Audio Files/Track_NN_consolidated_K.wav) referenced by one clip,
         // baking in gains / fades / clip order. Returns true on success.
         bool consolidateRange (int track, juce::int64 start, juce::int64 end);
-        // Background multi-track consolidation. Rendering and file writes run
-        // off the message thread; clip-list changes are committed atomically
-        // back on it for the still-active session.
-        void consolidateRangeAsync (std::vector<int> tracks,
-                                    juce::int64 start, juce::int64 end,
-                                    std::function<void (int, bool)> completion);
+        // Multi-track consolidation, on a session job. prepare fixes what will
+        // be rendered, on the message thread, and is null when nothing can be.
+        // render runs on the job and touches only the run. publish, back on the
+        // message thread, commits each clip list that has not changed since,
+        // and returns the tracks done and whether that was all of them.
+        struct ConsolidateRun;
+        std::shared_ptr<ConsolidateRun> prepareConsolidate (std::vector<int> tracks, juce::int64 start, juce::int64 end);
+        static void renderConsolidate (ConsolidateRun&, const std::atomic<bool>& cancel);
+        std::pair<int, bool> publishConsolidate (ConsolidateRun&);
         // Remove the audio inside [start, end) on one track: split at both
         // edges, then drop every clip that falls fully inside the range
         // (locked clips are spared). Leaves a gap -- non-destructive, the
@@ -1072,7 +1088,15 @@ namespace zynforge
         std::vector<juce::int64> sourceTrackLengths;
         // Adds file span [from, to) of a track's own take to its active take,
         // at the same position on the timeline.
-        void addRecordedSpan (int track, juce::int64 from, juce::int64 to);
+        // `shift` is how far before its file position the span plays.
+        void addRecordedSpan (int track, juce::int64 from, juce::int64 to, juce::int64 shift = 0);
+        // Where a continue joins the arrangement: after everything but a reference bed.
+        juce::int64 continueLandsAt();
+        // A continue writes at the end of the file and plays at the end of the
+        // arrangement. After a Crop or a Ripple those are different places, and this
+        // is the distance between them for the take in progress.
+        std::atomic<juce::int64> continueShift { 0 };
+        juce::int64 continueFileBase { 0 };
         // Per-track Playlist storing every Take (named clip list). The
         // active take's clips mirror trackClips above so the player
         // path doesn't need to know about takes.

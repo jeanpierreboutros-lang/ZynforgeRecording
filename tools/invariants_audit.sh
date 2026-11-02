@@ -500,6 +500,20 @@ report "a take's status path reads no disk" \
        "read recorder.readDiskEstimate(), or gate an idle-only read behind engine.isTakeOnDisk()" \
        "$(sed '/^$/d' <<<"$HITS")"
 
+# ── A failed read is a failure ──────────────────────────────────────────────
+# JUCE's readers fill a short read with zeros and return true, so a render on a
+# dropping drive reported success over digital silence. Only ConcatReader::create
+# and openCheckedReader can see that. Playback and drawing may go without: a bad
+# block plays as silence there. The direct opens allowed below read only a file's
+# format and length, never its samples.
+HITS=$(grep -rn 'createUnchecked' $SCOPE 2>/dev/null \
+       | grep -vE 'Source/Audio/(MultiPartReader\.h|SessionPlayer\.cpp)|Source/UI/EditTrackRow\.h')
+HITS+=$(grep -rnE '\.createReaderFor \(' $SCOPE 2>/dev/null \
+       | grep -vE 'Source/Audio/(CheckedAudioReader\.h|MultiPartReader\.h|MultitrackRecorder\.cpp|SessionInterchange\.h)|Source/UI/MainComponentSessionIO\.cpp|^[^:]+:[0-9]+:[[:space:]]*//')
+report "whatever writes or reports from audio opens it checked" \
+       "use ConcatReader::create or openCheckedReader; a length or format probe joins the allow-list here" \
+       "$HITS"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     green "invariants audit: CLEAN"

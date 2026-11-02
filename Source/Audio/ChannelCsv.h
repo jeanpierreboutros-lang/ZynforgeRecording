@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include <algorithm>
 #include <limits>
 #include <vector>
 
@@ -83,13 +84,21 @@ namespace zynforge::channelcsv
             {
                 headerChecked = true;
                 const auto low = name.toLowerCase();
+                const auto second = fields.size() > 1 ? fields[1].trim().toLowerCase() : juce::String();
                 if (low == "name" || low == "channel" || low == "label"
-                    || low == "ch" || low == "channel name")
+                    || low == "ch" || low == "channel name"
+                    || (channel < 0 && (second == "name" || second == "label" || second == "channel name")))
                     continue;   // drop the header row
             }
             zeroBased = zeroBased || channel == 0;
             rows.push_back ({ channel, name });
         }
+
+        // One unnumbered row above numbered ones is a header we did not know.
+        // Kept, it would take channel 1 and the real row 1 would lose to it.
+        if (rows.size() > 1 && rows.front().channel < 0
+            && std::all_of (rows.begin() + 1, rows.end(), [] (const Row& r) { return r.channel >= 0; }))
+            rows.erase (rows.begin());
 
         // Numbered rows go to their own channel (first one wins), so a gap in
         // the numbering leaves that channel unnamed instead of pulling the

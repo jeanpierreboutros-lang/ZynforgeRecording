@@ -20,6 +20,7 @@ namespace zynforge::audioimport
         int importedFiles { 0 };
         int failed { 0 };
         int converted { 0 };
+        int clipped { 0 };    // files with audio over full scale, flat-topped at 24-bit
         bool cancelled { false };
     };
 
