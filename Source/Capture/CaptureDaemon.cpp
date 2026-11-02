@@ -88,13 +88,27 @@ namespace zynforge::capture
         recorder.prepare (sr, block, recorder.getNumTracks() > 0 ? recorder.getNumTracks()
                                     : device->getActiveInputChannels().countNumberOfSetBits());
         recorder.setAudioWorkgroup (device->getWorkgroup());
+        noteDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
         deviceAvailable.store (true);
         audioLoadPct.store (0.0f);
+    }
+
+    void CaptureDaemon::noteDevice (const juce::String& name)
+    {
+        const std::lock_guard<std::mutex> g (deviceNameLock);
+        deviceName = name;
+    }
+
+    juce::String CaptureDaemon::heldDevice() const
+    {
+        const std::lock_guard<std::mutex> g (deviceNameLock);
+        return deviceName;
     }
 
     void CaptureDaemon::audioDeviceStopped()
     {
         deviceAvailable.store (false);
+        noteDevice ({});
         audioLoadPct.store (0.0f);
         // A stopped callback cannot deliver any more samples. Finalise now so
         // status never continues to claim a healthy, rolling take. Normal
@@ -171,10 +185,15 @@ namespace zynforge::capture
             {
                 Reply r; r.id = c.id;
                 const juce::File dir (c.sessionDir);
+                // The window checked its last status. Only here is the answer
+                // current: the device can fall back between that and this.
+                const auto wantedDevice = c.configuration.getProperty ("expectedDevice", "").toString();
                 if (recorder.isRecording())              { r.error = "capture is already recording"; }
                 else if (c.sessionDir.isEmpty())         { r.error = "no sessionDir"; }
                 else if (! testMode.load() && ! deviceAvailable.load())
                     { r.error = "capture audio device is stopped"; }
+                else if (wantedDevice.isNotEmpty() && wantedDevice != heldDevice())
+                    { r.error = "capture holds " + heldDevice() + ", not " + wantedDevice; }
                 else
                 {
                     if (beforeStartForTests) beforeStartForTests();
@@ -280,6 +299,7 @@ namespace zynforge::capture
             case Action::ConfigureCapture:
             {
                 Reply r; r.id = c.id;
+                configuresForTests.fetch_add (1);
                 if (recorder.isRecording()) { r.error = "stop recording before configuration"; sendReplyUnlocked (r); break; }
                 const auto& cfg = c.configuration;
                 auto* tracks = cfg["tracks"].getArray();
@@ -385,6 +405,7 @@ namespace zynforge::capture
         s.blockSize      = currentBlockSize.load();
         s.audioLoadPct    = audioLoadPct.load();
         s.captureDeviceLost = captureDeviceLost.load();
+        s.captureDevice  = heldDevice();
         s.diskMBPerSec   = bytesToMB (recorder.getDiskBytesPerSec());
         s.ringFillPct    = recorder.getRingFillPct();
         s.lastWriteMs    = recorder.getLastWriteMs();

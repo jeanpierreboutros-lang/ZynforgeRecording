@@ -81,10 +81,12 @@ namespace zynforge::capture
         // a live timecode for the BWF stamp (bwf::TimeAnchor::toJson), or void.
         // False with `refusal` set: the daemon said no. False with `unanswered`
         // set: no reply came in time, so the take may be rolling all the same.
+        // expectedDevice: the device the daemon must hold, checked again at its end.
         bool startRecording (const juce::File& sessionDir, int trackCount,
                              int captureFormat, const juce::BigInteger& armedTracks,
                              const juce::var& timeHint = {},
-                             juce::String* refusal = nullptr, bool* unanswered = nullptr);
+                             juce::String* refusal = nullptr, bool* unanswered = nullptr,
+                             const juce::String& expectedDevice = {});
         bool stopRecording (bool* didStop = nullptr, juce::String* error = nullptr);
         // STOP without holding the caller: closing every file on every copy can
         // take far longer than a window can wait. `done` runs on the message
@@ -96,6 +98,9 @@ namespace zynforge::capture
         int  startReplyTimeoutMs { 5000 };
         juce::String lastConnectError;   // why connectOrLaunch last failed
         bool configureCapture (const juce::var&);
+        // Why this daemon must not take a RECORD for a window whose input device
+        // is ownDevice, from its latest status. Empty when it may.
+        juce::String deviceMismatch (const juce::String& ownDevice) const;
         juce::String configuredCapture;
         juce::String failedCapture;
         juce::int64 retryCaptureAtMs { 0 };
@@ -121,6 +126,7 @@ namespace zynforge::capture
         juce::int64        statusAtMs { 0 };
         std::atomic<bool>  statusSeen { false };
 
+        bool heldDeviceDiffers (const juce::String& wanted) const;
         void joinStop();
         std::thread        stopThread;
         std::atomic<bool>  stopInFlight { false };

@@ -469,7 +469,13 @@ bool MainComponent::saveMixerToTakeFolder (const juce::File& dir)
 void MainComponent::startDaemonTake (const RecordStartPlan& plan)
 {
     auto& recorder = engine.getRecorder();
-    if (! configureCaptureDaemon())
+    const bool configured = configureCaptureDaemon();
+    // This window's meters run from its own device, so nothing on screen would
+    // show a daemon recording some other one.
+    const auto ownDevice = engine.getDeviceManager().getAudioDeviceSetup().inputDeviceName;
+    if (const auto wrongDevice = captureSupervisor.deviceMismatch (ownDevice); wrongDevice.isNotEmpty())
+    { showRecordRefusal (wrongDevice); return; }
+    if (! configured)
     { showRecordRefusal ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
     const bool mixerInTakeFolder = saveMixerToTakeFolder (plan.dir);
     juce::BigInteger arms;
@@ -494,7 +500,8 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
     markers.setContext (dir, rate);
     if (captureSupervisor.startRecording (dir, numTracks, (int) engine.getRecorder().getCaptureFormat(), arms,
                                           engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var(),
-                                          &refusal, &unanswered))
+                                          &refusal, &unanswered,
+                                          engine.getDeviceManager().getAudioDeviceSetup().inputDeviceName))
     {
         engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
                                          captureSupervisor.lastStatusAtMs());

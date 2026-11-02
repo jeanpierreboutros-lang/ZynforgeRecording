@@ -37,7 +37,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class CapturePathTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -578,6 +578,7 @@ private:
     bool remotePunchRefused { false };  // and it was refused because it would punch
 
     friend class zynforge::CaptureDaemonLinkTests;
+    friend class zynforge::CapturePathTests;
     friend class zynforge::MainTransportRegressionTests;
     friend class zynforge::TwinLinkHostTests;
     friend class zynforge::PunchSessionGuardTests;

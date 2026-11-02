@@ -11,6 +11,7 @@
 #include "../Audio/QcAnalyzer.h"
 #include "../Audio/SongDetector.h"
 #include "../Audio/SpectrumBands.h"
+#include "../Capture/DeviceState.h"
 #include "QcReportDialog.h"
 #include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
@@ -725,13 +726,14 @@ void MainComponent::toggleCaptureDaemon()
 
 bool MainComponent::configureCaptureDaemon()
 {
-    auto* device = engine.getDeviceManager().getCurrentAudioDevice();
-    auto xml = engine.getDeviceManager().createStateXml();
-    if (device == nullptr || xml == nullptr) return false;
+    auto& manager = engine.getDeviceManager();
+    auto* device = manager.getCurrentAudioDevice();
+    if (device == nullptr) return false;
     auto config = captureDaemonSettings();
     auto* o = config.getDynamicObject();
-    o->setProperty ("deviceState", xml->toString());
+    o->setProperty ("deviceState", zynforge::capture::liveDeviceState (manager, *device)->toString());
     o->setProperty ("sampleRate", device->getCurrentSampleRate());
+    o->setProperty ("captureDevice", manager.getAudioDeviceSetup().inputDeviceName);
     return captureSupervisor.configureCapture (config);
 }
 
