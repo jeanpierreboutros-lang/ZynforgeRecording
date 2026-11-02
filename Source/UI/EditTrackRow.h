@@ -527,6 +527,11 @@ namespace zynforge
         {
             for (auto& own : ownThumbs)
                 if (own.file == file) return own.thumb.get();
+            // A first look at a file lists its folder and opens it, on the paint
+            // thread, and during a take that may be the drive that stopped
+            // answering. The lane can wait for the take: laneWaveFor's caller
+            // draws nothing for a null thumbnail.
+            if (engine.isTakeOnDisk()) return nullptr;
             auto thumb = std::make_unique<juce::AudioThumbnail> (wavecache::kThumbResolution, formats, thumbCache);
             applyThumbSource (*thumb, file, false);
             ownThumbs.push_back ({ file, std::move (thumb) });
@@ -2601,6 +2606,7 @@ namespace zynforge
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
         bool         isArmShownForTests()    const { return armButton.getToggleState(); }
         juce::int64  getLiveEnvelopeSamplesForTests() const { return recPeakL.spanSamples(); }
+        int          getOwnThumbnailCountForTests() const noexcept { return (int) ownThumbs.size(); }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
         int          getOverviewBuildsForTests() const noexcept { return overviewBuilds; }
         int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }

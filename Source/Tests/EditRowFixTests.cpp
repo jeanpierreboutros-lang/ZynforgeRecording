@@ -161,6 +161,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            noFirstLookDuringATake();
             newMediaKeepsTheCache (main);
             shiftRangeAdds();
             rangeBandSitsOnTheLane();
@@ -604,6 +605,36 @@ namespace zynforge
                 expect (finished, "setup: the consolidate never finished");
                 expect (pumpUntil ([&] { return ! waveCachePredatesAudio (cache, dir); }, 10000),
                         "the saved waveforms predate the new file, so reopening rescans every track");
+            }
+        }
+
+        void noFirstLookDuringATake()
+        {
+            beginTest ("A row touches no new clip file during a take");
+            {
+                const auto fresh = tempDir ("take");
+                expect (fresh.createDirectory().wasOk());
+                {
+                    Session s (1, { kRate });
+                    const auto own = s.dir.getChildFile ("Audio Files/Track_01_consolidated_1.wav");
+                    expect (writeWav (own, kRate));
+                    Row row (0, false, s.engine, s.formats, s.cache);
+                    sizeRow (row);
+                    auto clip = clipAt (0, 4800);
+                    clip.audioFile = own;
+
+                    s.engine.getRecorder().getTrack (0).armed.store (true);
+                    s.engine.setActiveSessionDir (fresh);
+                    s.engine.claimMixerFor (fresh);
+                    expect (s.engine.startRecording (fresh));
+                    expect (row.laneWaveFor (clip, false).thumb == nullptr, "paint opened a file during a take");
+                    expectEquals (row.getOwnThumbnailCountForTests(), 0, "a blank lane was cached for good");
+                    s.engine.stopRecording();
+                    expect (row.laneWaveFor (clip, false).thumb != nullptr, "the file's waveform never came back");
+                    expectEquals (row.getOwnThumbnailCountForTests(), 1);
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (fresh);
+                fresh.deleteRecursively();
             }
         }
 
