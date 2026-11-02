@@ -182,7 +182,7 @@ namespace zynforge
         // as seconds tick. It keeps its room; the health column gives way.
         const float timerPt = juce::jmin (inner.getHeight() * 0.95f, brand::type::h_hero + 4.0f);
         const auto  timerFont = brand::type::mono (timerPt, true);
-        const float timerW = timerFont.getStringWidthFloat (elapsedText) + (float) brand::space::xl;
+        const float timerW = juce::GlyphArrangement::getStringWidth (timerFont, elapsedText) + (float) brand::space::xl;
 
         // Right: record time left, then the disk-health rows if there is room.
         const float spare = inner.getWidth() - timerW;
@@ -190,17 +190,23 @@ namespace zynforge
         const bool primaryStale = diskReading == DiskReading::PrimaryStale;
         const bool copyStale    = diskReading == DiskReading::CopyStale;
         const auto valueCol     = primaryStale ? brand::alertAmber : brand::textPrimary;
+        const auto freeText     = primaryStale ? juce::String ("STALE")
+                                : freeGB < 0.0 ? juce::String ("--")
+                                               : juce::String::formatted ("%.1f GB", freeGB);
+        // With no estimate yet (nothing rolling) the large slot holds what is
+        // known, free space, rather than a dash.
+        const bool  freeIsBig   = remainingSeconds <= 0.0 || std::isinf (remainingSeconds);
         {
             // With a copy's drive not answering the time left is the primary's
             // alone, so the label says that instead of implying the whole rig.
             auto block = right.removeFromLeft (juce::jmin (124.0f, right.getWidth()));
             g.setColour (copyStale ? brand::alertAmber : labelCol);
             g.setFont (brand::type::caption());
-            g.drawText (copyStale ? "PRIMARY TIME LEFT" : "RECORD TIME LEFT",
+            g.drawText (freeIsBig ? "DISK FREE" : copyStale ? "PRIMARY TIME LEFT" : "RECORD TIME LEFT",
                         block.removeFromTop (14.0f), juce::Justification::centredLeft, false);
             g.setColour (valueCol);
             g.setFont (brand::type::mono (tall ? brand::type::h_subhead : brand::type::h_headline, true));
-            g.drawText (primaryStale ? juce::String ("STALE") : formatRemaining (remainingSeconds),
+            g.drawText (freeIsBig ? freeText : primaryStale ? juce::String ("STALE") : formatRemaining (remainingSeconds),
                         block, juce::Justification::centredLeft, false);
         }
 
@@ -221,11 +227,7 @@ namespace zynforge
             g.drawText (value, line, juce::Justification::centredRight, false);
         };
 
-        drawRow ("FREE",
-                 primaryStale ? juce::String ("STALE")
-                              : freeGB < 0.0 ? juce::String ("--")
-                                             : juce::String::formatted ("%.1f GB", freeGB),
-                 labelCol, valueCol);
+        if (! freeIsBig) drawRow ("FREE", freeText, labelCol, valueCol);
         // On the record plate a miss has to be white to read at all.
         const auto missCol = rolling ? brand::textPrimary : brand::accentRecord;
         drawRow (missed > 0 ? "MISSED SAMPLES" : "NO MISSED WRITES",
