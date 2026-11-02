@@ -16,6 +16,14 @@ namespace zynforge::atomicfile
         return file;
     }
 
+    // A writer's staging file: here only until its rename, and never part of
+    // a session. It can vanish at any moment, so nothing should copy or compare it.
+    inline bool isStagingFile (const juce::File& file)
+    {
+        const auto name = file.getFileName();
+        return name.startsWithChar ('.') && name.endsWith (".tmp");
+    }
+
     // Each caller gets a unique sibling, so overlapping report writers cannot
     // truncate one another's staging file. replaceFileIn maps to same-volume
     // rename on POSIX and leaves an existing target untouched on failure.

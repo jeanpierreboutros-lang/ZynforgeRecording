@@ -24,6 +24,7 @@
 #include "../Theme/DialogChrome.h"
 #include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
+#include "WaveCacheFile.h"
 #include "ExportDialog.h"
 #include "SessionProjPath.h"
 
@@ -35,6 +36,31 @@ juce::String applicationVersion()
 {
     auto* app = juce::JUCEApplicationBase::getInstance();
     return app != nullptr ? app->getApplicationVersion() : juce::String ("unknown");
+}
+
+bool copyFileCancellable (const juce::File& source, const juce::File& target,
+                          const std::atomic<bool>& cancel)
+{
+    auto in = source.createInputStream();
+    target.deleteFile();
+    auto out = target.createOutputStream();
+    if (in == nullptr || out == nullptr) return false;
+    const auto expectedSize = source.getSize();
+    // On the heap: this runs on a job thread, whose 512 KiB stack cannot hold
+    // it, and a frame that size faults the moment the function is entered.
+    std::vector<char> buffer (1024 * 1024);
+    while (! in->isExhausted())
+    {
+        if (cancel.load (std::memory_order_relaxed)) return false;
+        const int got = in->read (buffer.data(), (int) buffer.size());
+        if (got < 0 || (got > 0 && ! out->write (buffer.data(), (size_t) got)))
+            return false;
+        if (got == 0) break;
+    }
+    out->flush();
+    return ! in->getStatus().failed() && ! out->getStatus().failed()
+        && in->getPosition() == expectedSize && out->getPosition() == expectedSize
+        && source.getSize() == expectedSize;
 }
 
 bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
@@ -53,35 +79,19 @@ bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
     for (const auto& child : source.findChildFiles (juce::File::findFilesAndDirectories, false))
     {
         if (cancel.load (std::memory_order_relaxed)) return false;
+        if (zynforge::atomicfile::isStagingFile (child)) continue;
         if (child.isSymbolicLink()) return false;
         const auto target = dest.getChildFile (child.getFileName());
         if (child.isDirectory())
         {
             if (! copyDirectoryCancellable (child, target, cancel)) return false;
         }
-        else
+        else if (! copyFileCancellable (child, target, cancel))
         {
-            auto in = child.createInputStream();
+            // A cache can be rewritten while this runs, and losing it costs a
+            // rescan. Anything else missing would make the copy incomplete.
+            if (cancel.load (std::memory_order_relaxed) || ! wavecache::isCacheFile (child)) return false;
             target.deleteFile();
-            auto out = target.createOutputStream();
-            if (in == nullptr || out == nullptr) return false;
-            const auto expectedSize = child.getSize();
-            // On the heap: this runs on a job thread, whose 512 KiB stack cannot
-            // hold it, and a frame that size faults the moment the function is
-            // entered.
-            std::vector<char> buffer (1024 * 1024);
-            while (! in->isExhausted())
-            {
-                if (cancel.load (std::memory_order_relaxed)) return false;
-                const int got = in->read (buffer.data(), (int) buffer.size());
-                if (got < 0 || (got > 0 && ! out->write (buffer.data(), (size_t) got)))
-                    return false;
-                if (got == 0) break;
-            }
-            out->flush();
-            if (in->getStatus().failed() || out->getStatus().failed()
-                || in->getPosition() != expectedSize || out->getPosition() != expectedSize
-                || child.getSize() != expectedSize) return false;
         }
     }
     return ! cancel.load (std::memory_order_relaxed);

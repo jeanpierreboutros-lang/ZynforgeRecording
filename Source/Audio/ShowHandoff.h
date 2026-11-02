@@ -37,7 +37,8 @@ namespace zynforge::showhandoff
         for (const auto& child : dir.findChildFiles (juce::File::findFilesAndDirectories, false))
         {
             if (cancel.load (std::memory_order_relaxed) || child.isSymbolicLink()) return false;
-            if (isFinderFile (child)) continue;
+            if (isFinderFile (child) || atomicfile::isStagingFile (child)
+                || child.getFileName() == "WaveCache.wfm") continue;
             if (child.isDirectory())
             {
                 if (! collectFiles (root, child, files, cancel)) return false;

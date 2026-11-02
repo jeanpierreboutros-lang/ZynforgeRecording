@@ -721,6 +721,43 @@ public:
             host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
         }
 
+        beginTest ("A staging file or a busy waveform cache cannot fail a session copy");
+        {
+            Folder f; writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            const auto staging = f.dir.getChildFile (".session_mix.json.1234.tmp");
+            expect (staging.replaceWithText ("half written"));
+            const auto cache = f.dir.getChildFile ("WaveCache.wfm");
+            expect (cache.replaceWithText ("cache"));
+            // Unreadable stands in for a file that is gone by the time it is
+            // opened. Read permission means nothing on exFAT, so this case only
+            // bites on APFS, which is where CI and the sanitizer runs keep it.
+            ::chmod (staging.getFullPathName().toRawUTF8(), 0);
+            ::chmod (cache.getFullPathName().toRawUTF8(), 0);
+            const auto saved = f.dir.getSiblingFile (f.dir.getFileName() + "-saved-as");
+            const auto handoff = f.dir.getSiblingFile (f.dir.getFileName() + "-handoff");
+            const juce::ScopeGuard removeCopies { [&]
+            {
+                ::chmod (staging.getFullPathName().toRawUTF8(), 0644);
+                ::chmod (cache.getFullPathName().toRawUTF8(), 0644);
+                saved.deleteRecursively(); handoff.deleteRecursively();
+            } };
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) > 0);
+
+            expect (host.sessionJobs.reserve());
+            host.completeShowHandoff (f.dir, handoff);
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }, 20000));
+            expect (handoff.getChildFile ("Audio Files/Track_01.wav").existsAsFile(), host.statusLabel.getText());
+            expect (! handoff.getChildFile (staging.getFileName()).exists(), "a staging file reached the handoff");
+
+            expect (host.sessionJobs.reserve());
+            host.completeSaveAs (f.dir, saved);
+            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }, 20000));
+            expect (saved.getChildFile ("Audio Files/Track_01.wav").existsAsFile(), host.statusLabel.getText());
+            expect (! saved.getChildFile (staging.getFileName()).exists(), "a staging file reached the copy");
+            host.engine.clearSessionState(); host.engine.setStripCount (0); host.engine.clearAllStripOverrides();
+        }
+
         beginTest ("Save As copies a read-only session and keeps the unsaved edits");
         {
             Folder f (permissionsRoot()); writeSavedShow (f, 2); expect (writeAudio (f.track (1)));

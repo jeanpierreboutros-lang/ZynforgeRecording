@@ -37,6 +37,8 @@ namespace zynforge::wavecache
     using Caches    = std::vector<std::unique_ptr<juce::AudioThumbnailCache>>;
     using StopCheck = std::function<bool()>;
 
+    inline bool isCacheFile (const juce::File& file) { return file.getFileName() == "WaveCache.wfm"; }
+
     inline juce::File fileIn (const juce::File& sessionDir)
     {
         return sessionDir.getChildFile ("WaveCache.wfm");
