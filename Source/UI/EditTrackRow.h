@@ -203,7 +203,8 @@ namespace zynforge
             nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
             nameLabel.setFont (brand::type::channelName());
             nameLabel.setEditable (false, true, false);
-            nameLabel.setTooltip ("Double-click to rename this track. Changes mirror to the MIXER + PATCH views.");
+            nameLabel.setTooltip ("Double-click to rename this track. Changes mirror to the MIXER + PATCH views. "
+                                  "Right-click for what the lane shows, row size and Delete Channel.");
             nameLabel.onTextChange = [this]
             {
                 const auto typed = nameLabel.getText().trim();
@@ -226,6 +227,7 @@ namespace zynforge
             {
                 if (onTabRename) onTabRename (*this, shift);
             };
+            nameLabel.onPopupMenu = [this] (juce::Point<int> screenPos) { showRowMenu (screenPos, true); };
             addAndMakeVisible (nameLabel);
 
             auto styleBtn = [] (juce::ToggleButton& b, juce::Colour onCol)
@@ -1018,6 +1020,13 @@ namespace zynforge
                                     juce::Justification::topLeft, false);
                     }
                 }
+                // Nothing else on the row names this lane, and it refuses every
+                // clip gesture, so say so at the right of what is on screen.
+                g.setColour (brand::textTertiary);
+                g.setFont (brand::type::micro());
+                g.drawText ("MARKERS LANE",
+                            inner.withRight (juce::jmin (inner.getRight(), visibleRightX())).reduced (4, 1),
+                            juce::Justification::topRight, false);
                 // Playhead overlay still applies below.
                 if (playheadX >= 0 && playheadX < wavePane.getWidth())
                 {
@@ -1565,6 +1574,12 @@ namespace zynforge
         // un-shifted inner rect ([headerW, contentWidth]) because the waveform
         // itself is drawn there -- only the click classification shifts.
         int  waveLeftX()         const noexcept { return headerOriginX() + headerW; }
+        int  visibleRightX()     const noexcept
+        {
+            if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+                return vp->getViewPositionX() + vp->getViewWidth();
+            return getWidth();
+        }
         bool inWavePane (int ex) const noexcept { return ex >= waveLeftX(); }
         bool inSwatch   (int ex) const noexcept
         { const int hx = headerOriginX(); return ex >= hx && ex < hx + swatchW; }
@@ -1842,43 +1857,16 @@ namespace zynforge
                     engine.getPlayer().setPositionSamples (sx);
             }
 
-            // Right-click on a clip in the waveform lane → fade menu.
-            // Anywhere else on the row → row-size menu.
+            // Right-click on a clip in the waveform lane → clip menu.
+            // Anywhere else on the row → the row's menu. Delete is offered on
+            // the header only, the DAW-standard place to remove a track; the
+            // host confirms before deleting.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
-                // Right-click on the row header (name zone, not the wave
-                // pane) → channel context menu. The DAW-standard place to
-                // remove a track; the host confirms before deleting.
                 if (inNameZone (e.x))
                 {
-                    if (auto* page = findParentComponentOfClass<EditPage>())
-                    {
-                        if (page->onRowDelete)
-                        {
-                            juce::Component::SafePointer<EditPage> safePage (page);
-                            juce::Component::SafePointer<TrackRow> safeRow (this);
-                            const int idx = index;
-                            juce::PopupMenu m;
-                            m.addItem (2, "Lane Shows Waveform", true, laneMode == LaneMode::Waveform);
-                            m.addItem (3, "Lane Shows Markers",  true, laneMode == LaneMode::Markers);
-                            m.addSeparator();
-                            m.addItem (1, "Delete Channel");
-                            m.showMenuAsync (
-                                juce::PopupMenu::Options().withTargetScreenArea (
-                                    { e.getScreenPosition().x, e.getScreenPosition().y, 1, 1 }),
-                                [safePage, safeRow, idx] (int r)
-                                {
-                                    if ((r == 2 || r == 3) && safeRow != nullptr)
-                                    {
-                                        safeRow->laneMode = r == 2 ? LaneMode::Waveform : LaneMode::Markers;
-                                        safeRow->repaint();
-                                    }
-                                    if (r == 1 && safePage != nullptr && safePage->onRowDelete)
-                                        safePage->onRowDelete (idx);
-                                });
-                            return;
-                        }
-                    }
+                    showRowMenu (e.getScreenPosition(), true);
+                    return;
                 }
                 if (laneMode == LaneMode::Waveform && inWavePane (e.x))
                 {
@@ -1899,7 +1887,7 @@ namespace zynforge
                         }
                     }
                 }
-                showSizeMenu (e.getScreenPosition());
+                showRowMenu (e.getScreenPosition(), false);
                 return;
             }
             // Left-click in the bottom resize zone → start a drag-resize.
@@ -2907,11 +2895,40 @@ namespace zynforge
             return { -1, -1 };
         }
 
-        void showSizeMenu (juce::Point<int> screenPos)
+        void showRowMenu (juce::Point<int> screenPos, bool withDelete)
         {
-            if (menuOpen) return;   // re-entrancy guard
+            if (menuOpen || ! isEnabled()) return;   // re-entrancy guard
 
+            auto menu = rowMenu (withDelete);
+
+            // Use a screen-area target (1x1 at the click point) so the menu's
+            // anchor doesn't depend on the row component still being alive
+            // when the callback fires. SafePointer wraps the row body so a
+            // rebuild between open and dismiss can't crash the callback.
+            menuOpen = true;
+            juce::Component::SafePointer<TrackRow> safe (this);
+            menu.showMenuAsync (juce::PopupMenu::Options()
+                                    .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
+                                [safe] (int chosen)
+            {
+                auto* row = safe.getComponent();
+                if (row == nullptr) return;
+                row->menuOpen = false;
+                row->applyRowMenuChoice (chosen);
+            });
+        }
+
+    public:
+        // The row's menu, on its name, its bare header and any lane with no clip
+        // under the pointer. A row left on Markers refuses every clip gesture,
+        // so the way back is offered wherever the engineer ends up clicking.
+        static constexpr int kMenuLaneWaveform = 31, kMenuLaneMarkers = 32, kMenuDeleteChannel = 33;
+        juce::PopupMenu rowMenu (bool withDelete) const
+        {
             juce::PopupMenu menu;
+            menu.addItem (kMenuLaneWaveform, "Lane Shows Waveform", true, laneMode == LaneMode::Waveform);
+            menu.addItem (kMenuLaneMarkers,  "Lane Shows Markers",  true, laneMode == LaneMode::Markers);
+            menu.addSectionHeader ("Row Size");
             auto add = [this, &menu] (int id, const juce::String& name, Size s)
             {
                 menu.addItem (id, name, true /*enabled*/, s == rowSize);
@@ -2939,40 +2956,44 @@ namespace zynforge
             allMenu.addSeparator();
             allMenu.addItem (28, "fit to window");
             menu.addSubMenu ("Set all tracks to", allMenu);
-
-            // Use a screen-area target (1x1 at the click point) so the menu's
-            // anchor doesn't depend on the row component still being alive
-            // when the callback fires. SafePointer wraps the row body so a
-            // rebuild between open and dismiss can't crash the callback.
-            menuOpen = true;
-            juce::Component::SafePointer<TrackRow> safe (this);
-            menu.showMenuAsync (juce::PopupMenu::Options()
-                                    .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
-                                [safe] (int chosen)
+            if (withDelete)
             {
-                auto* row = safe.getComponent();
-                if (row == nullptr) return;
-                row->menuOpen = false;
-
-                static const std::array<Size, 8> sizeMap { Size::Micro, Size::Mini, Size::Small,
-                                                           Size::Medium, Size::Large, Size::Jumbo,
-                                                           Size::Extreme, Size::FitToWindow };
-                if (chosen >= 1 && chosen <= 8)
-                {
-                    const auto next = sizeMap[(std::size_t) (chosen - 1)];
-                    row->rowSize = next;
-                    if (row->onSizeChosen) row->onSizeChosen (*row, next);
-                    return;
-                }
-                // "Set all tracks to ▸" -- 21..28 mirror the size list.
-                if (chosen >= 21 && chosen <= 28)
-                {
-                    const auto next = sizeMap[(std::size_t) (chosen - 21)];
-                    if (row->onApplyToAllRows) row->onApplyToAllRows (next, 0);
-                    return;
-                }
-            });
+                menu.addSeparator();
+                menu.addItem (kMenuDeleteChannel, "Delete Channel");
+            }
+            return menu;
         }
+
+        // Split out of the async callback so the suite can drive it (test seam).
+        void applyRowMenuChoice (int chosen)
+        {
+            static const std::array<Size, 8> sizeMap { Size::Micro, Size::Mini, Size::Small,
+                                                       Size::Medium, Size::Large, Size::Jumbo,
+                                                       Size::Extreme, Size::FitToWindow };
+            if (chosen >= 1 && chosen <= 8)
+            {
+                const auto next = sizeMap[(std::size_t) (chosen - 1)];
+                rowSize = next;
+                if (onSizeChosen) onSizeChosen (*this, next);
+            }
+            // "Set all tracks to ▸" -- 21..28 mirror the size list.
+            else if (chosen >= 21 && chosen <= 28)
+            {
+                if (onApplyToAllRows) onApplyToAllRows (sizeMap[(std::size_t) (chosen - 21)], 0);
+            }
+            else if (chosen == kMenuLaneWaveform || chosen == kMenuLaneMarkers)
+            {
+                laneMode = chosen == kMenuLaneWaveform ? LaneMode::Waveform : LaneMode::Markers;
+                repaint();
+            }
+            else if (chosen == kMenuDeleteChannel)
+            {
+                if (auto* page = findParentComponentOfClass<EditPage>(); page != nullptr && page->onRowDelete)
+                    page->onRowDelete (index);
+            }
+        }
+
+    private:
 
         // One Cmd+Z step around an arrangement edit (no-op edits record none).
         template <typename Op>

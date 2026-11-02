@@ -11,6 +11,7 @@
 #include "../UI/EditTrackRow.h"
 #include "../UI/MainComponent.h"
 #include "../UI/PatchPage.h"
+#include "../UI/RenameLabel.h"
 
 #include <cmath>
 #include <functional>
@@ -156,6 +157,7 @@ namespace zynforge
             theMasterIsNotAChannel (main);
             theMouseTakesWhatItCanSee();
             aSessionJobOwnsTheEditor (main);
+            theRowMenuIsReachable();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -407,6 +409,68 @@ namespace zynforge
                 const int bStart = laneX (row, 0.45);
                 drag (row, { bStart + 2, bodyY }, { bStart - 18, bodyY });
                 expect (s.clips (0)[1].timelineStartSamples < 21600, "the incoming clip's start was out of reach");
+            }
+        }
+
+        static juce::StringArray itemsOf (const juce::PopupMenu& menu)
+        {
+            juce::StringArray items;
+            for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+                items.add (it.getItem().text);
+            return items;
+        }
+
+        void theRowMenuIsReachable()
+        {
+            beginTest ("A right-click on the channel name opens the row's menu, as the bare header does");
+            {
+                Session s (1, { kRate });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                const auto rows = rowsOf (page);
+                expect (rows.size() == 1, "setup: one row");
+                if (rows.size() == 1)
+                {
+                    RenameLabel* name = nullptr;
+                    for (auto* child : rows[0]->getChildren())
+                        if (auto* label = dynamic_cast<RenameLabel*> (child)) name = label;
+                    expect (name != nullptr && name->onPopupMenu != nullptr, "the name field swallows the right-click");
+                }
+            }
+
+            beginTest ("The row's menu names lane, size and delete, and sends a Markers row back");
+            {
+                Session s (1, { kRate });
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const auto header = itemsOf (row.rowMenu (true));
+                for (const auto& item : { "Lane Shows Waveform", "Lane Shows Markers", "small", "Set all tracks to", "Delete Channel" })
+                    expect (header.contains (item), juce::String ("the header menu lost ") + item);
+                const auto lane = itemsOf (row.rowMenu (false));
+                expect (lane.contains ("Lane Shows Waveform"), "a lane with no clip offers no way back");
+                expect (! lane.contains ("Delete Channel"), "a stray click on a lane must not offer Delete");
+
+                row.applyRowMenuChoice (Row::kMenuLaneMarkers);
+                expect (row.laneMode == Row::LaneMode::Markers);
+                row.applyRowMenuChoice (Row::kMenuLaneWaveform);
+                expect (row.laneMode == Row::LaneMode::Waveform);
+                row.applyRowMenuChoice (5);
+                expect (row.getRowSize() == Row::Size::Large);
+            }
+
+            beginTest ("Right-clicking a Markers lane opens the row's menu, not a clip's");
+            {
+                Session s (1, { kRate });
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                row.laneMode = Row::LaneMode::Markers;
+                int opened = -1;
+                row.clipMenuForTests = [&opened] (int clip) { opened = clip; };
+                const juce::Point<int> p (laneX (row, 0.5), 40);
+                row.mouseDown (mouseAt (row, p, p, false, juce::ModifierKeys::rightButtonModifier));
+                expectEquals (opened, -1, "a Markers row opened a clip menu");
+                expect (juce::PopupMenu::dismissAllActiveMenus(), "the row's menu did not open");
             }
         }
 
