@@ -56,7 +56,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         // Close the session back to the Welcome screen WITHOUT quitting --
         // so the engineer can start/open another session between sets.
-        menu.addItem (6, "Close Session", engine.hasSessionFolder()
+        menu.addItem (6, "Close Session", (engine.hasSessionFolder() || sessionFolderIsMissing())
                                           && sessionEditable);
         menu.addSeparator();
 
@@ -343,6 +343,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) sessionLocked
         << '|' << (int) player.hasLoopRegion()
         << '|' << (int) engine.hasSessionFolder()
+        << '|' << (int) sessionFolderIsMissing()
         << '|' << (int) engine.isPunchModeOn()
         << '|' << (int) snapToMarkers
         << '|' << (int) cues.empty()

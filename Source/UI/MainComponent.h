@@ -186,6 +186,11 @@ private:
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
     void releaseHeldRecordPress();
     bool sessionFolderIsMissing() const;
+    juce::String noFolderText (const juce::String& noSession, const juce::String& before) const;
+    bool refuseUnloadedSession (const juce::String& before);
+    void offerLeaveMissingSession (const juce::String& leaveLabel, std::function<void()> leave);
+    std::function<bool (const juce::String& text)> leaveMissingSessionPromptForTests;
+    void finishCloseSession (bool saved);
     void completeSaveAs (const juce::File& source, const juce::File& dest);
     void completeRelocate (const juce::File& oldDir, const juce::File& newParent);
     void completeShowHandoff (const juce::File& source, const juce::File& dest);

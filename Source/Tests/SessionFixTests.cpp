@@ -262,6 +262,153 @@ public:
         }
     }
 
+    void testMissingDrive()
+    {
+        beginTest ("With the drive gone, replacing the session asks and says how to keep the work");
+        {
+            Folder f, other ("Other"); writeSavedShow (f); writeSavedShow (other);
+            Host host (f);
+            PulledDrive drive (f);
+            int prompts = 0;
+            juce::String text;
+            bool answer = false;
+            host.main.leaveMissingSessionPromptForTests = [&] (const juce::String& t)
+            { ++prompts; text = t; return answer; };
+
+            bool replaced = false;
+            host.main.confirmSessionReplacement ([&] { replaced = true; });
+            expectEquals (prompts, 1, "unsaved work was replaced without a question");
+            expect (! replaced, "cancelling must keep the session");
+            expect (text.contains (f.dir.getFullPathName()), text);
+            expect (text.containsIgnoreCase ("reconnect the drive"), text);
+
+            answer = true;
+            host.main.confirmSessionReplacement ([&] { replaced = true; });
+            expect (replaced, "the engineer chose to go on");
+        }
+
+        beginTest ("A Finder open of another session asks too, and Cancel leaves everything in place");
+        {
+            Folder f, other ("Other"); writeSavedShow (f); writeSavedShow (other);
+            Host host (f);
+            PulledDrive drive (f);
+            int prompts = 0;
+            host.main.leaveMissingSessionPromptForTests = [&] (const juce::String&) { ++prompts; return false; };
+
+            expect (host.main.openSessionDocument (other.project(), true));
+            expectEquals (prompts, 1);
+            expect (host.main.engine.getActiveSessionDir() == f.dir, "the session was replaced");
+            expect (host.main.engine.mixerBelongsTo (f.dir));
+            expectEquals (host.main.engine.getRecorder().getNumTracks(), 2);
+        }
+
+        beginTest ("Quit with the drive gone asks about the session, not about no session");
+        {
+            Folder f; writeSavedShow (f);
+            Host host (f);
+            PulledDrive drive (f);
+            int prompts = 0;
+            host.main.leaveMissingSessionPromptForTests = [&] (const juce::String&) { ++prompts; return false; };
+            host.main.confirmAndQuit();
+            expectEquals (prompts, 1, "Quit took the open session for no session at all");
+            juce::ModalComponentManager::getInstance()->cancelAllModalComponents();
+        }
+
+        beginTest ("Close Session stays available with the drive gone, and asks");
+        {
+            Folder f; writeSavedShow (f);
+            Host host (f);
+            PulledDrive drive (f);
+            bool found = false;
+            for (const auto& row : walk (host.main.getMenuForIndex (0, {})))
+                if (row.id == 6) { found = true; expect (row.enabled, "Close Session greyed out"); }
+            expect (found);
+
+            int prompts = 0;
+            host.main.leaveMissingSessionPromptForTests = [&] (const juce::String&) { ++prompts; return false; };
+            host.main.closeSession();
+            expectEquals (prompts, 1);
+            expect (host.main.engine.getActiveSessionDir() == f.dir);
+            juce::ModalComponentManager::getInstance()->cancelAllModalComponents();
+        }
+
+        beginTest ("Export, Handoff and Move name the missing drive, not a missing session");
+        {
+            Folder f, out ("Out"); writeSavedShow (f);
+            Host host (f);
+            PulledDrive drive (f);
+            const auto expectNamed = [&] (const juce::String& what)
+            {
+                expect (host.status().contains ("reconnect its drive"), what + ": " + host.status());
+                expect (host.status().contains (f.dir.getFullPathName()), what + ": " + host.status());
+                host.main.statusLabel.setText ({}, juce::dontSendNotification);
+            };
+            host.main.startExportTracksTo (out.dir, { 0 }, {});        expectNamed ("raw export");
+            host.main.onExportAudio();                                  expectNamed ("export dialog");
+            host.main.exportTimelineCsv();                              expectNamed ("timeline");
+            host.main.exportDawProject (projectexport::Format::Reaper); expectNamed ("project");
+            host.main.exportShowHandoff();                              expectNamed ("handoff");
+            host.main.relocateActiveSession();                          expectNamed ("move");
+            host.main.onBounceStereoMix();                              expectNamed ("mix");
+            expect (! host.main.sessionIoBusy.load(), "a refused job kept its reservation");
+        }
+
+        beginTest ("The ordinary question comes back with the drive");
+        {
+            Folder f; writeSavedShow (f);
+            Host host (f);
+            PulledDrive drive (f);
+            expect (host.main.sessionFolderIsMissing());
+            drive.reconnect();
+            expect (! host.main.sessionFolderIsMissing());
+        }
+
+        beginTest ("A session pinned but never loaded has nothing to lose, so nothing asks");
+        {
+            Folder f; writeSavedShow (f);
+            const juce::File gone = f.dir.getSiblingFile ("never mounted");
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.setActiveSessionDir (gone);
+            int prompts = 0;
+            host.leaveMissingSessionPromptForTests = [&] (const juce::String&) { ++prompts; return false; };
+            bool replaced = false;
+            host.confirmSessionReplacement ([&] { replaced = true; });
+            expectEquals (prompts, 0);
+            expect (replaced);
+            forget (host);
+        }
+    }
+
+    void testUnloadedSession()
+    {
+        beginTest ("A session pinned but not loaded makes no handoff or project from empty memory");
+        {
+            Folder f; writeSavedShow (f); expect (writeAudio (f.track (1)));
+            const auto handoff = f.dir.getSiblingFile ("Show Handoff");
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.setActiveSessionDir (f.dir);
+
+            expect (host.sessionJobs.reserve());
+            host.completeShowHandoff (f.dir, handoff);
+            expect (! host.sessionIoBusy.load(), "a refused handoff kept its reservation");
+            expect (host.statusLabel.getText().contains ("not loaded"), host.statusLabel.getText());
+            expect (! handoff.exists(), "a handoff folder was made");
+
+            host.exportShowHandoff();
+            expect (host.chooser == nullptr, "the folder chooser opened for a handoff that cannot run");
+            host.statusLabel.setText ({}, juce::dontSendNotification);
+            host.exportDawProject (projectexport::Format::Reaper);
+            expect (host.statusLabel.getText().contains ("not loaded"), host.statusLabel.getText());
+            expect (! host.sessionIoBusy.load());
+            expect (! f.dir.getChildFile ("Export Files").exists(), "an empty project was written");
+            host.statusLabel.setText ({}, juce::dontSendNotification);
+            host.exportTimelineCsv();
+            expect (host.statusLabel.getText().contains ("not loaded"), host.statusLabel.getText());
+            expect (host.chooser == nullptr);
+            forget (host);
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -272,6 +419,8 @@ public:
         testHandoffStatus();
         testHandoffLines();
         testSoundcheckPatchStaysOut();
+        testMissingDrive();
+        testUnloadedSession();
     }
 };
 
