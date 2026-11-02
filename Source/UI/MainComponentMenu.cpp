@@ -270,7 +270,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         {
             juce::PopupMenu m;
             m.addItem (954, consoleLink.isConnected()
-                               ? "Console: disconnect " + consoleLink.getHost()
+                               ? "Console: disconnect " + consoleLink.getHost() + " (" + consoleLink.healthText() + ")"
                                : juce::String ("Console: connect..."));
             // Repatch + gain items only light up for a desk we drive over OSC.
             // Write-tier items also require a TRUSTWORTHY dialect: either the
@@ -286,6 +286,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                ? "Console: back to STAGE patch"
                                : "Console: SOUNDCHECK patch (card returns)",
                        consoleRepatch);
+            m.addItem (987, "Console: check the desk's patch",
+                       consoleLink.isConnected() && consoleLink.getProfile().canRepatch);
             m.addItem (956, "Console: capture head-amp gains", consoleGains);
             m.addItem (957, "Console: restore head-amp gains",
                        consoleGains && ! engine.isRecording() && ! captureMetadataPending);
@@ -362,7 +364,9 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << engine.getLtcSourceStrip()
         << '|' << (int) twinLink.isEnabled()
         << '|' << (int) consoleLink.isConnected()
+        << '|' << (int) consoleLink.getHealth()
         << '|' << (int) consoleLink.getPatch()
+        << '|' << (int) consoleLink.isOnSoundcheckPatch()
         << '|' << (int) consoleLink.getProfile().canRepatch
         << '|' << (int) consoleLink.getProfile().canCaptureGains
         // The handshake flips canWrite() asynchronously AFTER connect, so it
@@ -512,6 +516,7 @@ void MainComponent::registerMenuCommands()
     m.add (953, [this] { detectSongsToMarkers(); });
     m.add (954, [this] { promptConsoleConnect(); });
     m.add (955, [this] { consoleToggleSoundcheck(); });
+    m.add (987, [this] { consoleCheckDeskPatch(); });
     m.add (956, [this] { consoleCaptureGains(); });
     m.add (957, [this] { consoleRestoreGains(); });
     m.add (958, [this] { toggleCaptureDaemon(); });
@@ -628,7 +633,8 @@ juce::String MainComponent::consoleLinkSummary() const
     if (! consoleLink.isConnected()) return "Console link: not connected";
     return "Console link: " + profile.displayName + " at " + consoleLink.getHost()
          + (consoleLink.isDialectConfirmed() ? ", dialect confirmed by the desk"
-                                             : ", dialect not confirmed by the desk");
+                                             : ", dialect not confirmed by the desk")
+         + ", " + consoleLink.healthText();
 }
 
 int MainComponent::oscListenPort() const

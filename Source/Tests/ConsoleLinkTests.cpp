@@ -96,15 +96,21 @@ namespace zynforge
                 }
                 expect (link.getPatch() == ConsoleLink::Patch::Soundcheck);
 
-                // Back to stage: restores the AES50 patch, not analog.
+                // Back to stage: restores the AES50 patch, not analog, then
+                // asks each block what it now holds.
                 link.exitSoundcheck();
-                expectEquals ((int) sent.size(), 12);
+                expectEquals ((int) sent.size(), 16);
                 for (int b = 0; b < 4; ++b)
                 {
                     const auto& s = sent[(size_t) (8 + b)];
                     expect (s.args.size() == 1 && s.args[0].isInt32());
                     expectEquals ((int) s.args[0].getInt32(), 4 + b);
+                    expect (sent[(size_t) (12 + b)].args.empty(), "a read-back carries no arguments");
                 }
+                expect (link.getPatch() == ConsoleLink::Patch::Soundcheck, "only the desk's answer ends it");
+                for (int b = 0; b < 4; ++b)
+                    link.injectReply (juce::OSCMessage (juce::OSCAddressPattern (sent[(size_t) b].addr),
+                                                        (juce::int32) (4 + b)));
                 expect (link.getPatch() == ConsoleLink::Patch::Stage);
             }
 
@@ -155,7 +161,7 @@ namespace zynforge
                 link.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/000/gain"), 0.9f));
                 expectWithinAbsoluteError (link.getCapturedGains().at (0), 0.5f, 1.0e-6f,
                                            "live console updates must not overwrite the capture snapshot");
-                expectEquals ((int) sent.size(), 3);
+                expectEquals ((int) sent.size(), 6, "three writes, then three read-backs");
                 if (haveAtLeast (sent, 1, "restoreGains writes")
                     && expectAtLeastOneFloatArg (sent[0]))
                     expectWithinAbsoluteError (sent[0].args[0].getFloat32(), 0.5f, 1.0e-6f);
@@ -213,7 +219,7 @@ namespace zynforge
                     sent.push_back (std::move (s));
                 });
                 b.exitSoundcheck();
-                expectEquals ((int) sent.size(), 4);
+                expectEquals ((int) sent.size(), 8, "four writes, then four read-backs");
                 if (haveAtLeast (sent, 1, "exitSoundcheck restores")
                     && expectAtLeastOneIntArg (sent[0]))
                     expectEquals ((int) sent[0].args[0].getInt32(), 10);

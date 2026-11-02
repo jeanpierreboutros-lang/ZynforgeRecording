@@ -887,6 +887,7 @@ namespace zynforge::twin
             const std::lock_guard<std::mutex> lock (queueLock);
             outbox.push_back (lastSummaryBody);
         }
+        offerAdoptedTake();
         publishStatus (local);
     }
 
@@ -954,6 +955,11 @@ namespace zynforge::twin
                 reply (true, "already recording; the take it kept rolling is now linked to this one");
             }
             else reply (true, "already recording its own take; STOP on the leader will not end it");
+            return;
+        }
+        if ((bool) body.getProperty ("relink", false))
+        {
+            reply (true, "nothing is rolling here, so the leader's take has no follower");
             return;
         }
 
@@ -1196,8 +1202,26 @@ namespace zynforge::twin
         refreshWarnings();
     }
 
+    void TwinLink::noteLocalTakeAdopted()
+    {
+        if (leaderTakeActive) return;
+        adoptedTake = true;
+        offerAdoptedTake();
+    }
+
+    void TwinLink::offerAdoptedTake()
+    {
+        if (! adoptedTake || ! linked) return;
+        adoptedTake = false;
+        if (config.role != Role::Leader || leaderTakeActive || ! host.twinStatus().recording) return;
+        leaderTakeId = juce::Uuid().toString();
+        leaderTakeActive = true;
+        queueBody (makeObject ({ { "m", "start" }, { "take", leaderTakeId }, { "relink", true } }));
+    }
+
     void TwinLink::noteLocalTakeStarted()
     {
+        adoptedTake = false;
         if (! enabled || config.role != Role::Leader) return;
         leaderTakeId = juce::Uuid().toString();
         leaderTakeActive = true;

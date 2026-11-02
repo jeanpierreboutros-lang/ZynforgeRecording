@@ -37,7 +37,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -273,6 +273,7 @@ private:
     // Request channel names from a DiGiCo console, then build a session from
     // what comes back (the bidirectional console link).
     void createSessionFromConsole();
+    void finishSessionFromConsole (const juce::File& sessionAtPress, bool viaLink, int stereoPairsAsked);
     // Builds the session from what the desk reported. `stereoPairsAsked` is
     // how many link states were requested; 0 means this desk or path can't
     // report them.
@@ -357,6 +358,7 @@ private:
     juce::String consoleLinkSummary() const;
     bool refuseConsoleWriteDuringTake();
     void consoleToggleSoundcheck();
+    void consoleCheckDeskPatch();
     void consoleCaptureGains();
     void consoleRestoreGains();
     void togglePunchMode();
@@ -519,6 +521,7 @@ private:
     double      takeClockRate (double deviceRate);
     double      shownTakeRate { 48000.0 };   // asked once a tick, by the big clock; a daemon take asks the helper
     void restoreOutputPatch();
+    juce::String vscReachText (int moved);
     void updateNextCueCountdown();
     void syncStripsWithEngine();
     void surfaceAsyncReportFailure();
@@ -558,6 +561,8 @@ private:
     // Show pre-flight checklist -- one-screen view of every show-critical
     // setting (device, SR, inputs, armed, backup, disk, cues, recording state).
     void  showPreflightChecklist();
+    zynforge::PreflightRow deskPatchRow() const;
+    zynforge::PreflightRow deskLinkRow() const;
     juce::String backupChecklistRow();
 
     zynforge::ZynForgeLookAndFeel laf;
@@ -588,6 +593,7 @@ private:
     // before everything above, so its threads never outlive what the host uses.
     zynforge::twin::TwinLink twinLink { *this };
     bool twinStartInFlight { false };   // this RECORD arrived over the twin link
+    bool twinStopFollowsDaemon { false };  // a confirmed STOP waits on the daemon's reply
     bool remoteStartInFlight { false }; // this RECORD arrived from any remote surface
     bool remotePunchRefused { false };  // and it was refused because it would punch
 
@@ -599,6 +605,7 @@ private:
     friend class zynforge::ReviewPersistenceRepairTests;
     friend class zynforge::ReviewUiFormatRepairTests;
     friend class zynforge::ConsoleVscTests;
+    friend class zynforge::NetworkStateTests;
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
     friend class zynforge::SessionSafetyTests;
