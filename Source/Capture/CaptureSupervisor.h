@@ -26,7 +26,7 @@ namespace zynforge::capture
     //    (the take is already lost; the engineer must see that).
     //  * shutdown() leaves a RECORDING daemon rolling (the whole point: the
     //    GUI quitting must not stop the take); an idle daemon we launched
-    //    is asked to exit (SIGTERM via ChildProcess::kill).
+    //    is asked to exit, by Quit and then SIGTERM. It is never killed.
     //
     // The daemon side needs no watchdog: a vanished GUI just drops the
     // socket (SIGPIPE ignored) and recording continues.
@@ -46,6 +46,8 @@ namespace zynforge::capture
         // Best-effort discovery relative to the running executable
         // (build tree: ../../../../ZynforgeCapture_artefacts/<config>/).
         static juce::File discoverBinary();
+        // SIGTERM to this process's children of that name. Returns how many.
+        static int askChildrenToExit (const juce::String& programName);
 
         // Attach to a live daemon on `port`, else launch + connect.
         // extraArgs are appended to the launch command (tests pass

@@ -13,6 +13,19 @@ namespace zynforge::capture
         // first callback. The device may expose fewer physical inputs.
         recorder.setTrackCount (numInputs);
 
+        // The port first: a device can take seconds to open, and a window that
+        // hears nothing takes that for a helper that will never answer. The
+        // handshake is the server's own; commands and status wait on this lock.
+        std::unique_lock<std::mutex> opening (commandLock);
+        server.onCommand = [this] (const Command& c) { handleCommand (c); };
+        if (! server.listen (port))
+        {
+            juce::Logger::writeToLog ("[capture] listen failed on port " + juce::String (port));
+            return false;
+        }
+        running.store (true);
+        statusThread = std::thread ([this] { statusLoop(); });
+
         if (! testMode.load())
         {
             // Inputs only -- the daemon never plays back.
@@ -20,23 +33,14 @@ namespace zynforge::capture
             if (err.isNotEmpty())
             {
                 juce::Logger::writeToLog ("[capture] device init failed: " + err);
+                opening.unlock();
+                stop();
                 return false;
             }
             deviceManager.addAudioCallback (this);
         }
         else if (registerCallbackForTests)
             registerCallbackForTests();
-
-        server.onCommand = [this] (const Command& c) { handleCommand (c); };
-        if (! server.listen (port))
-        {
-            juce::Logger::writeToLog ("[capture] listen failed on port " + juce::String (port));
-            if (! testMode.load()) deviceManager.removeAudioCallback (this);
-            return false;
-        }
-
-        running.store (true);
-        statusThread = std::thread ([this] { statusLoop(); });
         return true;
     }
 

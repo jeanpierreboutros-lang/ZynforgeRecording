@@ -11,6 +11,8 @@
 #include <mutex>
 #include <thread>
 
+namespace zynforge { class CapturePathTests; }
+
 namespace zynforge::capture
 {
     // Phase 1c of the capture-process split: the engine of the headless
@@ -76,6 +78,7 @@ namespace zynforge::capture
 
     private:
         friend class ReviewCaptureStartupTests;
+        friend class zynforge::CapturePathTests;
         std::function<void()> registerCallbackForTests;
         void handleCommand (const Command&);
         void statusLoop();

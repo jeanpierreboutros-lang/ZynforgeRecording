@@ -2,6 +2,11 @@
 
 #include <juce_events/juce_events.h>
 
+#include <array>
+#include <libproc.h>
+#include <signal.h>
+#include <unistd.h>
+
 namespace zynforge::capture
 {
     CaptureSupervisor::~CaptureSupervisor()
@@ -30,6 +35,23 @@ namespace zynforge::capture
             if (dir.getParentDirectory() == dir) break;
         }
         return {};
+    }
+
+    // juce::ChildProcess::kill is SIGKILL, which can leave an audio driver wedged
+    // with the device still open. The helper closes its device on SIGTERM.
+    int CaptureSupervisor::askChildrenToExit (const juce::String& programName)
+    {
+        std::array<pid_t, 256> children {};
+        const int count = proc_listchildpids (::getpid(), children.data(), (int) sizeof (children));
+        int asked = 0;
+        for (int i = 0; i < count && i < (int) children.size(); ++i)
+        {
+            char name[64] {};
+            if (proc_name (children[(size_t) i], name, sizeof (name)) > 0 && programName == name
+                && ::kill (children[(size_t) i], SIGTERM) == 0)
+                ++asked;
+        }
+        return asked;
     }
 
     bool CaptureSupervisor::connectOrLaunch (int wantPort, const juce::StringArray& extraArgs)
@@ -105,7 +127,7 @@ namespace zynforge::capture
             }
             if (! process.isRunning()) break;   // crashed on startup
         }
-        process.kill();
+        askChildrenToExit (binaryPath.getFileName());
         launched = false;
         lastConnectError = "The capture daemon started but never answered; port "
                          + juce::String (port) + " may be busy.";
@@ -181,11 +203,11 @@ namespace zynforge::capture
 
             client.disconnect();
 
-            // Kill fallback fires ONLY when we know the daemon is idle -- either
-            // a fresh status said so, or the daemon acked the quit. It can never
-            // fire on a default/unknown status.
+            // Fires ONLY when we know the daemon is idle -- either a fresh status
+            // said so, or the daemon acked the quit. It can never fire on a
+            // default/unknown status.
             if (quitAccepted && process.isRunning())
-                process.kill();
+                askChildrenToExit (binaryPath.getFileName());
         }
         else
         {

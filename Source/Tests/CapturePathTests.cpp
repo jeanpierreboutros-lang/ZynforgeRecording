@@ -1076,9 +1076,55 @@ namespace zynforge
             }
         }
 
+        void testHelperLifecycle()
+        {
+            beginTest ("A window can reach a helper while its device is still opening");
+            {
+                capture::CaptureDaemon daemon;
+                daemon.setTestModeNoDevice (true);
+                bool answered = false;
+                int port = 0;
+                daemon.registerCallbackForTests = [&]
+                {
+                    capture::CaptureClient client;
+                    answered = client.connect ("127.0.0.1", port) && client.hello (1500).ok;
+                    client.disconnect();
+                };
+                juce::Random random;
+                bool started = false;
+                for (int attempt = 0; attempt < 20 && ! started; ++attempt)
+                {
+                    port = 50000 + random.nextInt (9000);
+                    started = daemon.start (port, 1);
+                }
+                expect (started);
+                expect (answered, "the port opened only after the device did");
+                daemon.stop();
+            }
+
+            beginTest ("A helper asked to exit closes down cleanly, where a kill would not");
+            {
+                const auto binary = capture::CaptureSupervisor::discoverBinary();
+                if (binary.existsAsFile())
+                {
+                    const int port = 50000 + juce::Random::getSystemRandom().nextInt (9000);
+                    juce::ChildProcess child;
+                    expect (child.start (juce::StringArray { binary.getFullPathName(), "--port", juce::String (port),
+                                                             "--no-device" }));
+                    capture::CaptureClient client;
+                    expect (pumpUntil ([&] { return client.connect ("127.0.0.1", port); }, 5000), "the helper never listened");
+                    client.disconnect();
+                    expectGreaterOrEqual (capture::CaptureSupervisor::askChildrenToExit (binary.getFileName()), 1);
+                    expect (child.waitForProcessToFinish (5000), "the helper ignored SIGTERM");
+                    expectEquals ((int) child.getExitCode(), 0, "the helper did not close down cleanly");
+                }
+            }
+        }
+
         void runTest() override
         {
             const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
+            testHelperLifecycle();
             testCrashRemains();
             testDaemonDevice();
             AudioEngine::setTestModeSkipAudioInit (true);
