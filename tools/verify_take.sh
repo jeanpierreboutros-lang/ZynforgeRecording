@@ -86,7 +86,18 @@ fi
 # ── Per-file: header + length ───────────────────────────────────────────────
 hdr "2. Per-file header + length"
 shopt -s nullglob
-media=("$AUDIO"/Track_*.wav "$AUDIO"/Track_*.aif "$AUDIO"/Track_*.aiff "$AUDIO"/Track_*.flac)
+media=()
+renders=0
+# A Consolidate render sits beside the takes and is no part of one: the report
+# never lists it. QC, Export and the handoff skip the same exact name.
+for w in "$AUDIO"/Track_*.wav "$AUDIO"/Track_*.aif "$AUDIO"/Track_*.aiff "$AUDIO"/Track_*.flac; do
+    if [[ "$(basename "$w")" =~ ^Track_[0-9]{1,3}_consolidated_[0-9]+\.(wav|aif|aiff|flac)$ ]]; then
+        ((renders+=1))
+    else
+        media+=("$w")
+    fi
+done
+(( renders == 0 )) || ylw "  $renders Consolidate render(s) skipped: they are not takes"
 if (( ${#media[@]} == 0 )); then
     red "no Track_* take files found in $AUDIO"; exit 1
 fi
@@ -191,12 +202,15 @@ from fractions import Fraction
 report = json.loads(pathlib.Path(sys.argv[1]).read_text())
 audio = pathlib.Path(sys.argv[2])
 pattern = re.compile(r"^Track_(\d{1,3})(?:_part(\d+))?\.(wav|aif|aiff|flac)$")
+render = re.compile(r"^Track_\d{1,3}_consolidated_\d+\.(wav|aif|aiff|flac)$")
 groups = {}
 problems = []
 for path in audio.iterdir():
     if not path.is_file() or not path.name.startswith("Track_"):
         continue
     if path.suffix.lower() not in (".wav", ".aif", ".aiff", ".flac"):
+        continue
+    if render.fullmatch(path.name):
         continue
     match = pattern.fullmatch(path.name)
     if not match:

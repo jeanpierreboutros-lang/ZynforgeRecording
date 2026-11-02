@@ -37,7 +37,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class EditRowFixTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -186,10 +186,18 @@ private:
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
     void releaseHeldRecordPress();
     bool sessionFolderIsMissing() const;
+    juce::String noFolderText (const juce::String& noSession, const juce::String& before) const;
+    bool refuseUnloadedSession (const juce::String& before);
+    void offerLeaveMissingSession (const juce::String& leaveLabel, std::function<void()> leave);
+    std::function<bool (const juce::String& text)> leaveMissingSessionPromptForTests;
+    void finishCloseSession (bool saved);
     void completeSaveAs (const juce::File& source, const juce::File& dest);
     void completeRelocate (const juce::File& oldDir, const juce::File& newParent);
     void completeShowHandoff (const juce::File& source, const juce::File& dest);
     bool carryMixerInto (const juce::File& copy);
+    juce::String openCopiedSession (const juce::File& source, const juce::File& copy, bool carried);
+    static juce::String moveStatusLine (const juce::File& oldDir, const juce::File& newDir, bool carried,
+                                        bool oldCopyRemains, const juce::String& refused);
     void startHandoffCopy (const juce::File& source, const juce::File& dest);
     // When a job's save of the source fails, whether to go on from what is on
     // disk. The tests stand in for the dialog through continueFromDiskPromptForTests.
@@ -260,6 +268,8 @@ private:
     void importChannelNamesFromCsv();
     // Create a brand-new session sized + named from a channel CSV.
     void createSessionFromCsv();
+    void completeSessionFromCsv (const juce::File& csv);
+    juce::String notSavedWarning (bool saved) const;
     // Request channel names from a DiGiCo console, then build a session from
     // what comes back (the bidirectional console link).
     void createSessionFromConsole();
@@ -525,10 +535,14 @@ private:
     void warnIfSampleRateMismatch();
 
     // Session templates -- engineer's per-strip layout reusable across shows.
+    // The menu's id range for them, 200-249. Ids past it are other commands.
+    static constexpr int kMenuTemplateSlots = 50;
     juce::File  templatesDir() const;
+    juce::File  templatesDirForTests;
     juce::Array<juce::File> listSessionTemplates() const;
     void  promptSaveSessionTemplate();
     void  applySessionTemplate (const juce::File& templateFile);
+    juce::String sessionTemplateJson (const juce::String& name);
     void  promptDeleteSessionTemplate();
     // Default template: File ▸ New Session pre-applies it after creating
     // the session folder so the engineer starts with their preferred
@@ -595,6 +609,7 @@ private:
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
     friend class zynforge::SessionSafetyTests;
+    friend class zynforge::SessionFixTests;
     friend class zynforge::MainWindowGuardTests;
     friend class zynforge::EditIntegrityTests;
     friend class zynforge::EditRowFixTests;

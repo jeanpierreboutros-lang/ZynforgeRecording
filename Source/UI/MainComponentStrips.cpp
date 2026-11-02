@@ -566,43 +566,54 @@ void MainComponent::createSessionFromCsv()
                           | juce::FileBrowserComponent::canSelectFiles,
         [self] (const juce::FileChooser& fc)
         {
-            if (self == nullptr) return;
-            const auto f = fc.getResult();
-            if (! f.existsAsFile()) return;
-            const auto names = zynforge::channelcsv::parseNames (f.loadFileAsString());
-            if (names.isEmpty()) { self->showStatus ("No channel names found in " + f.getFileName()); return; }
-
-            zynforge::NewSessionDialog::Result r;
-            r.name          = f.getFileNameWithoutExtension();
-            r.location      = self->getSessionsRoot();
-            r.captureFormat = self->engine.getRecorder().getCaptureFormat();
-            r.sampleRate    = self->pendingSampleRate;
-            const auto dir  = self->createSessionFolderStructure (r);
-            if (! dir.isDirectory())
-            {
-                self->showStatus (self->sessionCreateFailureMessage());
-                return;
-            }
-
-            self->engine.setActiveSessionDir (dir);
-            // Stop the live strips' meter timers before setStripCount
-            // frees any TrackState they reference (a CSV with fewer names than
-            // the current count shrinks the recorder vector); strips rebuild on
-            // the next 10 Hz tick.
-            self->condemnAllStrips();
-            self->engine.clearAllStripOverrides();
-            self->engine.setStripCount (names.size());
-            for (int i = 0; i < names.size(); ++i)
-                if (names[i].isNotEmpty())
-                    self->engine.setTrackName (i, names[i]);
-            self->lastTrackCount = -1;
-            self->loadSetlistFromActiveSession();
-            self->loadUILayoutFromActiveSession();
-            self->saveSessionStateTo (dir);   // persist the names + strip count now
-
-            self->showStatus ("New session '" + r.name + "' with " + juce::String (names.size())
-                        + " channels from " + f.getFileName());
+            if (self != nullptr) self->completeSessionFromCsv (fc.getResult());
         });
+}
+
+void MainComponent::completeSessionFromCsv (const juce::File& f)
+{
+    if (! f.existsAsFile()) return;
+    const auto names = zynforge::channelcsv::parseNames (f.loadFileAsString());
+    if (names.isEmpty()) { showStatus ("No channel names found in " + f.getFileName()); return; }
+
+    zynforge::NewSessionDialog::Result r;
+    r.name          = f.getFileNameWithoutExtension();
+    r.location      = getSessionsRoot();
+    r.captureFormat = engine.getRecorder().getCaptureFormat();
+    r.sampleRate    = pendingSampleRate;
+    const auto dir  = createSessionFolderStructure (r);
+    if (! dir.isDirectory())
+    {
+        showStatus (sessionCreateFailureMessage());
+        return;
+    }
+
+    engine.setActiveSessionDir (dir);
+    // Stop the live strips' meter timers before setStripCount frees any
+    // TrackState they reference (a CSV with fewer names than the current count
+    // shrinks the recorder vector); strips rebuild on the next 10 Hz tick.
+    condemnAllStrips();
+    engine.clearAllStripOverrides();
+    engine.setStripCount (names.size());
+    for (int i = 0; i < names.size(); ++i)
+        if (names[i].isNotEmpty())
+            engine.setTrackName (i, names[i]);
+    lastTrackCount = -1;
+    loadSetlistFromActiveSession();
+    loadUILayoutFromActiveSession();
+    const bool saved = saveSessionStateTo (dir);   // persist the names + strip count now
+
+    showStatus ("New session '" + r.name + "' with " + juce::String (names.size())
+                + " channels from " + f.getFileName() + notSavedWarning (saved));
+}
+
+// The strips exist only in memory until this first save lands, and the next
+// autosave is minutes away.
+juce::String MainComponent::notSavedWarning (bool saved) const
+{
+    if (saved) return {};
+    return "; WARNING: session state was not saved"
+         + (lastMetadataSaveError.isNotEmpty() ? " (" + lastMetadataSaveError + ")" : juce::String());
 }
 
 bool MainComponent::setStereoLink (int i, bool link)
@@ -742,7 +753,7 @@ void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& 
     lastTrackCount = -1;
     loadSetlistFromActiveSession();
     loadUILayoutFromActiveSession();
-    saveSessionStateTo (dir);
+    const bool saved = saveSessionStateTo (dir);
 
     auto status = "Session created from console: " + zynforge::counted ((int) names.size(), "named channel");
     if (stereoPairsAsked == 0)
@@ -752,5 +763,5 @@ void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& 
                << " of " << stereoPairsAsked << " link states arrived, so check the rest by hand";
     else
         status << ", " << zynforge::counted (pairsLinked, "stereo pair") << " linked";
-    showStatus (status);
+    showStatus (status + notSavedWarning (saved));
 }
