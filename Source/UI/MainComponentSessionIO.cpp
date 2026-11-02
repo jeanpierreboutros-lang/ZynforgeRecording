@@ -1774,11 +1774,26 @@ juce::String MainComponent::buildTimelineCsv()
     for (const auto& c : cues)
         cueList.push_back ({ c.samplePos, c.name, juce::String() });
 
+    std::vector<tx::ClipEntry> clips;
+    for (int i = 0; i < rec.getNumTracks(); ++i)
+        if (const auto* list = engine.tryClipsFor (i))
+        {
+            const auto own = std::find_if (tracks.begin(), tracks.end(),
+                                           [i] (const tx::TrackEntry& t) { return t.index1 == i + 1; });
+            for (const auto& c : *list)
+            {
+                const bool ownFile = c.audioFile == juce::File() && own != tracks.end();
+                clips.push_back ({ i + 1, names[i], ownFile ? own->file : c.audioFile.getFileName(),
+                                   ownFile ? own->channel1 : juce::jmax (0, c.sourceChannel + 1),
+                                   c.timelineStartSamples, c.fileStartSamples, c.fileLengthSamples, c.muted });
+            }
+        }
+
     const double sr = engine.getSessionSampleRate() > 0.0 ? engine.getSessionSampleRate()
                                                           : pendingSampleRate;
     return tx::buildCsv (dir.getFileName(), sr,
                          tx::frameRateFor (engine.getTimecodeChase().getFps()),
-                         tracks, markers, cueList);
+                         tracks, markers, cueList, clips);
 }
 
 void MainComponent::exportTimelineCsv()

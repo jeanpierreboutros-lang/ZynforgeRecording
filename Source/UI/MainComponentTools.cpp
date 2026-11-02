@@ -245,16 +245,12 @@ void MainComponent::runQcAnalysis()
         return;
     }
 
-    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
-                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
-    auto files = audioDir.findChildFiles (juce::File::findFiles, false,
-                                          "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac");
+    const auto files = zynforge::qc::sessionTakes (sessionDir);
     if (files.isEmpty())
     {
         showStatus ("No recorded audio to QC -- record a take first.");
         return;
     }
-    files.sort();
 
     showStatus ("Running post-show QC (peak / LUFS / clipping / noise floor)...");
 
@@ -264,7 +260,7 @@ void MainComponent::runQcAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    analysisJobs.start ([self, sessionDir, audioDir, files, names] (const std::atomic<bool>& cancel)
+    analysisJobs.start ([self, sessionDir, files, names] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
         const auto stopped = [self]
@@ -273,14 +269,8 @@ void MainComponent::runQcAnalysis()
         std::vector<zynforge::qc::TrackQc> results;
         for (const auto& f : files)
         {
-            const auto stem = f.getFileNameWithoutExtension();          // "Track_NN" or "Track_NN_partXX"
-            // Skip continuation parts: analyzeFile scans one file at a time, so
-            // a _part would produce a phantom mislabeled row (getIntValue on the
-            // last "_" segment -> 0 -> track 1) and miss the later audio. Parse
-            // the index from the Track_NN PREFIX, matching song detect.
-            // Also skips punch sidecars and Track_NN_consolidated_K renders.
+            const auto stem = f.getFileNameWithoutExtension();
             const int idx = zynforge::mainTakeTrackNumber (f) - 1;
-            if (idx < 0) continue;
             auto q = zynforge::qc::analyzeFile (f, &cancel);
             if (cancel.load (std::memory_order_relaxed)) return stopped;
             q.trackIndex = idx;

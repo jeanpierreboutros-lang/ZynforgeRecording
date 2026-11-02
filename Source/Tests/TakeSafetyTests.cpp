@@ -1030,6 +1030,7 @@ namespace zynforge
                 exports (f);
             }
             renders();
+            analysis();
             punches();
         }
     };
@@ -1147,6 +1148,55 @@ namespace zynforge
             }
         }
 
+        void analysis()
+        {
+            beginTest ("Detect Songs finds a song in a session with one voice");
+            {
+                const int windows = 900;   // 90 s of 100 ms windows
+                const std::vector<std::vector<char>> one { std::vector<char> ((size_t) windows, 1) };
+                const songs::Params params;
+                expectEquals ((int) songs::detect (one, kRate, params).size(), 1, "one voice could never be a quorum");
+
+                const std::vector<std::vector<char>> two { std::vector<char> ((size_t) windows, 1),
+                                                           std::vector<char> ((size_t) windows, 0) };
+                expect (songs::detect (two, kRate, params).empty(), "one ambient mic of two became a song");
+            }
+
+            beginTest ("QC reads older takes in the session root beside imported ones");
+            {
+                const auto dir = tempDir ("qc");
+                FailedReadTests::writeAudio (dir.getChildFile ("Track_01.wav"), 4800);
+                FailedReadTests::writeAudio (dir.getChildFile ("Track_02.wav"), 4800);
+                FailedReadTests::writeAudio (dir.getChildFile ("Track_02_part02.wav"), 4800);
+                FailedReadTests::writeAudio (dir.getChildFile ("Audio Files/Track_02.wav"), 4800);
+                FailedReadTests::writeAudio (dir.getChildFile ("Audio Files/Track_03.wav"), 4800);
+                FailedReadTests::writeAudio (dir.getChildFile ("Audio Files/Track_03_consolidated_1.wav"), 4800);
+                FailedReadTests::writeAudio (dir.getChildFile ("Audio Files/Track_04.punchbase.wav"), 4800);
+
+                const auto takes = qc::sessionTakes (dir);
+                expectEquals (takes.size(), 3);
+                expect (takes[0] == dir.getChildFile ("Track_01.wav"), "the root take was left out");
+                expect (takes[1] == dir.getChildFile ("Audio Files/Track_02.wav"), "the modern folder lost its precedence");
+                expect (takes[2] == dir.getChildFile ("Audio Files/Track_03.wav"));
+                dir.deleteRecursively();
+            }
+        }
+
+        void timelineCsv()
+        {
+            beginTest ("The timeline CSV says where each clip plays, so markers line up with the audio");
+            MainComponent main;
+            testaudio::useSilentDevice (main.engine);
+            main.setSize (1320, 820);
+            PunchRuleTests::Session s (main);
+            expect (s.engine().rippleDeleteRange (0, 4096, 8192));
+            const auto csv = main.buildTimelineCsv();
+            expect (csv.contains ("[Clips]"), "no clip list");
+            expect (csv.contains (",4096,8192," + juce::String (200 * kBlock - 8192) + ",no"),
+                    "the clip that moved does not say where it plays and what it reads");
+            expect (csv.contains (",0,0,4096,no"), "the clip before the cut is missing");
+        }
+
         void runTest() override
         {
             AudioEngine::setTestModeSkipAudioInit (true);
@@ -1157,6 +1207,8 @@ namespace zynforge
                 AudioEngine::setTestModeSkipAudioInit (false);
             } };
             stripPaste();
+            analysis();
+            timelineCsv();
         }
     };
 

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <set>
 #include <vector>
 
 namespace zynforge::qc
@@ -45,6 +46,26 @@ namespace zynforge::qc
     constexpr float kClipThreshold        = 0.999f;
     constexpr int   kClipRunSamples       = 3;
     constexpr int   kMaxStoredClipEvents  = 200;
+
+    // Every take the session plays, one file per track. A session from before
+    // Audio Files existed keeps its takes in the root, and anything imported
+    // later goes in the folder: reading only the folder left the show out of
+    // the report and called the rest clean.
+    inline juce::Array<juce::File> sessionTakes (const juce::File& sessionDir)
+    {
+        const auto audioDir = sessionDir.getChildFile ("Audio Files");
+        std::set<int> tracks;
+        for (const auto& dir : { audioDir, sessionDir })
+            for (const auto& file : dir.findChildFiles (juce::File::findFiles, false,
+                                                        "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac"))
+                if (const int number = mainTakeTrackNumber (file); number > 0) tracks.insert (number);
+
+        juce::Array<juce::File> takes;
+        for (const int number : tracks)
+            if (const auto take = findTrackMedia (audioDir, number - 1); take.existsAsFile())
+                takes.add (take);
+        return takes;
+    }
 
     // A set `cancel` stops the scan at the next block; its result means nothing.
     inline TrackQc analyzeFile (const juce::File& f, const std::atomic<bool>* cancel = nullptr)

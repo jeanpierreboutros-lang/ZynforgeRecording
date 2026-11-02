@@ -158,7 +158,9 @@ namespace zynforge::songs
         if (numWindows == 0) return songs;
 
         const int win = juce::jmax (64, (int) (sr * p.windowSec));
-        const int quorum = juce::jmax (1, p.quorumTracks);
+        // A board mix or a single stereo pair is one voice, and it can only
+        // ever vote once.
+        const int quorum = juce::jlimit (1, (int) trackFlags.size(), p.quorumTracks);
 
         // music[w] = enough tracks active at once.
         std::vector<char> music (numWindows, 0);
