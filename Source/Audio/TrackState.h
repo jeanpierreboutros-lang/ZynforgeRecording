@@ -223,4 +223,12 @@ namespace zynforge
             return strip % numInputs;
         return requested;
     }
+
+    // The device input a strip actually listens to. A default patch is the
+    // strip's own channel, with a device open or not. -1 = none.
+    inline int listenedInput (int strip, int requested, int numInputs) noexcept
+    {
+        const int input = effectiveInputRouting (strip, requested, numInputs);
+        return input < -1 ? strip : input;
+    }
 }

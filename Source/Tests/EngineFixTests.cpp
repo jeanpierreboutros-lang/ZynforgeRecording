@@ -9,6 +9,7 @@
 #include "../UI/MainComponent.h"
 #include "../Audio/CallbackWatchdog.h"
 #include "../Audio/DeviceChoice.h"
+#include "../Audio/OscRemote.h"
 #include "../Capture/CaptureDaemon.h"
 
 #include <functional>
@@ -199,6 +200,7 @@ namespace zynforge
             chosenDeviceComesBack();
             recordAsksAboutTheDevice();
             deviceThatStopsCallingBack();
+            trimFollowHearsThePatch();
         }
 
     private:
@@ -378,6 +380,71 @@ namespace zynforge
                 juce::PropertySet none;
                 save (none, noInput);
                 expect (load (none).saved, "a choice of no input read as never chosen");
+            }
+        }
+
+        void trimFollowHearsThePatch()
+        {
+            beginTest ("Trim-Follow moves the strip the desk channel feeds, not the strip at that position");
+            {
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.setDeviceInputCountForTests (32);
+                engine.setStripCount (8);
+                for (int i = 0; i < 8; ++i) engine.setTrackInputRouting (i, i);
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::DiGiCo);
+                const auto gain = [&engine] (int strip) { return engine.getRecorder().getTrack (strip).liveInputGainDb.load(); };
+                const auto known = [&engine] (int strip) { return engine.getRecorder().getTrack (strip).liveInputGainKnown.load(); };
+
+                engine.setTrackInputRouting (2, 6);     // strip 3 listens to In 7
+                engine.setTrackInputRouting (6, -1);    // strip 7 hears nothing
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/7/gain", -6.0f));
+                expectWithinAbsoluteError (gain (2), -6.0f, 0.001f, "the strip on that channel did not follow");
+                expect (! known (6), "the strip at that position moved by another channel's preamp");
+
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/3/gain", 9.0f));
+                expect (known (2) && std::abs (gain (2) + 6.0f) < 0.001f,
+                        "a desk channel nothing listens to moved a strip");
+
+                engine.setTrackStereo (3, true);        // a pair on In 4 and In 5
+                engine.setTrackInputRouting (3, 3);
+                engine.setTrackInputRouting (4, 4);
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/4/gain", 3.0f));
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/5/gain", 4.0f));
+                expectWithinAbsoluteError (gain (3), 3.0f, 0.001f, "the left half did not follow");
+                expectWithinAbsoluteError (gain (4), 4.0f, 0.001f, "the right half did not follow");
+
+                engine.setTrackInputRouting (4, 3);     // both halves on one channel
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/4/gain", 1.0f));
+                expectWithinAbsoluteError (gain (3), 1.0f, 0.001f);
+                expectWithinAbsoluteError (gain (4), 1.0f, 0.001f, "a second strip on the channel was left out");
+
+                engine.setDeviceInputCountForTests (0);
+                engine.clearAllStripOverrides();
+            }
+
+            beginTest ("A strip keeps following its channel after it moves");
+            {
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.setDeviceInputCountForTests (32);
+                engine.setStripCount (3);
+                for (int i = 0; i < 3; ++i) engine.setTrackInputRouting (i, i);
+                engine.setTrackName (2, "Snare");
+                expect (engine.reorderTracks ({ 2, 0, 1 }));
+
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::DiGiCo);
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/3/gain", -3.0f));
+                const auto& moved = engine.getRecorder().getTrack (0);
+                expectEquals (moved.getNameThreadSafe(), juce::String ("Snare"));
+                expectWithinAbsoluteError (moved.liveInputGainDb.load(), -3.0f, 0.001f, "the moved strip stopped following");
+                expect (! engine.getRecorder().getTrack (2).liveInputGainKnown.load(),
+                        "the strip now at that position took the moved strip's preamp");
+
+                engine.setDeviceInputCountForTests (0);
+                engine.clearAllStripOverrides();
             }
         }
 

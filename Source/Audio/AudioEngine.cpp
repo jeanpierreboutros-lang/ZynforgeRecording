@@ -138,6 +138,16 @@ namespace zynforge
         // never a sentinel permitting a console update to rebaseline a take.
     }
 
+    void AudioEngine::setDeskChannelGain (int deskChannel, float dB)
+    {
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        const int numInputs = getCurrentDeviceInputCount();
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+            if (listenedInput (i, recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed), numInputs)
+                == deskChannel)
+                setTrackLiveInputGain (i, dB);
+    }
+
     void AudioEngine::snapshotCaptureInputGains()
     {
         const juce::ScopedLock sl (recorder.getStructureLock());

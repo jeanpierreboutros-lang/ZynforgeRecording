@@ -1149,6 +1149,9 @@ namespace zynforge
         // message thread). Updates the live value only; the capture reference
         // is fixed when a take starts.
         void setTrackLiveInputGain (int channelIndex, float dB);
+        // A preamp value from the desk, for the strips that listen to that
+        // channel. A desk knows its channels and nothing about strip order.
+        void setDeskChannelGain (int deskChannel, float dB);
         // The offset playback gets: live - capture, limited, 0 with no reference.
         float getTrackTrimDelta (int channelIndex);
         // Take the desk's current reading as each armed strip's capture
