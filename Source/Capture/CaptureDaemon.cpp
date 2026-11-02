@@ -422,6 +422,7 @@ namespace zynforge::capture
         s.diskStruggling = recorder.isDiskStruggling();
         s.channelAlarms  = recorder.evaluateChannelAlarms();
         s.copyProblems   = recorder.getCopyProblems();
+        s.preRollNotice  = recorder.isRecording() ? recorder.getPreRollNotice() : juce::String();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {

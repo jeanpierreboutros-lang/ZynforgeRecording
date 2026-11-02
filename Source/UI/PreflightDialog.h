@@ -44,6 +44,20 @@ namespace zynforge
         }
     };
 
+    // A copy writes the pre-roll while live audio waits in memory. Memory sets how
+    // much can be written; a drive below real time cannot keep up with any of it.
+    inline PreflightRow preRollRow (int seconds, double secondsThatFit, double gotMBps, double needMBps)
+    {
+        if (gotMBps > 0.0 && gotMBps <= needMBps)
+            return { PreflightRow::Status::warning, "Pre-roll",
+                     "this drive cannot write " + juce::String (seconds) + " s in time; live audio would be lost" };
+        if (secondsThatFit + 0.05 < (double) seconds)
+            return { PreflightRow::Status::warning, "Pre-roll",
+                     juce::String (secondsThatFit, 1) + " s of " + juce::String (seconds)
+                         + " s will be written; these channels and copies fill the capture memory" };
+        return { PreflightRow::Status::ok, "Pre-roll", juce::String (seconds) + " s" };
+    }
+
     class PreflightDialog final : public juce::Component
     {
     public:

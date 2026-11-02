@@ -12,6 +12,7 @@
 #include "../Capture/CaptureDaemon.h"
 #include "../Capture/DeviceState.h"
 #include "../UI/MainComponent.h"
+#include "../UI/PreflightDialog.h"
 
 #include <cmath>
 #include <vector>
@@ -544,12 +545,156 @@ namespace zynforge
             return { buffer.getReadPointer (0), buffer.getReadPointer (0) + buffer.getNumSamples() };
         }
 
+        // ── Pre-roll ───────────────────────────────────────────────────────
+        static float rampAt (juce::int64 frame) { return 0.1f + 0.5f * (float) (frame % 1000) / 1000.0f; }
+
+        struct Ramp
+        {
+            MultitrackRecorder& rec;
+            juce::int64 frame { 0 };
+
+            void block()
+            {
+                std::vector<float> samples ((size_t) kBlock);
+                for (int i = 0; i < kBlock; ++i) samples[(size_t) i] = rampAt (frame + i);
+                const float* inputs[] { samples.data() };
+                rec.processBlock (inputs, 1, kBlock);
+                frame += kBlock;
+            }
+        };
+
+        // The file holds the ramp from `first`, unbroken to its last frame.
+        void expectRamp (const juce::File& file, juce::int64 first, juce::int64 frames, const juce::String& what)
+        {
+            const auto audio = samplesOfTrack (file);
+            expectEquals ((juce::int64) audio.size(), frames, what + ": wrong length");
+            int wrong = 0;
+            for (size_t i = 0; i < audio.size(); ++i)
+                if (std::abs (audio[i] - rampAt (first + (juce::int64) i)) > 0.0002f) ++wrong;
+            expectEquals (wrong, 0, what + ": frames differ from what was played");
+        }
+
+        void testPreRoll()
+        {
+            using Copy = MultitrackRecorder::CaptureCopy;
+            constexpr int kHeard = 200 * kBlock;        // more than a second of history
+
+            beginTest ("Live audio outlasts a pre-roll dump on a drive that only keeps real time");
+            {
+                const auto root = tempDir ("dump");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                const auto mirror = root.getChildFile ("mirror");
+                auto entered = std::make_shared<juce::WaitableEvent> (true);
+                auto released = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.setPreRollSeconds (1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.setMirrors ({ { mirror, CaptureFormat::Wav24 } }));
+                rec.copyRingFramesForTests = Copy::kChunkFrames;      // far less than the pre-roll
+                rec.beforeCopyWriteForTests = [entered, released] (Copy&)
+                {
+                    entered->signal();
+                    released->wait (-1);
+                };
+                Ramp ramp { rec };
+                while (ramp.frame < kHeard) ramp.block();
+                expect (rec.startRecording (session));
+                expect (entered->wait (5000), "no copy reached its dump");
+
+                // As long as the dump would take at exactly real time.
+                while (ramp.frame < kHeard + (juce::int64) kRate)
+                {
+                    ramp.block();
+                    rec.drainOnce();
+                }
+                expect (rec.getCopyProblems().isEmpty(), rec.getCopyProblems().joinIntoString (" | "));
+                released->signal();
+                rec.stopRecording();
+
+                expectEquals (rec.getMissedSamples(), (juce::int64) 0, "live audio went to the dump");
+                expect (! rec.hasPrimaryFailed());
+                expect (! rec.anyMirrorFailed());
+                const auto total = (juce::int64) kRate + ramp.frame - kHeard;
+                expectRamp (session.getChildFile ("Audio Files/Track_01.wav"), kHeard - (juce::int64) kRate, total, "the primary");
+                expectRamp (mirror.getChildFile ("session/Audio Files/Track_01.wav"), kHeard - (juce::int64) kRate, total, "the mirror");
+            }
+
+            beginTest ("At the memory limit the pre-roll gives way, newest kept, with a notice");
+            {
+                const auto root = tempDir ("limit");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                constexpr int kFits = 14400;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.setPreRollSeconds (1);
+                rec.getTrack (0).armed.store (true);
+                rec.copyRingFramesForTests = Copy::kChunkFrames;
+                rec.copyRingBytesForTests = (Copy::kChunkFrames + kFits) * (juce::int64) sizeof (float);
+                expectWithinAbsoluteError (rec.preRollSecondsThatFit(), kFits / kRate, 0.001);
+                Ramp ramp { rec };
+                while (ramp.frame < kHeard) ramp.block();
+                expect (rec.startRecording (session));
+                expect (rec.getPreRollNotice().contains ("Pre-roll cut to 0.3 s of 1.0 s"), rec.getPreRollNotice());
+                for (int b = 0; b < 40; ++b) { ramp.block(); rec.drainPendingForTests(); }
+                rec.stopRecording();
+                expectRamp (session.getChildFile ("Audio Files/Track_01.wav"), kHeard - kFits,
+                            ramp.frame - kHeard + kFits, "the take");
+                const auto report = juce::JSON::parse (session.getChildFile ("session.report.json"));
+                expectEquals ((int) report["passPreRollSamples"], kFits);
+                expectEquals ((int) report["passPreRollCutSamples"], (int) kRate - kFits);
+            }
+
+            beginTest ("A whole pre-roll is written with no notice when memory allows");
+            {
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                expectEquals (rec.preRollFramesFitting (2, 56, 30 * (int) kRate), 30 * (int) kRate);
+                const int fits = rec.preRollFramesFitting (6, 256, 30 * (int) kRate);
+                expectLessThan (fits, 30 * (int) kRate);
+                const auto ringBytes = (juce::int64) (rec.copyRingFrames (6, 256) + fits) * (juce::int64) sizeof (float) * 256 * 6;
+                expect (ringBytes <= (juce::int64) 1 << 30, "the rings went past the memory limit");
+                expectEquals (rec.getPreRollNotice(), juce::String());
+            }
+
+            beginTest ("A cut pre-roll is a quiet notice on the banner, and crosses from the daemon");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                MainComponent::s_testConstruct = true;
+                const juce::ScopeGuard cleanUp { [] { MainComponent::s_testConstruct = false; } };
+                MainComponent main;
+                EngineStatus status;
+                status.recording = true;
+                status.preRollNotice = "Pre-roll cut to 2.0 s of 30.0 s -- this many channels and copies fill the capture memory";
+                const auto crossed = EngineStatus::fromJson (status.toJson());
+                expectEquals (crossed.preRollNotice, status.preRollNotice);
+                main.updateCaptureWarnings (crossed);
+                expect (main.alarmBanner.getText().startsWith ("Pre-roll cut"), main.alarmBanner.getText());
+                expect (! main.alarmBanner.getText().containsChar ('!'), "a cut pre-roll is not an emergency");
+            }
+
+            beginTest ("Pre-flight says what the pre-roll will do");
+            {
+                using Status = PreflightRow::Status;
+                expect (preRollRow (10, 10.0, 500.0, 100.0).status == Status::ok);
+                const auto cut = preRollRow (30, 12.0, 500.0, 100.0);
+                expect (cut.status == Status::warning);
+                expect (cut.value.contains ("12.0 s of 30 s"), cut.value);
+                const auto slow = preRollRow (10, 10.0, 90.0, 100.0);
+                expect (slow.status == Status::warning);
+                expect (slow.value.contains ("cannot write"), slow.value);
+            }
+        }
+
         void runTest() override
         {
             const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
             testDaemonDevice();
             AudioEngine::setTestModeSkipAudioInit (true);
             testCopiesFollowStrips();
+            testPreRoll();
         }
     };
 

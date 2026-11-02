@@ -312,6 +312,7 @@ namespace zynforge
         // its new file at punchInPos, and a continuation starts at the old
         // take's end; prepending history to either shifts the edit boundary.
         preRollHistorySamples = 0;
+        preRollCutFrames.store (0, std::memory_order_relaxed);
         if (preRollSeconds <= 0 || punchInActive || continueAsPart)
         {
             preRollSnapshot.clear();
@@ -319,10 +320,14 @@ namespace zynforge
         }
 
         const int wanted = (int) (sampleRate * preRollSeconds);
+        int available = 0;
         for (std::size_t i = 0; i < writers.size() && i < preRollSnapshot.size(); ++i)
             if (writers[i].active)
-                preRollHistorySamples = juce::jmax (preRollHistorySamples, (int) juce::jmin (
+                available = juce::jmax (available, (int) juce::jmin (
                     (juce::int64) wanted, preRollSnapshot[i]->totalWritten.load()));
+        // The newest history is the part kept: it runs straight into the take.
+        preRollHistorySamples = juce::jmin (available, preRollLimit);
+        preRollCutFrames.store (available - preRollHistorySamples, std::memory_order_release);
         if (preRollHistorySamples <= 0)
         {
             preRollSnapshot.clear();
@@ -1519,8 +1524,11 @@ namespace zynforge
         pendingLeadIns.clear();
         // Only what the estimate stamped at open assumes; preparePreRollDump
         // sets the real amount once the history is detached.
-        preRollHistorySamples = preRollSeconds > 0 && ! punchInActive && ! continueAsPart
-                                  ? (int) (sampleRate * preRollSeconds) : 0;
+        preRollLimit = preRollFramesFitting (1 + (take.backupReady ? 1 : 0) + (int) activeMirrors.size(),
+                                             armedCaptureChannels(),
+                                             preRollSeconds > 0 && ! punchInActive && ! continueAsPart
+                                                 ? (int) (sampleRate * preRollSeconds) : 0);
+        preRollHistorySamples = preRollLimit;
         const bool editPass = (continueAsPart || punchInActive) && recordBaseSamples > 0;
         const LeadInPlan leadInPlan { editPass, continueAsPart, punchInActive, recordBaseSamples, sampleRate };
 
@@ -1633,7 +1641,7 @@ namespace zynforge
         int capturedChannels = 0;
         for (const auto& w : writers)
             if (w.active) capturedChannels += w.numChannels;
-        const int ringFrames = copyRingFrames ((int) copies.size(), capturedChannels);
+        const int ringFrames = copyRingFrames ((int) copies.size(), capturedChannels) + preRollLimit;
         for (auto& copy : copies)
         {
             copy->ringFrames = ringFrames;
@@ -1676,18 +1684,64 @@ namespace zynforge
             planFor (mirrorCopies[mi], takeFormatFor (activeMirrors[mi].format));
     }
 
+    static constexpr juce::int64 kMaxRingBytes = (juce::int64) 1 << 30;
+
     // Four seconds or so per copy, like the audio FIFO, until that is more than
-    // a gigabyte of ring: then less, never under a second.
+    // a gigabyte of ring: then less, never under a second. A take with pre-roll
+    // adds preRollFramesFitting on top.
     int MultitrackRecorder::copyRingFrames (int numCopies, int channels) const noexcept
     {
         if (copyRingFramesForTests > 0) return juce::jmax (copyRingFramesForTests, CaptureCopy::kChunkFrames);
-        constexpr juce::int64 kMaxRingBytes = (juce::int64) 1 << 30;
         const int floorFrames = juce::jmax (1, (int) sampleRate);
         auto frames = juce::nextPowerOfTwo ((int) (sampleRate * kFifoSeconds));
         while (frames / 2 >= floorFrames
                && (juce::int64) frames * (juce::int64) sizeof (float) * channels * numCopies > kMaxRingBytes)
             frames /= 2;
         return frames;
+    }
+
+    // A copy writes its pre-roll before its first live sample, so live audio
+    // waits in its ring for as long as the dump takes. A drive that keeps real
+    // time takes no longer to write L frames than L frames last, so a ring with
+    // room for L on top of its usual margin loses nothing to the dump, whatever
+    // the page cache does. Below real time no length of pre-roll saves a take.
+    // Past the memory limit the pre-roll gives way, never the live audio.
+    int MultitrackRecorder::preRollFramesFitting (int numCopies, int channels, int wanted) const noexcept
+    {
+        const auto limit = copyRingBytesForTests > 0 ? copyRingBytesForTests : kMaxRingBytes;
+        const auto bytesPerFrame = (juce::int64) sizeof (float) * juce::jmax (1, channels) * juce::jmax (1, numCopies);
+        const auto room = limit / bytesPerFrame - copyRingFrames (numCopies, channels);
+        return (int) juce::jlimit ((juce::int64) 0, (juce::int64) wanted, room);
+    }
+
+    int MultitrackRecorder::armedCaptureChannels() const noexcept
+    {
+        int channels = 0;
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+        {
+            if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
+            if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
+                      && tracks[i - 1]->armed.load (std::memory_order_relaxed))
+                continue;
+            channels += tracks[i]->isStereo.load (std::memory_order_relaxed) && i + 1 < tracks.size() ? 2 : 1;
+        }
+        return channels;
+    }
+
+    double MultitrackRecorder::preRollSecondsThatFit() const noexcept
+    {
+        if (sampleRate <= 0.0) return 0.0;
+        const int copyCount = 1 + (backupDir.getFullPathName().isNotEmpty() ? 1 : 0) + (int) mirrorConfigs.size();
+        return preRollFramesFitting (copyCount, armedCaptureChannels(), (int) (sampleRate * preRollSeconds)) / sampleRate;
+    }
+
+    juce::String MultitrackRecorder::getPreRollNotice() const
+    {
+        const auto cut = preRollCutFrames.load (std::memory_order_acquire);
+        if (cut <= 0 || sampleRate <= 0.0) return {};
+        return "Pre-roll cut to " + juce::String ((double) preRollHistorySamples / sampleRate, 1)
+             + " s of " + juce::String ((double) (preRollHistorySamples + cut) / sampleRate, 1)
+             + " s -- this many channels and copies fill the capture memory";
     }
 
     const MultitrackRecorder::CaptureCopy* MultitrackRecorder::copyAt (int copyIndex) const noexcept
@@ -2244,6 +2298,7 @@ namespace zynforge
         double      reportedSeconds {};
         juce::int64 passSamples {}, passMissed {};
         double      passSeconds {};
+        int         passPreRoll {}, passPreRollCut {};
         bool        backupWasRunning {}, reportedBackupFailure {}, reportedPrimaryFailure {},
                     reportedPunchFailure {}, reportedMirrorFailure {}, reportedDeviceLoss {};
         int         reportedMirrorsSkipped {};
@@ -3000,6 +3055,8 @@ namespace zynforge
         report.passSamples = stop.totalSamples;
         report.passSeconds = stop.totalSeconds;
         report.passMissed  = stop.totalMissed;
+        report.passPreRoll = preRollHistorySamples;
+        report.passPreRollCut = preRollCutFrames.load (std::memory_order_relaxed);
         report.reportedMirrorsSkipped = (int) previousInt ("mirrorsSkipped") + mirrorsSkipped;
         report.reportedDeviceLoss = previousBool ("captureDeviceLost") || stop.deviceLostAtStop;
         report.reportedPrimaryFailure = previousBool ("primaryFailed") || primFailed;
@@ -3049,6 +3106,8 @@ namespace zynforge
         report->setProperty ("passSamples",    (juce::int64) passSamples);
         report->setProperty ("passSeconds",    passSeconds);
         report->setProperty ("passMissedSamples", (juce::int64) passMissed);
+        report->setProperty ("passPreRollSamples", passPreRoll);
+        report->setProperty ("passPreRollCutSamples", passPreRollCut);
         report->setProperty ("captureDeviceLost", reportedDeviceLoss);
         report->setProperty ("backupActive",   backupWasRunning);
         report->setProperty ("backupFailed",   reportedBackupFailure);
@@ -3502,16 +3561,7 @@ namespace zynforge
                                    && ! backupFailed.load (std::memory_order_relaxed))
                                 : backupDir.isDirectory();
 
-        int captureChannels = 0;
-        for (std::size_t i = 0; i < tracks.size(); ++i)
-        {
-            if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
-            if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
-                      && tracks[i - 1]->armed.load (std::memory_order_relaxed))
-                continue;
-            captureChannels += tracks[i]->isStereo.load (std::memory_order_relaxed)
-                                && i + 1 < tracks.size() ? 2 : 1;
-        }
+        const int captureChannels = armedCaptureChannels();
 
         // Every configured MIRROR is another full parallel copy of every armed
         // track, in its own format. Omitting them under-reported the real write
@@ -3611,16 +3661,7 @@ namespace zynforge
     int MultitrackRecorder::estimateMinutesRemaining (const juce::File& primaryVolume,
                                                       const juce::File& backupVolume) const noexcept
     {
-        int captureChannels = 0;
-        for (std::size_t i = 0; i < tracks.size(); ++i)
-        {
-            if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
-            if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
-                      && tracks[i - 1]->armed.load (std::memory_order_relaxed))
-                continue;
-            captureChannels += tracks[i]->isStereo.load (std::memory_order_relaxed)
-                                && i + 1 < tracks.size() ? 2 : 1;
-        }
+        const int captureChannels = armedCaptureChannels();
         if (sampleRate <= 0.0 || captureChannels <= 0) return 0;
 
         const auto rateFor = [&] (CaptureFormat f) -> juce::int64

@@ -463,7 +463,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const bool primaryNotAnswering = status.primaryDiskStale && status.source != "daemon-unavailable";
         if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
-            || ! status.copyProblems.isEmpty())
+            || ! status.copyProblems.isEmpty() || status.preRollNotice.isNotEmpty())
         {
             // Most serious first: the banner shares its row with the header
             // buttons, and a long list can run out of room at the far end.
@@ -485,7 +485,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                                                             "or folder unusable  ";
             if (status.copyDiskStale) warn << "! A COPY'S DRIVE IS NOT ANSWERING -- its free space is unknown  ";
             for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
-            if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
+            if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent  ";
+            warn << status.preRollNotice;
             activeCaptureWarning = warn.trim();
             statusLabel.setText (activeCaptureWarning, juce::dontSendNotification);
         }

@@ -1682,6 +1682,8 @@ void MainComponent::showPreflightChecklist()
         const double gotMBps = zynforge::preflight::measureWriteSpeedMBps (speedDir);
         rows.push_back ({ chk (gotMBps > needMBps * 1.5, gotMBps > needMBps), "Disk write speed (measured)",
                           juce::String (juce::roundToInt (gotMBps)) + " MB/s (need " + needText + ")" });
+        if (const int preRoll = engine.getRecorder().getPreRollSeconds(); preRoll > 0)
+            rows.push_back (zynforge::preRollRow (preRoll, engine.getRecorder().preRollSecondsThatFit(), gotMBps, needMBps));
     }
 
     // Every configured mirror drive: mounted AND actually writable.

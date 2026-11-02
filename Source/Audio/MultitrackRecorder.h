@@ -406,6 +406,10 @@ namespace zynforge
         // One line per copy that lost audio or stopped responding, naming it,
         // for the banner. Empty for a clean take.
         juce::StringArray getCopyProblems() const;
+        // Says so when this take wrote less pre-roll than was asked for.
+        juce::String getPreRollNotice() const;
+        // What a take with today's arms and copies could write, for pre-flight.
+        double preRollSecondsThatFit() const noexcept;
         bool hasPunchSpliceFailed() const noexcept
         {
             return punchSpliceFailed.load (std::memory_order_relaxed);
@@ -600,6 +604,8 @@ namespace zynforge
         // before its first live samples (see goLive).
         void preparePreRollDump();
         int  preRollHistorySamples { 0 };
+        int  preRollLimit { 0 };                       // the most this take's rings can carry
+        std::atomic<int> preRollCutFrames { 0 };       // history left out for want of ring
 
         // One destination of a take, with its own thread and ring (CaptureCopy.h).
         struct CaptureCopy;
@@ -645,6 +651,8 @@ namespace zynforge
         const CaptureCopy* copyAt (int copyIndex) const noexcept;
         bool isCopyOutOfTake (int copyIndex) const noexcept;
         int  copyRingFrames (int numCopies, int channels) const noexcept;
+        int  preRollFramesFitting (int numCopies, int channels, int wanted) const noexcept;
+        int  armedCaptureChannels() const noexcept;
         juce::StringArray describeCopyProblems() const;
         void finishCopies();
 
@@ -818,6 +826,7 @@ namespace zynforge
         friend class AsyncStopAuditTests;
         friend class ReviewCaptureRepairTests;
         friend class CaptureCopyTests;
+        friend class CapturePathTests;
         friend class CaptureFixTests;
         friend class CaptureDaemonLinkTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
@@ -828,6 +837,7 @@ namespace zynforge
         std::function<void()> beforeStampForTests;
         std::function<void (CaptureCopy&)> beforeCopyWriteForTests;
         int copyRingFramesForTests { 0 };
+        juce::int64 copyRingBytesForTests { 0 };
         // How long STOP waits on a copy that has stopped making progress, and on
         // a copy's drain altogether: a buffered write counts as progress, so a
         // dying drive could otherwise feed the first limit for hours.
