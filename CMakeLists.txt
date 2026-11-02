@@ -127,7 +127,6 @@ add_library(ZynforgeCore STATIC
     Source/UI/PerfDashboard.cpp
     Source/UI/SessionInfoDialog.cpp
     Source/UI/SetlistBar.cpp
-    Source/UI/TempoBar.cpp
     Source/Network/RemoteControl.cpp
     Source/Network/TwinLink.cpp
     Source/UI/Meterbridge.cpp

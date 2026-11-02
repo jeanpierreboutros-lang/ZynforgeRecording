@@ -12,7 +12,7 @@ namespace zynforge::icons
     enum class Glyph
     {
         Record, Play, Stop, Lock, Unlock, Plus, Device, Patch, Meters,
-        Osc, Vsc, File, Disk, Mix, Edit, Setlist, Tempo, Trash,
+        Osc, Vsc, File, Disk, Mix, Edit, Setlist, Trash,
         Selection, Cut, Copy, Paste, Undo, Redo
     };
 
@@ -175,16 +175,6 @@ namespace zynforge::icons
                     p.addEllipse (0.20f, y, 0.08f, 0.08f);
                     p.addRectangle (0.34f, y + 0.02f, 0.46f, 0.04f);
                 }
-                break;
-
-            case Glyph::Tempo:
-                // Metronome triangle + arm
-                p.startNewSubPath (0.50f, 0.18f);
-                p.lineTo          (0.78f, 0.82f);
-                p.lineTo          (0.22f, 0.82f);
-                p.closeSubPath();
-                p.startNewSubPath (0.50f, 0.50f);
-                p.lineTo          (0.68f, 0.30f);
                 break;
 
             case Glyph::Trash:

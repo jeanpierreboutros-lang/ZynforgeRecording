@@ -1134,7 +1134,6 @@ namespace zynforge
     juce::String AudioEngine::captureSessionMixJson()
     {
         const juce::ScopedLock structure (recorder.getStructureLock());
-        const juce::ScopedLock tempo (tempoLock);
 
         juce::Array<juce::var> arr;
         for (int i = 0; i < recorder.getNumTracks(); ++i)
@@ -1196,24 +1195,9 @@ namespace zynforge
         }
         root->setProperty ("vcas", vcaState);
 
-        // Session-level tempo state (BPM, time signature, and the multi-point
-        // tempo map) -- per session, not global appProps.
-        root->setProperty ("tempoBpm",   (double) currentTempoBpm.load (std::memory_order_relaxed));
         root->setProperty ("chaseStartTimecode", getChaseStartTimecode());
         root->setProperty ("streamOutL", streamOutL.load (std::memory_order_relaxed));
         root->setProperty ("streamOutR", streamOutR.load (std::memory_order_relaxed));
-        root->setProperty ("timeSigNum",   timeSigNumerator  .load (std::memory_order_relaxed));
-        root->setProperty ("timeSigDenom", timeSigDenominator.load (std::memory_order_relaxed));
-        juce::Array<juce::var> tmap;
-        for (const auto& tc : tempoMap)
-        {
-            juce::DynamicObject::Ptr o (new juce::DynamicObject());
-            o->setProperty ("pos", (juce::int64) tc.samplePos);
-            o->setProperty ("bpm", (double) tc.bpm);
-            tmap.add (juce::var (o.get()));
-        }
-        root->setProperty ("tempoMap", tmap);
-
         return juce::JSON::toString (juce::var (root.get()), true);
     }
 
@@ -1267,24 +1251,6 @@ namespace zynforge
         // rather than landing on whatever pair the last session used.
         setStreamOutputs (root->hasProperty ("streamOutL") ? (int) root->getProperty ("streamOutL") : -1,
                           root->hasProperty ("streamOutR") ? (int) root->getProperty ("streamOutR") : -1);
-
-        // Session tempo state. Guarded so an older session (no keys) keeps
-        // whatever's current rather than snapping to 0 BPM / 4-4.
-        if (root->hasProperty ("tempoBpm"))
-            setSessionTempoBpm ((float) (double) root->getProperty ("tempoBpm"));
-        if (root->hasProperty ("timeSigNum") && root->hasProperty ("timeSigDenom"))
-            setTimeSignature ((int) root->getProperty ("timeSigNum"),
-                              (int) root->getProperty ("timeSigDenom"));
-        if (auto* tm = root->getProperty ("tempoMap").getArray())
-        {
-            std::vector<TempoChange> map;
-            map.reserve ((size_t) tm->size());
-            for (auto& v : *tm)
-                if (auto* o = v.getDynamicObject())
-                    map.push_back ({ (juce::int64) o->getProperty ("pos"),
-                                     (float) (double) o->getProperty ("bpm") });
-            setTempoMap (std::move (map));
-        }
 
         if (auto* arr = root->getProperty ("strips").getArray())
             for (auto& v : *arr)
@@ -2044,13 +2010,6 @@ namespace zynforge
             if (! mirrors.empty()) recorder.setMirrors (mirrors);
         }
 
-        currentTempoBpm.store ((float) appProps->getDoubleValue ("sessionTempoBpm", 120.0),
-                               std::memory_order_relaxed);
-        timeSigNumerator  .store (appProps->getIntValue ("timeSigNumerator",   4),
-                                  std::memory_order_relaxed);
-        timeSigDenominator.store (appProps->getIntValue ("timeSigDenominator", 4),
-                                  std::memory_order_relaxed);
-
         // Restore the active session folder (set by New Session... / Open
         // Session...) so Save / Save As stay enabled across app restarts.
         {
@@ -2291,92 +2250,8 @@ namespace zynforge
         }
         markers.clearContext();
         editCursorSample.store (-1, std::memory_order_release);
-        {
-            const juce::ScopedLock sl (tempoLock);
-            tempoMap.clear();
-        }
-        currentTempoBpm.store (120.0f, std::memory_order_relaxed);
-        timeSigNumerator.store (4, std::memory_order_relaxed);
-        timeSigDenominator.store (4, std::memory_order_relaxed);
         claimMixerFor ({});
         setActiveSessionDir ({});
-    }
-
-    void AudioEngine::setTimeSignature (int numerator, int denominator)
-    {
-        numerator   = juce::jlimit (1, 32, numerator);
-        // Powers of two from 1 to 32 -- the typical music range.
-        if (denominator < 1) denominator = 4;
-        if (denominator > 32) denominator = 32;
-        timeSigNumerator  .store (numerator,   std::memory_order_relaxed);
-        timeSigDenominator.store (denominator, std::memory_order_relaxed);
-        if (appProps != nullptr)
-        {
-            reloadAppPropsBeforeWrite();
-            appProps->setValue ("timeSigNumerator",   numerator);
-            appProps->setValue ("timeSigDenominator", denominator);
-            appProps->saveIfNeeded();
-        }
-    }
-
-    void AudioEngine::setSessionTempoBpm (float bpm)
-    {
-        bpm = juce::jlimit (20.0f, 999.0f, bpm);
-        currentTempoBpm.store (bpm, std::memory_order_relaxed);
-        if (appProps != nullptr)
-        {
-            reloadAppPropsBeforeWrite();
-            appProps->setValue ("sessionTempoBpm", (double) bpm);
-            appProps->saveIfNeeded();
-        }
-    }
-
-    void AudioEngine::setTempoMap (std::vector<TempoChange> newMap)
-    {
-        std::sort (newMap.begin(), newMap.end(),
-                   [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
-        const juce::ScopedLock sl (tempoLock);
-        tempoMap = std::move (newMap);
-    }
-
-    void AudioEngine::addTempoChange (juce::int64 samplePos, float bpm)
-    {
-        bpm = juce::jlimit (20.0f, 999.0f, bpm);
-        const juce::ScopedLock sl (tempoLock);
-        // Replace if a change already exists within a small tolerance
-        // (one block at 48k = ~10ms) so duplicate drops don't pile up.
-        constexpr juce::int64 kSnap = 256;
-        for (auto& c : tempoMap)
-        {
-            if (std::abs (c.samplePos - samplePos) < kSnap)
-            {
-                c.bpm = bpm;
-                return;
-            }
-        }
-        tempoMap.push_back ({ samplePos, bpm });
-        std::sort (tempoMap.begin(), tempoMap.end(),
-                   [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
-    }
-
-    void AudioEngine::removeTempoChangeNear (juce::int64 samplePos, juce::int64 tolerance)
-    {
-        const juce::ScopedLock sl (tempoLock);
-        if (tempoMap.empty()) return;
-        auto best = tempoMap.end();
-        juce::int64 bestDist = tolerance + 1;
-        for (auto it = tempoMap.begin(); it != tempoMap.end(); ++it)
-        {
-            const auto d = std::abs (it->samplePos - samplePos);
-            if (d < bestDist) { bestDist = d; best = it; }
-        }
-        if (best != tempoMap.end()) tempoMap.erase (best);
-    }
-
-    void AudioEngine::clearTempoMap()
-    {
-        const juce::ScopedLock sl (tempoLock);
-        tempoMap.clear();
     }
 
     void AudioEngine::setStreamOutputs (int l, int r)

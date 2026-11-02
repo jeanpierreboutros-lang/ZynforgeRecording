@@ -76,7 +76,7 @@ namespace zynforge::brand
     // the bundled JetBrains Mono face.
     //
     //   uiFamily   -- proportional UI text (labels, body, titles, buttons)
-    //   monoFamily -- tabular numerals (BigClock, BPM, meter dB readouts,
+    //   monoFamily -- tabular numerals (BigClock, meter dB readouts,
     //                CPU%, MB/s -- anywhere a value changes and shouldn't
     //                cause horizontal layout jitter)
     //

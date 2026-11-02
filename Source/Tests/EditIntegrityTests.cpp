@@ -441,24 +441,6 @@ namespace zynforge
                 s.engine.clearAutomation (AP::Volume);
             }
 
-            beginTest ("Clear with the Lane on Tempo erases nothing");
-            {
-                Show s (2, { 48000, 48000 });
-                using Param = AutomationToolbar::Param;
-                s.engine.addAutomationPoint (0, AP::Mute, 12000, 1.0f);
-                s.engine.addAutomationPoint (1, AP::Mute, 24000, 1.0f);
-                for (auto param : { Param::Tempo })
-                {
-                    s.main.automationToolbar->setParamSilently (param);
-                    s.main.automationToolbar->onClearAll();
-                    expectEquals ((int) s.engine.getAutomation (0, AP::Mute).size(), 1, "a hidden Mute lane was erased");
-                    expectEquals ((int) s.engine.getAutomation (1, AP::Mute).size(), 1);
-                }
-                s.main.automationToolbar->setParamSilently (Param::Mute);
-                s.main.automationToolbar->onClearAll();
-                expect (s.engine.getAutomation (0, AP::Mute).empty(), "the real Mute lane still clears");
-            }
-
             beginTest ("Arrow keys and Delete reach only the lane the active row shows");
             {
                 Show s (2, { 48000, 48000 });
@@ -504,9 +486,6 @@ namespace zynforge
                     expectWithinAbsoluteError (s.engine.getAutomation (0, AP::Pan).front().value, 0.05f, 0.001f,
                                                "Up must change the lane the row shows");
 
-                    // A Tempo lane has no points, so neither does its menu or hit-test.
-                    row.laneMode = Lane::Tempo;
-                    expect (! row.shownAutomationParam().has_value(), "a Tempo lane reported Volume points");
                     row.laneMode = Lane::Volume;
                     expect (row.shownAutomationParam() == AP::Volume);
                 }
@@ -701,32 +680,6 @@ namespace zynforge
                 if (rows.size() == 1)
                     expect (pumpUntil ([&] { return rows[0]->getWaveformSecondsForTests() > 0.0; }, 5000),
                             "the row never picked up its waveform after the cache loaded");
-            }
-
-            beginTest ("Tempo lane edits are undoable");
-            {
-                Show s (2, { 48000, 48000 });
-                s.engine.clearTempoMap();
-                auto rows = rowsOf (s.page());
-                expect (rows.size() == 2, "setup: two rows");
-                if (rows.size() == 2)
-                {
-                    auto& row = *rows[0];
-                    row.laneMode = Lane::Tempo;
-                    pressButton (*s.main.automationToolbar, "+ Point");
-                    s.main.undoManager.clearUndoHistory();
-
-                    click (row, { row.getHeaderWidth() + 200, 40 });
-                    expectEquals ((int) s.engine.getTempoMap().size(), 1, "setup: the point landed");
-
-                    s.main.editUndo();
-                    expect (s.engine.getTempoMap().empty(), "the tempo edit never reached undo");
-                    s.main.editRedo();
-                    expectEquals ((int) s.engine.getTempoMap().size(), 1);
-
-                    pressButton (*s.main.automationToolbar, "Select");
-                }
-                s.engine.clearTempoMap();
             }
 
             beginTest ("A clip action left open cannot change a rolling take's arrangement");

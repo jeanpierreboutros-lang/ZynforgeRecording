@@ -188,7 +188,7 @@ public:
 
     void cropAndRipple()
     {
-        beginTest ("Ripple Delete on every strip moves markers, automation, tempo and other takes");
+        beginTest ("Ripple Delete on every strip moves markers, automation and other takes");
         {
             Folder f; expect (write (f.track()));
             AudioEngine e; setup (e, 2); e.loadSession (f.dir);
@@ -197,7 +197,6 @@ public:
             e.getMarkers().drop (30000, "after");
             e.addAutomationPoint (0, Param::Volume, 0, -6.0f);
             e.addAutomationPoint (0, Param::Volume, 40000, -6.0f);
-            e.setTempoMap ({ { 1000, 100.0f }, { 15000, 120.0f }, { 30000, 140.0f } });
             savedtakes::addTake (e, 0, "Take 2");
 
             expectEquals (e.rippleDeleteTracks ({ 0, 1 }, 10000, 20000), 1);
@@ -210,12 +209,6 @@ public:
             const auto& lane = e.getAutomation (0, Param::Volume);
             expectEquals (lane.back().samplePos, (juce::int64) 30000, "a ride stayed on the wrong audio");
             expectWithinAbsoluteError (e.automationValueAtOffline (0, Param::Volume, 25000, 0.0f), -6.0f, 0.01f);
-
-            const auto& tempo = e.getTempoMap();
-            expectEquals ((int) tempo.size(), 3);
-            expectEquals (tempo[1].samplePos, (juce::int64) 10000);
-            expectWithinAbsoluteError (tempo[1].bpm, 120.0f, 0.01f, "the tempo in force at the join was lost");
-            expectEquals (tempo[2].samplePos, (juce::int64) 20000);
 
             expectEquals (savedtakes::count (e, 0), 2);
             for (int take = 0; take < savedtakes::count (e, 0); ++take)
@@ -230,13 +223,11 @@ public:
             e.getMarkers().drop (30000, "song");
             e.addAutomationPoint (0, Param::Volume, 30000, -6.0f);
             e.addAutomationPoint (1, Param::Volume, 30000, -6.0f);
-            e.setTempoMap ({ { 30000, 140.0f } });
 
             expectEquals (e.rippleDeleteTracks ({ 0 }, 10000, 20000), 1);
             expectEquals (e.getAutomation (0, Param::Volume).back().samplePos, (juce::int64) 20000);
             expectEquals (e.getAutomation (1, Param::Volume).back().samplePos, (juce::int64) 30000);
             expectEquals (e.getMarkers().getAll()[0].sampleOffset, (juce::int64) 30000);
-            expectEquals (e.getTempoMap()[0].samplePos, (juce::int64) 30000);
         }
 
         beginTest ("Automation curves keep their value on both sides of a Ripple Delete");
@@ -263,7 +254,6 @@ public:
             e.addAutomationPoint (0, Param::Volume, 40000, 0.0f);
             const float atStart = e.automationValueAtOffline (0, Param::Volume, 10000, 99.0f);
             const float inRange = e.automationValueAtOffline (0, Param::Volume, 15000, 99.0f);
-            e.setTempoMap ({ { 5000, 100.0f }, { 15000, 120.0f } });
             savedtakes::addTake (e, 0, "Take 2");
 
             expectEquals (e.cropToRange (10000, 20000), 1);
@@ -272,11 +262,6 @@ public:
             expectEquals (e.getMarkers().getAll()[0].sampleOffset, (juce::int64) 5000);
             expectWithinAbsoluteError (e.automationValueAtOffline (0, Param::Volume, 0, 99.0f), atStart, 0.01f);
             expectWithinAbsoluteError (e.automationValueAtOffline (0, Param::Volume, 5000, 99.0f), inRange, 0.01f);
-            const auto& tempo = e.getTempoMap();
-            expectEquals ((int) tempo.size(), 2);
-            expectEquals (tempo[0].samplePos, (juce::int64) 0);
-            expectWithinAbsoluteError (tempo[0].bpm, 100.0f, 0.01f);
-            expectEquals (tempo[1].samplePos, (juce::int64) 5000);
             expectEquals (savedtakes::count (e, 0), 2);
             for (int take = 0; take < savedtakes::count (e, 0); ++take)
             {
@@ -325,7 +310,6 @@ public:
             SetlistBar::Cue inside;
             inside.name = "kept"; inside.samplePos = 12000;
             inside.automation = e.automationToJson();
-            inside.tempoCurve.push_back ({ 2000, 110.0f });
             SetlistBar::Cue outside;
             outside.name = "gone"; outside.samplePos = 40000;
 
@@ -333,7 +317,6 @@ public:
             const auto kept = MainComponent::cuesAfterCut ({ inside, outside }, crop, { 0 }, true);
             expectEquals ((int) kept.size(), 1);
             expectEquals (kept[0].samplePos, (juce::int64) 2000);
-            expectEquals (kept[0].tempoCurve[0].offsetSamples, (juce::int64) 2000);
             e.loadAutomationFromJson (kept[0].automation);
             expectEquals (e.getAutomation (0, Param::Volume).front().samplePos, (juce::int64) 2000,
                           "a recalled cue would put its automation back on the old timeline");
@@ -361,14 +344,12 @@ public:
             AudioEngine e; setup (e); e.loadSession (f.dir);
             e.getMarkers().drop (15000, "m");
             e.addAutomationPoint (0, Param::Volume, 30000, -6.0f);
-            e.setTempoMap ({ { 30000, 140.0f } });
             const auto before = e.captureTimelineState();
             expectEquals (e.cropToRange (20000, 40000), 1);
             expect (e.getMarkers().getAll().empty());
             e.restoreTimelineState (before);
             expectEquals (e.getMarkers().getAll()[0].sampleOffset, (juce::int64) 15000);
             expectEquals (e.getAutomation (0, Param::Volume)[0].samplePos, (juce::int64) 30000);
-            expectEquals (e.getTempoMap()[0].samplePos, (juce::int64) 30000);
             expectEquals (clipSpan (e.clipsFor (0)), (juce::int64) 48000);
         }
     }

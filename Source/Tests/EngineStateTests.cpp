@@ -210,9 +210,6 @@ namespace zynforge
                 // sends to it. Both must round-trip through session_mix.json.
                 eng.setTrackIsBus (3, true);
                 eng.setTrackSend  (0, /*slot*/ 0, /*bus*/ 3, /*dB*/ -3.0f, /*post*/ true);
-                eng.setSessionTempoBpm (142.0f);
-                eng.setTimeSignature (6, 8);
-                eng.setTempoMap ({ { 0, 120.0f }, { 480000, 140.0f } });
                 eng.claimMixerFor (tmp);
                 eng.saveSessionMixTo (tmp);
 
@@ -226,9 +223,6 @@ namespace zynforge
                 eng.setTrackVcaGroup (2, 5);
                 eng.setTrackIsBus (3, false);                 // un-bus it
                 eng.setTrackSend  (0, 0, -1, 0.0f, false);    // clear the send
-                eng.setSessionTempoBpm (90.0f);
-                eng.setTimeSignature (4, 4);
-                eng.setTempoMap ({});
 
                 eng.setStripCount (7); // simulate the previously-open larger session
                 expect (eng.loadSessionMixFrom (tmp));
@@ -252,11 +246,6 @@ namespace zynforge
                 expectWithinAbsoluteError (
                     eng.getRecorder().getTrack (0).sends[0].levelDb.load(), -3.0f, 0.01f);
                 expect (eng.getRecorder().getTrack (0).sends[0].postFader.load());
-                // Tempo state round-trips per session.
-                expectWithinAbsoluteError (eng.getSessionTempoBpm(), 142.0f, 0.01f);
-                expectEquals (eng.getTimeSignatureNumerator(),   6);
-                expectEquals (eng.getTimeSignatureDenominator(), 8);
-                expectEquals ((int) eng.getTempoMap().size(), 2);
 
                 eng.clearSessionState();
                 expect (! eng.getRecorder().getTrack (1).outputMuted.load(),

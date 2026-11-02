@@ -29,7 +29,6 @@
 #include "SessionJobRunner.h"
 #include "SessionMetadataWriter.h"
 #include "../Audio/SettingsFile.h"
-#include "TempoBar.h"
 #include "Toast.h"
 #include "PlaceholderView.h"
 #include "VcaPanel.h"
@@ -364,11 +363,7 @@ private:
     bool playheadLockedForPunch();
 
     // Snap modes -- cycled by the '4' key (also surfaced in the
-    // Edit menu). Off / Markers / Bars; Bars uses the engine's
-    // tempo map + time-sig to align edits to bar boundaries. The
-    // bool name is kept for source compatibility with code that
-    // checks "is snap on at all"; new code should branch on
-    // snapMode for the actual snap behaviour.
+    // Edit menu).
     enum class SnapMode { Off = 0, Markers = 1 };
     SnapMode snapMode      { SnapMode::Off };
     bool     snapToMarkers { false };   // mirrors (snapMode == Markers) for legacy reads
@@ -413,8 +408,6 @@ private:
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
-    // One undo step around a tempo-map edit.
-    void runTempoEdit (const juce::String& label, std::function<void()> mutate);
     // Test seam: receives what either delete prompt would run on "Delete".
     std::function<void (std::function<void()>)> confirmForTests;
 
@@ -671,7 +664,6 @@ private:
     zynforge::VolumeProbe::Reader recordDriveReaderForTests;
     zynforge::PerfDashboard perfDashboard;
     zynforge::SetlistBar    setlistBar;
-    zynforge::TempoBar      tempoBar;
     zynforge::Toast         toast;
 
     // STOP-while-recording two-tap guard. Tracks the message-counter
@@ -693,26 +685,6 @@ private:
     // every session swap, persisted on every add / pick / update.
     std::vector<zynforge::SetlistBar::Cue> cues;
     int currentCueIndex { -1 };
-
-    // Cue-transition ramp state. Active while a Fade-mode cue is in
-    // flight; updated by the existing 24 Hz timerCallback. Each strip
-    // gets its own (start, target) pair and we lerp gain + pan toward
-    // the target proportionally to elapsed beats.
-    struct RampState
-    {
-        bool        active { false };
-        double      startMs { 0.0 };
-        double      durationMs { 0.0 };
-        std::vector<std::pair<float, float>> gainStartTarget; // per snapshot entry
-        std::vector<std::pair<float, float>> panStartTarget;  // per snapshot entry
-        // Resolved destination track index for each entry above (matched by
-        // stripId, like the Snap path), so a Fade recall after a reorder /
-        // delete ramps the correct strips rather than raw array positions.
-        std::vector<int>                     targetTrack;
-    };
-    RampState cueRamp;
-    void startCueRampTo (const zynforge::SetlistBar::Cue&);
-    void updateCueRamp();
 
     void loadSetlistFromActiveSession();
     bool saveSetlistToActiveSession (bool writeBackup = true) const;

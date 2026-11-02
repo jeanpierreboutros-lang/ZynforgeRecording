@@ -125,31 +125,6 @@ namespace
         bool      afterCaptured { false };
     };
 
-    // The tempo map before and after a lane edit.
-    struct TempoSnapshotAction final : public juce::UndoableAction
-    {
-        using Map = std::vector<zynforge::AudioEngine::TempoChange>;
-
-        TempoSnapshotAction (zynforge::AudioEngine& e, Map beforeIn, Map afterIn)
-            : eng (e), before (std::move (beforeIn)), after (std::move (afterIn)) {}
-
-        bool perform() override
-        {
-            if (firstRun) { firstRun = false; return true; }   // already applied
-            eng.setTempoMap (after);
-            return true;
-        }
-        bool undo() override
-        {
-            eng.setTempoMap (before);
-            return true;
-        }
-
-        zynforge::AudioEngine& eng;
-        Map before, after;
-        bool firstRun { true };
-    };
-
     // Clip / playlist undo. The edit has ALREADY happened by the time we
     // push this (the caller captured 'before' first), so perform() is a
     // no-op on first run and re-applies 'after' on redo. undo() restores
@@ -272,12 +247,6 @@ std::vector<SetlistBar::Cue> MainComponent::cuesAfterCut (const std::vector<Setl
         {
             const auto pos = cut.map (cue.samplePos);
             if (! pos) continue;
-            std::vector<AudioEngine::TempoChange> curve;
-            for (const auto& point : cue.tempoCurve)
-                curve.push_back ({ cue.samplePos + point.offsetSamples, point.bpm });
-            cue.tempoCurve.clear();
-            for (const auto& change : timelinecut::cutTempoMap (curve, cut))
-                cue.tempoCurve.push_back ({ change.samplePos - *pos, change.bpm });
             cue.samplePos = *pos;
         }
         kept.push_back (std::move (cue));
@@ -689,7 +658,7 @@ void MainComponent::editCropToLoopRange()
     constexpr int kCrop = 1, kCancel = 2;
     auto* aw = new juce::AlertWindow ("Crop to loop range?",
         "Trim every track to the " + juce::String (secs, 2) + " s loop region?\n"
-        "Markers, automation, tempo changes, cues and other takes move with the "
+        "Markers, automation, cues and other takes move with the "
         "audio, and whatever lies outside the region goes.\n"
         "Non-destructive -- the recordings on disk are untouched and Cmd+Z restores everything.",
         juce::MessageBoxIconType::NoIcon, this);
@@ -856,22 +825,6 @@ void MainComponent::runAutomationEdit (const juce::String& label,
 
     undoManager.beginNewTransaction (label);
     undoManager.perform (new AutomationSnapshotAction (engine, before, after));
-    if (editPage != nullptr) editPage->repaint();
-}
-
-void MainComponent::runTempoEdit (const juce::String& label, std::function<void()> mutate)
-{
-    if (! canMutateTimeline()) return;
-    const auto before = engine.getTempoMap();
-    mutate();
-    const auto after = engine.getTempoMap();
-    const bool same = before.size() == after.size()
-        && std::equal (before.begin(), before.end(), after.begin(), [] (const auto& a, const auto& b)
-                       { return a.samplePos == b.samplePos && a.bpm == b.bpm; });
-    if (same) return;
-
-    undoManager.beginNewTransaction (label);
-    undoManager.perform (new TempoSnapshotAction (engine, before, after));
     if (editPage != nullptr) editPage->repaint();
 }
 

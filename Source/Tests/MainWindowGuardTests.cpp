@@ -989,18 +989,16 @@ namespace zynforge
                 expect (! w.main.statusLabel.getText().containsIgnoreCase ("finalization"), w.main.statusLabel.getText());
             }
 
-            beginTest ("The setlist bar and a running cue fade end with the session");
+            beginTest ("The setlist bar ends with the session");
             {
                 Window w;
                 w.main.cues.push_back ({});
                 w.main.cues.back().name = "Old";
                 w.main.currentCueIndex = 0;
                 w.main.setlistBar.setCues (w.main.cues, 0);
-                w.main.cueRamp.active = true;
                 w.main.engine.clearSessionState();
                 w.main.forgetSessionUiState();
                 expect (w.main.cues.empty());
-                expect (! w.main.cueRamp.active, "a fade ran on into the next session");
                 for (auto* child : w.main.setlistBar.getChildren())
                     if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
                         expectEquals (combo->getNumItems(), 0, "the setlist bar kept the closed session's cues");
@@ -1432,14 +1430,6 @@ namespace zynforge
                     expect (token->getText().isNotEmpty());
                     w.engine().getRemotes().stopOsc();
                 }
-            }
-
-            beginTest ("A cue fade stops when strips move, and a click refresh waits for the take");
-            {
-                Window w (3);
-                w.main.cueRamp.active = true;
-                expect (w.engine().reorderTracks ({ 2, 1, 0 }));
-                expect (! w.main.cueRamp.active, "a fade kept writing to indices that moved");
             }
 
             beginTest ("Tap STOP again shows at once, ahead of anything queued");

@@ -14,9 +14,7 @@ namespace zynforge
     // header column matches the strip-header width so columns line up.
     //
     // No Bars|Beats: this is a live recorder, not a DAW. Engineers
-    // navigate by wall-clock + markers, not by bars. Tempo math is
-    // still alive for the click track + cue tempo ramps; the ruler
-    // just doesn't visualise it.
+    // navigate by wall-clock + markers, not by bars.
     //
     // The scale is built like a Reaper / Pro Tools time ruler:
     //   - A 1-2-5 progression (0.1s -> 2h) picks a labelled "major"

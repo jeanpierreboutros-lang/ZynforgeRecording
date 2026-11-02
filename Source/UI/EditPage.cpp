@@ -754,7 +754,6 @@ namespace zynforge
             case AutomationToolbar::Param::Volume: lm = TrackRow::LaneMode::Volume; break;
             case AutomationToolbar::Param::Pan:    lm = TrackRow::LaneMode::Pan;    break;
             case AutomationToolbar::Param::Mute:   lm = TrackRow::LaneMode::Mute;   break;
-            case AutomationToolbar::Param::Tempo:  lm = TrackRow::LaneMode::Tempo;  break;
         }
         list->forceLaneMode (lm);
     }

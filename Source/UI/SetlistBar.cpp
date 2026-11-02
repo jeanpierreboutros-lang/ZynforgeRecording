@@ -51,14 +51,14 @@ namespace zynforge
         updateButton.onClick = [this] { if (onUpdateCue) onUpdateCue(); };
         addAndMakeVisible (updateButton);
 
-        // Explicit RECALL -- re-applies the selected cue's mix / automation /
-        // tempo on demand (the dropdown + arrows also recall, but a clear
+        // Explicit RECALL -- re-applies the selected cue's mix / automation
+        // on demand (the dropdown + arrows also recall, but a clear
         // button makes the action obvious during a show). Distinct teal so it
         // reads apart from the green '+ Cue' and grey 'Update'.
         recallButton.setButtonText ("Recall");
         recallButton.setColour (juce::TextButton::buttonColourId,  brand::featureEngaged);
         recallButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::featureEngaged));
-        recallButton.setTooltip ("Recall the selected cue -- apply its mix, automation and tempo now.");
+        recallButton.setTooltip ("Recall the selected cue -- apply its mix and automation now.");
         recallButton.onClick = [this] { if (onRecallCue) onRecallCue(); };
         addAndMakeVisible (recallButton);
 

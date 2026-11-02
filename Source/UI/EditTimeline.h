@@ -3,8 +3,7 @@
 // Shared EDIT-timeline helpers. These live in their own header (rather than
 // inside EditPage / TrackRow) so the ruler, the lanes and the unit tests all
 // read the SAME definition -- the 2026-08-12 audit found the ruler drawing a
-// 300 s empty session while the automation lane hit-tested against 60 s, and a
-// hardcoded 48 kHz in the tempo lane on top of that.
+// 300 s empty session while the automation lane hit-tested against 60 s.
 
 #include <juce_core/juce_core.h>
 #include <algorithm>
@@ -22,11 +21,11 @@ namespace zynforge
     // Both live here (rather than inside TrackRow) so the ruler, the lanes and
     // the tests all read the SAME definition -- the 2026-08-12 audit found the
     // ruler drawing a 300 s empty session while the automation lane hit-tested
-    // against 60 s, and a hardcoded 48 kHz in the tempo lane on top of that.
+    // against 60 s.
 
     // Timeline span an EDIT lane (and the ruler) covers when the session has no
     // audio yet -- 5 notional minutes, so the engineer can place the edit
-    // cursor, markers, tempo and automation before the first take.
+    // cursor, markers and automation before the first take.
     inline constexpr double kNotionalEmptyLaneSec = 300.0;
     inline constexpr float kMaxTimelineZoom = 512.0f;
     // A live take is mapped against its initial span and grows wider for

@@ -34,7 +34,6 @@ MainComponent::MainComponent()
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {
-        cueRamp.active = false;   // its targets are strip indices, and those just moved
         for (auto& cue : cues)
             if (auto* lanes = cue.automation.getArray())
             {
@@ -432,10 +431,6 @@ MainComponent::MainComponent()
         { showStatus ("Stop recording or unlock the session before clearing automation"); return; }
         using Param = zynforge::AutomationToolbar::Param;
         const auto p = automationToolbar->getParam();
-        // Click and Tempo hold no automation points. Falling through to Mute
-        // here erased every Mute lane while the row showed something else.
-        if (p != Param::Volume && p != Param::Pan && p != Param::Mute)
-        { showStatus ("Clear works on the Volume, Pan and Mute lanes -- pick one first"); return; }
         const auto engineParam = p == Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
                                : p == Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
                                                     : zynforge::AudioEngine::AutomationParam::Mute;
@@ -504,14 +499,6 @@ MainComponent::MainComponent()
         }
     };
 
-    tempoBar.setBpm (engine.getSessionTempoBpm());
-    tempoBar.onBpmChanged = [this] (float bpm)
-    {
-        engine.setSessionTempoBpm (bpm);
-        tempoBar.setBpm (engine.getSessionTempoBpm());   // clamp echo
-    };
-    addAndMakeVisible (tempoBar);
-
     transportBar = std::make_unique<zynforge::TransportBar> (engine);
     transportBar->onRequestPlay   = [this] { onPlayClicked();   };
     transportBar->onRequestStop   = [this] { onStopClicked();   };
@@ -535,10 +522,6 @@ MainComponent::MainComponent()
             runAutomationEdit (label, std::move (fn));
         });
     editPage->canMutateTimeline = [this] { return canMutateTimeline(); };
-    editPage->tempoEditWrapper = [this] (const juce::String& label, std::function<void()> fn)
-    {
-        runTempoEdit (label, std::move (fn));
-    };
     editPage->setAutomationDragHooks (
         [this] { beginAutomationTransaction(); },
         [this] (const juce::String& label) { endAutomationTransaction (label); });

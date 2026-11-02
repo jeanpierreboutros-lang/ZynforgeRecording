@@ -283,7 +283,6 @@ namespace zynforge
                 kept.back().sampleOffset = *pos;
             }
         markers.replaceAll (std::move (kept));
-        setTempoMap (timelinecut::cutTempoMap (tempoMap, cut));
     }
 
     std::vector<int> AudioEngine::allTimelineTracks() const
@@ -331,7 +330,7 @@ namespace zynforge
 
     AudioEngine::TimelineState AudioEngine::captureTimelineState() const
     {
-        return { playlistsToJson(), automationToJson(), markers.getAll(), tempoMap };
+        return { playlistsToJson(), automationToJson(), markers.getAll() };
     }
 
     void AudioEngine::restoreTimelineState (const TimelineState& state)
@@ -339,7 +338,6 @@ namespace zynforge
         restorePlaylistSnapshot (state.playlists);
         loadAutomationFromJson (state.automation);
         markers.replaceAll (state.markers);
-        setTempoMap (state.tempoMap);
     }
 
     int AudioEngine::getActiveTakeIdx (int track) const
@@ -1324,13 +1322,6 @@ namespace zynforge
         const double playerRate = player.getSampleRate();
         input.sampleRate = playerRate > 0.0 ? playerRate
                          : (sessionSampleRate.load() > 0.0 ? sessionSampleRate.load() : getDeviceSampleRate());
-        input.tempoBpm    = getSessionTempoBpm();
-        input.timeSigNum  = getTimeSignatureNumerator();
-        input.timeSigDen  = getTimeSignatureDenominator();
-        {
-            const juce::ScopedLock tempo (tempoLock);
-            input.hasTempoMap = ! tempoMap.empty();
-        }
         input.masterDb    = getMasterGainDb();
         input.masterMuted = getMasterMuted();
         input.anySolo     = isAnySoloActive();
@@ -1838,7 +1829,7 @@ namespace zynforge
 
         cutAutomationLanes (cut, tracks);
         // On some strips only, the rest of the session stays where it was, so
-        // the markers and tempo map stay with it.
+        // the markers stay with it.
         if (namesEveryStrip (tracks)) cutSessionTimeline (cut);
         return changed;
     }

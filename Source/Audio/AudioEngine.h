@@ -311,10 +311,7 @@ namespace zynforge
         // Snap mode -- shared between the host (which sets it from
         // the Edit menu / '4' hotkey) and the edit operations that
         // should respect it (split, eventually clip move + loop in/out).
-        // Off = no snap, Markers = snap to nearest marker. Bars used
-        // to exist for tempo-map-grid snapping; removed in 2026-05-25
-        // along with the Bars|Beats ruler -- live recorders don't
-        // navigate by bars.
+        // Off = no snap, Markers = snap to nearest marker.
         enum class SnapMode : int { Off = 0, Markers = 1 };
         void     setSnapMode (SnapMode m) noexcept { snapMode.store ((int) m, std::memory_order_relaxed); }
         SnapMode getSnapMode() const noexcept { return (SnapMode) snapMode.load (std::memory_order_relaxed); }
@@ -540,27 +537,6 @@ namespace zynforge
         void          setEditCursorSample (juce::int64 sample) noexcept;
         juce::int64   getEditCursorSample() const noexcept;
         void          clearEditCursor() noexcept { setEditCursorSample (-1); }
-
-        // Session tempo. setSessionTempoBpm() is the canonical setter --
-        // it updates currentTempoBpm + persists to appProps. The tempo
-        // map is a sorted list of (samplePos, bpm) change points; the
-        // engine doesn't consume it on the audio thread yet (no MIDI
-        // click out), but TempoBar / EDIT view / cue snapshot all read
-        // and write it through these getters.
-        struct TempoChange { juce::int64 samplePos; float bpm; };
-        float  getSessionTempoBpm() const noexcept { return currentTempoBpm.load (std::memory_order_relaxed); }
-        void   setSessionTempoBpm (float bpm);
-
-        // Time signature. Persisted to appProps.
-        int   getTimeSignatureNumerator()   const noexcept { return timeSigNumerator  .load (std::memory_order_relaxed); }
-        int   getTimeSignatureDenominator() const noexcept { return timeSigDenominator.load (std::memory_order_relaxed); }
-        void  setTimeSignature (int numerator, int denominator);
-
-        const std::vector<TempoChange>& getTempoMap() const noexcept { return tempoMap; }
-        void   setTempoMap (std::vector<TempoChange> newMap);
-        void   addTempoChange (juce::int64 samplePos, float bpm);
-        void   removeTempoChangeNear (juce::int64 samplePos, juce::int64 tolerance);
-        void   clearTempoMap();
 
         // Per-track automation. Three discrete parameter lanes:
         //   Volume (-60..+12 dB)
@@ -946,7 +922,7 @@ namespace zynforge
         bool rippleDeleteRange (int track, juce::int64 start, juce::int64 end);
         // Ripple Delete across `tracks`, moving what plays with their audio:
         // every take and their automation. Naming every strip moves the
-        // session's timeline too (markers, tempo map). Returns the tracks
+        // session's timeline too (markers). Returns the tracks
         // changed, or -1 when timelineCutRefusal refuses.
         int  rippleDeleteTracks (const std::vector<int>& tracks, juce::int64 start, juce::int64 end);
         // Why a Crop or Ripple Delete cannot run, or empty when it can. A
@@ -961,7 +937,6 @@ namespace zynforge
         {
             juce::var playlists, automation;
             std::vector<Marker> markers;
-            std::vector<TempoChange> tempoMap;
         };
         TimelineState captureTimelineState() const;
         void restoreTimelineState (const TimelineState&);
@@ -1000,7 +975,7 @@ namespace zynforge
         // Non-destructive crop: on EVERY track, replace its clip list with
         // the parts that fall inside the timeline range [start, end),
         // shifted so the range start becomes timeline 0. Every take, the
-        // automation, the markers and the tempo map move with them. The
+        // automation and the markers move with them. The
         // underlying Track_NN.wav files are never touched. Returns the number
         // of tracks left with at least one clip, or -1 when timelineCutRefusal
         // refuses.
@@ -1298,15 +1273,9 @@ namespace zynforge
                 std::memory_order_relaxed);
         }
     private:
-        std::atomic<float>  currentTempoBpm     { 120.0f };
-        std::atomic<int>    timeSigNumerator    { 4 };
-        std::atomic<int>    timeSigDenominator  { 4 };
         // Pro Tools-style edit cursor. -1 = unset (drop-marker /
         // split / paste use the playhead as the fallback).
         std::atomic<juce::int64> editCursorSample { -1 };
-        std::vector<TempoChange> tempoMap;   // sorted by samplePos
-        // Guards tempoMap across the threads that read and write it.
-        mutable juce::CriticalSection tempoLock;
         // Active snap grid. Read by snapSampleToGrid + by the
         // splitTrackAtPlayhead path. Default Off.
         std::atomic<int> snapMode { 0 };

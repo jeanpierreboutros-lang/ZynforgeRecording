@@ -1074,7 +1074,6 @@ void MainComponent::applyLockState()
     metersButton .setEnabled (e);
     addChannelButton.setEnabled (e && ! engine.isRecording());
     setlistBar.setEnabled (e);
-    tempoBar.setEnabled (e);
     if (transportBar != nullptr) transportBar->setEnabled (e);
     if (masterStrip != nullptr) masterStrip->setEnabled (e);
 
@@ -1123,7 +1122,6 @@ void MainComponent::forgetSessionUiState()
     cues.clear();
     currentCueIndex = -1;
     setlistBar.setCues (cues, currentCueIndex);
-    cueRamp.active = false;     // its strip indices mean nothing in the next session
     wasInsidePunch = false;
     analysisJobs.cancel();
 }

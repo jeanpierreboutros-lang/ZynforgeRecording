@@ -131,16 +131,13 @@ namespace zynforge
             }
 
             // ── The empty-session lane span is ONE number ────────────────────
-            // The ruler drew 300 s while laneTimelineSamples() returned 60 s and
-            // the tempo lane hardcoded 48000*60, so on a session with no audio
-            // an automation/tempo point placed under the ruler's 2:30 mark was
-            // stored at 0:30. Both now route through this helper.
+            // The ruler drew 300 s while laneTimelineSamples() returned 60 s, so on
+            // a session with no audio an automation point placed under the ruler's
+            // 2:30 mark was stored at 0:30. Both now route through this helper.
             beginTest ("Notional empty-lane span is 5 minutes at the DEVICE rate");
             {
                 expectEquals (kNotionalEmptyLaneSec, 300.0);
                 expectEquals (notionalEmptyLaneSamples (48000.0), (juce::int64) (48000 * 300));
-                // Rate-dependent: the tempo lane's old hardcoded 48000 gave 30 s
-                // of real time at 96 k, so its points landed at half position.
                 expectEquals (notionalEmptyLaneSamples (96000.0), (juce::int64) (96000 * 300));
                 expectEquals (notionalEmptyLaneSamples (44100.0), (juce::int64) (44100 * 300));
                 // A zero / bogus device rate must not collapse the lane to 0

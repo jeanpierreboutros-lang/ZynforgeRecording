@@ -38,33 +38,11 @@ namespace zynforge
             bool  armed        { false };
         };
 
-        // How the cue transitions in -- Snap is instant (the prior
-        // behaviour); Fade ramps every strip's gain + pan from the
-        // current value to the captured value across N beats at the
-        // cue's tempo.
-        enum class Transition : int { Snap = 0, Fade };
-
-        // Tempo automation point -- sample offset relative to the cue's
-        // samplePos. Audio thread interpolates linearly between points.
-        struct TempoPoint
-        {
-            juce::int64 offsetSamples { 0 };
-            float       bpm           { 120.0f };
-        };
-
         struct Cue
         {
             juce::String name;
             juce::int64  samplePos { 0 };
             std::vector<StripSnapshot> strips;   // length = recorder.getNumTracks() at capture time
-            float        tempoBpm  { 0.0f };     // 0 = 'use session default' (older cues)
-            Transition   transition { Transition::Snap };
-            float        fadeBeats { 0.0f };     // > 0 only meaningful for Fade
-            // Multi-point tempo curve for accel / rit within the song.
-            // Empty → constant tempoBpm. When non-empty, the engine
-            // interpolates between points; the first point's bpm
-            // overrides tempoBpm.
-            std::vector<TempoPoint> tempoCurve;
 
             // Per-cue automation snapshot: the engine's volume/pan/mute
             // lanes (engine.automationToJson()) captured when the cue was

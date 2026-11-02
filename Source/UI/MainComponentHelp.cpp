@@ -316,7 +316,7 @@ void MainComponent::showUserGuide()
         "incremental patching.\n\n"
         "CUE LIST (top bar)\n"
         "  + Cue captures current fader / pan / routing / mute / arm + "
-        "playback position + tempo. Recall via cue buttons OR number "
+        "playback position. Recall via cue buttons OR number "
         "keys 1-""9. 250 ms soft-takeover prevents clicks.\n\n"
         "VCA PANEL (toggle with the VCA button)\n"
         "  8 group faders. Assign strips via right-click > Assign to VCA. "

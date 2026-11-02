@@ -885,7 +885,6 @@ void MainComponent::writeSoundcheckReport()
     juce::DynamicObject::Ptr root (new juce::DynamicObject());
     root->setProperty ("generatedAt", juce::Time::getCurrentTime().toISO8601 (true));
     root->setProperty ("sampleRate",  sr);
-    root->setProperty ("bpm",         engine.getSessionTempoBpm());
 
     juce::Array<juce::var> arr;
     for (int i = 0; i < rec.getNumTracks(); ++i)

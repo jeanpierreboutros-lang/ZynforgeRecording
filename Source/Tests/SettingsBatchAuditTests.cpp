@@ -152,10 +152,10 @@ namespace zynforge
                 }
             }
 
-            beginTest ("A 56-strip cue fade tick does not rewrite the settings file per strip");
+            beginTest ("A 56-strip gain and pan tick does not rewrite the settings file per strip");
             {
-                // updateCueRamp sets gain + pan on every strip at 10 Hz; each
-                // call used to reload and rewrite the whole shared file.
+                // Setting gain + pan on every strip in one tick: each call used
+                // to reload and rewrite the whole shared file.
                 juce::File file;
                 {
                     AudioEngine engine;

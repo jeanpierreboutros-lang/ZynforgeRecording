@@ -877,7 +877,7 @@ namespace zynforge
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
             // All lane-content drawing runs inside this lambda. The non-waveform
-            // lane modes (Tempo / Markers / Volume·Pan·Mute automation)
+            // lane modes (Markers / Volume·Pan·Mute automation)
             // early-`return` once they've drawn their lane -- by
             // doing so from the lambda (not paint()), they no longer SKIP the
             // pinned header painted LAST below. Skipping it left the header
@@ -981,7 +981,7 @@ namespace zynforge
 
             // Pro Tools-style: the waveform is ALWAYS the base layer,
             // even when a different lane mode (Volume / Pan / Mute /
-            // Tempo / Markers) is selected. The lane data is
+            // Markers) is selected. The lane data is
             // drawn on top with a semi-transparent backdrop. Paint
             // the waveform here as the substrate; the lane branch
             // below then overlays its content. Skip the substrate when the
@@ -1110,74 +1110,6 @@ namespace zynforge
                         lineCol = muted ? brand::brandOrange : brand::textMuted;
                         label   = muted ? "MUTED" : "open";
                         break;
-                    }
-                    case LaneMode::Tempo:
-                    {
-                        // Shared tempo curve -- one lane for the whole
-                        // session, drawn identically on every row. Each
-                        // point in engine.getTempoMap() is rendered as
-                        // a handle on a stepped curve (40..240 BPM
-                        // mapped to bottom..top of the lane).
-                        const auto& tempoMap = engine.getTempoMap();
-                        // Shared lane span (5-min notional when empty, at the
-                        // DEVICE rate). The hardcoded 48000*60 here was both a
-                        // different span from the ruler AND wrong at any other
-                        // sample rate -- 30 s of real time at 96 kHz.
-                        const juce::int64 totalSamples = laneTimelineSamples();
-
-                        auto bpmToY = [&] (float bpm) -> int
-                        {
-                            const float clamped = juce::jlimit (40.0f, 240.0f, bpm);
-                            const float yp = 1.0f - (clamped - 40.0f) / 200.0f;
-                            return inner.getY() + juce::roundToInt (yp * inner.getHeight());
-                        };
-                        auto sampleToX = [&] (juce::int64 sp) -> int
-                        { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
-
-                        const float sessionBpm = engine.getSessionTempoBpm();
-                        g.setColour (brand::brandOrange);
-
-                        if (tempoMap.empty())
-                        {
-                            const int y = bpmToY (sessionBpm);
-                            g.drawHorizontalLine (y, (float) inner.getX(), (float) inner.getRight());
-                        }
-                        else
-                        {
-                            juce::Path path;
-                            int prevY = bpmToY (sessionBpm);
-                            path.startNewSubPath ((float) inner.getX(), (float) prevY);
-                            for (const auto& tc : tempoMap)
-                            {
-                                const int x = sampleToX (tc.samplePos);
-                                const int y = bpmToY  (tc.bpm);
-                                path.lineTo ((float) x, (float) prevY);
-                                path.lineTo ((float) x, (float) y);
-                                prevY = y;
-                            }
-                            path.lineTo ((float) inner.getRight(), (float) prevY);
-                            g.strokePath (path, juce::PathStrokeType (1.8f));
-
-                            for (const auto& tc : tempoMap)
-                            {
-                                const int x = sampleToX (tc.samplePos);
-                                const int y = bpmToY  (tc.bpm);
-                                g.fillEllipse ((float) x - 4.0f, (float) y - 4.0f, 8.0f, 8.0f);
-                            }
-                        }
-
-                        g.setColour (brand::textTertiary);
-                        g.setFont (brand::type::caption());
-                        g.drawText ("tempo " + juce::String (sessionBpm, 1) + " BPM",
-                                    inner.reduced (6, 2),
-                                    juce::Justification::topLeft, false);
-                        if (playheadX >= 0 && playheadX < wavePane.getWidth())
-                        {
-                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
-                            g.fillRect (juce::Rectangle<int> (headerW + playheadX,
-                                                              0, 2, getHeight()));
-                        }
-                        return;
                     }
                     case LaneMode::Markers:
                     {
@@ -2627,60 +2559,17 @@ namespace zynforge
             }
 
             // Lane-area interaction -- only when the toolbar is wired and the
-            // row SHOWS an editable lane (Volume / Pan / Mute, or the shared
-            // Tempo lane). A Waveform or Markers lane draws no points: a click there (a gap
-            // between clips, past a short take, an empty session) used to fall
-            // through to here and add, delete or grab a HIDDEN point -- or
-            // write the tempo map -- with whatever the toolbar last held.
+            // row SHOWS an editable lane (Volume / Pan / Mute). A Waveform or
+            // Markers lane draws no points: a click there (a gap between clips,
+            // past a short take, an empty session) used to fall through to here
+            // and add, delete or grab a HIDDEN point with whatever the toolbar
+            // last held.
             const bool showsEditableLane = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
-                                        || laneMode == LaneMode::Mute   || laneMode == LaneMode::Tempo;
+                                        || laneMode == LaneMode::Mute;
             if (toolbar != nullptr && showsEditableLane && inWavePane (e.x))
             {
                 const auto coord = laneCoordAt (e.getPosition());
                 const auto p     = currentLaneParam();
-
-                // Special case: the Tempo lane edits the engine's shared
-                // tempo map instead of the per-track point store.
-                if (laneMode == LaneMode::Tempo)
-                {
-                    const juce::int64 totalSamples = laneTimelineSamples();
-                    const juce::int64 tol = juce::jmax<juce::int64> (1,
-                        totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
-                    // Y → BPM (40..240 range mirrors the paint mapping).
-                    const auto inner2 = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
-                    const float yProp = juce::jlimit (0.0f, 1.0f,
-                        (float) (e.y - inner2.getY()) / juce::jmax (1, inner2.getHeight()));
-                    const float bpm = juce::jlimit (40.0f, 240.0f,
-                                                    40.0f + (1.0f - yProp) * 200.0f);
-
-                    // Through the host when there is one: undo, and a click
-                    // track rendered from this map follows it.
-                    auto tempoEdit = [this] (const char* label, std::function<void()> fn)
-                    {
-                        auto* page = findParentComponentOfClass<EditPage>();
-                        if (page != nullptr && page->tempoEditWrapper)
-                            page->tempoEditWrapper (label, std::move (fn));
-                        else
-                            fn();
-                    };
-                    switch (toolbar->getTool())
-                    {
-                        case AutomationToolbar::Tool::AddPoint:
-                            tempoEdit ("Add tempo point",
-                                       [this, coord, bpm] { engine.addTempoChange (coord.samplePos, bpm); });
-                            break;
-                        case AutomationToolbar::Tool::DeletePoint:
-                            tempoEdit ("Delete tempo point",
-                                       [this, coord, tol] { engine.removeTempoChangeNear (coord.samplePos, tol); });
-                            break;
-                        case AutomationToolbar::Tool::Select:
-                            // Tempo drag isn't wired yet -- Select on
-                            // the Tempo lane just records nothing.
-                            break;
-                    }
-                    repaint();
-                    return;
-                }
 
                 // Helper: route the engine call through the optional
                 // undo wrapper. Plain direct call when no wrapper is
@@ -3583,7 +3472,7 @@ namespace zynforge
         // they never disagree. It used to prefer the toolbar's param,
         // which a VIEW pick on ANOTHER row changes silently: this row then
         // drew Volume points under a "pan C" readout while its menus
-        // edited Pan. Falls through to Volume for Tempo / unknown.
+        // edited Pan. Falls through to Volume for unknown.
         AudioEngine::AutomationParam currentLaneParam() const
         {
             switch (laneMode)
@@ -3597,8 +3486,8 @@ namespace zynforge
     public:
         // The automation lane this row draws points for, if it draws any.
         // currentLaneParam() falls through to Volume for every other lane, so
-        // anything that edits points must ask here first: a Tempo lane and a
-        // Waveform lane show none.
+        // anything that edits points must ask here first: a Waveform lane
+        // shows none.
         std::optional<AudioEngine::AutomationParam> shownAutomationParam() const
         {
             const bool showsPoints = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
@@ -3951,7 +3840,7 @@ namespace zynforge
     public:
         // What this row draws in the lane area (matches the toolbar's
         // Param, or the row's own VIEW choice when no toolbar is wired).
-        enum class LaneMode { Waveform, Markers, Volume, Mute, Pan, Tempo };
+        enum class LaneMode { Waveform, Markers, Volume, Mute, Pan };
         LaneMode laneMode { LaneMode::Waveform };
 
     private:

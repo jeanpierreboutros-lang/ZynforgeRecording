@@ -51,9 +51,6 @@ namespace zynforge::interchange
         juce::File   sessionDir;
         juce::String sessionName;
         double sampleRate { 48000.0 };
-        double tempoBpm   { 120.0 };
-        int    timeSigNum { 4 }, timeSigDen { 4 };
-        bool   hasTempoMap { false };
         bool   anySolo     { false };
         float  masterDb    { 0.0f };
         bool   masterMuted { false };
@@ -96,8 +93,6 @@ namespace zynforge::interchange
     {
         juce::String sessionName;
         double sampleRate { 48000.0 };
-        double tempoBpm { 120.0 };
-        int    timeSigNum { 4 }, timeSigDen { 4 };
         double masterGain { 1.0 };
         bool   masterMuted { false };
         std::vector<Track> tracks;
@@ -355,9 +350,6 @@ namespace zynforge::interchange
         auto& project = result.project;
         project.sessionName = cleanText (in.sessionName);
         project.sampleRate  = in.sampleRate;
-        project.tempoBpm    = in.tempoBpm;
-        project.timeSigNum  = in.timeSigNum;
-        project.timeSigDen  = in.timeSigDen;
         project.masterGain  = juce::Decibels::decibelsToGain ((double) in.masterDb, -60.0);
         project.masterMuted = in.masterMuted;
         for (const auto& marker : in.markers)
@@ -450,8 +442,6 @@ namespace zynforge::interchange
         if (splitPairs > 0)
             notes.add (plural (splitPairs, "stereo pair") + " exported as two mono tracks"
                        " (L and R): the sides read different files or were edited apart.");
-        if (in.hasTempoMap)
-            notes.add ("Tempo changes are not exported: the project runs at the session tempo.");
         if (in.anySolo)
             notes.add ("Solo is not exported: every track plays unless it is muted.");
         return result;

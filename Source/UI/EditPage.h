@@ -131,8 +131,6 @@ namespace zynforge
         { return (! canMutateTimeline || canMutateTimeline()) && ! readOnlyWhileRecording; }
 
 
-        // Tempo-lane edits go through this so they join Cmd+Z.
-        std::function<void (const juce::String&, std::function<void()>)> tempoEditWrapper;
 
         // Memory-Location recall hooks. setLogicalRowsVisible takes a
         // list of logical strip indices to show (empty = show all).

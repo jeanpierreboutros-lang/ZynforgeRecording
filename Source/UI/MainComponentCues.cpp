@@ -4,9 +4,7 @@
 // Includes: loadSetlistFromActiveSession / saveSetlistToActiveSession
 // (.zfproj cue round-trip), jumpToCue / promptCueName /
 // addCueAtTransport / renameCurrentCue / updateCueAtTransport (mutate
-// the cue list), startCueRampTo / updateCueRamp (the soft-takeover
-// fade engine used to recall a cue without zipper noise), and
-// printSetlist (browser-printable HTML).
+// the cue list), and printSetlist (browser-printable HTML).
 
 #include "MainComponent.h"
 #include "../Audio/AtomicFile.h"
@@ -68,10 +66,6 @@ void MainComponent::loadSetlistFromActiveSession()
                         zynforge::SetlistBar::Cue cue;
                         cue.name      = c->getProperty ("name").toString();
                         cue.samplePos = (juce::int64) (double) c->getProperty ("samplePos");
-                        cue.tempoBpm   = (float) (double) c->getProperty ("tempoBpm");
-                        cue.transition = (zynforge::SetlistBar::Transition)
-                                            (int) c->getProperty ("transition");
-                        cue.fadeBeats  = (float) (double) c->getProperty ("fadeBeats");
 
                         // Deserialize per-strip snapshot if present
                         // (cues saved by older builds without snapshots
@@ -99,22 +93,6 @@ void MainComponent::loadSetlistFromActiveSession()
                                     s.monitor      = (bool)           so->getProperty ("mon");
                                     s.armed        = (bool)           so->getProperty ("rec");
                                     cue.strips.push_back (s);
-                                }
-                            }
-                        }
-                        // Per-cue tempo curve (optional -- older cues
-                        // without one just play at the single tempoBpm).
-                        const auto cv = c->getProperty ("tempoCurve");
-                        if (auto* ca = cv.getArray())
-                        {
-                            for (const auto& citem : *ca)
-                            {
-                                if (auto* co = citem.getDynamicObject())
-                                {
-                                    zynforge::SetlistBar::TempoPoint p;
-                                    p.offsetSamples = (juce::int64) (double) co->getProperty ("off");
-                                    p.bpm           = (float)        (double) co->getProperty ("bpm");
-                                    cue.tempoCurve.push_back (p);
                                 }
                             }
                         }
@@ -169,9 +147,6 @@ juce::String MainComponent::captureProjectPatchJson() const
         juce::DynamicObject::Ptr entry (new juce::DynamicObject());
         entry->setProperty ("name",      c.name);
         entry->setProperty ("samplePos", (double) c.samplePos);
-        entry->setProperty ("tempoBpm",    (double) c.tempoBpm);
-        entry->setProperty ("transition",  (int) c.transition);
-        entry->setProperty ("fadeBeats",   (double) c.fadeBeats);
 
         juce::Array<juce::var> stripArr;
         for (const auto& s : c.strips)
@@ -189,21 +164,6 @@ juce::String MainComponent::captureProjectPatchJson() const
             stripArr.add (juce::var (st.get()));
         }
         entry->setProperty ("strips", juce::var (stripArr));
-
-        // Per-cue tempo curve -- offsets + bpm pairs. Empty when the
-        // cue is a single-BPM cue (older format / no curve set).
-        if (! c.tempoCurve.empty())
-        {
-            juce::Array<juce::var> curveArr;
-            for (const auto& p : c.tempoCurve)
-            {
-                juce::DynamicObject::Ptr cp (new juce::DynamicObject());
-                cp->setProperty ("off", (double) p.offsetSamples);
-                cp->setProperty ("bpm", (double) p.bpm);
-                curveArr.add (juce::var (cp.get()));
-            }
-            entry->setProperty ("tempoCurve", juce::var (curveArr));
-        }
 
         // Per-cue automation snapshot (volume/pan/mute lanes). Stored as the
         // same array automationToJson() produces, so the recall path can feed
@@ -253,37 +213,9 @@ void MainComponent::jumpToCue (int index)
     if (! playheadLockedForPunch())   // the mixer recall below still runs
         player.setPositionSamples (cue.samplePos);
 
-    // Restore the cue's tempo if it has one (older cues stored 0 →
-    // skip so the engineer doesn't get yanked to 0 BPM).
-    if (cue.tempoBpm > 0.0f)
-    {
-        engine.setSessionTempoBpm (cue.tempoBpm);
-        tempoBar.setBpm (engine.getSessionTempoBpm());
-    }
-
-    // Per-cue tempo curve -- install the cue's tempo map (offsets
-    // translated to absolute sample positions starting at cue.samplePos)
-    // into the engine's tempo map.
-    if (! cue.tempoCurve.empty())
-    {
-        std::vector<zynforge::AudioEngine::TempoChange> map;
-        map.reserve (cue.tempoCurve.size());
-        for (const auto& p : cue.tempoCurve)
-            map.push_back ({ cue.samplePos + p.offsetSamples, p.bpm });
-        engine.setTempoMap (std::move (map));
-    }
-    else
-    {
-        // No curve on this cue -> CLEAR any map left by a previous cue, else a
-        // single-BPM song inherits the last song's accelerando. Same clear-first
-        // rule as the automation lanes below.
-        engine.setTempoMap ({});
-    }
-
     // Reinstall this cue's automation lanes so the song plays back with its
-    // own volume / pan / mute moves. Applied for BOTH Snap and Fade recalls
-    // (before the Fade early-return below). An empty array clears the lanes;
-    // a void var (older cues) leaves the current lanes untouched.
+    // own volume / pan / mute moves. An empty array clears the lanes; a void
+    // var (older cues) leaves the current lanes untouched.
     int autoPts = 0;
     if (cue.automation.isArray())
     {
@@ -305,21 +237,6 @@ void MainComponent::jumpToCue (int index)
                             autoPts += la->size();
         if (editPage != nullptr) editPage->repaintLanes();   // redraw the curves now
     }
-
-    // Fade transition? -- start a ramp instead of instant restore.
-    if (cue.transition == zynforge::SetlistBar::Transition::Fade && cue.fadeBeats > 0.0f)
-    {
-        startCueRampTo (cue);
-        updateTransportLabels();
-        showStatus ("Cue " + juce::String (index + 1) + " -- fading mix over "
-                    + juce::String (cue.fadeBeats, 1) + " beats");
-        return;
-    }
-
-    // Cancel any in-flight fade ramp from a previous Fade cue -- otherwise
-    // updateCueRamp keeps interpolating this snap's tracks back toward the
-    // OLD cue's targets every tick, and the snap we're about to apply loses.
-    cueRamp.active = false;
 
     // Recall the mixer state captured with this cue: gain / pan /
     // input + output routing / mute / solo / mon / arm -- for every
@@ -426,7 +343,6 @@ void MainComponent::addCueAtTransport()
                          ? juce::String ("Song " + juce::String ((int) cues.size() + 1))
                          : name;
         c.samplePos = pos;
-        c.tempoBpm  = engine.getSessionTempoBpm();
 
         // Snapshot the current mixer state so recalling this cue later
         // restores fader, pan, mute/solo/mon/arm, and routing for every
@@ -481,7 +397,6 @@ void MainComponent::updateCueAtTransport()
     const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
     auto& cue = cues[(size_t) currentCueIndex];
     cue.samplePos = pos;
-    cue.tempoBpm  = engine.getSessionTempoBpm();
 
     // Re-capture every strip's state. Update means 'whatever the mixer
     // looks like NOW is what this cue should recall to in the future'.
@@ -500,101 +415,6 @@ void MainComponent::updateCueAtTransport()
     saveCueChanges ("Cue '" + cue.name + "' updated -- "
                 + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s, "
                 + juce::String (total) + " strip mix snapshotted");
-}
-void MainComponent::startCueRampTo (const zynforge::SetlistBar::Cue& cue)
-{
-    auto& rec = engine.getRecorder();
-    const int n = rec.getNumTracks();
-    cueRamp.gainStartTarget.clear();
-    cueRamp.panStartTarget .clear();
-    cueRamp.targetTrack    .clear();
-    cueRamp.gainStartTarget.reserve (cue.strips.size());
-    cueRamp.panStartTarget .reserve (cue.strips.size());
-    cueRamp.targetTrack    .reserve (cue.strips.size());
-
-    auto& player = engine.getPlayer();
-    player.setPositionSamples (cue.samplePos);
-
-    // Resolve each snapshot to a live track by stripId (matching the Snap
-    // path in jumpToCue) so a Fade recall after a reorder / delete ramps the
-    // right strips. Pre-v2 cues without a stripId fall back to array index.
-    auto resolveTarget = [&] (const zynforge::SetlistBar::StripSnapshot& s,
-                              int fallbackIdx) -> int
-    {
-        if (s.stripId.isNotEmpty())
-        {
-            for (int j = 0; j < n; ++j)
-                if (rec.getTrack (j).stripId == s.stripId)
-                    return j;
-            return -1;   // strip was deleted since the cue was saved
-        }
-        return fallbackIdx < n ? fallbackIdx : -1;
-    };
-
-    const int snapN = (int) cue.strips.size();
-    for (int i = 0; i < snapN; ++i)
-    {
-        const auto& s = cue.strips[(size_t) i];
-        const int target = resolveTarget (s, i);
-        if (target < 0) continue;
-
-        const auto curG = rec.getTrack (target).gainDb.load (std::memory_order_relaxed);
-        const auto curP = rec.getTrack (target).pan   .load (std::memory_order_relaxed);
-        cueRamp.gainStartTarget.push_back ({ curG, s.gainDb });
-        cueRamp.panStartTarget .push_back ({ curP, s.pan });
-        cueRamp.targetTrack    .push_back (target);
-    }
-
-    // Other state (mute / solo / mon / arm / routing / tempo) snaps
-    // immediately -- only continuous parameters interpolate. Arm + input
-    // routing are held while recording (they define what is captured).
-    const bool recording = engine.isRecording();
-    if (cue.tempoBpm > 0.0f) { engine.setSessionTempoBpm (cue.tempoBpm); tempoBar.setBpm (cue.tempoBpm); }
-    for (int i = 0; i < snapN; ++i)
-    {
-        const auto& s = cue.strips[(size_t) i];
-        const int target = resolveTarget (s, i);
-        if (target < 0) continue;
-        engine.setTrackOutputRouting(target, s.outputRouting);
-        if (! recording)
-            engine.setTrackInputRouting (target, s.inputRouting);
-        auto& t = rec.getTrack (target);
-        t.muted  .store (s.muted,   std::memory_order_relaxed);
-        t.soloed .store (s.soloed,  std::memory_order_relaxed);
-        t.monitor.store (s.monitor, std::memory_order_relaxed);
-        if (! recording)
-            t.armed.store (s.armed, std::memory_order_relaxed);
-    }
-
-    const float bpm = engine.getSessionTempoBpm();
-    cueRamp.durationMs = (cue.fadeBeats * 60000.0) / juce::jmax (20.0f, bpm);
-    cueRamp.startMs    = juce::Time::getMillisecondCounterHiRes();
-    cueRamp.active     = true;
-    lastTrackCount = -1;
-}
-
-void MainComponent::updateCueRamp()
-{
-    if (! cueRamp.active) return;
-    const double now = juce::Time::getMillisecondCounterHiRes();
-    const double t   = juce::jlimit (0.0, 1.0,
-                                     (now - cueRamp.startMs) / juce::jmax (1.0, cueRamp.durationMs));
-    auto& rec = engine.getRecorder();
-    const int total = rec.getNumTracks();
-    const int n = (int) cueRamp.gainStartTarget.size();
-    for (int i = 0; i < n; ++i)
-    {
-        // targetTrack was resolved by stripId in startCueRampTo -- apply to
-        // that live track, not the raw entry index.
-        const int target = cueRamp.targetTrack[(size_t) i];
-        if (target < 0 || target >= total) continue;
-        const auto [gA, gB] = cueRamp.gainStartTarget[(size_t) i];
-        const auto [pA, pB] = cueRamp.panStartTarget [(size_t) i];
-        engine.setTrackGainDb (target, (float) (gA + (gB - gA) * t));
-        engine.setTrackPan    (target, (float) (pA + (pB - pA) * t));
-    }
-    if (t >= 1.0)
-        cueRamp.active = false;
 }
 
 void MainComponent::printSetlist()
@@ -628,14 +448,13 @@ void MainComponent::printSetlist()
          << "td{padding:6pt 8pt;border-bottom:1pt solid #ccc}"
          << ".n{text-align:right;color:#555;font-variant-numeric:tabular-nums}"
          << ".cue{font-weight:600}"
-         << ".bpm{color:#555}"
          << "@media print{body{margin:12pt}}"
          << "</style></head><body>"
          << "<h1>" << sessName << "</h1>"
          << "<h2>Setlist - " << juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M")
          << " * " << (int) cues.size() << " cue" << (cues.size() == 1 ? "" : "s")
          << "</h2>"
-         << "<table><thead><tr><th class=\"n\">#</th><th>Cue</th><th>Time</th><th class=\"n\">BPM</th><th class=\"n\">Strips</th></tr></thead><tbody>";
+         << "<table><thead><tr><th class=\"n\">#</th><th>Cue</th><th>Time</th><th class=\"n\">Strips</th></tr></thead><tbody>";
 
     for (size_t i = 0; i < cues.size(); ++i)
     {
@@ -651,8 +470,6 @@ void MainComponent::printSetlist()
         html << "<tr><td class=\"n\">" << (int) (i + 1) << "</td>"
              << "<td class=\"cue\">" << c.name.replace ("&", "&amp;").replace ("<", "&lt;") << "</td>"
              << "<td>" << timeStr << "</td>"
-             << "<td class=\"n bpm\">" << (c.tempoBpm > 0.0f ? juce::String (c.tempoBpm, 1) : juce::String (" -"))
-             << "</td>"
              << "<td class=\"n\">" << (int) c.strips.size() << "</td></tr>";
     }
     html << "</tbody></table></body></html>";

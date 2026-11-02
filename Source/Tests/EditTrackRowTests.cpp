@@ -436,13 +436,6 @@ namespace zynforge
                             "+ Point on a waveform/markers lane wrote a hidden Volume point");
                 }
 
-                const auto tempoBefore = h.engine.getTempoMap().size();
-                toolbar.setParamSilently (AutomationToolbar::Param::Tempo);
-                row.laneMode = Lane::Waveform;
-                click (row, { laneX (row, 0.5), 20 });
-                expectEquals ((int) h.engine.getTempoMap().size(), (int) tempoBefore,
-                              "a waveform lane must not write the session tempo map");
-
                 // Select grabbing a hidden point and dragging rewrites its value.
                 toolbar.setParamSilently (AutomationToolbar::Param::Volume);
                 pressButton (toolbar, "Select");

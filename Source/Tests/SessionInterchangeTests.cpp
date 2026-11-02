@@ -431,10 +431,9 @@ namespace zynforge
                         "the pan law must match the session's");
             }
 
-            beginTest ("Automation, sends and tempo changes are left out, and the summary says so");
+            beginTest ("Automation and sends are left out, and the summary says so");
             {
                 ix::SessionInput in;
-                in.hasTempoMap = true;
                 in.anySolo = true;
                 ix::StripInput strip;
                 strip.automationLanes = 2;
@@ -444,7 +443,6 @@ namespace zynforge
                 const auto notes = r.project.notes.joinIntoString (" ");
                 expect (notes.contains ("Automation is not exported (2 lanes)"));
                 expect (notes.contains ("Aux sends"));
-                expect (notes.contains ("Tempo changes"));
                 expect (notes.contains ("Solo"));
             }
 
@@ -671,14 +669,11 @@ namespace zynforge
                 }
             }
 
-            beginTest ("Reaper project header, markers, tempo and colour");
+            beginTest ("Reaper project header, markers, default tempo and colour");
             {
                 ix::SessionInput in;
                 in.sessionName = "Show";
                 in.sampleRate = 44100.0;
-                in.tempoBpm = 132.5;
-                in.timeSigNum = 3;
-                in.timeSigDen = 8;
                 in.masterDb = -6.0f;
                 in.masterMuted = true;
                 in.markers.push_back ({ 44100, "One" });
@@ -692,7 +687,7 @@ namespace zynforge
                 expect (rpp.startsWith ("<REAPER_PROJECT 0.1"));
                 expect (rpp.trimEnd().endsWith (">"));
                 expect (rpp.contains ("SAMPLERATE 44100 1 0"));
-                expect (rpp.contains ("TEMPO 132.500000 3 8"));
+                expect (rpp.contains ("TEMPO 120 4 4"));
                 expect (rpp.contains ("ITEMMIX 1"), "overlapping clips must sum, as they do in the session");
                 expect (rpp.contains ("TIMELOCKMODE 0"), "the audio must not follow tempo edits");
                 expect (rpp.contains ("MASTERMUTESOLO 1"));
@@ -881,8 +876,6 @@ namespace zynforge
             rec.getTrack (11).pan.store (-0.5f);
             rec.getTrack (12).pan.store (0.25f);
             e.getMasterState().gainDb.store (-2.0f);
-            e.setSessionTempoBpm (97.0f);
-            e.addTempoChange (s, 120.0f);      // left out, so the project carries a note
             e.loadSession (session);
 
             auto& kick = e.clipsFor (0);
@@ -951,7 +944,6 @@ namespace zynforge
                 expect (writer->writeFromAudioSampleBuffer (mix, 0, mix.getNumSamples()));
             }
             e.clearAllStripOverrides();
-            e.clearTempoMap();
         }
     };
 
