@@ -498,8 +498,7 @@ namespace zynforge
                 engine.prepareForTests (kRate, kBlock);
                 engine.setStripCount (4);
                 engine.setTrackStereo (0, true);
-                const auto copied = mixersnapshot::snapshotStrip (engine, 0);
-                mixersnapshot::restoreStrip (engine, 2, copied);
+                mixersnapshot::pasteStrip (engine, 2, mixersnapshot::copyStrip (engine, 0));
                 expect (! engine.getRecorder().getTrack (2).isStereo.load(), "a paste linked the target");
                 engine.clearAllStripOverrides();
             }
