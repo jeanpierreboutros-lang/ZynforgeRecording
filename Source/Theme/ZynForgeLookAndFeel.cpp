@@ -106,6 +106,11 @@ namespace zynforge
         setColour (juce::AlertWindow::backgroundColourId,     brand::bgElevated);
         setColour (juce::AlertWindow::textColourId,           brand::textPrimary);
         setColour (juce::AlertWindow::outlineColourId,        brand::borderSubtle);
+        // JUCE paints a table header pale grey, the brightest band in a dark dialog.
+        setColour (juce::TableHeaderComponent::backgroundColourId, brand::controlBg);
+        setColour (juce::TableHeaderComponent::textColourId,       brand::textSecondary);
+        setColour (juce::TableHeaderComponent::outlineColourId,    brand::edge);
+        setColour (juce::TableHeaderComponent::highlightColourId,  brand::controlBgHover);
         // JUCE's default scheme paints these bright blue.
         setColour (juce::ScrollBar::thumbColourId,            brand::borderBright);
         setColour (juce::ScrollBar::trackColourId,            juce::Colours::transparentBlack);
