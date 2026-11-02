@@ -203,7 +203,7 @@ void MainComponent::showDeviceState (const zynforge::devicechoice::DeviceState& 
     deviceLabel.setColour (juce::Label::textColourId, wrong ? brand::alertAmber : brand::textTertiary);
     const auto line = wrongDeviceLine (state);
     deviceLabel.setTooltip (line.isNotEmpty() ? line + ". RECORD asks before it rolls."
-                                              : juce::String ("The input device a take records from."));
+                                              : state.active + " is the input device a take records from.");
     // Said once, when it happens. A rig left unplugged during prep stays amber
     // above, but it must not keep taking the status line away.
     if (line != deviceLineShown)

@@ -120,6 +120,7 @@ namespace zynforge
 
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
         SessionPlayer&            getPlayer()        noexcept { return player; }
+        bool                      isSessionLoaded()  const noexcept { return player.isLoaded(); }
         juce::PropertiesFile*     getAppProps()      noexcept       { return appProps.get(); }
         juce::PropertiesFile*     getAppProps() const noexcept       { return appProps.get(); }
         TimecodeChase&            getTimecodeChase() noexcept { return timecodeChase; }

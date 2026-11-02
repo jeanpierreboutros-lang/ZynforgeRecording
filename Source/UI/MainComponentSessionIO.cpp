@@ -2435,7 +2435,7 @@ juce::File MainComponent::makeNewSessionDir() const
             juce::File f (saved);
             // A folder gone from under a loaded session is not that session
             // any more, even if its path can be made again.
-            const bool gone = ! f.isDirectory() && engine.getPlayer().isLoaded();
+            const bool gone = ! f.isDirectory() && engine.isSessionLoaded();
             if (! gone && engine.mixerBelongsTo (f) && (f.isDirectory() || f.createDirectory().wasOk()))
                 return f;
         }
