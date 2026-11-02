@@ -1333,6 +1333,18 @@ namespace zynforge
                 delete w.main.metersDialog.getComponent();
             }
 
+            beginTest ("A click leaves no keyboard focus on the transport");
+            {
+                Window w;
+                int buttons = 0;
+                for (auto* child : w.main.transportBar->getChildren())
+                    if (dynamic_cast<juce::Button*> (child) != nullptr)
+                    {
+                        ++buttons;
+                        expect (! child->getMouseClickGrabsKeyboardFocus(), "Return would press " + child->getName());
+                    }
+                expectGreaterThan (buttons, 0);
+            }
 
 
 
