@@ -159,6 +159,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            scanRepaintsOnceMore();
             fadeToolGrabs();
         }
 
@@ -452,6 +453,18 @@ namespace zynforge
                 expectEquals (opened, 0, "a click on the clip did not open its menu");
                 expectEquals (s.clips (0)[0].timelineStartSamples, (juce::int64) 0, "the Fade tool moved a clip");
                 row.toolsBar = nullptr;
+            }
+        }
+
+        void scanRepaintsOnceMore()
+        {
+            beginTest ("The lanes repaint once more after a waveform scan ends");
+            {
+                ScanRepaint repaint;
+                expect (! repaint.tick (false), "an idle page repaints nothing");
+                expect (repaint.tick (true), "a running scan repaints");
+                expect (repaint.tick (false), "the tick a scan ended on is the one that matters");
+                expect (! repaint.tick (false), "the repaint is bounded");
             }
         }
 

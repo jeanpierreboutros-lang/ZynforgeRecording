@@ -271,6 +271,7 @@ namespace zynforge
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>> thumbnailCaches;
         ScrollViewport                     viewport;
         TimelineFollowState                followState;
+        ScanRepaint                        scanRepaint;
         bool                               programmaticViewportChange { false };
         bool                               readOnlyWhileRecording { false };
         bool                               hostReadOnly { false };   // last setReadOnlyWhileRecording

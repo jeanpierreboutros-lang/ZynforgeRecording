@@ -1197,10 +1197,10 @@ namespace zynforge
         // draws in AS it loads. Without this nothing triggers a repaint once
         // recording stops (the playhead is parked, pushRecLevels isn't running),
         // so the lane sat on the held envelope until the engineer moved the
-        // mouse. Bounded: stops the moment every thumbnail is fully loaded.
-        if (! rec && list != nullptr && list->rowCount() > 0
-            && engine.hasSessionFolder()
-            && ! list->allWaveformsLoaded())
+        // mouse. Bounded: stops one tick after every thumbnail is fully loaded.
+        const bool scanning = ! rec && list != nullptr && list->rowCount() > 0
+                           && engine.hasSessionFolder() && ! list->allWaveformsLoaded();
+        if (scanRepaint.tick (scanning) && list != nullptr)
             list->repaintRows();
 
         // Append this tick's input peaks to the live capture envelope so
