@@ -2288,7 +2288,7 @@ namespace zynforge
         juce::int64 totalSamples {}, totalMissed {};
         bool        deviceLostAtStop {};
         double      totalSeconds {};
-        bool        backupWasRunning {}, backupHadFailure {};
+        bool        backupWasRunning {};
         bool        doPunch {};
         juce::int64 timelineStart {};   // where this pass sits on the timeline (punch origin aware)
         std::vector<WriterReport>     writers;
@@ -2490,7 +2490,6 @@ namespace zynforge
         stop.deviceLostAtStop = captureDeviceLost.load (std::memory_order_relaxed);
         stop.totalSeconds     = sampleRate > 0.0 ? (double) stop.totalSamples / sampleRate : 0.0;
         stop.backupWasRunning = isBackupActive();
-        stop.backupHadFailure = backupFailed.load (std::memory_order_relaxed);
         {
             const juce::ScopedLock sl (alarmLock);
             if (alarmsRunning)
@@ -2983,13 +2982,10 @@ namespace zynforge
             const bool punchFailed = ! job->punchFailedTracks.empty();
             if (punchFailed || job->leadInFailed)
             {
-                if (isBackup)
-                {
-                    backupFailed.store (true, std::memory_order_relaxed);
-                    stop.backupHadFailure = stop.backupHadFailure || punchFailed;
-                }
-                else
-                    mirrorFailed.store (true, std::memory_order_relaxed);
+                (isBackup ? backupFailed : mirrorFailed).store (true, std::memory_order_relaxed);
+                if (job->leadInFailed)
+                    noteCopyProblem ((isBackup ? juce::String ("Backup") : copy->label)
+                                     + " could not write a silent lead-in; a track on it sits early");
             }
             if (job->punchHadGap)
                 noteCopyProblem ((isBackup ? juce::String ("Backup") : copy->label)
@@ -3087,7 +3083,9 @@ namespace zynforge
         report.reportedMirrorsSkipped = (int) previousInt ("mirrorsSkipped") + mirrorsSkipped;
         report.reportedDeviceLoss = previousBool ("captureDeviceLost") || stop.deviceLostAtStop;
         report.reportedPrimaryFailure = previousBool ("primaryFailed") || primFailed;
-        report.reportedBackupFailure = previousBool ("backupFailed") || stop.backupHadFailure;
+        // Read now: a copy's own post-take work can fail after the take stopped.
+        report.reportedBackupFailure = previousBool ("backupFailed")
+                                           || backupFailed.load (std::memory_order_relaxed);
         report.reportedPunchFailure = previousBool ("punchSpliceFailed") || punchFailed;
         report.reportedMirrorFailure = previousMirrorFailure
                                            || mirrorFailed.load (std::memory_order_relaxed);

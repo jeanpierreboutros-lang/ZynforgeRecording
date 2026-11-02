@@ -1266,6 +1266,44 @@ namespace zynforge
                 expectEquals (daemon.getRecorder().getNumTracks(), 2);
             }
 
+            beginTest ("A backup that fails after STOP is failed in the report");
+            {
+                const auto root = systemTempDir ("late-backup");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                const auto backup = root.getChildFile ("backup");
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 2);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (backup);
+                expect (rec.startRecording (session));
+                rec.waitForCopiesOpenForTests();
+                Ramp ramp { rec };
+                std::vector<float> samples ((size_t) kBlock, 0.25f);
+                const float* inputs[] { samples.data(), samples.data() };
+                for (int b = 0; b < 8; ++b) { rec.processBlock (inputs, 2, kBlock); rec.drainPendingForTests(); }
+                rec.stopRecording();
+
+                // A continue that newly arms a track owes the backup a lead-in,
+                // and here it cannot write one.
+                rec.getTrack (1).armed.store (true);
+                rec.armContinue (0);
+                rec.beforeCopyFinishForTests = [&backup] (Copy& copy)
+                {
+                    if (copy.copyIndex == 1)
+                        ::chmod (backup.getChildFile ("session/Audio Files").getFullPathName().toRawUTF8(), 0555);
+                };
+                expect (rec.startRecording (session));
+                rec.waitForCopiesOpenForTests();
+                for (int b = 0; b < 8; ++b) { rec.processBlock (inputs, 2, kBlock); rec.drainPendingForTests(); }
+                rec.stopRecording();
+                ::chmod (backup.getChildFile ("session/Audio Files").getFullPathName().toRawUTF8(), 0755);
+
+                const auto report = juce::JSON::parse (session.getChildFile ("session.report.json"));
+                expect ((bool) report["backupFailed"], "the report called a failed backup clean");
+                expect (juce::JSON::toString (report["copyProblems"]).contains ("lead-in"), juce::JSON::toString (report));
+            }
+
             beginTest ("A take file that closes short is a failed write, not a clean STOP");
             {
                 const auto root = tempDir ("short-close");
