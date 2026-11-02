@@ -113,8 +113,10 @@ namespace zynforge
         static constexpr int kIdRowH   = 12;
         static constexpr int kNameRowH = 22;
         static constexpr int kHeaderH  = kIdRowH + kNameRowH + 8;
+        static constexpr int kFaderValueH = 14;
 
         juce::Rectangle<int> numberBounds() const;
+        void showFaderValue();
 
         bool hovered { false };
         // Tracks whether an edit-group badge is currently shown so
@@ -161,6 +163,7 @@ namespace zynforge
         juce::ToggleButton muteButton  { "M" };
         juce::ToggleButton soloButton  { "S" };
         juce::Label   dbLabel;
+        juce::Label   faderValue;
         juce::Label   clipLabel;
         // Mono: panSlider + panLabel ('pan  <  0  >'). Stereo: two
         // knobs panSlider/panSliderR, two compact labels ('<  100  >').

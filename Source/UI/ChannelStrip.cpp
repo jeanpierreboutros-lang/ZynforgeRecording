@@ -334,6 +334,7 @@ namespace zynforge
         if (std::abs ((float) gainFader.getValue() - gainDb) > 0.05f)
         {
             gainFader.setValue (gainDb, juce::dontSendNotification);
+            showFaderValue();
             dirty = true;
         }
         if (std::abs ((float) panSlider.getValue() - panL) > 0.01f)
@@ -865,7 +866,7 @@ namespace zynforge
         gainFader.setSkewFactorFromMidPoint (-15.0);   // log-ish console feel
         gainFader.setDoubleClickReturnValue (true, 0.0);
         gainFader.setTextValueSuffix (" dB");
-        gainFader.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 56, 14);
+        gainFader.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         gainFader.setNumDecimalPlacesToDisplay (1);
         gainFader.setColour (juce::Slider::trackColourId,        brand::edge);
         gainFader.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
@@ -878,10 +879,6 @@ namespace zynforge
         // narrow bounds, not the strip body, so strip-select clicks elsewhere
         // never touch it.
         gainFader.setSliderSnapsToMousePosition (true);
-        gainFader.setColour (juce::Slider::textBoxTextColourId,  brand::textPrimary);
-        gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        gainFader.setColour (juce::Slider::textBoxBackgroundColourId,
-                             brand::bgDeep.withAlpha (zynforge::brand::alpha::ghost));
         // Same reasoning as the pan knob: scroll-wheel / trackpad
         // gestures should NEVER move the gain. The fader changes only
         // on a direct click+drag interaction.
@@ -893,8 +890,32 @@ namespace zynforge
             state.gainDb.store (v, std::memory_order_relaxed);
             if (pairState) pairState->gainDb.store (v, std::memory_order_relaxed);
             if (gainCb) gainCb (v);
+            showFaderValue();
         };
         addAndMakeVisible (gainFader);
+
+        // The fader's own text box is only as wide as the cap, which cut the
+        // value to "0....", so the value gets the strip's width. It stays
+        // click-to-type, as the box was.
+        faderValue.setFont (zynforge::brand::type::monoStamp());
+        faderValue.setColour (juce::Label::textColourId, brand::textPrimary);
+        faderValue.setColour (juce::Label::backgroundColourId,
+                              brand::bgDeep.withAlpha (zynforge::brand::alpha::ghost));
+        faderValue.setJustificationType (juce::Justification::centred);
+        faderValue.setBorderSize ({});
+        faderValue.setMinimumHorizontalScale (0.6f);
+        faderValue.setEditable (true, false, false);
+        faderValue.setTitle ("Gain value");
+        faderValue.setTooltip ("Fader level -- click to type a value.");
+        faderValue.onTextChange = [this]
+        {
+            const auto typed = gainFader.getValueFromText (faderValue.getText());
+            gainFader.setValue (gainFader.snapValue (typed, juce::Slider::notDragging),
+                                juce::sendNotificationSync);
+            showFaderValue();   // a refused or clamped entry shows what was applied
+        };
+        showFaderValue();
+        addAndMakeVisible (faderValue);
 
         // dB scale label strip between the fader and the LED meter.
         dbRuler = std::make_unique<DbRuler> (gainFader);
@@ -919,6 +940,11 @@ namespace zynforge
         // right-click anywhere on the strip -- even on a button or fader --
         // opens the context menu.
         addMouseListener (this, true);
+    }
+
+    void ChannelStrip::showFaderValue()
+    {
+        faderValue.setText (gainFader.getTextFromValue (gainFader.getValue()), juce::dontSendNotification);
     }
 
     juce::Rectangle<int> ChannelStrip::numberBounds() const
@@ -1142,6 +1168,7 @@ namespace zynforge
         // out the column.
         auto bottom = r.removeFromBottom (brand::space::xl);
         dbLabel.setBounds (bottom);
+        faderValue.setBounds (r.removeFromBottom (kFaderValueH));
 
         // Pro-Tools-style COMPACT fader cluster: the dB ruler hugs the fader on
         // the left and the meter hugs it on the right, with the fader just wide
