@@ -585,6 +585,58 @@ namespace zynforge
                 expectEquals (b.track (1).outputRouting.load(), 5, "R came back on its old output");
             }
 
+            beginTest ("A surface is given its whole state when it connects");
+            {
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.setStripCount (2);
+                MidiControlSurface surface (engine);
+                std::vector<juce::MidiMessage> sent;
+                surface.sendHookForTests = [&] (const juce::MidiMessage& m) { sent.push_back (m); };
+                const auto wasSent = [&] (const juce::MidiMessage& wanted)
+                {
+                    for (const auto& m : sent)
+                        if (m.getRawDataSize() == wanted.getRawDataSize()
+                            && std::memcmp (m.getRawData(), wanted.getRawData(), (size_t) m.getRawDataSize()) == 0)
+                            return true;
+                    return false;
+                };
+                surface.start ({}, {});
+                surface.timerCallback();
+                surface.stop();
+                expect (wasSent (mcu::led (mcu::Action::Mute, 0, false)), "a stale Mute LED stayed lit");
+                expect (wasSent (mcu::led (mcu::Action::Solo, 1, false)), "a stale Solo LED stayed lit");
+                expect (wasSent (mcu::led (mcu::Action::Arm, 7, false)), "a stale Rec LED stayed lit");
+                expect (wasSent (mcu::led (mcu::Action::Play, 0, false)), "a stale PLAY LED stayed lit");
+                expect (wasSent (mcu::scribble (7, {})), "an old name stayed on a blank strip");
+            }
+
+            beginTest ("The master fader on a surface is saved once it rests");
+            {
+                Bench b (main);
+                auto* props = b.engine().getAppProps();
+                expect (props != nullptr, "fixture: no settings");
+                if (props != nullptr)
+                {
+                    b.engine().setMasterGainDb (0.0f);
+                    MidiControlSurface surface (b.engine());
+                    surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::pitchWheel (9, 4000));
+                    const auto moved = b.engine().getMasterGainDb();
+                    expect (std::abs (moved) > 1.0f, "fixture: the fader did not move");
+
+                    surface.timerCallback();
+                    expectWithinAbsoluteError ((float) props->getDoubleValue ("masterGainDb"), 0.0f, 0.01f,
+                                               "a moving fader writes the settings file");
+
+                    surface.masterMovedAtMs.store (juce::Time::getMillisecondCounter()
+                                                   - MidiControlSurface::kMasterSaveAfterMs - 10);
+                    surface.timerCallback();
+                    expectWithinAbsoluteError ((float) props->getDoubleValue ("masterGainDb"), moved, 0.01f,
+                                               "the move did not survive a relaunch");
+                    b.engine().setMasterGainDb (0.0f);
+                }
+            }
+
             beginTest ("Timecode chase leaves a locked session alone");
             {
                 Bench b (main);

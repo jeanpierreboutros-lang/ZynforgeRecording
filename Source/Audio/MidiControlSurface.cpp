@@ -27,8 +27,9 @@ namespace zynforge
             if (d.name == outputName) { output = juce::MidiOutput::openDevice (d.identifier); break; }
 
         if (input != nullptr) input->start();
-        // Force a full state push on the next tick.
-        for (int i = 0; i < kStrips; ++i) { lastFaderDb[i] = -999.0f; lastName[i] = {}; }
+        // The surface may still show an earlier run, so everything goes out,
+        // the LEDs that are off and the names that are empty included.
+        forceRefresh.store (true, std::memory_order_relaxed);
         startTimerHz (15);
         return input != nullptr;   // a surface with only output still echoes, but input is the point
     }
@@ -63,7 +64,12 @@ namespace zynforge
             // The 9th fader (MIDI channel 9) is the master / monitor level
             // (not track-indexed -- setMasterGainDbFast is a plain atomic).
             if (mcu::isMasterFader (m.getChannel()))
-            { engine.setMasterGainDbFast (mcu::faderToDb (m.getPitchWheelValue())); return; }
+            {
+                engine.setMasterGainDbFast (mcu::faderToDb (m.getPitchWheelValue()));
+                masterMovedAtMs.store (juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter()),
+                                       std::memory_order_relaxed);
+                return;
+            }
 
             const int ch = bank + (m.getChannel() - 1);   // MCU channel 1..8 -> strip + bank
             const float db = mcu::faderToDb (m.getPitchWheelValue());
@@ -212,6 +218,15 @@ namespace zynforge
 
     void MidiControlSurface::timerCallback()
     {
+        // A held fader sends a stream of values. The setting is written once,
+        // when it rests, and this runs with no output port too.
+        if (const auto moved = masterMovedAtMs.load (std::memory_order_relaxed);
+            moved != 0 && juce::Time::getMillisecondCounter() - moved >= kMasterSaveAfterMs)
+        {
+            masterMovedAtMs.store (0, std::memory_order_relaxed);
+            engine.setMasterGainDb (engine.getMasterGainDb());
+        }
+
         if (output == nullptr && sendHookForTests == nullptr) return;
         auto& rec = engine.getRecorder();
         const int n    = rec.getNumTracks();
@@ -251,7 +266,7 @@ namespace zynforge
         }
 
         const bool playing = engine.isPlaying();
-        if (playing != lastPlaying)
+        if (force || playing != lastPlaying)
         {
             send (mcu::led (mcu::Action::Play, 0, playing));
             send (mcu::led (mcu::Action::Stop, 0, ! playing));
