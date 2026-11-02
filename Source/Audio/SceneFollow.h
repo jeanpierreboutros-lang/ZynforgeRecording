@@ -96,6 +96,7 @@ namespace zynforge::scenefollow
         bool seekLocked   { false };   // a punch holds the playhead
         bool sessionBusy  { false };   // a session job or capture finalization
         bool playerLoaded { false };   // nothing to move otherwise
+        juce::Range<juce::int64> punchRange;   // a locate may not land in here
     };
 
     struct Decision
@@ -130,6 +131,8 @@ namespace zynforge::scenefollow
         return first;
     }
 
+    inline const char* const kInsidePunchRange = "that lands inside the PUNCH range";
+
     // Empty when the playhead may move. The desk macro's marker commands use
     // this too, so a locate has one list of refusals.
     inline juce::String locateRefusal (const Facts& f)
@@ -150,6 +153,8 @@ namespace zynforge::scenefollow
             return { Action::Refused, -1, why };
         const int index = findMarker (markers, label, playhead);
         if (index < 0) return { Action::NoMatch };
+        if (f.punchRange.contains (markers[(size_t) index].sampleOffset))
+            return { Action::Refused, -1, kInsidePunchRange };
         return { Action::Locate, index };
     }
 

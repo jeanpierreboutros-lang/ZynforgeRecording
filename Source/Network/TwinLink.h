@@ -201,6 +201,11 @@ namespace zynforge::twin
         // The leader's capture path reports what really happened. These only
         // queue; none can wait on the network.
         void noteLocalTakeStarted();
+        // A take this run found rolling, which never reached noteLocalTakeStarted:
+        // a daemon that outlived a relaunch. The follower may have kept its side
+        // rolling, so once linked it is offered the re-link. This never starts a
+        // take there, because reconnecting must not.
+        void noteLocalTakeAdopted();
         void noteLocalStopAccepted();
         void noteLocalMarker (const juce::String& name);
 
@@ -263,6 +268,7 @@ namespace zynforge::twin
         void handleEvent (Event&);
         void handleBody (const Event&);
         void onLinkUp();
+        void offerAdoptedTake();
         void onLinkDown (const juce::String& why);
         void onPeerStatus (const Event&);
         void onPeerSummary (const juce::var& body);
@@ -315,6 +321,7 @@ namespace zynforge::twin
         juce::uint32 lastPublishMs { 0 }, rollingChangedAtMs { 0 };
         juce::String leaderTakeId;
         bool         leaderTakeActive { false };
+        bool         adoptedTake { false };
         juce::String followerTakeId;     // the take the link started here
         juce::String lastSummaryBody;
         std::deque<TakeRecord> records;

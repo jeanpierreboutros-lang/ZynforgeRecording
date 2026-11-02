@@ -5,6 +5,7 @@
 
 #include <juce_core/juce_core.h>
 
+#include "../Capture/CaptureDaemon.h"
 #include "../Network/CaptureIdentity.h"
 #include "../Network/CaptureProtocol.h"
 #include "../Network/LineSocket.h"
@@ -358,6 +359,55 @@ namespace zynforge
                     main.engine.setExternalRecording (false);
                     main.lastCaptureFinalizationError.clear();
                     main.twinLink.stop();
+                }
+
+                beginTest ("A daemon take found rolling offers a re-link, and a confirmed STOP reaches the follower");
+                {
+                    FollowerSocket peer;
+                    if (! linkAsLeader (main, peer)) return;
+                    capture::CaptureDaemon daemon;
+                    daemon.setTestModeNoDevice (true);
+                    int port = 0;
+                    juce::Random random;
+                    for (int attempt = 0; attempt < 20 && port == 0; ++attempt)
+                    {
+                        const int candidate = 50000 + random.nextInt (9000);
+                        if (daemon.start (candidate, 1)) port = candidate;
+                    }
+                    expect (port != 0);
+                    daemon.prepareForTests (48000.0, 256, 1);
+                    main.engine.clearAllStripOverrides();
+                    main.engine.setStripCount (1);
+                    main.engine.prepareForTests (48000.0, 256);
+                    main.useCaptureDaemon = true;
+                    main.captureDaemonPort = port;
+                    main.connectCaptureDaemon (false);
+                    expect (main.captureSupervisor.isAttached());
+
+                    const auto session = tempSession();
+                    juce::BigInteger arms;
+                    arms.setBit (0);
+                    expect (main.captureSupervisor.startRecording (session, 1, (int) CaptureFormat::Wav24, arms));
+                    expect (settle (main, [&]
+                    {
+                        main.serviceCaptureDaemonLink();
+                        return main.engine.isExternalRecording();
+                    }), "the window never saw the take");
+                    expect (settle (main, [&] { return peer.count ("start") == 1; }),
+                            "a take found rolling can't reach the follower's");
+
+                    main.onStopClicked();
+                    main.onStopClicked();
+                    expect (settle (main, [&] { return peer.count ("stop") == 1; }), "the daemon's STOP never reached the follower");
+                    settleStopped (main);
+                    expect (! main.twinLink.snapshot().lastEvent.contains ("without STOP"), main.twinLink.snapshot().lastEvent);
+
+                    main.useCaptureDaemon = false;
+                    main.captureSupervisor.disconnect();
+                    daemon.stop();
+                    main.twinLink.stop();
+                    main.engine.clearSessionState();
+                    session.deleteRecursively();
                 }
 
                 beginTest ("A punch on the leader tells the follower nothing");

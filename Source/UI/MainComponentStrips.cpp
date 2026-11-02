@@ -764,8 +764,13 @@ void MainComponent::createSessionFromConsole()
 
         // Listen on the chosen console's dialect so replies are parsed, capture
         // incoming names, then nudge the console to report them.
-        if (! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != dialect)
-            engine.getRemotes().startOsc (oscListenPort(), dialect);
+        if ((! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != dialect)
+            && ! engine.getRemotes().startOsc (oscListenPort(), dialect))
+        {
+            showStatus ("Couldn't listen for the desk on UDP port " + juce::String (oscListenPort())
+                        + " -- another app may hold it");
+            return;
+        }
         engine.getRemotes().setConsoleNameCapture (true);
         if (! engine.getRemotes().requestConsoleChannelNames (ip, rx, dialect))
         {
@@ -777,19 +782,37 @@ void MainComponent::createSessionFromConsole()
     }
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Timer::callAfterDelay (3000, [self, viaLink, stereoPairsAsked]
+    juce::Timer::callAfterDelay (3000, [self, viaLink, stereoPairsAsked,
+                                        sessionAtPress = engine.getActiveSessionDir()]
     {
-        if (self == nullptr) return;
-        self->engine.getRemotes().setConsoleNameCapture (false);
-        const auto names = self->engine.getRemotes().takeCapturedConsoleNames();
-        const auto links = self->engine.getRemotes().takeCapturedStereoLinks();
-        if (names.empty())
-        {
-            self->showStatus ("No channel names received -- check the desk is sending OSC to this Mac.");
-            return;
-        }
-        self->buildSessionFromConsole (names, links, stereoPairsAsked, viaLink ? "Console " : "DiGiCo ");
+        if (self != nullptr) self->finishSessionFromConsole (sessionAtPress, viaLink, stereoPairsAsked);
     });
+}
+
+// The engineer agreed to replace the session that was open three seconds ago,
+// with the app as it was then.
+void MainComponent::finishSessionFromConsole (const juce::File& sessionAtPress, bool viaLink, int stereoPairsAsked)
+{
+    engine.getRemotes().setConsoleNameCapture (false);
+    const auto names = engine.getRemotes().takeCapturedConsoleNames();
+    const auto links = engine.getRemotes().takeCapturedStereoLinks();
+
+    const juce::String refusal = sessionLocked ? "the session is locked"
+                               : sessionIoBusy.load() ? "a session operation is running"
+                               : engine.isTakeOnDisk() || captureMetadataPending ? "a take is running"
+                               : engine.getActiveSessionDir() != sessionAtPress ? "another session was opened"
+                               : "";
+    if (refusal.isNotEmpty())
+    {
+        showStatus ("Session from console stopped -- " + refusal);
+        return;
+    }
+    if (names.empty())
+    {
+        showStatus ("No channel names received -- check the desk is sending OSC to this Mac.");
+        return;
+    }
+    buildSessionFromConsole (names, links, stereoPairsAsked, viaLink ? "Console " : "DiGiCo ");
 }
 
 void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& names,

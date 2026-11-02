@@ -26,11 +26,13 @@ public:
             expect (link.isGainCaptureComplete());
             sent.clear();
             link.restoreGains();
-            expectEquals ((int) sent.size(), 2);
-            if (sent.size() == 2)
+            expectEquals ((int) sent.size(), 4, "two writes, then two read-backs");
+            if (sent.size() == 4)
             {
                 expectEquals (sent[0].address, juce::String ("/headamp/000/gain"));
                 expectEquals (sent[1].address, juce::String ("/headamp/001/gain"));
+                expect (sent[0].hasArgs() && sent[1].hasArgs());
+                expect (! sent[2].hasArgs() && ! sent[3].hasArgs());
             }
         }
 
