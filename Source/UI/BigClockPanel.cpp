@@ -212,7 +212,7 @@ namespace zynforge
 
         // Each row is [label left, value right]. Label uses the UI font; value
         // uses tabular mono so the digits don't dance. A row that doesn't fit
-        // isn't drawn.
+        // isn't drawn: the order below is the order they give way.
         const float rowH = 13.0f;
         auto drawRow = [&] (const char* label, const juce::String& value,
                             juce::Colour rowLabelCol, juce::Colour rowValueCol = brand::textPrimary)
@@ -236,18 +236,6 @@ namespace zynforge
                  missed > 0 ? missCol : brand::textPrimary);
         drawRow ("LAST WRITE", juce::String (lastWriteMs) + " ms", labelCol);
         drawRow ("MARKERS", juce::String (markerCount), labelCol);
-
-        // Master loudness (BS.1770). Integrated program loudness + true-peak;
-        // true-peak turns red as it approaches 0 dBTP.
-        auto lufsStr = [] (float v)
-        { return v <= -119.0f ? juce::String ("--") : juce::String (v, 1) + " LUFS"; };
-        drawRow ("LOUDNESS (I)", lufsStr (lufsIntegrated), labelCol);
-        drawRow ("MOMENTARY",    lufsStr (lufsMomentary), labelCol);
-        const bool tpHot = truePeakDb > -1.0f;
-        drawRow ("TRUE PEAK",
-                 truePeakDb <= -119.0f ? juce::String ("--") : juce::String (truePeakDb, 1) + " dBTP",
-                 tpHot ? missCol : labelCol,
-                 tpHot ? missCol : brand::textPrimary);
 
         g.setFont (timerFont);
         g.setColour (rolling ? brand::textPrimary
