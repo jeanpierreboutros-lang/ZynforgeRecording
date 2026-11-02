@@ -29,14 +29,12 @@ namespace zynforge::interchange
         juce::String name;
         juce::uint32 colourArgb { 0 };      // 0 = no colour chosen
         bool  stereoLeft { false };         // L half of a pair; the next strip is its R
-        bool  isBus      { false };
         float faderDb    { 0.0f };
         float pan        { 0.0f };
         bool  muted      { false };
         float vcaDb      { 0.0f };          // 0 = no VCA
         bool  vcaAssigned { false };
         bool  vcaMuted   { false };
-        bool  hasSends   { false };
         // nullopt: never given a clip list, so it plays its whole file. An
         // empty list is different: the engineer deleted every clip, and the
         // strip stays silent however much media sits on disk.
@@ -359,25 +357,16 @@ namespace zynforge::interchange
         if (! audioDir.isDirectory()) audioDir = in.sessionDir;
 
         MediaCache media;
-        int approximatedFades = 0, splitPairs = 0, sends = 0, vcas = 0;
+        int approximatedFades = 0, splitPairs = 0, vcas = 0;
         const int count = (int) in.strips.size();
         for (int index = 0; index < count; ++index)
         {
             if (cancel.load (std::memory_order_relaxed)) { result.error = "Cancelled"; return result; }
             const auto& strip = in.strips[(size_t) index];
-            sends      += strip.hasSends ? 1 : 0;
             vcas       += strip.vcaAssigned ? 1 : 0;
 
             // A pair's right half travels with its left.
             if (index > 0 && in.strips[(size_t) index - 1].stereoLeft) continue;
-
-            // A bus mixes other strips and plays no media of its own, even with
-            // a stereo take sitting in the slot before it.
-            if (strip.isBus)
-            {
-                project.tracks.push_back (trackFrom (strip));
-                continue;
-            }
 
             std::vector<Item> left;
             if (auto problem = stripItems (in, index, audioDir, media, left, approximatedFades);
@@ -425,9 +414,6 @@ namespace zynforge::interchange
         }
 
         auto& notes = project.notes;
-        if (sends > 0)
-            notes.add ("Aux sends and bus routing are not exported (" + plural (sends, "strip")
-                       + " with sends): bus tracks arrive empty.");
         if (vcas > 0)
             notes.add ("VCA groups are not exported: " + plural (vcas, "strip")
                        + " carry the VCA level in the track fader.");

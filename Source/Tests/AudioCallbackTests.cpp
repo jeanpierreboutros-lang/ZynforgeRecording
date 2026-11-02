@@ -119,7 +119,7 @@ namespace zynforge
         };
 
         // ── Playback-feed helpers ─────────────────────────────────────
-        // The VCA-gain / aux-send paths all read from
+        // The VCA-gain paths all read from
         // `playerScratch`, which is empty unless a real session is
         // loaded. These helpers record a known signal to disk via the
         // real capture path, then let a fixture play it back so the
@@ -648,7 +648,7 @@ namespace zynforge
             {
                 // Regression: a second take that armed a DIFFERENT channel
                 // used to wipe the first take's file, because startRecording
-                // opened (and truncated) a writer for every non-bus track,
+                // opened (and truncated) a writer for every track,
                 // armed or not. Take 1 records track 0; take 2 records only
                 // track 1 into the SAME session -- track 0's file must
                 // survive intact.
@@ -2103,7 +2103,7 @@ namespace zynforge
                 expect (f.peakOut (1, 256) > 0.20f);
             }
 
-            // ─── Playback feed: VCA gain / aux send ───────────────────
+            // ─── Playback feed: VCA gain ──────────────────────────────
             // These exercise the paths that were impossible to test
             // without a loaded playerScratch feed (see the round-4 gap
             // list in tasks.md). Each records a real WAV, plays it back,
@@ -2250,90 +2250,16 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
-            beginTest ("Aux send routes playback through a bus track to its output");
-            {
-                const auto dir = recordTestSession (1, 0.5f);   // only Track_01.wav
-                {
-                    CallbackFixture f (3, 1, 4);   // strip 0 source, strip 2 bus
-                    // Wipe any sends the prefs file might inject before we
-                    // configure the single send under test.
-                    for (int i = 0; i < 3; ++i)
-                        for (int s = 0; s < TrackState::kNumSends; ++s)
-                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
-
-                    f.engine.getPlayer().loadSession (dir);    // 1 reader -> row 0
-                    f.engine.setTrackIsBus (2, true);          // strip 2 = bus
-                    f.engine.setTrackOutputRouting (2, 3);     // bus -> Out 3
-                    f.engine.setTrackOutputRouting (0, -1);    // source master-only
-                    // Source pre-fader send at unity into the bus.
-                    f.engine.setTrackSend (0, 0, /*bus*/ 2, /*levelDb*/ 0.0f, /*post*/ false);
-                    f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.20f);
-
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    expect (f.peakOut (3, 256) > 0.20f);   // the send reaches the bus output
-
-                    // Kill the send -> the bus output goes silent.
-                    f.engine.setTrackSend (0, 0, -1, 0.0f, false);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    expect (f.peakOut (3, 256) < 0.02f);
-                }
-                dir.deleteRecursively();
-            }
-
-            beginTest ("A stereo strip's send keeps a mono bus at the level the send shows");
-            {
-                const auto dir = recordTestSession (2, 0.5f);
-                {
-                    CallbackFixture f (3, 2, 4);
-                    for (int i = 0; i < 3; ++i)
-                        for (int s = 0; s < TrackState::kNumSends; ++s)
-                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
-
-                    f.engine.getPlayer().loadSession (dir);
-                    f.engine.setTrackIsBus (2, true);
-                    f.engine.setTrackOutputRouting (2, 3);
-                    f.engine.setTrackOutputRouting (0, -1);
-                    f.engine.setTrackOutputRouting (1, -1);
-                    f.engine.setTrackSend (0, 0, 2, 0.0f, false);
-                    f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.20f);
-
-                    const auto busPeak = [&]
-                    {
-                        f.engine.getPlayer().setPositionSamples (0);
-                        f.process (256);
-                        return f.peakOut (3, 256);
-                    };
-                    const float oneChannel = busPeak();
-                    expect (oneChannel > 0.20f);
-
-                    f.engine.setTrackStereo (0, true);
-                    f.engine.setTrackSend (0, 0, 2, 0.0f, false);
-                    expectWithinAbsoluteError (busPeak(), oneChannel, 0.01f);
-
-                    f.engine.stopPlayback();
-                    f.engine.setTrackStereo (0, false);
-                }
-                dir.deleteRecursively();
-            }
-
             beginTest ("Live playback and the offline bounce mix the same session identically");
             {
                 // MixKernel.h is the one definition of the mix rules. Render
                 // one session through BOTH of its users -- the audio callback
                 // and renderStereoMix -- and compare them sample for sample.
                 // Every rule is in play: fader, pan, VCA, a stereo pair, a mute,
-                // pre- and post-fader sends into a bus, the master fader, and
-                // then a solo.
+                // the master fader, and then a solo.
                 const auto dir = recordTestSession (3, 0.5f);   // Track_01..03, 49152 samples
                 {
-                    CallbackFixture f (4, 3, 2);                // strip 3 = bus, no file
-                    for (int i = 0; i < 4; ++i)
-                        for (int s = 0; s < TrackState::kNumSends; ++s)
-                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
+                    CallbackFixture f (3, 3, 2);
                     expect (f.engine.loadSession (dir, false, false) == 3);
                     f.engine.setMasterOutputs (0, 1);
                     f.engine.setStreamOutputs (-1, -1);
@@ -2347,13 +2273,8 @@ namespace zynforge
                     f.engine.setTrackVcaGroup (0, 0);
                     f.engine.setTrackVcaGroup (1, 0);
                     f.engine.getVca (0).gainDb.store (-2.0f);
-                    f.engine.setTrackSend (1, 0, 3, -6.0f, true);     // post: follows the pair's mute
                     rec.getTrack (2).gainDb.store (-4.0f);
                     rec.getTrack (2).pan.store (-0.7f);
-                    f.engine.setTrackSend (2, 0, 3, -10.0f, false);   // pre
-                    f.engine.setTrackIsBus (3, true);
-                    rec.getTrack (3).gainDb.store (-1.0f);
-                    rec.getTrack (3).pan.store (0.3f);
                     f.engine.getMasterState().gainDb.store (-2.0f);
 
                     const auto arrLen = f.engine.getArrangementLengthSamples();
@@ -2381,12 +2302,12 @@ namespace zynforge
                     };
 
                     expect (f.engine.renderStereoMix (offline, arrLen));
-                    compareAt (2048,  "fader, pan and sends");
+                    compareAt (2048,  "fader and pan");
                     compareAt (15360, "further into the take");
 
                     f.engine.setTrackMuted (0, true);
                     expect (f.engine.renderStereoMix (offline, arrLen));
-                    compareAt (15360, "pair muted, its post send silent");
+                    compareAt (15360, "pair muted");
                     f.engine.setTrackMuted (0, false);
 
                     rec.getTrack (2).soloed.store (true);

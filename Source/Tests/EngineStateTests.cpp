@@ -205,11 +205,6 @@ namespace zynforge
                 eng.setTrackVcaGroup (0, 2);
                 eng.setTrackVcaGroup (1, 2);
                 eng.setTrackEditGroup (3, 1);
-                // isBus + aux send -- the two fields that used to leak across
-                // sessions via global appProps. Track 3 becomes a bus; track 0
-                // sends to it. Both must round-trip through session_mix.json.
-                eng.setTrackIsBus (3, true);
-                eng.setTrackSend  (0, /*slot*/ 0, /*bus*/ 3, /*dB*/ -3.0f, /*post*/ true);
                 eng.claimMixerFor (tmp);
                 eng.saveSessionMixTo (tmp);
 
@@ -221,8 +216,6 @@ namespace zynforge
                 eng.getRecorder().getTrack (1).outputMuted.store (false);
                 eng.getRecorder().getTrack (2).streamSend.store (false);
                 eng.setTrackVcaGroup (2, 5);
-                eng.setTrackIsBus (3, false);                 // un-bus it
-                eng.setTrackSend  (0, 0, -1, 0.0f, false);    // clear the send
 
                 eng.setStripCount (7); // simulate the previously-open larger session
                 expect (eng.loadSessionMixFrom (tmp));
@@ -239,13 +232,6 @@ namespace zynforge
                 expectEquals (eng.getTrackEditGroup (3), 1);
                 // Strip 2 was ungrouped in the file -> the leaked VCA 5 is overwritten.
                 expectEquals (eng.getRecorder().getTrack (2).vcaGroup.load(), -1);
-                // isBus + aux send round-trip (the appProps-leak fix).
-                expect (eng.getRecorder().getTrack (3).isBus.load());
-                expect (! eng.getRecorder().getTrack (0).isBus.load());
-                expectEquals (eng.getRecorder().getTrack (0).sends[0].targetBus.load(), 3);
-                expectWithinAbsoluteError (
-                    eng.getRecorder().getTrack (0).sends[0].levelDb.load(), -3.0f, 0.01f);
-                expect (eng.getRecorder().getTrack (0).sends[0].postFader.load());
 
                 eng.clearSessionState();
                 expect (! eng.getRecorder().getTrack (1).outputMuted.load(),

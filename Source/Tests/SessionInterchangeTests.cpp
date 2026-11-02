@@ -272,22 +272,6 @@ namespace zynforge
                 expectEquals ((int) resolved (e).tracks[0].items.size(), 1, "another active take must change the export");
             }
 
-            beginTest ("A bus plays no media, even after a stereo take");
-            {
-                Folder f;
-                expect (writeAudio (f.audio().getChildFile ("Track_01.wav"), 4800, 2, 1));
-                ix::SessionInput in;
-                in.sessionDir = f.dir;
-                in.strips.push_back (ix::StripInput());
-                ix::StripInput bus;
-                bus.isBus = true;
-                in.strips.push_back (bus);
-                const auto r = ix::resolve (in, noCancel);
-                expect (r.ok(), r.error);
-                expectEquals ((int) r.project.tracks.size(), 2);
-                expect (r.project.tracks[1].items.empty(), "the bus picked up the take's right channel");
-            }
-
             beginTest ("Deleting every clip stays silent; a strip never edited plays its file");
             {
                 Folder f;
@@ -431,16 +415,14 @@ namespace zynforge
                         "the pan law must match the session's");
             }
 
-            beginTest ("Sends are left out, and the summary says so");
+            beginTest ("Solo is left out, and the summary says so");
             {
                 ix::SessionInput in;
                 in.anySolo = true;
                 ix::StripInput strip;
-                strip.hasSends = true;
                 in.strips.push_back (strip);
                 const auto r = ix::resolve (in, noCancel);
                 const auto notes = r.project.notes.joinIntoString (" ");
-                expect (notes.contains ("Aux sends"));
                 expect (notes.contains ("Solo"));
             }
 

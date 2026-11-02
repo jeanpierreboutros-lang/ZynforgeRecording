@@ -750,7 +750,7 @@ juce::var MainComponent::captureDaemonSettings()
         auto& t = rec.getTrack (i); auto* s = new juce::DynamicObject();
         s->setProperty ("name", t.getNameThreadSafe()); s->setProperty ("uid", t.stripId);
         s->setProperty ("input", engine.getEffectiveInputRouting (i)); s->setProperty ("armed", t.armed.load());
-        s->setProperty ("stereo", t.isStereo.load()); s->setProperty ("bus", t.isBus.load());
+        s->setProperty ("stereo", t.isStereo.load());
         tracks.add (juce::var (s));
     }
     for (const auto& m : rec.getMirrors())

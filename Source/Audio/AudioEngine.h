@@ -328,16 +328,6 @@ namespace zynforge
         int   getTrackEditGroup (int channelIndex) noexcept;
         std::vector<int> getStripsInEditGroup (int groupId);
 
-        // Aux sends + bus tracks ─────────────────────────────────────
-        // setTrackIsBus marks a track as a bus destination (no input,
-        // no record, sums sends + routes to outputs like a regular
-        // strip).
-        void  setTrackIsBus (int channelIndex, bool isBus);
-        // setTrackSend configures one of 4 send slots on a non-bus
-        // strip. targetBus < 0 disables the send. Persisted to appProps
-        // so sends survive a relaunch.
-        void  setTrackSend (int channelIndex, int sendSlot,
-                            int targetBus, float levelDb, bool postFader);
         bool isPlaying() const noexcept                    { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }
@@ -1168,7 +1158,7 @@ namespace zynforge
         }
 
         // Wipe every persisted per-strip override (name, colour, gain, pan,
-        // routing, stereo, edit group, VCA, sends, bus flag, UUID) for the
+        // routing, stereo, edit group, VCA, UUID) for the
         // half-open index range [firstIndex, lastIndexExclusive). Used to
         // give freshly-added strips a clean slate so they don't inherit a
         // previous session's layout by array position.

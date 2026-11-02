@@ -53,24 +53,6 @@ namespace zynforge
                 styleCombo (modeCombo);
                 addAndMakeVisible (modeCombo);
 
-                // Track type -- Audio (records input + plays back) vs
-                // Bus (no input, sums sends, routes to outputs).
-                typeCombo.addItem ("Audio Track", 1);
-                typeCombo.addItem ("Bus Track",   2);
-                typeCombo.setSelectedItemIndex (0, juce::dontSendNotification);
-                styleCombo (typeCombo);
-                // When the engineer flips the type combo, swap the default
-                // name accordingly -- but only if they haven't manually
-                // typed anything custom. nameIsAutoDefault tracks that.
-                typeCombo.onChange = [this]
-                {
-                    if (! nameIsAutoDefault) return;
-                    const auto def = isBus() ? juce::String ("Bus")
-                                             : juce::String ("Audio");
-                    nameEditor.setText (def, juce::dontSendNotification);
-                };
-                addAndMakeVisible (typeCombo);
-
                 nameLabel.setText ("Name:", juce::dontSendNotification);
                 nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 nameLabel.setFont (brand::type::uiBody());
@@ -81,10 +63,6 @@ namespace zynforge
                 nameEditor.setColour (juce::TextEditor::backgroundColourId, brand::inputBg);
                 nameEditor.setColour (juce::TextEditor::textColourId,       brand::textPrimary);
                 nameEditor.setColour (juce::TextEditor::outlineColourId,    brand::edge);
-                // First keystroke from the engineer flips nameIsAutoDefault
-                // off, so a subsequent type-combo change won't clobber the
-                // user's name.
-                nameEditor.onTextChange = [this] { nameIsAutoDefault = false; };
                 addAndMakeVisible (nameEditor);
 
                 plusButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
@@ -123,8 +101,6 @@ namespace zynforge
                 newLabel   .setBounds (r.removeFromLeft (28));
                 r.removeFromLeft (brand::space::sm);
                 modeCombo  .setBounds (r.removeFromLeft (110).reduced (0, 2));
-                r.removeFromLeft (brand::space::sm);
-                typeCombo  .setBounds (r.removeFromLeft (130).reduced (0, 2));
 
                 // ── Right block (+/-) ────────────────────────────────────
                 plusButton .setBounds (r.removeFromRight (28).reduced (0, 2));
@@ -152,7 +128,6 @@ namespace zynforge
 
             int  count()  const { return juce::jlimit (1, 256, countEditor.getText().getIntValue()); }
             bool stereo() const { return modeCombo.getSelectedItemIndex() == 1; }
-            bool isBus()  const { return typeCombo.getSelectedItemIndex() == 1; }
             juce::String baseName() const { return nameEditor.getText().trim(); }
 
             // Enter in either field fires the dialog's primary action (Create).
@@ -174,16 +149,10 @@ namespace zynforge
             juce::TextEditor countEditor;
             juce::Label      newLabel;
             juce::ComboBox   modeCombo;
-            juce::ComboBox   typeCombo;
             juce::Label      nameLabel;
             juce::TextEditor nameEditor;
             juce::TextButton plusButton;
             juce::TextButton minusButton;
-
-            // True until the engineer types into the name editor.
-            // While true, switching the type combo (Audio <-> Bus)
-            // updates the editor text to match the new default.
-            bool nameIsAutoDefault { true };
         };
 
         class DialogContent final : public juce::Component
@@ -289,7 +258,6 @@ namespace zynforge
                     AddTracksDialog::Entry e;
                     e.count    = r->count();
                     e.stereo   = r->stereo();
-                    e.isBus    = r->isBus();
                     e.baseName = r->baseName();
                     entries.push_back (std::move (e));
                 }

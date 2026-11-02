@@ -98,7 +98,6 @@ namespace zynforge::songexport
                     const auto& strip = recorder.getTrack (t);
                     if (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
                         continue;   // a pair's right half goes out with its left
-                    if (strip.isBus.load (std::memory_order_relaxed)) continue;
 
                     const auto base = juce::String::formatted ("Track_%02d - ", t + 1)
                                     + safeName (strip.getNameThreadSafe());

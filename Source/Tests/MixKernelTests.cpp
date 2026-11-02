@@ -88,20 +88,6 @@ namespace zynforge
                 expect (! mix::busHeldOffOutputs (true, 8, true), "the engineer said this rig may share");
             }
 
-            beginTest ("Post-fader sends follow every mute; pre-fader sends do not");
-            {
-                expect (! mix::postFaderMuted (false, false));
-                expect (mix::postFaderMuted (true,  false));
-                expect (mix::postFaderMuted (false, true));
-
-                expectWithinAbsoluteError (mix::sendGain (0.0f, true, 0.5f), 0.5f, 1.0e-6f);
-                expectWithinAbsoluteError (mix::sendGain (0.0f, true, 0.0f), 0.0f, 1.0e-6f);
-                expectWithinAbsoluteError (mix::sendGain (0.0f, false, 0.0f), 1.0f, 1.0e-6f);
-                expectWithinAbsoluteError (mix::sendGain (-6.0f, false, 0.0f),
-                                           juce::Decibels::decibelsToGain (-6.0f), 1.0e-6f);
-                expectEquals (mix::sendGain (-60.0f, false, 1.0f), 0.0f);
-            }
-
             beginTest ("Constant-power pan law and master gain");
             {
                 const auto c = mix::constantPowerPan (1.0, 0.0f);

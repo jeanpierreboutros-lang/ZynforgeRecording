@@ -84,13 +84,6 @@ namespace zynforge
         // so the assignment persists.
         IntCallback onEditGroupChanged;
 
-        // Aux send wiring -- host provides the live bus list
-        // (busTrackIndex, displayName) so the right-click menu can
-        // populate the 'Send to bus' submenu, and a callback the
-        // strip fires when the engineer picks a new target for
-        // send slot 0.
-        std::function<std::vector<std::pair<int, juce::String>>()> getBusList;
-        std::function<void (int /*targetBus*/)> onSendTargetChanged;
         // The engine applies both, so a stereo strip's two halves move as one.
         std::function<void (bool)> onStreamSendChanged;
 
@@ -122,7 +115,7 @@ namespace zynforge
 
     private:
         bool hovered { false };
-        // Tracks whether a VCA / edit-group / bus badge is currently shown so
+        // Tracks whether a VCA / edit-group badge is currently shown so
         // the slow poll can re-lay-out the name label (which reserves room for
         // the badge) the moment an assignment changes. -1 = uninitialised.
         int  lastBadgeShown { -1 };

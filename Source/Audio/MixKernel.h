@@ -3,8 +3,8 @@
 // The mixing RULES shared by the real-time callback (AudioEngine.cpp) and the
 // offline stereo bounce (AudioEngineClips.cpp).
 //
-// Both paths used to carry their own copy of the solo / mute / VCA gate, the
-// pan law and the aux-send gain. A fix in one (a VCA reaching the monitor) then
+// Both paths used to carry their own copy of the solo / mute / VCA gate and
+// the pan law. A fix in one (a VCA reaching the monitor) then
 // had to be found and repeated by hand in the other, and a bounce could
 // silently stop matching what the engineer heard. Each rule now
 // has exactly one definition, here. AudioCallbackTests renders one session
@@ -65,28 +65,6 @@ namespace zynforge::mix
     constexpr float stripDb (float faderDb, float vcaDb) noexcept
     {
         return (faderDb <= kFaderFloorDb || vcaDb <= kFaderFloorDb) ? kOffDb : faderDb + vcaDb;
-    }
-
-    // A POST-fader send follows the channel mute like a real console: the
-    // strip's own mute and its VCA's mute both silence it.
-    constexpr bool postFaderMuted (bool stripMute, bool vcaMuted) noexcept
-    {
-        return stripMute || vcaMuted;
-    }
-
-    // Aux-send gain. A POST-fader send scales by the strip's post-fader gain
-    // (0 when muted); a PRE-fader send is independent of the fader.
-    inline float sendGain (float sendDb, bool postFader, float postFaderGain) noexcept
-    {
-        return juce::Decibels::decibelsToGain (sendDb, -60.0f) * (postFader ? postFaderGain : 1.0f);
-    }
-
-    // A stereo strip is one send. On a mono bus its two halves land together,
-    // so each brings half, and a centred source arrives at the level the send
-    // shows rather than 6 dB over it.
-    constexpr float sendFoldGain (bool sourceIsStereoHalf, bool busIsStereoHalf) noexcept
-    {
-        return sourceIsStereoHalf && ! busIsStereoHalf ? 0.5f : 1.0f;
     }
 
     // Trim-Follow: the desk's preamp move since the take was captured, added

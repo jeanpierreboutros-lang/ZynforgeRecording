@@ -425,8 +425,7 @@ namespace zynforge
                 const auto& lft = *tracks[(std::size_t) (ch - 1)];
                 pairArmed = lft.isStereo.load (std::memory_order_relaxed)
                          && (rec ? captureArms[(size_t) ch - 1]
-                                 : lft.armed.load (std::memory_order_relaxed))
-                         && ! lft.isBus .load (std::memory_order_relaxed);
+                                 : lft.armed.load (std::memory_order_relaxed));
             }
 
             // Exact zero is the fault signature, so any non-zero peak counts.
@@ -466,7 +465,6 @@ namespace zynforge
                 // Stereo drain consumes min(L,R): either missing side must feed
                 // zeros or it starves the valid side and loses the entire pair.
                 if (! (rec && (armed || pairArmed))) continue;
-                if (t.isBus.load (std::memory_order_relaxed)) continue;
                 const int  n0  = juce::jmin (numSamples, (int) scratch.size());
                 if (n0 <= 0) continue;
                 auto& cfz = *fifos[(std::size_t) ch];
@@ -528,12 +526,8 @@ namespace zynforge
 
             // Push to ring buffer when recording. Armed channels push; the
             // R half of an armed stereo pair also pushes (pairArmed) so both
-            // sides of the interleaved file advance together. A BUS never pushes
-            // -- it has no input + gets no writer (active stays false), so an
-            // armed bus (e.g. armed over OSC/MCU) would feed an undrained FIFO
-            // that overflows into a false "samples dropped" alarm.
-            if (rec && ! t.isBus.load (std::memory_order_relaxed)
-                    && (armed || pairArmed))
+            // sides of the interleaved file advance together.
+            if (rec && (armed || pairArmed))
             {
                 // Live waveform overview: bin the captured input into min/max
                 // pairs so the EDIT lane draws the detailed waveform AS it
@@ -740,11 +734,10 @@ namespace zynforge
         return { 0, 24, ".wav" };
     }
 
-    // True when track k is one we open a writer for: not a bus, and armed.
+    // True when track k is one we open a writer for: armed.
     bool MultitrackRecorder::isArmedCapture (std::size_t k) const noexcept
     {
-        return ! tracks[k]->isBus .load (std::memory_order_relaxed)
-               &&  tracks[k]->armed.load (std::memory_order_relaxed);
+        return tracks[k]->armed.load (std::memory_order_relaxed);
     }
 
     // An armed capture track that owns its Track_NN file -- i.e. not the
@@ -1200,7 +1193,6 @@ namespace zynforge
             juce::int64 takeLen = recordBaseSamples; // caller's loaded-session hint
             for (std::size_t i = 0; i < tracks.size(); ++i)
             {
-                if (tracks[i]->isBus .load (std::memory_order_relaxed)) continue;
                 const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
                 for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
                 {
@@ -1511,7 +1503,7 @@ namespace zynforge
                 continue;
             }
 
-            // No writer for bus tracks (no input) OR unarmed tracks. Push
+            // No writer for unarmed tracks. Push
             // an empty WriterChannel so the per-channel index stays aligned
             // with tracks[i]; processBlock's arm-gate already skips both.
             //
@@ -1521,8 +1513,7 @@ namespace zynforge
             // opening writers for the still-unarmed earlier tracks would
             // wipe their Track_NN.wav from the first take -- silent data
             // loss. Skipping them here leaves those files intact.
-            if (tracks[i]->isBus .load (std::memory_order_relaxed)
-                || ! tracks[i]->armed.load (std::memory_order_relaxed))
+            if (! tracks[i]->armed.load (std::memory_order_relaxed))
             {
                 writers.push_back (std::move (w));
                 fifos[i]->fifo.reset();
@@ -1564,7 +1555,7 @@ namespace zynforge
             // This channel opened (or attempted) real destinations, so it
             // participates in the take and MUST keep draining even if its
             // primary later fails -- see WriterChannel::active. Empty R slots
-            // and unarmed/bus channels `continue`d above and stay inactive.
+            // and unarmed channels `continue`d above and stay inactive.
             w.active = true;
 
             writers.push_back (std::move (w));
@@ -3446,8 +3437,7 @@ namespace zynforge
         int captureChannels = 0;
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
-            if (tracks[i]->isBus.load (std::memory_order_relaxed)
-                || ! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
+            if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
             if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
                       && tracks[i - 1]->armed.load (std::memory_order_relaxed))
                 continue;
@@ -3556,8 +3546,7 @@ namespace zynforge
         int captureChannels = 0;
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
-            if (tracks[i]->isBus.load (std::memory_order_relaxed)
-                || ! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
+            if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
             if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
                       && tracks[i - 1]->armed.load (std::memory_order_relaxed))
                 continue;
@@ -3646,7 +3635,7 @@ namespace zynforge
             auto& cf = *fifos[i];
             const auto& w  = writers[i];
             // Skip only channels that don't participate in the take (empty
-            // stereo-R slots, unarmed/bus).
+            // stereo-R slots, unarmed).
             if (! w.active) continue;
 
             // Track FIFO occupancy so the dashboard can warn the engineer

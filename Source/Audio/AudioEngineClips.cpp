@@ -991,21 +991,18 @@ namespace zynforge
         // Everything the mix reads from a strip is SNAPSHOTTED here, under a
         // BRIEF structure lock, and the windows below render from the
         // snapshot alone. The render used to keep a pointer to each strip's
-        // TrackState and re-read mute/VCA/sends every window, so the caller
+        // TrackState and re-read mute/VCA every window, so the caller
         // had to hold the structure lock for the WHOLE bounce -- and the UI
         // timer's captureStatus() takes that lock, freezing the app until the
         // bounce finished. The snapshot is also the honest semantic: the file
         // is the mix as it stood when the bounce began, not a blend of
         // mid-bounce fader and mute moves.
-        struct SendSnapshot { int bus { -1 }; float levelDb { -100.0f }; bool post { false }; float fold { 1.0f }; };
         struct TrackCtx
         {
             int track {};
-            bool audible {}, needed {};
+            bool audible {};
             ArrangementSource src;
             float baseDb {}, basePan {}, vcaDb {};
-            bool  isBus {}, muted {}, vcaMuted {};
-            std::array<SendSnapshot, TrackState::kNumSends> sends {};
         };
         std::vector<std::unique_ptr<TrackCtx>> live;
         int nTracks = 0;
@@ -1046,45 +1043,17 @@ namespace zynforge
                 ctx->baseDb   = ts.gainDb.load (std::memory_order_relaxed);
                 ctx->basePan  = ts.pan.load (std::memory_order_relaxed);
                 ctx->vcaDb    = inVca ? vcas[(size_t) grp].gainDb.load (std::memory_order_relaxed) : 0.0f;
-                ctx->vcaMuted = inVca && vcas[(size_t) grp].muted.load (std::memory_order_relaxed);
-                ctx->isBus    = ts.isBus.load (std::memory_order_relaxed);
-                ctx->muted    = ts.muted.load (std::memory_order_relaxed);
-                const auto isStereoHalf = [this] (int index)
-                {
-                    return recorder.getTrack (index).isStereo.load (std::memory_order_relaxed)
-                        || (index > 0 && recorder.getTrack (index - 1).isStereo.load (std::memory_order_relaxed));
-                };
-                for (size_t k = 0; k < ctx->sends.size(); ++k)
-                {
-                    const int bus = ts.sends[k].targetBus.load (std::memory_order_relaxed);
-                    ctx->sends[k] = { bus,
-                                      ts.sends[k].levelDb.load (std::memory_order_relaxed),
-                                      ts.sends[k].postFader.load (std::memory_order_relaxed),
-                                      mix::sendFoldGain (isStereoHalf (t),
-                                                         bus >= 0 && bus < recorder.getNumTracks() && isStereoHalf (bus)) };
-                }
                 live.push_back (std::move (ctx));
             }
         }
 
         for (auto& cp : live)
-        {
-            cp->needed = cp->audible;
-            if (! cp->isBus)
-                for (const auto& send : cp->sends)
-                {
-                    const int bus = send.bus;
-                    if (bus >= 0 && bus < nTracks && live[(size_t) bus]->isBus
-                        && live[(size_t) bus]->audible && send.levelDb > -60.0f)
-                        cp->needed = true;
-                }
-            if (cp->needed && ! cp->isBus)
+            if (cp->audible)
             {
                 const auto* clips = cp->track < (int) trackClips.size()
                     ? &trackClips[(size_t) cp->track] : nullptr;
                 if (! cp->src.open (audioDir, cp->track, clips)) return false;
             }
-        }
 
         // Master MUTE keeps playback out of the PA. It is a monitoring switch,
         // not part of the mix, so a render follows the master fader alone.
@@ -1105,25 +1074,8 @@ namespace zynforge
 
             raw.clear();
             for (auto& cp : live)
-                if (cp->needed && ! cp->isBus
+                if (cp->audible
                     && ! cp->src.mixWindow (raw.getWritePointer (cp->track), winStart, winLen, tmp)) return false;
-
-            // Sends precede solo filtering, as in live playback: a soloed bus
-            // still receives its unsoloed source strips.
-            for (auto& cp : live)
-            {
-                if (! cp->needed || cp->isBus) continue;
-                const bool muted = mix::postFaderMuted (cp->muted, cp->vcaMuted);
-                const float postGain = muted ? 0.0f
-                    : juce::Decibels::decibelsToGain (mix::stripDb (cp->baseDb, cp->vcaDb), -60.0f);
-                for (const auto& send : cp->sends)
-                {
-                    const int bus = send.bus;
-                    if (bus < 0 || bus >= nTracks || ! live[(size_t) bus]->isBus) continue;
-                    raw.addFrom (bus, 0, raw, cp->track, 0, winLen,
-                                 send.fold * mix::sendGain (send.levelDb, send.post, postGain));
-                }
-            }
 
             for (auto& cp : live)
             {
@@ -1305,7 +1257,6 @@ namespace zynforge
                 strip.name       = ts.getNameThreadSafe();
                 strip.colourArgb = ts.colourARGB.load (std::memory_order_relaxed);
                 strip.stereoLeft = ts.isStereo.load (std::memory_order_relaxed);
-                strip.isBus      = ts.isBus.load (std::memory_order_relaxed);
                 strip.faderDb    = ts.gainDb.load (std::memory_order_relaxed);
                 strip.pan        = ts.pan.load (std::memory_order_relaxed);
                 strip.muted      = ts.muted.load (std::memory_order_relaxed);
@@ -1317,8 +1268,6 @@ namespace zynforge
                     strip.vcaDb    = vcas[(size_t) group].gainDb.load (std::memory_order_relaxed);
                     strip.vcaMuted = vcas[(size_t) group].muted.load (std::memory_order_relaxed);
                 }
-                for (const auto& send : ts.sends)
-                    strip.hasSends = strip.hasSends || send.targetBus.load (std::memory_order_relaxed) >= 0;
                 if (t < (int) trackClips.size())
                     strip.clips = trackClips[(size_t) t];
                 input.strips.push_back (std::move (strip));

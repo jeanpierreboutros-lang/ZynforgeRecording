@@ -268,9 +268,7 @@ MainComponent::MainComponent()
                 for (int i = 0; i < e.count && cursor < target; ++i)
                 {
                     const int suffix = e.count > 1 ? i + 1 : 0;
-                    const auto defaultName = e.isBus ? juce::String ("Bus ") + juce::String (cursor + 1)
-                                                      : juce::String (cursor + 1);
-                    const auto base  = e.baseName.isNotEmpty() ? e.baseName : defaultName;
+                    const auto base  = e.baseName.isNotEmpty() ? e.baseName : juce::String (cursor + 1);
                     if (e.stereo && cursor + 1 < target)
                     {
                         const auto label = suffix > 0 ? base + " " + juce::String (suffix) : base;
@@ -278,16 +276,10 @@ MainComponent::MainComponent()
                         engine.setTrackName  (cursor + 1, label + " R");
                         engine.setTrackStereo (cursor,     true);
                         engine.setTrackStereo (cursor + 1, false);
-                        engine.setTrackIsBus  (cursor,     e.isBus);
-                        engine.setTrackIsBus  (cursor + 1, e.isBus);
                         // Hard-pan the new pair L/R so it reproduces its full
-                        // stereo image from the start (buses excepted -- a
-                        // stereo bus sums centred). Matches import.
-                        if (! e.isBus)
-                        {
-                            engine.setTrackPan (cursor,     -1.0f);
-                            engine.setTrackPan (cursor + 1,  1.0f);
-                        }
+                        // stereo image from the start. Matches import.
+                        engine.setTrackPan (cursor,     -1.0f);
+                        engine.setTrackPan (cursor + 1,  1.0f);
                         cursor += 2;
                         ++totalStereo;
                     }
@@ -296,7 +288,6 @@ MainComponent::MainComponent()
                         engine.setTrackName  (cursor, suffix > 0 ? base + " " + juce::String (suffix)
                                                                   : base);
                         engine.setTrackStereo (cursor, false);
-                        engine.setTrackIsBus  (cursor, e.isBus);
                         ++cursor;
                     }
                 }
@@ -862,25 +853,6 @@ void MainComponent::rebuildStrips()
                               + " -> Edit Group " + juce::String (groupId + 1));
         };
 
-        // Aux send wiring -- feed the strip the live bus list so its
-        // 'Send to bus' submenu populates, and persist whatever the
-        // engineer picks for send slot 0. Unity post-fader default.
-        s->getBusList = [this]() -> std::vector<std::pair<int, juce::String>>
-        {
-            std::vector<std::pair<int, juce::String>> out;
-            for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
-            {
-                auto& ts = engine.getRecorder().getTrack (t);
-                if (ts.isBus.load (std::memory_order_relaxed))
-                    out.emplace_back (t, ts.name.isEmpty() ? juce::String ("Bus ") + juce::String (t + 1)
-                                                              : ts.name);
-            }
-            return out;
-        };
-        s->onSendTargetChanged = [this, i] (int target)
-        {
-            engine.setTrackSend (i, 0, target, 0.0f /* dB */, true /* post */);
-        };
         s->onStreamSendChanged = [this, i] (bool on)
         {
             engine.setTrackStream (i, on);

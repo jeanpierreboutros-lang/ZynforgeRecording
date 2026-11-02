@@ -368,23 +368,17 @@ namespace zynforge
                         if (ls.trackIndex + 1 >= totalTracks) return;
                         if (engine.getRecorder().getTrack (ls.trackIndex + 1).isStereo.load()) return;
                         engine.setTrackStereo (ls.trackIndex, true);
-                        // Hard-pan L/R for the full stereo image (buses sum
-                        // centred, so skip them). Matches the mixer + import.
-                        if (! engine.getRecorder().getTrack (ls.trackIndex).isBus.load())
-                        {
-                            engine.setTrackPan (ls.trackIndex,     -1.0f);
-                            engine.setTrackPan (ls.trackIndex + 1,  1.0f);
-                        }
+                        // Hard-pan L/R for the full stereo image. Matches the
+                        // mixer + import.
+                        engine.setTrackPan (ls.trackIndex,     -1.0f);
+                        engine.setTrackPan (ls.trackIndex + 1,  1.0f);
                     }
                     else
                     {
                         engine.setTrackStereo (ls.trackIndex, false);
                         // Back to mono -> recentre both halves.
-                        if (! engine.getRecorder().getTrack (ls.trackIndex).isBus.load())
-                        {
-                            engine.setTrackPan (ls.trackIndex,     0.0f);
-                            engine.setTrackPan (ls.trackIndex + 1, 0.0f);
-                        }
+                        engine.setTrackPan (ls.trackIndex,     0.0f);
+                        engine.setTrackPan (ls.trackIndex + 1, 0.0f);
                     }
                     dragActive = false;
                     repaint();

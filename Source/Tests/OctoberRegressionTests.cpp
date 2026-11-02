@@ -182,10 +182,9 @@ public:
             e.setVcaGainDb (0, -18); e.setVcaMuted (0, true); e.setVcaSoloed (0, true);
             e.claimMixerFor (f.dir);
             expect (e.saveSessionMixTo (f.dir));
-            e.getRecorder().getTrack (0).muted = true; e.setTrackIsBus (0, true);
+            e.getRecorder().getTrack (0).muted = true;
             e.clearSessionState();
             expect (! e.getRecorder().getTrack (0).muted.load());
-            expect (! e.getRecorder().getTrack (0).isBus.load());
             expectWithinAbsoluteError (e.getVca (0).gainDb.load(), 0.0f, 0.0001f);
             expect (e.loadSessionMixFrom (f.dir));
             expectWithinAbsoluteError (e.getVca (0).gainDb.load(), -18.0f, 0.0001f);
@@ -214,18 +213,6 @@ public:
             e.loadSession (f.dir, true, true); juce::AudioBuffer<float> out;
             expect (e.renderTrackArrangement (0, out, 9600));
             expect (out.getMagnitude (0, 4800, 4800) > 0.2f);
-        }
-        beginTest ("Offline solo aux bus includes its sends");
-        {
-            Folder f; expect (write (f.track())); AudioEngine e; setup (e); e.loadSession (f.dir);
-            e.setTrackIsBus (1, true); e.setTrackSend (0, 0, 1, 0, true);
-            e.setTrackSoloed (1, true); juce::AudioBuffer<float> out;
-            expect (e.renderStereoMix (out, 4800));
-            expectWithinAbsoluteError (out.getSample (0, 100), 0.25f / std::sqrt (2.0f), 0.0001f);
-            e.setTrackMuted (0, true); expect (e.renderStereoMix (out, 4800));
-            expectWithinAbsoluteError (out.getSample (0, 100), 0.0f, 0.0001f);
-            e.setTrackSend (0, 0, 1, 0, false); expect (e.renderStereoMix (out, 4800));
-            expect (out.getSample (0, 100) > 0.1f);
         }
         beginTest ("Healing requires identical channel, gain and mute state");
         {
@@ -523,31 +510,6 @@ public:
                 juce::Time::getCurrentTime(), down, juce::Time::getCurrentTime(), 1, true);
             row.mouseDrag (ev);
             expectEquals (e.clipsFor (0)[0].timelineStartSamples - e.clipsFor (1)[0].timelineStartSamples, (juce::int64) 1000);
-        }
-        beginTest ("Live aux receives input and post-fader sends follow VCA mute");
-        {
-            AudioEngine e; setup (e); auto& r = e.getRecorder(); r.getTrack (0).monitor = true;
-            e.setTrackIsBus (1, true); e.setTrackSend (0, 0, 1, 0, true); e.setTrackSoloed (1, true);
-            e.setTrackVcaGroup (0, 0);
-            float signal[256]; std::fill_n (signal, 256, 0.25f); const float* in[] { signal, signal };
-            juce::AudioBuffer<float> out (2, 256);
-            auto process = [&] { e.audioDeviceIOCallbackWithContext (in, 2, out.getArrayOfWritePointers(), 2, 256, {}); };
-            process(); expect (out.getMagnitude (0, 256) > 0.1f);
-            const float liveLevel = out.getMagnitude (0, 256);
-            e.getRecorder().getTrack (0).captureInputGainKnown = true;   // the offset is real
-            e.setTrackLiveInputGain (0, 12); e.setTrimFollowEnabled (true); process();
-            expectWithinAbsoluteError (out.getMagnitude (0, 256), liveLevel, 0.0001f);
-            e.setTrimFollowEnabled (false);
-            e.setVcaMuted (0, true); process(); expectWithinAbsoluteError (out.getMagnitude (0, 256), 0.0f, 0.00001f);
-            e.setTrackSend (0, 0, 1, 0, false); process(); expect (out.getMagnitude (0, 256) > 0.1f);
-        }
-        beginTest ("Offline post-fader aux respects VCA mute while pre-fader remains independent");
-        {
-            Folder f; expect (write (f.track())); AudioEngine e; setup (e); e.loadSession (f.dir);
-            e.setTrackIsBus (1, true); e.setTrackSend (0, 0, 1, 0, true); e.setTrackSoloed (1, true);
-            e.setTrackVcaGroup (0, 0); e.setVcaMuted (0, true); juce::AudioBuffer<float> out;
-            expect (e.renderStereoMix (out, 4800)); expectWithinAbsoluteError (out.getMagnitude (0, 4800), 0.0f, 0.00001f);
-            e.setTrackSend (0, 0, 1, 0, false); expect (e.renderStereoMix (out, 4800)); expect (out.getMagnitude (0, 4800) > 0.1f);
         }
         beginTest ("Auto-arm ignores playback and arms both halves from right-only live input");
         {

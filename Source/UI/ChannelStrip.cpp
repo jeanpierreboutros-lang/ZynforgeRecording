@@ -397,11 +397,10 @@ namespace zynforge
             dirty = true;
         }
 
-        // If a VCA / edit-group / bus badge just appeared or disappeared,
+        // If a VCA / edit-group badge just appeared or disappeared,
         // re-lay-out so the name label reclaims or yields the badge's space.
         const int badgeNow = (state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                           || state.editGroup.load (std::memory_order_relaxed) >= 0
-                           || state.isBus    .load (std::memory_order_relaxed)) ? 1 : 0;
+                           || state.editGroup.load (std::memory_order_relaxed) >= 0) ? 1 : 0;
         if (badgeNow != lastBadgeShown)
         {
             lastBadgeShown = badgeNow;
@@ -547,29 +546,6 @@ namespace zynforge
                             true, curEg == i);
         menu.addSubMenu (isStereo ? "Assign to Edit Group (L+R)" : "Assign to Edit Group", egMenu);
 
-        // Aux send to a bus track (slot 0 only in the menu -- multi-send
-        // gets its own dialog later). Hidden for bus tracks themselves
-        // since sending a bus into another bus would feedback loop.
-        if (! state.isBus.load (std::memory_order_relaxed))
-        {
-            juce::PopupMenu sendMenu;
-            const int currentTarget = state.sends[0].targetBus.load (std::memory_order_relaxed);
-            sendMenu.addItem (800, "None", true, currentTarget < 0);
-            if (getBusList)
-            {
-                int id = 801;
-                for (const auto& b : getBusList())
-                {
-                    sendMenu.addItem (id++, b.second, true, b.first == currentTarget);
-                }
-            }
-            else
-            {
-                sendMenu.addItem (-1, "(no bus tracks - create one via +CH > Bus)", false);
-            }
-            menu.addSubMenu ("Send to bus", sendMenu);
-        }
-
         menu.showMenuAsync (juce::PopupMenu::Options(),
                             [this, safe = juce::Component::SafePointer<ChannelStrip> (this)] (int chosen)
         {
@@ -630,18 +606,6 @@ namespace zynforge
                         if (pairState)
                             pairState->editGroup.store (g, std::memory_order_relaxed);
                         if (onEditGroupChanged) onEditGroupChanged (g);
-                    }
-                    // Aux send target: 800 = None, 801..899 = bus index 0..N-1.
-                    else if (chosen == 800 || (chosen >= 801 && chosen < 900))
-                    {
-                        int target = -1;
-                        if (chosen >= 801 && getBusList)
-                        {
-                            const auto list = getBusList();
-                            const int idx = chosen - 801;
-                            if (idx < (int) list.size()) target = list[(size_t) idx].first;
-                        }
-                        if (onSendTargetChanged) onSendTargetChanged (target);
                     }
                     break;
             }
@@ -1047,10 +1011,9 @@ namespace zynforge
             steel::drawSpine       (g, r, armedNow, armPulse); // ① structural orange spine (pulses when armed)
             if (getWidth() >= 78)                               // ② deboss channel number
                 steel::drawDebossNumber (g, { 15, 7, 30, 17 }, stripIndex + 1);
-            // ④ forge-mark top-right, only where no VCA/EG/BUS chip sits
+            // ④ forge-mark top-right, only where no VCA/EG chip sits
             const bool badgeHere = state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                                || state.editGroup.load (std::memory_order_relaxed) >= 0
-                                || state.isBus    .load (std::memory_order_relaxed);
+                                || state.editGroup.load (std::memory_order_relaxed) >= 0;
             if (! badgeHere)
                 steel::drawForgeMark (g, { r.getRight() - 18.0f, r.getY() + 3.0f, 13.0f, 13.0f }, armedNow);
         }
@@ -1141,24 +1104,6 @@ namespace zynforge
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
-        // BUS badge -- top-right, mirroring the VCA chip position.
-        // Bus strips and VCA-grouped strips are mutually exclusive
-        // (a bus is itself a group target, never a member of one),
-        // so the two chips can share the same coordinates without
-        // colliding. The previous top-left position overlapped the
-        // strip's colour swatch.
-        if (state.isBus.load (std::memory_order_relaxed))
-        {
-            auto badge = juce::Rectangle<float> (r.getRight() - 30.0f, r.getY() + 4.0f, 26.0f, 12.0f);
-            g.setColour (brand::sink (brand::alertAmber, 0.30f));
-            g.fillRoundedRectangle (badge, brand::radius::sm);
-            g.setColour (brand::lift (brand::alertAmber, 0.20f));
-            g.drawRoundedRectangle (badge, brand::radius::sm, 0.75f);
-            g.setColour (brand::onSignal (brand::sink (brand::alertAmber, 0.30f)));
-            g.setFont (brand::type::caption());
-            g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
-        }
-
     }
 
     void ChannelStrip::mouseEnter (const juce::MouseEvent&)
@@ -1186,8 +1131,7 @@ namespace zynforge
         const bool wideHdr  = getWidth() >= 78;
         const bool veryWide = getWidth() >= 150;   // L preset -- name on its OWN row
         const bool hasBadge = state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                           || state.editGroup.load (std::memory_order_relaxed) >= 0
-                           || state.isBus    .load (std::memory_order_relaxed);
+                           || state.editGroup.load (std::memory_order_relaxed) >= 0;
         if (veryWide)
         {
             // L view: the NAME sits INSIDE the black steel header plate,
@@ -1269,10 +1213,6 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
 
         // ── 3. Two rows of two buttons each: [ I | R ] / [ S | M ] ──
-        //   ...except on a bus strip, which is playback-only -- record-arm and
-        //   input-monitor make no sense so those two pills are hidden, and the
-        //   SOLO + MUTE row sits alone with no gap above it.
-        const bool isBusStrip   = state.isBus.load (std::memory_order_relaxed);
         const int btnH = 24;
         const int btnGap = 3;
 
@@ -1284,64 +1224,28 @@ namespace zynforge
         // cost of one extra row of height. Engineers running at XS for
         // density still get a usable hit zone.
         const bool stack = getWidth() < 78;
-        const int rowsForButtons = stack ? 4 : 2;
 
-        if (isBusStrip)
+        if (stack)
         {
-            // Bus tracks have no input -- no R / I buttons.
-            // Reserve the missing row(s) as empty space above the
-            // remaining S / M row so the fader + meter below start at
-            // the same Y as a full audio strip's. Without this, the
-            // fader on a bus strip sits ~27 px higher than its
-            // neighbours and meters across the mixer don't line up.
-            armButton.setVisible (false); armButton.setBounds ({});
-            monButton.setVisible (false); monButton.setBounds ({});
-            if (stack)
-            {
-                // Two missing rows (mon + arm).
-                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
-                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
-                soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
-                r.removeFromTop (btnGap);
-                muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
-            }
-            else
-            {
-                // One missing row above (the mon / arm row).
-                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
-                auto row = r.removeFromTop (btnH);
-                const int halfW = row.getWidth() / 2;
-                soloButton.setBounds (row.removeFromLeft (halfW).reduced (2, 0));
-                muteButton.setBounds (row.reduced (2, 0));
-            }
+            monButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
+            r.removeFromTop (btnGap);
+            armButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
+            r.removeFromTop (btnGap);
+            soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
+            r.removeFromTop (btnGap);
+            muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
         }
         else
         {
-            armButton.setVisible (true);
-            monButton.setVisible (true);
-            if (stack)
-            {
-                monButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
-                r.removeFromTop (btnGap);
-                armButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
-                r.removeFromTop (btnGap);
-                soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
-                r.removeFromTop (btnGap);
-                muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
-            }
-            else
-            {
-                auto row1 = r.removeFromTop (btnH);
-                r.removeFromTop (btnGap);
-                auto row2 = r.removeFromTop (btnH);
-                const int halfW = row1.getWidth() / 2;
-                monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
-                armButton.setBounds (row1.reduced (2, 0));
-                soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
-                muteButton.setBounds (row2.reduced (2, 0));
-            }
+            auto row1 = r.removeFromTop (btnH);
+            r.removeFromTop (btnGap);
+            auto row2 = r.removeFromTop (btnH);
+            const int halfW = row1.getWidth() / 2;
+            monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
+            armButton.setBounds (row1.reduced (2, 0));
+            soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
+            muteButton.setBounds (row2.reduced (2, 0));
         }
-        juce::ignoreUnused (rowsForButtons);
         r.removeFromTop (brand::space::sm);
 
         clipLabel.setBounds (r.removeFromTop (12));

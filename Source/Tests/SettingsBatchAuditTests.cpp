@@ -99,35 +99,6 @@ namespace zynforge
                 expectGlobalsPreserved (saved);
             }
 
-            beginTest ("Full reset removes current and legacy persisted aux-send fields");
-            {
-                AudioEngine engine;
-                auto* properties = engine.getAppProps();
-                for (int track : { 0, 17, 255 })
-                    for (int send = 0; send < TrackState::kNumSends; ++send)
-                    {
-                        const auto key = "strip_send_" + juce::String (track) + "_" + juce::String (send);
-                        properties->setValue (key + "_bus", 7);
-                        properties->setValue (key + "_dB", -9.0);
-                        properties->setValue (key + "_post", false);
-                        properties->setValue ("strip_send_" + juce::String (send) + "_" + juce::String (track), 7);
-                    }
-                properties->setValue ("audit_aux_global", "preserve");
-                expect (properties->saveIfNeeded());
-                engine.clearAllStripOverrides();
-                juce::PropertiesFile saved (properties->getFile(), options());
-                for (int track : { 0, 17, 255 })
-                    for (int send = 0; send < TrackState::kNumSends; ++send)
-                    {
-                        const auto key = "strip_send_" + juce::String (track) + "_" + juce::String (send);
-                        for (auto* suffix : { "_bus", "_dB", "_post" })
-                            expect (! saved.containsKey (key + suffix), "current send field survived: " + key + suffix);
-                        expect (! saved.containsKey ("strip_send_" + juce::String (send) + "_" + juce::String (track)),
-                                "legacy send field survived");
-                    }
-                expectEquals (saved.getValue ("audit_aux_global"), juce::String ("preserve"));
-            }
-
             beginTest ("Public strip growth preserves old slots and reports its remaining UUID reload cost");
             {
                 AudioEngine engine;

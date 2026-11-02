@@ -440,10 +440,7 @@ void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
         // What the strip hears on this device: a saved patch past a smaller
         // device's inputs already wraps live and must not be overwritten here.
         const int dev = engine.getEffectiveInputRouting (i);
-        // Buses have no input by design. Never turn them into live-input
-        // strips here.
-        if (isArmed && ! t.isBus.load (std::memory_order_relaxed)
-            && (dev < 0 || dev >= numInputs))
+        if (isArmed && (dev < 0 || dev >= numInputs))
         {
             const int target = numInputs > 0 ? (i % numInputs) : 0;
             engine.setTrackInputRouting (i, target);
