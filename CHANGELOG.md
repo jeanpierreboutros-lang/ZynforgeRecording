@@ -89,7 +89,7 @@ ZynForge Recording is now a recorder and virtual soundcheck. After a census of e
 
 ---
 
-Everything from here down to *Added — console and virtual soundcheck* came in on 2026-11-01. It is in `main` only: not installed on either Mac, and not yet tried on real hardware.
+Everything from here down to *Added — console and virtual soundcheck* came in on 2026-11-01. It is installed on the development Mac only, and not yet tried on real hardware.
 
 ### Fixed — punch and RECORD safety
 

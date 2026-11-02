@@ -8,18 +8,19 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 `main` adds Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus a full round of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). Automated results are in [testing.md](testing.md). **None of this work is installed on either Mac**, and none of it has been tried on real hardware: not on a real interface, a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
-Installed build (2026-10-29):
-
-Both Macs and the [universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg)
-now use verified `281c6c0` and its matching protocol-4 helper. This build contains
+Installed builds: the development Mac has `fffab44` (2026-11-02), which is this
+README apart from later changes in `main`. It passes **1219 test groups in Release,
+ASan/UBSan, TSan and CI**, and has not run on real hardware. The Mac mini and the
+[universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg) still have
+verified `281c6c0` and its matching protocol-4 helper. That older build contains
 every fix from the October bug hunt (punch, capture and session safety, network
 hardening, engine/playback, EDIT view, clip editing), RECORD no longer waiting on
 lead-in silence, and exact splits inside fades. It passes **689 test groups in
 Release, ASan/UBSan, TSan and CI**. [INSTALL.md](INSTALL.md) owns hashes,
 rollback paths and what was and was not checked at installation;
 [CHANGELOG.md](CHANGELOG.md) lists the changes. Nothing under *Unreleased* in the
-changelog is in this build, so until a newer one is installed those fixes do not
-apply to either Mac. The rest of this README describes `main`.
+changelog is in `281c6c0`, so those fixes do not apply to the mini until it is
+updated. The rest of this README describes `main`.
 
 Active development, pre-1.0. The app provides multitrack capture, virtual
 soundcheck, non-destructive clip editing, stems and stereo bounce,
@@ -91,7 +92,7 @@ Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md);
 
 ## Feature highlights
 
-These describe `main`, which is ahead of the installed `281c6c0`: see *Status*.
+These describe `main`, which the mini's `281c6c0` does not have: see *Status*.
 
 ### Capture
 - Per-channel audio rings (up to 256 channels) feed a separate writer and buffer for each copy; bounded capture-boundary synchronization preserves exact audio/gap order on overflow

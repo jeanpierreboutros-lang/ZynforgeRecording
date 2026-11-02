@@ -2,9 +2,9 @@
 
 ## Current validation — 2026-11-02
 
-Current source, after the cut to recorder and virtual soundcheck: **1217 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports and no forced thread stops. `tools/design_audit.sh`, `tools/invariants_audit.sh`, `test_notarize.py` and `test_verify_tools.py` pass. Nothing here has run on real hardware or been installed on either Mac.
+Current source, after the cut to recorder and virtual soundcheck and the design pass: **1219 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports and no forced thread stops. `tools/design_audit.sh`, `tools/invariants_audit.sh`, `test_notarize.py` and `test_verify_tools.py` pass. Nothing here has run on real hardware. It is installed on the development Mac only; see [INSTALL.md](INSTALL.md).
 
-Nothing in this section has run on real hardware, and nothing from it is installed on either Mac. The hardware steps are under *2026-11-02 cut* in [FIELD-TEST.md](FIELD-TEST.md).
+Nothing in this section has run on real hardware, and it is installed on the development Mac only. The hardware steps are under *2026-11-02 cut* in [FIELD-TEST.md](FIELD-TEST.md).
 
 ### The cut to recorder and virtual soundcheck
 
@@ -21,7 +21,7 @@ Nothing in this section has run on real hardware, and nothing from it is install
 
 At that pass: **1298 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open` with no sanitizer reports and no forced thread stops (Release and TSan at `58a7267`; ASan/UBSan after a test-only fix to `CaptureFixTests.cpp`, where a detached probe thread outlived the event it waited on). `tools/design_audit.sh`, `tools/invariants_audit.sh`, `test_notarize.py` and `test_verify_tools.py` all passed. CI passed the same 1298 groups on the macOS 15 runner, Debug and Release, at `f2df45f`. CI moved from macOS 14 because GitHub retires that runner on 2026-11-02.
 
-Nothing in this section has run on real hardware, and nothing from it is installed on either Mac. The hardware steps are under *2026-11-01 fix-pass acceptance* in [FIELD-TEST.md](FIELD-TEST.md).
+Nothing in this section has run on real hardware, and it is installed on the development Mac only. The hardware steps are under *2026-11-01 fix-pass acceptance* in [FIELD-TEST.md](FIELD-TEST.md).
 
 ### New suites
 

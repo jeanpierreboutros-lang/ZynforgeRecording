@@ -2,9 +2,24 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-## Current two-Mac installation — 2026-10-29
+## Development Mac update — 2026-11-02
 
-`main` is ahead of this build, and nothing newer is installed on either Mac. Everything below describes `281c6c0`, which still carries the features listed under *Removed* in [CHANGELOG.md](CHANGELOG.md). The next package from `main` has `device.audio-input` as its only entitlement on both binaries.
+The development Mac (MacBook Pro) now has `fffab44`: the recorder and virtual soundcheck after the cut, every 2026-11-01 fix and the design pass. The Mac mini still has `281c6c0`, described below, and no DMG was made for this build.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `91f6ff578a748ce7323c4eb4842d7d85766bb613cdb5b4a582f4fde3fe8bbcba` |
+| Capture helper | `6335a7af98b34227c6401ced532f16461e941b0dc60c657b957249bacde1b3a5` |
+
+- **Tests before install:** 1219 groups / 0 failures in Release, ASan/UBSan and TSan, each launched through `open`, with no sanitizer reports. CI passed Debug and Release on the same commit. The built app launched, quit by itself and left no crash report.
+- **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Both executables are universal. The stage was copied with `ditto --norsrc --noextattr --noqtn`, because the build folder is on exFAT.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261102-094838-before-fffab44` (`281c6c0`).
+- **Signing:** ad-hoc, with no entitlements and no hardened runtime, the same as `281c6c0`. Only a `tools/notarize.sh` package carries `device.audio-input`. macOS shows the microphone prompt again, since a new ad-hoc build counts as a new app.
+- **Not checked:** no recording was made, and no audio device was selected. Nothing here has run on real hardware.
+
+## Two-Mac installation — 2026-10-29
+
+Everything in this section describes `281c6c0`, which still carries the features listed under *Removed* in [CHANGELOG.md](CHANGELOG.md). It is now on the Mac mini only.
 
 Both Macs now have source build `281c6c0` (the October bug-hunt fixes, deferred
 lead-ins and exact split fades; code identical to `abb83bf`) and its matching
@@ -238,6 +253,6 @@ Not run yet: it needs the owner's Developer ID. Local installs above stay ad-hoc
 
 ## Rollback
 
-The October 5 two-Mac cleanup removed all inventoried older app bundles at the user's request. There is currently no local old-version rollback copy. Since 2026-10-29 each Mac keeps its `443c769` bundle as `/Applications/Zynforge Recording.app.backup-20261029-*-before-281c6c0`; earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.
+The October 5 two-Mac cleanup removed all inventoried older app bundles at the user's request. There is currently no local old-version rollback copy. Since 2026-10-29 each Mac keeps its `443c769` bundle as `/Applications/Zynforge Recording.app.backup-20261029-*-before-281c6c0`, and the development Mac also keeps `281c6c0` as `/Applications/Zynforge Recording.app.backup-20261102-094838-before-fffab44`; earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.
