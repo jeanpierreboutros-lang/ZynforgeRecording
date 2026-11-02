@@ -167,6 +167,7 @@ namespace zynforge
             heldPresses();
             bannerHoldsEverything();
             bannerTakesTurns();
+            testTone();
         }
 
     private:
@@ -554,6 +555,99 @@ namespace zynforge
                 bool self = true, children = true;
                 w.main.alarmBanner.getInterceptsMouseClicks (self, children);
                 expect (! self && ! children);
+            }
+        }
+
+        // The engine's callback on four outputs. A test tone is the only thing
+        // that can sound here: no strip feeds an output.
+        struct Outputs
+        {
+            juce::AudioBuffer<float> in { 2, kBlock }, out { 4, kBlock };
+
+            void render (AudioEngine& engine)
+            {
+                in.clear();
+                out.clear();
+                engine.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), 2,
+                                                         out.getArrayOfWritePointers(), 4, kBlock, {});
+            }
+
+            float peak (int channel) const { return out.getMagnitude (channel, 0, kBlock); }
+
+            float peakOver (AudioEngine& engine, int channel, int blocks)
+            {
+                float most = 0.0f;
+                for (int b = 0; b < blocks; ++b) { render (engine); most = juce::jmax (most, peak (channel)); }
+                return most;
+            }
+        };
+
+        void testTone()
+        {
+            beginTest ("The test tone sounds on the monitor pair and nowhere else");
+            {
+                AudioEngine engine;
+                engine.prepareForTests (kRate, kBlock);
+                engine.setMasterOutputs (2, 3);
+                engine.setMasterGainDb (0.0f);
+                engine.setMasterMuted (false);
+                expect (engine.playTestTone().isEmpty());
+                Outputs outputs;
+                float left = 0.0f, right = 0.0f, others = 0.0f;
+                for (int b = 0; b < 40; ++b)
+                {
+                    outputs.render (engine);
+                    left   = juce::jmax (left,  outputs.peak (2));
+                    right  = juce::jmax (right, outputs.peak (3));
+                    others = juce::jmax (others, outputs.peak (0), outputs.peak (1));
+                }
+                expect (left > 0.05f, "no tone on the left of the pair");
+                expect (right > 0.05f, "no tone on the right of the pair");
+                expect (left < 0.2f, "the tone is meant to be a line-up level");
+                expectEquals (others, 0.0f, "the tone reached outputs that feed the desk");
+                engine.setMasterOutputs (0, 1);
+            }
+
+            beginTest ("Master MUTE silences the tone, even one already sounding");
+            {
+                AudioEngine engine;
+                engine.prepareForTests (kRate, kBlock);
+                engine.setMasterOutputs (0, 1);
+                engine.setMasterGainDb (0.0f);
+                engine.setMasterMuted (false);
+                expect (engine.playTestTone().isEmpty());
+                Outputs outputs;
+                expect (outputs.peakOver (engine, 0, 20) > 0.05f);
+                engine.setMasterMuted (true);
+                expectEquals (outputs.peakOver (engine, 0, 20), 0.0f, "the tone went past MUTE");
+                expect (engine.playTestTone().containsIgnoreCase ("mute"));
+                engine.setMasterMuted (false);
+            }
+
+            beginTest ("A take refuses the tone and takes the outputs back from one sounding");
+            {
+                Window w;
+                w.arm ({ 0 });
+                expect (w.engine().playTestTone().isEmpty());
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording());
+                expect (w.engine().playTestTone().containsIgnoreCase ("take"));
+                Outputs outputs;
+                expectEquals (outputs.peakOver (w.engine(), 0, 20), 0.0f, "the tone played on into the take");
+                w.main.onStopClicked();
+                w.main.onStopClicked();
+                expect (w.stopped());
+            }
+
+            beginTest ("With the monitor bus set to no output the tone has nowhere to go");
+            {
+                AudioEngine engine;
+                engine.prepareForTests (kRate, kBlock);
+                engine.setMasterOutputs (-1, -1);
+                expect (engine.playTestTone().isNotEmpty());
+                Outputs outputs;
+                expectEquals (outputs.peakOver (engine, 0, 4), 0.0f);
+                engine.setMasterOutputs (0, 1);
             }
         }
 

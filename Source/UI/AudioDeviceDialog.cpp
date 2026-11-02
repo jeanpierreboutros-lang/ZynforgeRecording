@@ -200,9 +200,14 @@ namespace zynforge
 
                 addAndMakeVisible (inputMeter);
 
-                testButton.setTooltip ("Play a short 440 Hz tone through the selected output.");
+                testButton.setTooltip ("Play a one-second 440 Hz tone on the monitor pair only. Master MUTE silences it.");
                 dialog::styleSecondary (testButton);
-                testButton.onClick = [this] { engine.getDeviceManager().playTestSound(); };
+                testButton.onClick = [this]
+                {
+                    const auto refusal = engine.playTestTone();
+                    statusLabel.setText (refusal.isNotEmpty() ? refusal : juce::String ("Test tone on the monitor pair"),
+                                         juce::dontSendNotification);
+                };
                 addAndMakeVisible (testButton);
 
                 statusLabel.setText ("Pick a device, sample rate and buffer -- then Apply.",
@@ -386,6 +391,7 @@ namespace zynforge
                 inputBox .setEnabled (! rec);
                 rateBox  .setEnabled (! rec);
                 bufferBox.setEnabled (! rec);
+                testButton.setEnabled (! rec);
 
                 auto& dm = engine.getDeviceManager();
                 auto* type = dm.getCurrentDeviceTypeObject();

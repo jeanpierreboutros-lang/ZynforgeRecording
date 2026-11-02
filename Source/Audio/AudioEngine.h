@@ -192,6 +192,10 @@ namespace zynforge
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }
         void  setMasterOutputs (int l, int r);
+        // One second of 440 Hz on the master pair and nowhere else, under the
+        // master fader and MUTE. Empty means it plays; otherwise the reason it
+        // does not. A take refuses it and ends one already sounding.
+        juce::String playTestTone();
         // True while the audio callback keeps the master bus off its outputs
         // because a strip is patched to one (mix::busHeldOffOutputs).
         bool  isMasterHeldOff() const noexcept { return masterHeldOff.load (std::memory_order_relaxed); }
@@ -957,6 +961,11 @@ namespace zynforge
         std::atomic<bool> streamHeldOff { false };
         std::atomic<bool> mixMaySharePatchedOutputs { false };
         std::atomic<int>  masterOutL    { 0 };
+        static constexpr double kTestToneHz = 440.0, kTestToneSeconds = 1.0, kTestToneRampSeconds = 0.005;
+        static constexpr double kTestToneLevel = 0.1;   // -20 dBFS: a line-up level, not a shock
+        std::atomic<int>  testToneLeft { 0 }, testToneLength { 0 };
+        double            testTonePhase { 0.0 };        // audio thread only
+        void renderTestTone (int outL, int outR, double gain, int numSamples) noexcept;
         std::atomic<int>  masterOutR    { 1 };
         std::atomic<bool> masterStereo  { true };
 

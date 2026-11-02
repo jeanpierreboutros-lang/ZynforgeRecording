@@ -565,6 +565,50 @@ namespace zynforge
         return false;
     }
 
+    juce::String AudioEngine::playTestTone()
+    {
+        if (isRecording()) return "Test tone refused -- a take is rolling";
+        const auto rate = deviceSampleRate.load (std::memory_order_relaxed);
+        if (rate <= 0.0) return "Test tone refused -- no audio device";
+        if (masterOutL.load (std::memory_order_relaxed) < 0)
+            return "Test tone refused -- the monitor bus is set to no output";
+        if (masterState.muted.load (std::memory_order_relaxed))
+            return "Test tone refused -- master MUTE is on";
+        if (masterHeldOff.load (std::memory_order_relaxed))
+            return "Test tone refused -- a strip is patched to the monitor outputs";
+        const int length = (int) (rate * kTestToneSeconds);
+        testToneLength.store (length, std::memory_order_relaxed);
+        testToneLeft.store (length, std::memory_order_relaxed);
+        return {};
+    }
+
+    // Lands in the accumulator after the master sum, so it reaches the device
+    // through the one place that enforces master MUTE, and no other output.
+    void AudioEngine::renderTestTone (int outL, int outR, double gain, int numSamples) noexcept
+    {
+        auto left = testToneLeft.load (std::memory_order_relaxed);
+        // A take beginning takes the outputs back, even in the middle of a tone.
+        if (outL < 0 || isRecording()) { testToneLeft.compare_exchange_strong (left, 0); return; }
+
+        const int length = testToneLength.load (std::memory_order_relaxed);
+        const int count  = juce::jmin (numSamples, left);
+        const int ramp   = juce::jmax (1, (int) (deviceSampleRate.load (std::memory_order_relaxed) * kTestToneRampSeconds));
+        const double step = juce::MathConstants<double>::twoPi * kTestToneHz
+                          / deviceSampleRate.load (std::memory_order_relaxed);
+        double* dstL = outputAccum.getWritePointer (outL);
+        double* dstR = outR >= 0 ? outputAccum.getWritePointer (outR) : nullptr;
+        for (int i = 0; i < count; ++i)
+        {
+            const int played = length - left + i;
+            const double fade = juce::jmin (1.0, (double) juce::jmin (played, left - i) / (double) ramp);
+            const double sample = std::sin (testTonePhase) * kTestToneLevel * fade * gain;
+            testTonePhase = std::fmod (testTonePhase + step, juce::MathConstants<double>::twoPi);
+            dstL[i] += sample;
+            if (dstR != nullptr) dstR[i] += sample;
+        }
+        testToneLeft.compare_exchange_strong (left, left - count);
+    }
+
     void AudioEngine::setMasterGainDb (float dB)
     {
         masterState.gainDb.store (dB, std::memory_order_relaxed);
@@ -2876,6 +2920,9 @@ const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxe
             for (int i = 0; i < blk; ++i)
                 dstR[i] += accR[i] * mGain;
         }
+
+        if (testToneLeft.load (std::memory_order_relaxed) > 0)
+            renderTestTone (masterAudible ? outL : -1, masterAudible ? outR : -1, mGain, blk);
 
         // Final downcast: the 64-bit accumulator → device-output float
         // buffers. Done in one place at the very end so per-strip /
