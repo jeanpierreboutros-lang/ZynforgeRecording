@@ -8,6 +8,8 @@ namespace zynforge
 {
     namespace
     {
+        constexpr int kNarrowComboW = 64;
+
         // The ZynForge forge-mark badge -- the app-icon glyph (forged-steel
         // squircle + orange hex + rising double-chevron). Drawn programmatically
         // so it scales crisply at any size and needs no embedded PNG. Used as the
@@ -118,6 +120,33 @@ namespace zynforge
 
         g.setColour (brand::edge);
         g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+    }
+
+    void ZynForgeLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool isButtonDown,
+                                            int buttonX, int buttonY, int buttonW, int buttonH,
+                                            juce::ComboBox& box)
+    {
+        if (width >= kNarrowComboW)
+        {
+            LookAndFeel_V4::drawComboBox (g, width, height, isButtonDown, buttonX, buttonY, buttonW, buttonH, box);
+            return;
+        }
+        const auto bounds = juce::Rectangle<int> (0, 0, width, height).toFloat();
+        g.setColour (box.findColour (juce::ComboBox::backgroundColourId));
+        g.fillRoundedRectangle (bounds, brand::radius::sm);
+        g.setColour (box.findColour (juce::ComboBox::outlineColourId));
+        g.drawRoundedRectangle (bounds.reduced (0.5f), brand::radius::sm, 1.0f);
+    }
+
+    void ZynForgeLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
+    {
+        LookAndFeel_V4::positionComboBoxText (box, label);
+        const bool narrow = box.getWidth() < kNarrowComboW;
+        label.setBorderSize (narrow ? juce::BorderSize<int>() : juce::BorderSize<int> (1, 5, 1, 5));
+        if (! narrow) return;
+        label.setBounds (box.getLocalBounds().reduced (2, 1));
+        label.setFont (brand::type::caption());
+        label.setMinimumHorizontalScale (0.6f);
     }
 
     void ZynForgeLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,

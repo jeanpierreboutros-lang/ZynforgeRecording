@@ -725,22 +725,6 @@ namespace zynforge
         panSlider  .setTitle (pairState != nullptr ? "Pan left" : "Pan");
         panSliderR .setTitle ("Pan right");
 
-        // Reference-screenshot pan readouts:
-        //   mono   → "pan  ◂  N  ▸"
-        //   stereo → "◂  100  ▸"  on each of two knobs
-        auto formatPanText = [] (double v, bool compact)
-        {
-            const int pct = juce::jlimit (0, 100, juce::roundToInt (std::abs (v) * 100.0));
-            const juce::String mid = (pct == 0)
-                                       ? juce::String ("0")
-                                       : (v < 0.0 ? juce::String ("L") + juce::String (pct)
-                                                  : juce::String ("R") + juce::String (pct));
-            const auto core = juce::String::fromUTF8 ("\xe2\x97\x82") + "  "
-                            + mid + "  "
-                            + juce::String::fromUTF8 ("\xe2\x96\xb8");
-            return compact ? core : juce::String ("pan  ") + core;
-        };
-
         // Helper to style a pan rotary identically for L (and optional R).
         auto stylePanKnob = [this] (juce::Slider& s)
         {
@@ -766,7 +750,7 @@ namespace zynforge
         panSlider.setScrollWheelEnabled (false);
         panSlider.setTooltip ("Pan L -- drag to set L100..0..R100. Double-click for centre.");
         panSlider.setValue (s.pan.load(), juce::dontSendNotification);
-        panSlider.onValueChange = [this, formatPanText]
+        panSlider.onValueChange = [this]
         {
             const float v = (float) panSlider.getValue();
             state.pan.store (v, std::memory_order_relaxed);
@@ -777,7 +761,7 @@ namespace zynforge
                 // independent → don't sync R
             }
             if (panCb) panCb (v);
-            panLabel.setText (formatPanText (v, pairState != nullptr), juce::dontSendNotification);
+            showPanText();
         };
         addAndMakeVisible (panSlider);
 
@@ -785,7 +769,6 @@ namespace zynforge
         panLabel.setFont (zynforge::brand::type::monoStamp());
         panLabel.setColour (juce::Label::textColourId, brand::textSecondary);
         panLabel.setJustificationType (juce::Justification::centred);
-        panLabel.setText (formatPanText (s.pan.load(), pairState != nullptr), juce::dontSendNotification);
         addAndMakeVisible (panLabel);
 
         // For stereo strips: a second pan knob + label for R.
@@ -795,7 +778,7 @@ namespace zynforge
             panSliderR.setScrollWheelEnabled (false);
             panSliderR.setTooltip ("Pan R -- drag to set L100..0..R100. Double-click for centre.");
             panSliderR.setValue (pairState->pan.load(), juce::dontSendNotification);
-            panSliderR.onValueChange = [this, formatPanText]
+            panSliderR.onValueChange = [this]
             {
                 const float v = (float) panSliderR.getValue();
                 if (pairState != nullptr)
@@ -803,16 +786,16 @@ namespace zynforge
                 // Persist the R-side pan via its own callback so the
                 // L/R values are independent and both survive a relaunch.
                 if (panRCb) panRCb (v);
-                panLabelR.setText (formatPanText (v, true), juce::dontSendNotification);
+                showPanText();
             };
             addAndMakeVisible (panSliderR);
 
             panLabelR.setFont (zynforge::brand::type::monoStamp());
             panLabelR.setColour (juce::Label::textColourId, brand::textSecondary);
             panLabelR.setJustificationType (juce::Justification::centred);
-            panLabelR.setText (formatPanText (pairState->pan.load(), true), juce::dontSendNotification);
             addAndMakeVisible (panLabelR);
         }
+        showPanText();
 
         gainFader.setSliderStyle (juce::Slider::LinearVertical);
         gainFader.setRange (-60.0, 12.0, 0.1);
@@ -900,6 +883,30 @@ namespace zynforge
         if (takeRolling == rolling) return;
         takeRolling = rolling;
         repaint();
+    }
+
+    // Pan readout for the room there is: "pan < L40 >", "< L40 >" or just "L40",
+    // so a narrow strip shows the value rather than a clipped word.
+    void ChannelStrip::showPanText()
+    {
+        auto format = [] (double v, int detail)
+        {
+            const int pct = juce::jlimit (0, 100, juce::roundToInt (std::abs (v) * 100.0));
+            const juce::String mid = (pct == 0)
+                                       ? juce::String ("0")
+                                       : (v < 0.0 ? juce::String ("L") + juce::String (pct)
+                                                  : juce::String ("R") + juce::String (pct));
+            if (detail == 0) return mid;
+            const auto core = juce::String::fromUTF8 ("\xe2\x97\x82") + "  "
+                            + mid + "  "
+                            + juce::String::fromUTF8 ("\xe2\x96\xb8");
+            return detail == 1 ? core : juce::String ("pan  ") + core;
+        };
+        const int room = pairState != nullptr ? getWidth() / 2 : getWidth();
+        const int detail = room < 60 ? 0 : (room < 96 ? 1 : 2);
+        panLabel.setText (format (panSlider.getValue(), detail), juce::dontSendNotification);
+        if (pairState != nullptr)
+            panLabelR.setText (format (panSliderR.getValue(), detail), juce::dontSendNotification);
     }
 
     void ChannelStrip::showFaderValue()
@@ -1131,5 +1138,6 @@ namespace zynforge
         gainFader.setBounds (cluster);
 
         outLabel.setBounds ({});  // collapsed -- output combo serves the role
+        showPanText();
     }
 }

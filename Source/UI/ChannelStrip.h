@@ -122,6 +122,7 @@ namespace zynforge
         juce::Rectangle<int> contentArea() const;
         juce::Rectangle<int> numberBounds() const;
         void showFaderValue();
+        void showPanText();
         void ensureRoutingItem (juce::ComboBox&, int deviceChannel, int deviceChannels, const char* prefix);
 
         bool hovered { false };
