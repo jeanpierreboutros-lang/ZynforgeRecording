@@ -273,6 +273,18 @@ namespace zynforge::brand
         return strip;
     }
 
+    // An EDIT clip: a dark body that keeps a hint of the track's hue, and the
+    // waveform in the track's own colour, lifted until it reads on that body.
+    // A light clip was the brightest thing on screen in a dark room.
+    inline juce::Colour clipBody (juce::Colour track) noexcept
+    {
+        return bgDeep.interpolatedWith (track, alpha::subtle);
+    }
+    inline juce::Colour clipWave (juce::Colour track) noexcept
+    {
+        return track.withBrightness (juce::jmax (track.getBrightness(), 0.88f));
+    }
+
     // ── Personality wash colours -- INS 1-8 ────────────────────────────────
     //
     // Pass 2 (2026-05-23): the moss / olive / violet / teal swatches

@@ -853,33 +853,21 @@ namespace zynforge
             auto drawLane = [&]()
             {
 
-            // ── Waveform fill (Pro Tools-style: COLOURED clip bg + DARK wave) ──
-            // The "alive", easy-on-the-eyes look is the clip filled with the
-            // channel's COLOUR, and the waveform drawn DARK on top of it: loud
-            // sections fill dark, quiet sections let the colour show through. This
-            // is the INVERSE of a bright wave on a near-black lane (which glowed
-            // like a noisy barcode). The dark wave is a deep shade of the same
-            // channel hue, so colour identity carries. A thin LIGHTER rim along
-            // the envelope (drawn first, full height; dark body inset 1px over it)
-            // gives the contour definition PT has.
-            // The DARK waveform is the BOLD, dominant element (like Pro Tools);
-            // the coloured clip is the lighter backdrop. Derive the wave by
-            // SINKing the channel colour directly (keeps its saturation -> a deep,
-            // bold navy/hue), NOT by sinking the lightened bg (that came out muddy
-            // + washed, so the bg looked more alive than the wave). The bg is the
-            // channel colour LIFTed light. Solid wave (no rim) so it reads bold.
-            const auto waveBg   = brand::lift (getStripColour(), 0.48f);  // light coloured clip backdrop
-            const auto waveDark = brand::sink (getStripColour(), 0.68f);  // BOLD deep wave = the focal point
-            auto drawWaveOutlined = [this, &g, waveBg, waveDark]
+            // Each clip is a dark body with the waveform in the track's colour,
+            // so the colour says which channel and the shape reads at a glance
+            // without the lanes lighting up a dark room.
+            const auto waveBg   = brand::clipBody (getStripColour());
+            const auto waveFace = brand::clipWave (getStripColour());
+            auto drawWaveOutlined = [this, &g, waveBg, waveFace]
                 (juce::AudioThumbnail& thumb, juce::Rectangle<int> area,
                  bool wholeFile, int chan, double t0, double t1, float zoom)
             {
                 g.setColour (waveBg);
-                g.fillRect (area);                      // light coloured clip backdrop
-                g.setColour (waveDark);                 // solid BOLD dark waveform on top
+                g.fillRect (area);
+                g.setColour (waveFace);
                 if (! (wholeFile && thumb.getNumChannels() != 1)
                     && drawOverviewWave (g, thumb, area, chan, t0, t1, zoom,
-                                         waveDark, waveDark.withAlpha (brand::alpha::muted)))
+                                         waveFace, waveFace.withAlpha (brand::alpha::muted)))
                     return;
                 drawThumbnailVisible (g, thumb, area, t0, t1, wholeFile ? -1 : chan, zoom);
             };
@@ -1347,17 +1335,18 @@ namespace zynforge
                         if (headH > 0)
                         {
                             auto headRect = block.withHeight (headH);
-                            g.setColour (clipTint.withAlpha (c.muted ? 0.30f : 0.68f));
+                            g.setColour (brand::stripHeaderFill (clipTint).withAlpha (c.muted ? brand::alpha::wash
+                                                                                              : brand::alpha::bold));
                             g.fillRect (headRect);
                             if (block.getWidth() > 26)
                             {
-                                g.setColour (brand::onSignal (clipTint));
+                                g.setColour (brand::textPrimary);
                                 g.setFont (brand::type::micro());
                                 g.drawText (clipDisplayName (c), headRect.reduced (5, 0),
                                             juce::Justification::centredLeft, false);
                             }
                         }
-                        g.setColour (brand::lift (clipTint, 0.30f).withAlpha (zynforge::brand::alpha::prominent));
+                        g.setColour (brand::stripHeaderFill (clipTint));
                         g.drawRect (block, 1);
 
                         // Selected-clip highlight -- the clip you're working
