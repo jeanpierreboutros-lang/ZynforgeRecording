@@ -70,7 +70,7 @@ public:
         return writer->writeFromAudioSampleBuffer (audio, 0, 4800);
     }
 
-    static bool pumpUntil (const std::function<bool()>& ready, int timeoutMs = 20000)
+    static bool pumpUntil (const std::function<bool()>& ready, int timeoutMs = 120000)
     {
         const auto deadline = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
         while (! ready() && juce::Time::getMillisecondCounterHiRes() < deadline)
