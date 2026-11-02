@@ -49,7 +49,7 @@ namespace zynforge
                 for (auto* r : { &mtcSel, &ltcSel })
                 {
                     r->setRadioGroupId (1);
-                    r->setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                    r->setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                     addAndMakeVisible (*r);
                 }
                 masterIsMtc = (engine.getChaseMode() != AudioEngine::ChaseMode::Ltc);
@@ -84,7 +84,7 @@ namespace zynforge
 
                 keepRolling.setButtonText ("Keep rolling if sync is lost");
                 keepRolling.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-                keepRolling.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                keepRolling.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                 keepRolling.setToggleState (engine.isKeepRollingOnSyncLoss(), juce::dontSendNotification);
                 keepRolling.onClick = [this] { engine.setKeepRollingOnSyncLoss (keepRolling.getToggleState()); };
                 addAndMakeVisible (keepRolling);

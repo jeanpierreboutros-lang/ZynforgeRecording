@@ -44,7 +44,7 @@ namespace zynforge
 
                 addAndMakeVisible (pathButton);
                 pathButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-                pathButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
+                pathButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
                 pathButton.setButtonText (compactPath (storageDir));
                 pathButton.setTooltip ("Choose the folder to create the session in.");
                 pathButton.onClick = [this] { pickFolder(); };
@@ -103,8 +103,7 @@ namespace zynforge
 
                 addAndMakeVisible (createButton);
                 createButton.setButtonText ("Create");
-                createButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-                createButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
+                dialog::stylePrimary (createButton);
                 createButton.onClick = [this] { dismiss (true); };
 
                 // Reconcile the bit-depth list with the INITIAL file type too --

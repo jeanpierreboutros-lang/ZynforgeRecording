@@ -16,7 +16,7 @@ namespace zynforge
         static void styleReadOnly (juce::Label& l)
         {
             l.setFont (brand::type::channelName());
-            l.setColour (juce::Label::textColourId, brand::accentStatus);
+            l.setColour (juce::Label::textColourId, brand::textPrimary);
         }
 
         class Content final : public juce::Component

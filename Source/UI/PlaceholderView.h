@@ -239,7 +239,7 @@ namespace zynforge
             {
                 const float ph = phase * juce::MathConstants<float>::twoPi - (float) i * 0.6f;
                 const float a  = 0.35f + 0.45f * (0.5f + 0.5f * std::sin (ph));
-                g.setColour (brand::accentStatus.withAlpha (a));
+                g.setColour (brand::textSecondary.withAlpha (a));
                 g.fillEllipse (c.x + ((float) i - 1.0f) * gapX - r, c.y - r, r * 2.0f, r * 2.0f);
             }
         }
@@ -257,7 +257,7 @@ namespace zynforge
         void paintErrorGlyph (juce::Graphics& g, juce::Rectangle<float> cell) const
         {
             auto box = cell.reduced (cell.getWidth() * 0.12f);
-            g.setColour (brand::accentStatus);
+            g.setColour (brand::alertAmber);
             g.drawEllipse (box, 2.0f);
             g.setFont (brand::type::mono (cell.getHeight() * 0.55f, true));
             g.drawText ("!", box.toNearestInt(), juce::Justification::centred);

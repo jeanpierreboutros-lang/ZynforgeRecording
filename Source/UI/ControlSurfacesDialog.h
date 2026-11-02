@@ -161,7 +161,7 @@ namespace zynforge
                 lab (connVal, "osc.udp://" + host + ":" + juce::String (oscPort (e)) + "/", brand::textPrimary, true);
                 lab (portKey, "Listen Port", brand::textSecondary);
                 lab (addrKey, "Address root", brand::textSecondary);
-                lab (addrVal, juce::String (info.prefix) + "*", brand::accentStatus, true);
+                lab (addrVal, juce::String (info.prefix) + "*", brand::textPrimary, true);
 
                 dialog::styleTextEditor (portEd);
                 portEd.setInputRestrictions (5, "0123456789");
@@ -215,7 +215,7 @@ namespace zynforge
 
                     debugToggle.setButtonText ("Debug: log OSC traffic");
                     debugToggle.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-                    debugToggle.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                    debugToggle.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
                     debugToggle.setToggleState (engine.getRemotes().isOscDebug(), juce::dontSendNotification);
                     debugToggle.onClick = [this] { engine.getRemotes().setOscDebug (debugToggle.getToggleState()); };
                     logB.setButtonText ("View OSC Log...");
@@ -489,13 +489,13 @@ namespace zynforge
             {
                 if (row < 0 || row >= getNumRows()) return;
                 const auto& pi = protocols()[(size_t) row];
-                if (selected) { g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::subtle)); g.fillRect (0, 0, w, h); }
+                if (selected) { g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::ghost)); g.fillRect (0, 0, w, h); }
 
                 const auto box = juce::Rectangle<float> (12.0f, h * 0.5f - 8.0f, 16.0f, 16.0f);
                 g.setColour (brand::edge); g.drawRoundedRectangle (box, brand::radius::md, 1.2f);
                 if (protoEnabled (engine, pi))
                 {
-                    g.setColour (brand::accentStatus);
+                    g.setColour (brand::selectFill);
                     g.fillRoundedRectangle (box.reduced (3.0f), 2.0f);
                 }
                 g.setColour (brand::textPrimary);

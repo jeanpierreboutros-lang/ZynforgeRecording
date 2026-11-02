@@ -323,7 +323,7 @@ namespace zynforge
                                           brand::type::h_hero + 12.0f);
         const auto timerCol = mode == Mode::Recording ? brand::accentRecord
                             : mode == Mode::Playing   ? brand::accentPlay
-                                                      : brand::accentStatus;
+                                                      : brand::textSecondary;
         // Legibility first: a soft orange bloom around the digits (the old
         // approach) fringed every glyph and made the timer read as a blurry
         // smear against the warm, breathing ember background. Instead anchor

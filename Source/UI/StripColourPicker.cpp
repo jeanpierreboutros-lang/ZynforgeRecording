@@ -20,7 +20,7 @@ namespace zynforge
         // OK -- confirm the live-previewed selection and close. The colour is
         // already applied (each swatch click previews it on the strip), so OK
         // simply re-applies the pending colour and dismisses the call-out.
-        styleButton (okButton, brand::featureEngaged.withAlpha (zynforge::brand::alpha::muted));
+        styleButton (okButton, brand::selectFill);
         okButton.onClick = [this]
         {
             if (callback) callback (pending);
@@ -112,7 +112,7 @@ namespace zynforge
                 g.setColour (brand::gloss (zynforge::brand::alpha::muted));
                 g.drawRoundedRectangle (r.reduced (3.0f), brand::radius::sm, 1.0f);
             }
-            g.setColour (isPending ? brand::accentStatus : brand::edge);
+            g.setColour (isPending ? brand::selectFill : brand::edge);
             g.drawRoundedRectangle (r, brand::radius::md, isPending ? 2.5f : 1.0f);
         }
     }

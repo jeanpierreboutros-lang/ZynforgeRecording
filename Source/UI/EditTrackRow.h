@@ -1039,13 +1039,13 @@ namespace zynforge
                 {
                     const int x = mapper.toX (mk.sampleOffset);
                     if (x < inner.getX() || x > inner.getRight()) continue;
-                    g.setColour (brand::accentStatus);
+                    g.setColour (brand::textSecondary);
                     g.drawVerticalLine (x, (float) inner.getY(), (float) inner.getBottom());
                     // Flag + name at the top.
                     g.fillRect (juce::Rectangle<int> (x, inner.getY(), 6, 4));
                     if (mk.name.isNotEmpty())
                     {
-                        g.setColour (brand::onSignal (brand::accentStatus));
+                        g.setColour (brand::onSignal (brand::textSecondary));
                         g.setFont (brand::type::micro());
                         g.drawText (mk.name,
                                     juce::Rectangle<int> (x + 4, inner.getY() + 1, 90, 11),
@@ -1192,7 +1192,7 @@ namespace zynforge
                     const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);
                     auto sampleToX = [&] (juce::int64 sp) -> int
                     { return TimelineMapper::forLane (inner2, totalSamples).toXFloor (sp); };
-                    // The little green fade grab-squares were drawn on EVERY
+                    // The little fade grab-squares were drawn on EVERY
                     // clip edge even with no fade, which clutters the view. Show
                     // the empty grab-target only when the Fade tool is active;
                     // a clip that already HAS a fade always shows its handle so
@@ -1299,8 +1299,8 @@ namespace zynforge
                                 && (hovered || active || std::abs (c.gainDb) > 0.05f))
                             {
                                 const float g12 = juce::jlimit (-12.0f, 12.0f, c.gainDb);
-                                const auto col = active ? brand::accentStatus
-                                                        : brand::accentStatus.withAlpha (zynforge::brand::alpha::prominent);
+                                const auto col = active ? brand::selectFill
+                                                        : brand::selectFill.withAlpha (zynforge::brand::alpha::prominent);
                                 const float cx = (float) hr.getX() + 10.0f;
                                 // Fader track -- wider + clearer than the old hairline.
                                 g.setColour (brand::bgDeep.withAlpha (zynforge::brand::alpha::scrim));
@@ -1409,7 +1409,7 @@ namespace zynforge
                             if (c.fadeInSamples > 0)
                             {
                                 const auto [from, to] = fadeInLevels (c);
-                                g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::ghost));
+                                g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::ghost));
                                 juce::Path p;
                                 p.startNewSubPath ((float) xL, levelY (from));
                                 p.lineTo ((float) xF, levelY (to));
@@ -1423,7 +1423,7 @@ namespace zynforge
                                 const juce::Rectangle<float> handle (
                                     (float) xF - 3.5f, (float) inner2.getY(),
                                     7.0f, 7.0f);
-                                g.setColour (brand::accentStatus);
+                                g.setColour (brand::selectFill);
                                 g.fillRect (handle);
                             }
                         }
@@ -1433,7 +1433,7 @@ namespace zynforge
                             if (c.fadeOutSamples > 0)
                             {
                                 const auto [from, to] = fadeOutLevels (c);
-                                g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::ghost));
+                                g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::ghost));
                                 juce::Path p;
                                 p.startNewSubPath ((float) xF, levelY (from));
                                 p.lineTo ((float) xR, levelY (to));
@@ -1444,7 +1444,7 @@ namespace zynforge
                                 const juce::Rectangle<float> handle (
                                     (float) xF - 3.5f, (float) inner2.getY(),
                                     7.0f, 7.0f);
-                                g.setColour (brand::accentStatus);
+                                g.setColour (brand::selectFill);
                                 g.fillRect (handle);
                             }
                         }
@@ -1472,9 +1472,9 @@ namespace zynforge
                         const auto band = juce::Rectangle<int> (xL, inner2.getY(),
                                                                 xR - xL,
                                                                 inner2.getHeight());
-                        g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::faint));
+                        g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::faint));
                         g.fillRect (band);
-                        g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::prominent));
+                        g.setColour (brand::selectFill.withAlpha (zynforge::brand::alpha::prominent));
                         // Outgoing (a) -- top-left to bottom-right.
                         g.drawLine ((float) xL, (float) inner2.getY(),
                                     (float) xR, (float) inner2.getBottom(), 1.4f);
@@ -1484,7 +1484,7 @@ namespace zynforge
                         // Midpoint handle for future drag-to-adjust.
                         const int xMid = (xL + xR) / 2;
                         const int yMid = inner2.getY() + inner2.getHeight() / 2;
-                        g.setColour (brand::accentStatus);
+                        g.setColour (brand::selectFill);
                         g.fillEllipse ((float) xMid - 3.0f, (float) yMid - 3.0f,
                                        6.0f, 6.0f);
                     }

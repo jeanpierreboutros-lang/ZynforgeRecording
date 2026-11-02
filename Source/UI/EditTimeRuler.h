@@ -213,7 +213,6 @@ namespace zynforge
                         juce::Rectangle<int> (headerInsetX, 0,
                                               headerW - headerInsetX, markerStripH),
                         juce::Justification::centredLeft, false);
-            g.setColour (brand::accentStatus);
             g.drawText ("Min:Secs",
                         juce::Rectangle<int> (headerInsetX, rulerTop,
                                               headerW - headerInsetX, rulerH),

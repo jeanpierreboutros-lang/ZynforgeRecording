@@ -84,9 +84,7 @@ namespace zynforge
             addAndMakeVisible (table);
 
             recoverButton.setButtonText ("Recover selected");
-            recoverButton.setColour (juce::TextButton::buttonColourId,
-                                     brand::accentStatus.withMultipliedAlpha (0.20f));
-            recoverButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
+            dialog::stylePrimary (recoverButton);
             recoverButton.onClick = [this] { recoverSelected(); };
             addAndMakeVisible (recoverButton);
 

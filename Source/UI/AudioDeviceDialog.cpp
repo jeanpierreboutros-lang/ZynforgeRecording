@@ -222,9 +222,7 @@ namespace zynforge
                 statusLabel.setFont (brand::type::statusBar());
                 addAndMakeVisible (statusLabel);
 
-                applyButton.setColour (juce::TextButton::buttonColourId,
-                                       brand::accentStatus.withAlpha (zynforge::brand::alpha::prominent));
-                applyButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+                dialog::stylePrimary (applyButton);
                 applyButton.onClick = [this] { applyAndClose(); };
                 addAndMakeVisible (applyButton);
 

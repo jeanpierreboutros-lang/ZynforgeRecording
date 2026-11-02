@@ -167,11 +167,9 @@ MainComponent::MainComponent()
     auto styleViewBtn = [] (juce::TextButton& b, bool engaged)
     {
         b.setColour (juce::TextButton::buttonColourId,
-                     engaged ? brand::sink (brand::accentStatus, 0.55f)
-                             : brand::bgElevated);
+                     engaged ? brand::selectFill : brand::bgElevated);
         b.setColour (juce::TextButton::textColourOffId,
-                     engaged ? brand::lift (brand::accentStatus, 0.10f)
-                             : brand::textSecondary);
+                     engaged ? brand::onSignal (brand::selectFill) : brand::textSecondary);
     };
     styleViewBtn (mixViewButton,  true);
     styleViewBtn (editViewButton, false);
@@ -187,9 +185,9 @@ MainComponent::MainComponent()
     auto styleStripBtn = [] (juce::TextButton& b, const char* tt)
     {
         b.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
-        b.setColour (juce::TextButton::buttonOnColourId,  brand::accentStatus);
+        b.setColour (juce::TextButton::buttonOnColourId,  brand::selectFill);
         b.setColour (juce::TextButton::textColourOffId,   brand::textSecondary);
-        b.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::accentStatus));
+        b.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::selectFill));
         b.setClickingTogglesState (false);
         b.setTooltip (tt);
     };
@@ -630,10 +628,9 @@ void MainComponent::switchView (View v)
     auto colour = [] (juce::TextButton& b, bool engaged)
     {
         b.setColour (juce::TextButton::buttonColourId,
-                     engaged ? brand::accentStatus.withAlpha (zynforge::brand::alpha::wash)
-                             : brand::bgElevated);
+                     engaged ? brand::selectFill : brand::bgElevated);
         b.setColour (juce::TextButton::textColourOffId,
-                     engaged ? brand::accentStatus : brand::textSecondary);
+                     engaged ? brand::onSignal (brand::selectFill) : brand::textSecondary);
     };
     colour (mixViewButton,  mix);
     colour (editViewButton, ! mix);

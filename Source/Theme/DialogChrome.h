@@ -124,17 +124,13 @@ namespace zynforge::dialog
                    .reduced (brand::space::md);
     }
 
-    // Apply / primary action button -- accentStatus background, legible
-    // foreground via brand::onSignal. Matches AudioDeviceDialog's
-    // primary action treatment.
+    // Apply / primary action button -- the selection ember, legible
+    // foreground via brand::onSignal.
     inline void stylePrimary (juce::TextButton& b) noexcept
     {
-        b.setColour (juce::TextButton::buttonColourId,
-                     brand::accentStatus.withAlpha (brand::alpha::prominent));
-        b.setColour (juce::TextButton::textColourOffId,
-                     brand::onSignal (brand::accentStatus));
-        b.setColour (juce::TextButton::textColourOnId,
-                     brand::onSignal (brand::accentStatus));
+        b.setColour (juce::TextButton::buttonColourId,  brand::selectFill);
+        b.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::selectFill));
+        b.setColour (juce::TextButton::textColourOnId,  brand::onSignal (brand::selectFill));
     }
 
     // Cancel / secondary action button -- bgElevated background,
@@ -202,8 +198,8 @@ namespace zynforge::dialog
         t.setColour (juce::TextEditor::backgroundColourId,     brand::bgDeep);
         t.setColour (juce::TextEditor::textColourId,           brand::textPrimary);
         t.setColour (juce::TextEditor::outlineColourId,        brand::edge);
-        t.setColour (juce::TextEditor::focusedOutlineColourId, brand::accentStatus);
+        t.setColour (juce::TextEditor::focusedOutlineColourId, brand::selectFill);
         t.setColour (juce::TextEditor::highlightColourId,
-                     brand::accentStatus.withAlpha (brand::alpha::dimmed));
+                     brand::selectFill.withAlpha (brand::alpha::half));
     }
 }

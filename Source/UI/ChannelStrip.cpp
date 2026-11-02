@@ -848,7 +848,7 @@ namespace zynforge
 
         // Pan label below the knob(s).
         panLabel.setFont (zynforge::brand::type::monoStamp());
-        panLabel.setColour (juce::Label::textColourId, brand::accentStatus);
+        panLabel.setColour (juce::Label::textColourId, brand::textSecondary);
         panLabel.setJustificationType (juce::Justification::centred);
         panLabel.setText (formatPanText (s.pan.load(), pairState != nullptr), juce::dontSendNotification);
         addAndMakeVisible (panLabel);
@@ -873,7 +873,7 @@ namespace zynforge
             addAndMakeVisible (panSliderR);
 
             panLabelR.setFont (zynforge::brand::type::monoStamp());
-            panLabelR.setColour (juce::Label::textColourId, brand::accentStatus);
+            panLabelR.setColour (juce::Label::textColourId, brand::textSecondary);
             panLabelR.setJustificationType (juce::Justification::centred);
             panLabelR.setText (formatPanText (pairState->pan.load(), true), juce::dontSendNotification);
             addAndMakeVisible (panLabelR);

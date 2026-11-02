@@ -37,8 +37,8 @@ namespace zynforge
         addAndMakeVisible (cueCombo);
 
         addCueButton.setButtonText ("+ Cue");
-        addCueButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-        addCueButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
+        addCueButton.setColour (juce::TextButton::buttonColourId, brand::selectFill);
+        addCueButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::selectFill));
         addCueButton.setTooltip ("Drop a new cue at the current transport position");
         addCueButton.onClick = [this] { if (onAddCue) onAddCue(); };
         addAndMakeVisible (addCueButton);
@@ -53,11 +53,10 @@ namespace zynforge
 
         // Explicit RECALL -- re-applies the selected cue's mix on demand
         // (the dropdown + arrows also recall, but a clear
-        // button makes the action obvious during a show). Distinct teal so it
-        // reads apart from the green '+ Cue' and grey 'Update'.
+        // button makes the action obvious during a show).
         recallButton.setButtonText ("Recall");
-        recallButton.setColour (juce::TextButton::buttonColourId,  brand::featureEngaged);
-        recallButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::featureEngaged));
+        recallButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
+        recallButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
         recallButton.setTooltip ("Recall the selected cue -- apply its mix now.");
         recallButton.onClick = [this] { if (onRecallCue) onRecallCue(); };
         addAndMakeVisible (recallButton);

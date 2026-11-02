@@ -54,6 +54,13 @@ namespace zynforge::brand
     inline const auto engagedAmber = juce::Colour (forge::engagedAmber);  // BYPASS / LIVE / LOCK
     inline const auto featureEngaged = juce::Colour (forge::featureEngaged);  // cool-teal toggle-on
 
+    // ── Selection + primary action ────────────────────────────────────────
+    // The one fill for "this is selected" and "this is the action": a muted
+    // burnt ember, calm on a dark stage. Bright colour keeps its meaning: green
+    // is PLAY, meters and good status, red is RECORD. Recording-local until
+    // the family token source gains it.
+    inline const auto selectFill = juce::Colour (0xffb35a3e);
+
     // ── Meter colours (deliberately duller than accents) ──────────────────
     inline const auto meterGreen = juce::Colour (forge::meterGreen);
     inline const auto meterAmber = juce::Colour (forge::meterAmber);
@@ -110,9 +117,8 @@ namespace zynforge::brand
     // semantically a 'primed but not active' colour. Keeps brandOrange
     // free for its two documented uses (signalMute + brand assertion).
     inline juce::Colour signalArmedReady()  { return engagedAmber; }
-    // EDIT tools active selection -- cool-teal so it doesn't collide
-    // with any of the signal colours above.
-    inline juce::Colour toolActive()        { return featureEngaged; }
+    // EDIT tools active selection: a selection like any other.
+    inline juce::Colour toolActive()        { return selectFill; }
 
     // ── Alpha tokens for layered overlays ────────────────────────────
     // Anything painted on top of the waveform / lane should pick one

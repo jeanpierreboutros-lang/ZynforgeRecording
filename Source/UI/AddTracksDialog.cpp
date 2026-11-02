@@ -30,9 +30,9 @@ namespace zynforge
                 countEditor.setJustification (juce::Justification::centred);
                 countEditor.setFont (brand::type::captionBold());
                 countEditor.setColour (juce::TextEditor::backgroundColourId, brand::inputBg);
-                countEditor.setColour (juce::TextEditor::textColourId,       brand::accentStatus);
+                countEditor.setColour (juce::TextEditor::textColourId,       brand::textPrimary);
                 countEditor.setColour (juce::TextEditor::outlineColourId,    brand::edge);
-                countEditor.setColour (juce::TextEditor::focusedOutlineColourId, brand::accentStatus);
+                countEditor.setColour (juce::TextEditor::focusedOutlineColourId, brand::selectFill);
                 addAndMakeVisible (countEditor);
 
                 newLabel.setText ("new", juce::dontSendNotification);

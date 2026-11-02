@@ -167,7 +167,7 @@ namespace zynforge
 
                 addAndMakeVisible (pathButton);
                 pathButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-                pathButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
+                pathButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
                 pathButton.setButtonText (compactPath (storageDir));
                 pathButton.onClick = [this] { pickFolder(); };
 

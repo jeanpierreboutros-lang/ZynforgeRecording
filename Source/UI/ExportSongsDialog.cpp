@@ -38,7 +38,7 @@ namespace zynforge
             auto row = std::make_unique<Row>();
             row->range = song;
             row->tick.setToggleState (true, juce::dontSendNotification);
-            row->tick.setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+            row->tick.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
             row->tick.setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
             row->tick.onClick = [this] { refreshExportEnabled(); };
             row->addAndMakeVisible (row->tick);
@@ -87,7 +87,7 @@ namespace zynforge
 
         stereoOneFile.setToggleState (true, juce::dontSendNotification);
         stereoOneFile.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-        stereoOneFile.setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+        stereoOneFile.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
         stereoOneFile.setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
         addAndMakeVisible (stereoOneFile);
 

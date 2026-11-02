@@ -159,7 +159,7 @@ namespace zynforge
         {
             radio->setRadioGroupId (1);
             radio->setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-            radio->setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+            radio->setColour (juce::ToggleButton::tickColourId, brand::selectFill);
             radio->setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
             radio->onClick = [this] { refresh(); };
             addAndMakeVisible (*radio);
@@ -178,7 +178,7 @@ namespace zynforge
             auto tick = std::make_unique<juce::ToggleButton> (name);
             tick->setToggleState (true, juce::dontSendNotification);
             tick->setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-            tick->setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+            tick->setColour (juce::ToggleButton::tickColourId, brand::selectFill);
             tick->setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
             tick->onClick = [this] { refresh(); };
             listHolder.addAndMakeVisible (*tick);
