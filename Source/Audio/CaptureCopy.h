@@ -53,6 +53,7 @@ namespace zynforge
         int          ringFrames { 0 };
         std::shared_ptr<CaptureLatches> latches;
         std::function<void (CaptureCopy&)> beforeWriteForTests;
+        std::function<bool (CaptureCopy&, bool finishing)> threadRefusedForTests;
 
         std::vector<Track> tracks;                 // aligned with the recorder's tracks
         std::vector<WriterChannel::StampedPart> stampedParts;
@@ -214,6 +215,7 @@ namespace zynforge
             lastProgressMs.store (juce::Time::getMillisecondCounterHiRes());
             try
             {
+                refuseThreadForTests (false);
                 worker = std::thread ([self = std::move (self)] { self->run(); });
             }
             catch (const std::system_error&)
@@ -223,7 +225,7 @@ namespace zynforge
                 for (auto& t : tracks)
                     if (t.baseFile != juce::File()) t.failed = true;
                 latchFailure();
-                dropped.store (opening.exchange (false), std::memory_order_release);
+                if (opening.exchange (false)) leaveTake (label + " could not start; it is not in this take");
                 finished.store (true);
             }
         }
@@ -437,9 +439,8 @@ namespace zynforge
         {
             for (auto& t : tracks)
             {
-                if (t.writer == nullptr) continue;
-                if (! flushFloatAiffBeforeClose (t.writer.get())) failTrack (t);
-                stopTrack (t);
+                if (t.writer != nullptr && ! flushFloatAiffBeforeClose (t.writer.get())) failTrack (t);
+                stopTrack (t);      // a copy still opening has a ring and no writer
             }
             const std::lock_guard<std::mutex> g (ringLock);
             for (auto& t : tracks) t.ring.free();
@@ -477,6 +478,7 @@ namespace zynforge
             noteProgress();
             try
             {
+                refuseThreadForTests (true);
                 worker = std::thread ([self = std::move (self), work = std::move (work)]
                 {
                     work (*self);
@@ -485,9 +487,18 @@ namespace zynforge
             }
             catch (const std::system_error&)
             {
+                // None of the work ran, so nothing it would report exists. Reads
+                // as a copy left behind, and its folder is recovered next take.
                 latchFailure();
+                abandoned.store (true, std::memory_order_release);
                 finished.store (true, std::memory_order_release);
             }
+        }
+
+        void refuseThreadForTests (bool finishing)
+        {
+            if (threadRefusedForTests != nullptr && threadRefusedForTests (*this, finishing))
+                throw std::system_error (std::make_error_code (std::errc::resource_unavailable_try_again));
         }
 
         void noteProgress() noexcept

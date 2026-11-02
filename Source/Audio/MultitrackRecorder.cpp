@@ -1557,6 +1557,7 @@ namespace zynforge
             copy->passOrigin  = passOrigin;
             copy->latches     = latches;
             copy->beforeWriteForTests = beforeCopyWriteForTests;
+            copy->threadRefusedForTests = copyThreadRefusedForTests;
             copy->tracks.resize (tracks.size());
             copies.push_back (copy);
             return copy;

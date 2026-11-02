@@ -1158,9 +1158,58 @@ namespace zynforge
             }
         }
 
+        void testRefusedThreads()
+        {
+            using Copy = MultitrackRecorder::CaptureCopy;
+
+            beginTest ("A copy the OS gives no thread leaves the take by name and the take goes on");
+            {
+                const auto root = tempDir ("no-thread");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.setMirrors ({ { root.getChildFile ("mirror"), CaptureFormat::Wav24 } }));
+                rec.copyThreadRefusedForTests = [] (Copy& copy, bool finishing) { return ! finishing && copy.copyIndex == 2; };
+                expect (rec.startRecording (session));
+                Ramp ramp { rec };
+                for (int b = 0; b < 40; ++b) { ramp.block(); rec.drainPendingForTests(); }
+                expect (rec.anyMirrorFailed());
+                expect (rec.getCopyProblems().joinIntoString (" ").contains ("could not start"),
+                        rec.getCopyProblems().joinIntoString (" | "));
+                rec.stopRecording();
+                expect (! rec.hasPrimaryFailed());
+                expectRamp (session.getChildFile ("Audio Files/Track_01.wav"), 0, ramp.frame, "the primary");
+            }
+
+            beginTest ("A copy the OS gives no thread at STOP is reported, and STOP finishes");
+            {
+                const auto root = tempDir ("no-finish");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (root.getChildFile ("backup"));
+                expect (rec.setMirrors ({ { root.getChildFile ("mirror"), CaptureFormat::Wav24 } }));
+                rec.copyThreadRefusedForTests = [] (Copy&, bool finishing) { return finishing; };
+                expect (rec.startRecording (session));
+                rec.waitForCopiesOpenForTests();
+                Ramp ramp { rec };
+                for (int b = 0; b < 40; ++b) { ramp.block(); rec.drainPendingForTests(); }
+                rec.stopRecording();
+                expect (rec.hasBackupFailed());
+                expect (rec.anyMirrorFailed());
+                expect (! rec.hasPrimaryFailed());
+                expectRamp (session.getChildFile ("Audio Files/Track_01.wav"), 0, ramp.frame, "the primary");
+            }
+        }
+
         void runTest() override
         {
             const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
+            testRefusedThreads();
             testDiskFigures();
             testHelperLifecycle();
             testCrashRemains();

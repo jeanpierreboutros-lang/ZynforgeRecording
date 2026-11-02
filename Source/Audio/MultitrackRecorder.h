@@ -840,6 +840,7 @@ namespace zynforge
         std::function<void()> afterFifoReservationForTests;
         std::function<void()> beforeStampForTests;
         std::function<void (CaptureCopy&)> beforeCopyWriteForTests;
+        std::function<bool (CaptureCopy&, bool finishing)> copyThreadRefusedForTests;
         int copyRingFramesForTests { 0 };
         juce::int64 copyRingBytesForTests { 0 };
         // How long STOP waits on a copy that has stopped making progress, and on
