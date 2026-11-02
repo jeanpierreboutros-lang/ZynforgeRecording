@@ -4,7 +4,7 @@ This procedure installs a locally built macOS app; it does not create a notarize
 
 ## Current two-Mac installation — 2026-10-29
 
-`main` is ahead of this build, and nothing newer is installed on either Mac. Everything below describes `281c6c0`.
+`main` is ahead of this build, and nothing newer is installed on either Mac. Everything below describes `281c6c0`, which still carries the features listed under *Removed* in [CHANGELOG.md](CHANGELOG.md). The next package from `main` has `device.audio-input` as its only entitlement on both binaries.
 
 Both Macs now have source build `281c6c0` (the October bug-hunt fixes, deferred
 lead-ins and exact split fades; code identical to `abb83bf`) and its matching

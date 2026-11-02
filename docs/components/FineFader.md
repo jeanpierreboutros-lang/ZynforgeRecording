@@ -1,6 +1,6 @@
 # FineFader
 
-`Source/UI/FineFader.h` — the app-wide vertical gain fader used by every level control (channel, VCA, bus, master).
+`Source/UI/FineFader.h` — the app-wide vertical gain fader used by every level control (channel, master).
 
 ## Description
 
@@ -8,7 +8,7 @@ A thin `juce::Slider` subclass with one behavioural contract: **the cap moves on
 
 ## When to use
 
-Every level fader in the app is a FineFader — there is no other fader class. Channel strips, the VCA panel, bus masters, and the master strip all instantiate it so the "click-drag only, snaps to pointer" rule is universal. If you add a new level control, use FineFader; do not fall back to a raw `juce::Slider`.
+Every level fader in the app is a FineFader — there is no other fader class. Channel strips and the master strip both instantiate it so the "click-drag only, snaps to pointer" rule is universal. If you add a new level control, use FineFader; do not fall back to a raw `juce::Slider`.
 
 ## API
 

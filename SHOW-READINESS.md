@@ -1,10 +1,10 @@
 # Show readiness — planned SD5 recording
 
-## Decision as of 2026-11-01
+## Decision as of 2026-11-02
 
-`main` now carries the market-moves work (Scene Follow, desk macros, timestamped BWF, the dead-channel alarm, clock source in pre-flight, DAW and song export, the Twin Recorder link, Mac packaging) and a full round of punch, capture, session, editing, EDIT, network and playback fixes. **None of it is installed.** Both Macs and the current DMG are still `281c6c0` / protocol 4, and the decision below stands for that build, which has none of these fixes.
+`main` is now the recorder and virtual soundcheck alone (see *Removed* in [CHANGELOG.md](CHANGELOG.md)). It carries the market-moves work (Scene Follow, desk macros, timestamped BWF, the dead-channel alarm, clock source in pre-flight, DAW and song export, the Twin Recorder link, Mac packaging) and a full round of punch, capture, session, editing, EDIT, network and playback fixes. **None of it is installed, and none of it has run on real hardware.** Both Macs and the current DMG are still `281c6c0` / protocol 4, and the decision below stands for that build, which has none of this.
 
-Do not take the new source to a show until it has been installed on purpose and has passed the hardware steps in *2026-11-01 fix-pass acceptance* and *Market-moves acceptance* in [FIELD-TEST.md](FIELD-TEST.md). The per-copy writers, the dead-channel alarm and the BWF patch all touch the capture path, and none of them has seen a real interface. The automated results in [testing.md](testing.md) say nothing about a real desk, a real stream loss or two real Macs.
+Do not take the new source to a show until it has been installed on purpose and has passed the hardware steps in *2026-11-02 cut*, *2026-11-01 fix-pass acceptance* and *Market-moves acceptance* in [FIELD-TEST.md](FIELD-TEST.md). The per-copy writers, the dead-channel alarm and the BWF patch all touch the capture path, and none of them has seen a real interface. The automated results in [testing.md](testing.md) say nothing about a real desk, a real stream loss or two real Macs.
 
 ## Decision as of 2026-10-29
 
@@ -18,7 +18,7 @@ Both Macs and the current DMG have verified `281c6c0` / protocol 4 (see
 It also fixes two show-relevant highs:
 - a session prepared on a smaller device saved a wrapped input patch, so the
   SD5 rig would record the wrong inputs;
-- the companion RECORD button acted as STOP during a take.
+- a remote RECORD acted as STOP during a take.
 
 RECORD no longer waits on lead-in silence. 689 test groups pass in Release,
 ASan/UBSan, TSan and CI.
@@ -33,8 +33,8 @@ unresolved.
 
 Both Macs and the current DMG have verified `443c769` / protocol 4. The mini
 launch is waiting in CoreAudio initialization; its startup acceptance is open. The current source passed
-563 groups in each full Release, TSan and ASan/UBSan suite, plus six auto-stop
-fixtures; no sanitizer reports were emitted. Installed hashes/signatures match
+563 groups in each full Release, TSan and ASan/UBSan suite; no sanitizer reports
+were emitted. Installed hashes/signatures match
 the tested Release app/helper, and startup with normal preferences produced no
 new crash report. [INSTALL.md](INSTALL.md) owns package and rollback details.
 
@@ -83,7 +83,7 @@ RF64 limits apply **per file**, not to the session total. At 24-bit/48 kHz one m
 2. Confirm the intended clock source and stable synchronization throughout the chosen MADI/Dante path. Confirm the received audio really is 48 kHz. Do not assume the SD5's internal operating rate is the recording feed's rate.
 3. Identify all 56 inputs individually with known signal. Check names, physical input assignments, stereo pairs if used, and saved session settings. Keep virtual-soundcheck returns from changing the live desk patch.
 4. Run the app's pre-flight checks before recording. Verify primary and backup destinations are separate and writable. Disable computer sleep and protect power/cables. A 512-sample buffer is only a starting point for rehearsal when monitoring through the console; choose the setting that passes on this rig.
-5. Record **three continuous hours** of signal on all 56 inputs with the actual backup/mirror configuration and capture mode. Monitor missed samples, write errors, device sync, free space, per-volume time remaining and application responsiveness. If StereoMix is required, confirm its stream sends and file before the soak.
+5. Record **three continuous hours** of signal on all 56 inputs with the actual backup/mirror configuration and capture mode. Monitor missed samples, write errors, device sync, free space, per-volume time remaining and application responsiveness. If StereoMix is required, confirm its stream sends and file before the soak. Nothing stops a soak unattended: someone has to be there to press STOP twice at the end.
 6. Stop normally; wait for the final report and hashing, then run `tools/verify_take.sh` on the session. Require exit 0, zero missed samples and no primary/backup/mirror/punch/recovery/report failures. Inspect every file's expected duration and channel mapping, audition beginning/middle/end, and open the recording in another DAW. Check the backup independently; a successful primary does not prove its backup. Unplug/fail a redundant destination only in a separate disposable run and verify the warning remains visible through stop and later continuation.
 7. After installing the exact build to be used, separately test repeated takes, unreadable-session collision protection, selection/manual punch with before/new/after inspection, interrupted-punch recovery, multichannel import, session reopen, playback and export on disposable sessions. Verify every primary/backup/mirror punch copy and physical monitor/direct output. If using the daemon, test protocol 4, authenticated attach and acknowledgement, failed reconfiguration, truthful STOP/finalization status, routing and GUI reattachment. Run [FIELD-TEST.md](FIELD-TEST.md) and the applicable [hardware delta](FIELD-TEST-AUDIT.md).
 8. Test device-loss and crash recovery only on disposable recordings, away from show time, with a hardware recovery plan. Stop testing if the interface becomes unstable.

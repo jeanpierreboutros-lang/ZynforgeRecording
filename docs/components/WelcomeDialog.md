@@ -17,11 +17,12 @@ A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` with a vertic
 
 ```
 ┌─ WELCOME ───────────────────────────────────────────┐
-│ ┌─────────┐ │  Session Name: [_______________]      │
-│ │ ▶ New   │ │  Location:     [/Music/...] [Browse]  │
-│ │   Open  │ │  Format:       [WAV 24-bit ▾]         │
-│ └─────────┘ │  Sample Rate:  [48000 ▾]              │
-│             │  I/O:          [Mono inputs 1-8 ▾]    │
+│ ┌─────────┐ │  Name:          [_______________]     │
+│ │ ▶ New   │ │  Local Storage: [/Music/...]          │
+│ │   Open  │ │  File Type:     [WAV ▾]               │
+│ └─────────┘ │  Sample Rate:   [48000 ▾]             │
+│             │  Bit Depth:     [24 ▾]                │
+│             │  Input / Output Device [▾]            │
 │             │                                       │
 │             │                [Cancel] [Create]      │
 └─────────────────────────────────────────────────────┘
@@ -35,8 +36,6 @@ struct NewResult {
     juce::File location;
     CaptureFormat captureFormat;
     double sampleRate;
-    bool interleaved;
-    juce::String ioSettings;
     juce::String inputDeviceName;
     juce::String outputDeviceName;
 };
@@ -58,11 +57,11 @@ Static `launch` constructs the dialog asynchronously. `DeviceChoices` supplies a
 
 ## Sidebar
 
-Two items only — `New` and `Open`. Earlier builds had Sketch / Cloud / Learn entries; **explicitly removed** because they don't apply to ZynForge's recorder + virtual-soundcheck mission. Don't re-add them.
+Two items only — `New` and `Open`. Don't add others: anything else doesn't belong to a recorder + virtual soundcheck.
 
 | Item | Right pane content |
 |---|---|
-| New | Form: name / location / format / sample rate / I/O preset → `[Cancel] [Create]` |
+| New | Form: name / location / file type / sample rate / bit depth / devices → `[Cancel] [Create]`. Local Storage is a plain label beside its path button |
 | Open | `FileChooser` style picker rooted at `defaultLocation`, plus up to six recent sessions (`AudioEngine::getRecentSessions()`, remembered on record and open) as buttons |
 
 ## States

@@ -1,14 +1,14 @@
 # EditToolsBar
 
-`Source/UI/EditToolsBar.h` — edit-mode tool palette pinned to the right of the EDIT view's automation toolbar. Timeline and waveform zoom live on the EDIT view edge, not in this toolbar.
+`Source/UI/EditToolsBar.h` — edit-mode tool palette at the top of the EDIT view. Timeline and waveform zoom live on the EDIT view edge, not in this toolbar.
 
 ## Description
 
-A horizontal row of six tool-selection buttons with vector-painted glyphs and captions. The active tool biases hit-testing in `EditPage::TrackRow::mouseDown` — e.g. Selector treats clicks as range drags, Trim biases clip-edge zones, Grabber biases clip-body movement.
+A horizontal row of five tool-selection buttons with vector-painted glyphs and captions. The active tool biases hit-testing in `EditPage::TrackRow::mouseDown` — e.g. Selector treats clicks as range drags, Trim biases clip-edge zones, Grabber biases clip-body movement.
 
 ## When to use
 
-One instance per `EditPage`, owned by EditPage but laid out by MainComponent on the same 28 px row as the AutomationToolbar.
+One instance per `EditPage`, owned by EditPage but laid out by MainComponent on its own 28 px row.
 
 ## Tool enum
 
@@ -19,8 +19,7 @@ enum class Tool {
     Selector,    // Drag a range
     Trim,        // Edge drag = trim, body click = no-op
     Grabber,     // Body drag = move
-    Fade,        // Click a clip = fade dialog
-    Scrubber    // Drag = playhead chases mouse
+    Fade         // Click a clip = fade dialog
 };
 ```
 
@@ -40,9 +39,9 @@ The bar owns the tool radio-group state. `EditPage` owns timeline/waveform zoom 
 ## Layout
 
 ```
-┌─ Smart ─ Range ─ Trim ─ Move ─ Fade ─ Scrub ─┐
-│ pointer  I-beam   ◀▶    hand     /\    scrub  │
-└────────────────────────────────────────────────────────┘
+┌─ Smart ─ Range ─ Trim ─ Move ─ Fade ─┐
+│ pointer  I-beam   ◀▶    hand     /\  │
+└──────────────────────────────────────┘
 ```
 
 Tool buttons use `brand::toolActive()` (cool-teal `featureEngaged`) as the active accent — deliberately chosen so the tool selection doesn't collide with any signalRecord / signalMute / signalSolo claim. Replaces a previous hardcoded blue literal.

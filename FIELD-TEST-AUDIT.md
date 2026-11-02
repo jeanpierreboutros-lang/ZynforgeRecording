@@ -4,7 +4,7 @@ Historical hardware cases below remain useful, but are not passed results for th
 
 Turnkey verification of the **hardware-gated audit items** and **everything changed since the 2026-05-24 build** (native stereo capture, console link, the compact/GRID mixer UI, prompt chrome, the design re-tone). Run on the real rig. The general first-launch/recording/takes flow lives in `FIELD-TEST.md` — this file is the delta.
 
-The 2026-08-18 session-integrity/security remediation has its canonical manual matrix in `FIELD-TEST.md` §9. Run that section and the 2026-09-20 reliability follow-up before this hardware-only delta; together they cover guarded session replacement, transactional Save As/relocation, fresh-take collision refusal, redundancy failure reporting, daemon transport truth, background edit safety, authenticated Generic OSC and truthful companion errors without duplicating the steps here.
+The 2026-08-18 session-integrity/security remediation has its canonical manual matrix in `FIELD-TEST.md` §9. Run that section and the 2026-09-20 reliability follow-up before this hardware-only delta; together they cover guarded session replacement, transactional Save As/relocation, fresh-take collision refusal, redundancy failure reporting, daemon transport truth, background edit safety and authenticated Generic OSC without duplicating the steps here.
 
 **Severity:** 🟥 data-loss (stop + report now) · 🟧 audio-path (stop if reproducible) · 🟨 stage-readiness · ⬜ cosmetic.
 **Diagnostic helper:** `tools/verify_take.sh [session]` checks WAV/AIFF/FLAC headers, complete continuation parts, report frame counts, finished hashes and capture-failure flags. It exits nonzero for pending hashes or incomplete takes. It does not certify backups, routing or expected show duration; see [SHOW-READINESS.md](SHOW-READINESS.md#verification-helper-limitations).
@@ -59,7 +59,7 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 |---|---|---|---|
 | ☐ D.1 | Mark a strip **stereo** (mixer link or PATCH), arm + record real stereo. | **One** interleaved 2-ch `Track_NN.wav` — no second mono file. Pair hard-panned L/R. | Two mono files; pair centred. |
 | ☐ D.2 | Virtual-soundcheck playback of D.1. | Stereo image correct (L→its out, R→its out); the pair meters as one stereo strip. | Plays mono / wrong outputs / no meter. |
-| ☐ D.3 | Bounce the stereo pair (Export). | One interleaved stereo stem, both channels present, opens in the DAW. | R channel silent. |
+| ☐ D.3 | Export the stereo pair (Export Audio ▸ Edited tracks). | One interleaved stereo stem, both channels present, opens in the DAW. | R channel silent. |
 | ☐ D.4 | **Routing-mapping regression:** create 2 empty mono strips (don't record), then **import** a stereo file. | Stereo plays from **its own strip** + meters; the empty mono strips stay silent; muting them does nothing to the stereo. | Stereo plays out of the mono strips / no meter (the bug fixed `3b0b857`). |
 | ☐ D.5 | Open a **legacy** session (two-mono-file stereo pair). | Plays/edits/exports exactly as before. | Anything broken for old sessions. |
 | ☐ D.6 | Import a known four-channel source and inspect playback/export. | Four mono strips in source order, all channels present and sample-rate-converted together if needed. | Only L/R land, channels are swapped, or an incomplete import is reported as success. |
@@ -84,7 +84,7 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
-| ☐ F.1 | **Scroll-wheel / trackpad over a fader** (channel, master, VCA, bus). | Fader does **not** move; the mixer scrolls instead. Only click+drag on the cap moves it. | Wheel changes the level. |
+| ☐ F.1 | **Scroll-wheel / trackpad over a fader** (channel, master). | Fader does **not** move; the mixer scrolls instead. Only click+drag on the cap moves it. | Wheel changes the level. |
 | ☐ F.2 | Trigger **Delete channel?** (select strip → Track ▸ Delete, or strip menu). | Dialog shows the **ZynForge forge-mark** badge (not a red warning triangle); grey chrome. | Warning triangle / blue chrome. |
 | ☐ F.3 | Dock / Finder **app icon**. | New forge-mark + "RECORDING" icon (may need a Dock relaunch for cache). | Old forged-Z. |
 | ☐ F.4 | Launch **splash**. | New forge-mark glyph (not the old Z). | Old Z. |
@@ -100,7 +100,6 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 | ☐ G.1 | Session ▸ **Show pre-flight checklist…** with the real interface. | Device, sample rate, free space, armed-track count all correct. | Wrong device / missing checks. |
 | ☐ G.2 | Record a 10–15 s armed take; watch the **PerfDashboard**. | Enlarges with a red border; shows `48.0 kHz · <buffer> smp` + live `AUDIO %`. | No grow / no AUDIO row. |
 | ☐ G.3 | Reopen the session; confirm the **bound CoreAudio device**. | Binds to the intended interface (RME HDSPe), not a stray Avid/proxy device. | Silently binds to wrong device (`HALC_ProxyIOContext … overload`). |
-| ☐ G.4 | Session ▸ **Analyse for noise** with recorded audio. | Sortable report (hum/bumps/noise floor) + `noise_report.json`. On an empty session: a clear "nothing to analyse" prompt. | Does nothing silently. |
 
 ---
 

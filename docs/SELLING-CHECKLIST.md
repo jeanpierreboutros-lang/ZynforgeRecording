@@ -36,13 +36,6 @@ licence, and that includes the DMGs already in `dist/` on this public repository
 An Apple Developer ID is needed before `tools/notarize.sh` can produce a build that opens without a Gatekeeper warning.
 See [INSTALL.md](../INSTALL.md) and the notarized-build steps in [FIELD-TEST.md](../FIELD-TEST.md).
 
-## NDI, if it stays in the product
-
-The NDI docs (<https://docs.ndi.video/docs/sdk/licensing>) ask for the statement "NDI® is a registered trademark of
-Vizrt NDI AB" near first use and in the About box, and a link to ndi.video close to where NDI is selected, on the
-website and in the documentation. The app does not do this today, and its Help text still says ndi.tv. Check the SDK
-licence PDF before selling.
-
 ## Notices must travel with binaries
 
 FLAC, Ogg Vorbis, libpng, zlib, HarfBuzz and the OFL font all require their notices in binary distributions, and the

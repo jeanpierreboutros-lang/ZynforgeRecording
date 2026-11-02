@@ -236,19 +236,13 @@ capture mutation until completion. Space may stop existing transport through
 the save busy gate, while LOCK and the ordinary two-tap guard remain intact.
 A pending remote STOP is not a success acknowledgment.
 
-Session Info & Notes edits descriptive fields without replacing newer cues,
-clips or mixer metadata. Deferred import/bounce dialogs recheck capture when
-selection completes. A recorded track named Click is ordinary audio unless its
-explicit reference-media flag establishes generated ownership.
+Session Info is a read-only summary of the open session. Deferred import/bounce
+dialogs recheck capture when selection completes. A strip is ordinary audio
+whatever it is called.
 
-Noise reports distinguish unreadable analysis from clean audio, including in
-the completion summary. Capture/report errors remain latched after a toast
-expires. Invalid mirror replies preserve the current layout rather than showing
-an empty, apparently synchronized session.
+Capture/report errors remain latched after a toast expires.
 
-## Read-only observer and handoff — 2026-09-23
-
-The confidence page is intentionally a separate observer surface: large recording/idle/alarm states first, health figures second, per-track activity last, and no arm, mute, solo or transport buttons. Network loss and stale capture-daemon status are alarms, not a healthy-looking last frame. Audible alerts require an explicit user gesture and remain supplementary to the local recording dashboard.
+## Handoff — 2026-09-23
 
 The post-show handoff is a background, cancellable transfer into a new/empty folder. Its incomplete marker remains until copying, source/copy hashing, sidecars and the manifest all finish. The completion message distinguishes a verified file transfer from a source capture report that still needs review; neither visual state implies that the planned physical rig passed show-readiness acceptance.
 
@@ -410,8 +404,6 @@ Two distinct domains; the audio one is show-critical.
 - **`engine-reattach` (60 ms)** — audio device dialog close → engine
   callback re-attach defer. Lets in-flight Core Audio property
   notifications settle before the audio thread resumes.
-- **`web-broadcast` (200 ms = 5 Hz)** — companion device state push
-  interval. Responsive without saturating the WebSocket pipe.
 
 ## Components
 
@@ -580,7 +572,7 @@ Prompts prime their editor via `dialog::primeNameEditor` (focus + select-all
 
 
 ### TrackRow (EditPage.cpp — the EDIT lane)
-The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / R-I-S-M / VIEW / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade/Scrub) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
+The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / R-I-S-M / VIEW / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
 
 **Live navigation:** the EDIT viewport follows a rolling playhead by default. A manual horizontal pan (trackpad, Shift+wheel, minimap) or timeline zoom switches to browse mode and must not be undone by the next UI timer tick. The small FOLLOW control restores live tracking; the next play/record pass starts following. During recording, row and ruler edits are locked while zoom, scrolling, minimap and FOLLOW remain usable. A fresh take starts with five minutes across the viewport; as it grows, the timeline widens at that same time scale so the waveform can keep scrolling. Vertical track scrolling and amplitude zoom never change horizontal follow. The ruler, pinned row headers and minimap all track the same viewport offset. The macOS window has a 1120 × 700 minimum so fixed recording controls remain accessible when resized.
 
@@ -600,7 +592,6 @@ rules:
 | Use `Colors::getX()` getters in every `paint()`             | Inline `juce::Colour(0xff...)` anywhere outside the colour header |
 | Use `Fonts::X()` for every font set                         | Inline `juce::Font(...)` / `juce::FontOptions(...)` outside the fonts header |
 | Use `Spacing::X` constants in `setBounds`                   | Raw 4-int `setBounds(int,int,int,int)` literals                  |
-| Use CSS variables in companion-device HTML                  | Hex literals outside the `:root` block                           |
 | Use semantic neutrals (`textOnAccent`, `overlayLight`, etc) | Bare `juce::Colours::white / black / transparentBlack`           |
 | ASCII-only in tooltip + label text                          | Em-dash `—`, en-dash `–`, arrows, bullets in user-visible strings |
 

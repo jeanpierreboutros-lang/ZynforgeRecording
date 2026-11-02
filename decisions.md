@@ -1,6 +1,32 @@
 # Decisions Log
 
 
+## Cut to recorder and virtual soundcheck — 2026-11-02
+
+**Status:** Accepted. The owner's call, after a feature census of everything the app had grown.
+
+**Context:** The app's job is to record a show and play it back through the same outputs for virtual soundcheck. Around that it had grown VCAs, buses and mix automation, a tempo and click system, comping and analysis tools, and several network services. Each extra feature was more code near the audio callback and the session files, and more to prove on a real rig before a show.
+
+**Decision:** Cut the app to a recorder and virtual soundcheck.
+
+What went: AAF export, Noise Report, spectral auto-name and the mini spectrum, cloud upload, Session Mirror, NDI, the companion server (state, confidence page, `/stream.wav`, `tools/auto_stop.sh`), MP3 export, the Session Info text fields, the MIDI surface Device Type, comping and take actions, Strip Silence, Normalize, Tab-to-transient, the Scrub tool, VCAs, buses and aux sends, mix automation, the tempo map, Tempo lane, TempoBar, time signature, cue tempo curves, Cue Fade, the click, MIDI clock, the phase meter, TimelineStrip, dead buttons and dead dialog controls.
+
+What stayed: capture, the capture daemon, MTC/LTC chase, VSC, PATCH, Loop, faders, pan, mute, solo and master, edit groups, STREAM sends and StereoMix capture, the setlist and cue mix snapshots, markers, Export Songs, Detect Songs, the QC report, Write soundcheck report, Reaper and DAWproject export, Show Handoff, CSV export, templates, the Meterbridge, LUFS readout, LOCK, the alarm banner, pre-flight, Split, Heal, Crop, Ripple Delete, Clear Range, Consolidate, clip gain, fades, crossfades, clip mute, lock and rename, snap, Mackie and control surfaces, generic OSC, desk macros, the console link and soundcheck, Scene Follow, Trim-Follow and Twin Recorder.
+
+Merged rather than cut: Backup and Mirror Drives are one dialog with a real backup format box. Backup's default stays WAV 24, because a capture default never changes to suit a dialog. Four export items are one Export Audio dialog that calls the render paths already there.
+
+Details that follow from the cut:
+
+- **The playlist model stays.** Session files carry takes, and Punch, continue, undo, Crop, Ripple and export read the model. Only the UI that made and switched takes went.
+- **`referenceMedia` stays for the recorder only.** The take length skips such a strip. Without that, RECORD after STOP on a session with a generated click would start at the end of the bed and pad every take with silence, and this work must not change capture.
+- **Write soundcheck report keeps its band energies,** so the FFT feed in the recorder stays for that alone.
+- **Tab stays consumed with nothing behind it.** Left to JUCE it walks focus onto a routing combo or a transport button, where the next arrow or Return changes it mid-show.
+- **EDIT row routing joins the linked rule.** Its combos call `setTrackLinkedRouting` on both sides, like MIXER and PATCH, so the three views stay linked.
+- **A session from an earlier build keeps its originals.** Nothing loads the removed data, so the first save would drop it for good. On open, once, the session's documents are copied to `Session File Backups/Before Feature Removal/`, before anything can overwrite them. Detection reads values, not keys: earlier builds wrote these keys on every save at their defaults, so a key alone would flag a session that never used these features. A save is refused when the copy fails, because a failed copy followed by a save would lose the data the copy exists to keep.
+- **A session copy takes the session.** Save As, Move and Show Handoff skip writers' staging files, which can vanish at any moment, and a waveform cache that can't be read no longer fails a copy, since it costs only a rescan. Any other file that can't be copied still aborts, and the comparison in Show Handoff skips the same files.
+
+**Consequences:** Sessions from earlier builds open, play and save, and lose nothing on disk, but their removed data no longer does anything. The overnight soak needs a manual stop. DAW projects carry a default 120 BPM in 4/4 and no notes about what used to be left out. None of this has been installed or run on real hardware: see [FIELD-TEST.md](FIELD-TEST.md).
+
 ## A copy never refuses a take, and a punch commits only if complete — 2026-11-01
 
 **Status:** Accepted.
@@ -119,11 +145,15 @@
 
 ## Cloud upload runs through a shell — 2026-11-01
 
+**Note, 2026-11-02:** Cloud upload was removed. See *Cut to recorder and virtual soundcheck*.
+
 **Decision.** The dialog promises a shell command, and engineers write `~` and `&&`, so `/bin/sh -c` runs it with Homebrew's folders on PATH, because launchd's PATH has neither. The session path is `$1`, never text pasted into the script.
 
 **Consequence.** A template that relied on one word holding spaces with no quotes now gets shell splitting, as any shell command would.
 
 ## Crop and Ripple Delete move the whole timeline under one rule — 2026-11-01
+
+**Note, 2026-11-02:** Automation and the tempo map were removed, so the rule no longer moves rides or tempo. It covers clips on every take, markers and cues.
 
 **Context:** Both changed only the active take's clips. Rides, cues, the tempo map and other takes stayed on the old timeline, and the undo step restored only the clips.
 **Decision:** One mapping (`timelinecut::Cut`) applied to clips on every take, automation, markers, tempo and cues, as one undo step holding a snapshot of each. A locked clip that would move refuses the edit (it used to stay put while everything slid under it), and so does Automation Safe on a lane with points. A cue or marker in the removed audio goes, and undo brings it back. A ripple on a subset of strips moves those strips' takes and automation and leaves markers, tempo and cue positions: most of the session is where it was.
@@ -148,6 +178,8 @@
 **Consequences:** Adding a single user marker to a scene-run show changes what Export Songs offers. The dialog shows the rows before anything is written.
 
 ## Hum gate at -70 dBFS — 2026-11-01
+
+**Note, 2026-11-02:** The Noise Report was removed, and this gate with it.
 
 **Context:** The `-40 dBFS` gate read an unnormalised FFT, so it really sat near -100 dBFS. Normalising alone would have put it at a true -40 dBFS, hiding clearly audible hum.
 **Decision:** Normalise, and set the gate at -70 dBFS: above that, hum is audible in a quiet passage at ordinary gain.
@@ -182,6 +214,8 @@
 
 ## Long clip jobs publish only into the layout they started from — 2026-11-01
 
+**Note, 2026-11-02:** Normalize and Strip Silence were removed. Consolidate keeps the check.
+
 **Status:** Accepted.
 **Decision:** Normalize, Consolidate and Strip Silence record the track generation at launch and publish nothing if it changed. Row Normalize is a session job on the host, so reorders from the UI are refused while it runs, and the generation check covers what bypasses the UI.
 **Consequences:** A job overtaken by a strip move fails with a status line and no undo step.
@@ -212,6 +246,8 @@
 
 ## A mix bus stays off patched outputs — 2026-11-01
 
+**Note, 2026-11-02:** The click was removed. The rule stands for the master and stream buses.
+
 **Context.** Strip N patched to output N is the standard virtual soundcheck, and this app makes that patch from the strip combos, PATCH and import (`setTrackLinkedRouting`). The master pair defaults to Out 1-2. Direct routes and the master sum add into the same channels, so on a rig whose outputs are all console returns, console channels 1 and 2 carried their own track plus the whole mix at master level. There was no way to give the master no output. The app cannot tell a console return from a speaker.
 
 **Decision.** On a device with more than two outputs, the master bus and the click stay off their pair when any strip is patched to either output of it, and the stream bus likewise. It is one decision for the pair: holding only the shared channel would leave half a mix on the other console channel. It reads the patch, not what is audible, so a momentary mute cannot release the mix. A two-output device is exempt: there the pair is the monitor, and it has nowhere else. The master can be set to Off. An opt-in setting, default off, restores summing for a rig whose first outputs are monitors. Master MUTE still kills the selected pair: that guard is not weakened.
@@ -229,6 +265,8 @@
 A real zero read from the desk is still a real reference; only a file from before the flag cannot prove one.
 
 ## Solo stays out of the recorded mix — 2026-11-01
+
+**Note, 2026-11-02:** The stream rule stands. VCAs and the Mute lane were removed, so only the strip mute applies.
 
 **Decision.** The stream bus and StereoMix.wav ignore strip and VCA solo; mutes and the Mute lane still apply. The file is a record of the show, and an engineer checking a mic must not empty it without warning. The earlier code comment calling the send post-solo described the code, not a decision.
 
@@ -317,6 +355,8 @@ A real zero read from the desk is still a real reference; only a file from befor
 
 ## DAW interchange: capture, resolve, write; automation stays out — 2026-10-31
 
+**Note, 2026-11-02:** "Automation stays out" no longer applies: there is no automation. The capture, resolve and write steps stand, and projects carry a default 120 BPM in 4/4.
+
 **Context.** The only DAW handoff was a CSV. Two formats had to describe the same session, and a project file that mis-describes a show is worse than none: a mix engineer would trust it.
 
 **Decision.** A shared model, built in two steps: plain values captured on the message thread, then a worker resolve that opens take headers, cuts clips at part boundaries, collapses stereo pairs and refuses any missing media. Both writers read only the resolved model. Audio stays by reference in both formats. Each export reports what it approximated or left out, in a summary and inside the file.
@@ -353,6 +393,8 @@ Safety rules, in priority order: link loss never stops, starts or alters a take;
 **Consequences.** An operator can be left with a follower still rolling after the leader stops: a STOP pressed during link loss is deliberately never delivered later, so the leader warns and the follower is stopped by hand. Comparison is arithmetic on two reports, with no audio comparison or gap repair. The wall-clock offset is an NTP-style estimate from millisecond timestamps, for reading two reports side by side; it is not a sample-accurate alignment, and nothing here locks the two Macs' clocks. Widening exposure: this is a new listening port while enabled, which is why it is off by default and bound only while enabled.
 
 ## Follow-up capture, persistence and control contracts — 2026-10-05
+
+**Note, 2026-11-02:** Session Mirror was removed, and its schema checks with it. Noise analysis and spectral classification went too.
 
 **Context.** The follow-up review reproduced 21 defects after S6, including
 misordered capture gaps, stale dialog writes, unnecessary UI settings I/O and
@@ -395,6 +437,8 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ## October audit contracts — 2026-10-04
 
+**Note, 2026-11-02:** `referenceMedia` stays for the recorder only: nothing creates it now, and no generated click is regenerated.
+
 **Context.** The October audits found data-alignment, session-identity and asynchronous-state failures that were not covered by the earlier capture checks. A backing bed could move the capture endpoint, unknown replica ownership could overwrite another take, and reconnect or delayed confirmation could act on stale state.
 
 **Decision.** Persist reference-media and capture-gain identity separately from playback length/live gain. Validate stereo topology and replica provenance before writer creation, align each continuation destination, and switch pre-roll histories at one callback boundary. Reserve session I/O throughout delete confirmation and recheck the target at completion. Preserve the saved stage patch until restoration, finalize device loss once, and propagate failed source reads through export. Use one source-bound delta for grouped editing and input-only detector peaks for stereo auto-arm. Keep all preference writers in the same process-scoped test isolation mode.
@@ -429,6 +473,8 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ## Observer truth and portable handoff — 2026-09-23
 
+**Note, 2026-11-02:** The companion server and its confidence page were removed. The portable handoff stands.
+
 **Audit clarification, 2026-09-23.** A UI timer copying a cached daemon snapshot is not a new observation. Status age is measured from the supervisor's last received push; lost links invalidate the snapshot and retain a guarded unknown-take state until the daemon's actual outcome is known. Host-controlled channel labels and mute/solo/colour overlay daemon meter data. The capture report persists skipped mirror destinations so handoff warns even when no mirror writer ever opened.
 
 **Context.** A remote observer needs recording-health data without the risk of transport controls. During daemon capture the existing companion read the GUI's local recorder metrics, which could look healthy while the daemon was writing elsewhere. A copied show folder can also appear deliverable before the copy or source hash report finishes.
@@ -460,6 +506,8 @@ When making a non-trivial decision, add a new entry below using the template at 
 **Consequences.** A damaged session may require repair or a new session before recording can resume; it will not trade existing audio for convenience. The guard is intentionally below the UI so daemon/direct callers cannot bypass it.
 
 ### Analysis edits are optimistic background transactions
+
+**Note, 2026-11-02:** Strip Silence, Normalize and the transient analysis were removed. Only Consolidate of that list remains.
 
 **Context.** Strip Silence, Normalize, Consolidate, and transient analysis could monopolize the message thread and could be invoked while daemon capture was rolling. Strip Silence also analyzed raw files, which no longer represented the audible arrangement after clip edits.
 
@@ -585,7 +633,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 **Correction, 2026-11-01:** Yamaha SCP sends no subscription. The earlier `ssrecall_ex "scene"` was the scene-recall verb, in a section that promises never to change a desk. Whether a Yamaha desk pushes scene notifications to a connected client without being asked is UNVERIFIED; see FIELD-TEST.
 
-**Context.** The console layer was OSC-only, so four of the six console families in the picker were honest stubs. Meanwhile a direct competitor shipped DiGiCo + Allen & Heath + SSL integration at $39.99. Going up-market means supporting desks nobody here owns — which collides head-on with the standing rule that untested desk control is the project's largest liability.
+**Context.** The console layer was OSC-only, so four of the six console families in the picker were honest stubs. Going up-market means supporting desks nobody here owns — which collides head-on with the standing rule that untested desk control is the project's largest liability.
 
 **The resolution is to separate two things that were conflated.** "Is this address model correct?" and "is the desk on the other end who we think it is?" are different questions with different answers and different blast radii.
 
@@ -754,6 +802,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## AAF export built natively + de-risked with a round-trip oracle — 2026-06-08
 
+**Note, 2026-11-02:** AAF export was removed before phase 2c, and with it the compound-file writer and its tests. Reaper and DAWproject export carry sessions to DAWs.
+
 **Status:** Accepted (in progress — Phase 1 landed)
 **Context:** Real DAW interchange (a session opening as an editable timeline of clips → source WAVs) needs AAF: it's the one format Pro Tools — the dominant target in this market — imports. AES31/EDL are text and verifiable here, but Pro Tools doesn't ingest them, so they miss the #1 DAW. AAF, however, is a binary Microsoft-Compound-File container with a fragile object model, and neither a DAW nor the reference library (pyaaf2 / AAF SDK) is reachable from the build machine to validate output.
 **Decision:** Build AAF **natively in C++**, layered + phased, and **de-risk the binary with a write→read→assert oracle** (an independent reader in the test suite) rather than trusting the writer blind. Phases: (1) MS-CFB container writer + round-trip validator [**done** — `Aaf/CompoundFile.h`, `CompoundFileTests`]; (2a) object-model primitives — AUID/MobID/storedForm/value-encoders + the `properties`-stream codec [**done** — `Aaf/AafTypes.h`, `Aaf/AafProperties.h`, `AafTests`]; (2b) object-graph→CFB assembler — object = storage + `properties` stream + child sub-storages [**done** — `Aaf/AafObject.h`, `AafTests`]; (2c) the real AAF composition graph (Header/ContentStorage/Mobs/Slots/Sequence/SourceClip → WAVE descriptor + URL locator to the existing WAVs, external essence) **[BLOCKED — needs a reference `.aaf`]**; (3) fades-as-effects + embedded-essence; (4) real-DAW import field-check.
@@ -765,6 +815,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 ---
 
 ## No plugin hosting — 2026-04-12
+
+**Note, 2026-11-02:** The decision stands. The fixed routing graph no longer has VCAs or aux sends.
 
 **Status:** Accepted
 **Context:** Early users asked whether ZynForge Recording should host AU / VST plugins for offline mixdown or VSC tone shaping. The decision had to be made before the routing graph was architected.
@@ -814,12 +866,12 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 **Alternatives Considered:** Inheritance — a `ZynforgeDialogContent` base class. Rejected because dialogs already have varied root types (`Component`, `Component + ChangeListener`, etc.); free functions compose more cleanly.
 **Related Documents:** `architecture.md` §5, `coding-standards.md` (brand + design system rules), `CHANGELOG.md` 2026-05-23.
 
-## No Harrison LiveTrax / Waves Tracks Live attribution — 2026-04-18
+## No competing-recorder attribution — 2026-04-18
 
 **Status:** Accepted
 **Context:** Both products occupy adjacent positioning (live multitrack recorder + virtual soundcheck). Question: does the product page / commit history / code comments credit them as inspiration?
-**Decision:** No. ZynForge Recording is its own product. Do not reference, name, or credit Harrison LiveTrax or Waves Tracks Live in any artefact — code, comments, docs, commit messages, marketing.
-**Rationale:** The product has its own design language and architectural choices (no plugins, per-cue tempo curves, OSC dialect parity across five consoles). Comparisons would mislead users about feature parity and dilute the brand.
+**Decision:** No. ZynForge Recording is its own product. Do not reference, name, or credit any competing recorder in any artefact — code, comments, docs, commit messages, marketing.
+**Rationale:** The product has its own design language and architectural choices (no plugins, OSC dialect parity across five consoles). Comparisons would mislead users about feature parity and dilute the brand.
 **Consequences:** Engineers familiar with those products won't see explicit translation guides. Documentation has to teach the workflow on its own merits.
 **Alternatives Considered:** Mention as a comparison reference in marketing only — rejected to keep the message clean.
 **Related Documents:** `CLAUDE.md` workflow rule 5.
@@ -827,6 +879,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 ---
 
 ## Companion server is loopback-only with a per-session access token — 2026-05-24
+
+**Note, 2026-11-02:** The companion server was removed, with its tunnels and `/stream.wav`.
 
 **Status:** Accepted
 **Context:** The HTTP companion (`/state.json`, `/cmd`, `/stream.wav`) used to bind `0.0.0.0` with zero auth. Anyone on the same Wi-Fi could arm tracks, mute strips, or hijack a stream. At a public-Wi-Fi venue this is a real attack class.
@@ -865,6 +919,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 ---
 
 ## Read-only offline DSP is allowed; real-time signal-modifying DSP is not — 2026-05-24
+
+**Note, 2026-11-02:** The rule stands. `NoiseAnalyzer.h` and `SpectralClassifier.h` were removed; `SpectrumBands.h` is what remains, for the soundcheck report.
 
 **Status:** Accepted
 **Context:** The 2026-05-24 audit flagged ambiguity: `Source/Audio/NoiseAnalyzer.h` runs FFT-based hum detection / bump counting / noise-floor analysis, and `SpectralClassifier` does spectral fingerprinting for auto-naming. Both are real DSP. The "no plugins, no effects" rule (`CLAUDE.md` workflow rule 6) is unambiguous about plugin hosting but doesn't draw a line for in-tree DSP. Without a written line, a future contributor could justify adding an EQ "just for the click track" or a noise gate "just for analysis preview" and the codebase would silently drift.
@@ -952,6 +1008,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Aux sends are per-session in `session_mix.json`, not global appProps — 2026-06-04
 
+**Note, 2026-11-02:** Aux sends were removed. Their keys in an older session are ignored.
+
 **Status:** Accepted (extends *Persistence first*, 2026-05-23)
 **Context:** Aux send routing was stored in global `appProps` keyed by strip index (`strip_send_<i>_<slot>_*`). Because appProps is app-global, opening a different session inherited the previous session's sends, and the routing never round-tripped through the authoritative `session_mix.json` — the same leak the per-index appProps mechanism was already deprecated for.
 **Decision:** `saveSessionMixTo` / `loadSessionMixFrom` serialize each strip's 4 send slots (`{bus, dB, post}`). `setTrackSend` no longer writes appProps; `applyPersistedStripState` no longer reads sends from appProps (which would clobber the per-session values).
@@ -1037,6 +1095,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Stereo tracks record as ONE interleaved file — 2026-06-13
 
+**Note, 2026-11-02:** Normalize and Strip Silence were removed, so the "(normalize/consolidate/stripSilence)" consequence now covers Consolidate only.
+
 **Status:** Accepted — implemented 2026-06-13
 **Context:** A stereo track used to record as two mono `Track_NN.wav` files + an `isStereo` flag. Import/export/mixer already collapsed the pair, but the engineer rightly expects the *capture* to produce one stereo file — and every downstream consumer (player, clips, thumbnails, QC, export) was built on mono-per-channel files, so this touched the core.
 **Decision (phased, all shipped):**
@@ -1077,6 +1137,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 ---
 
 ## Inbound remote control is authenticated or read-only — 2026-08-18
+
+**Note, 2026-11-02:** The companion server was removed. Generic OSC and the console dialects remain under this rule.
 
 **Status:** Accepted
 **Context:** Generic OSC listened on UDP and accepted transport/arm/mute with no sender identity or secret, so any host able to reach the port could start or alter a take. Console dialect messages cannot carry a ZynForge application credential. The companion server had authentication, but returned success before marshalled transport commands actually ran.
@@ -1138,6 +1200,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Mix rules are shared, mix loops are not — 2026-10-29
 
+**Note, 2026-11-02:** The ADR stands. The VCA gate, the stereo-pair lane rule, lane resolution, the post-fader mute and send gain left with their features, and the live read of automation with them. The fader floor and master gain are now in the gate.
+
 **Context:** The real-time callback and the offline stereo bounce each carried their own copy of the solo / mute / VCA gate, the stereo-pair lane rule, the mute-lane semantics, the pan law and the send gain. Fixes had to be found and repeated by hand in both, and nothing checked that a bounce matched what was heard.
 
 **Decision:** Each RULE has one definition in `Source/Audio/MixKernel.h` (header-only, `noexcept`, allocation-free, no engine state), called by both paths. The two mix LOOPS stay separate: the callback also handles live input, punch replacement, routed outputs, the stream bus, a 64-bit accumulator and meters, while the bounce renders windows from disk with a 512-sample automation step. A parity test renders one session both ways and compares them sample for sample; an invariants rule refuses a re-derived copy of a rule.
@@ -1145,6 +1209,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 **Consequences:** A rule change is made once and is tested against both paths. The parity test found the live path reading automation one block late, now fixed. Differences that remain are deliberate and listed in CLAUDE.md (no live input, trim-follow or mono fold-down in the bounce). Merging the loops themselves was rejected: it would put disk-render concerns into the real-time path for no rule-level gain.
 
 ## Remote control is a separate class the engine owns by value — 2026-10-29
+
+**Note, 2026-11-02:** The companion server was removed. `RemoteControl` holds the console OSC listener, desk macros and the MIDI control surface, and the audio thread touches nothing in it.
 
 **Context:** `AudioEngine` owned the companion HTTP server, the console OSC listener with its log and channel-name capture, and the MIDI control surface directly: 26 public methods and their state in a class that is mainly the audio hub.
 
