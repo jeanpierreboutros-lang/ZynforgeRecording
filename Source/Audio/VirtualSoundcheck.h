@@ -18,6 +18,15 @@ namespace zynforge::vsc
         return false;
     }
 
+    // The output a strip has on the show patch, with or without VSC on. Anything
+    // stored for later (a cue, a template, a handoff) wants this, not the live
+    // output, or the soundcheck patch gets kept as the show's.
+    inline int showOutput (const TrackState& track)
+    {
+        const int saved = track.outputBeforeVsc.load (std::memory_order_relaxed);
+        return saved != TrackState::kNoSavedOutput ? saved : track.outputRouting.load (std::memory_order_relaxed);
+    }
+
     // Returns the number of strips repatched. Pressed again it does nothing,
     // or the second press would save the soundcheck patch as the show patch.
     inline int repatch (AudioEngine& engine)
