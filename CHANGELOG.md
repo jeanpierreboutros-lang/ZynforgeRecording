@@ -23,7 +23,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-The next four sections came in on 2026-11-02. They are in `main` only: not installed on either Mac, and not yet tried on real hardware.
+The next five sections came in on 2026-11-02. None of it has been tried on real hardware.
+
+### Changed — look
+
+A full design pass for a dark FOH position. Bright colour now means something, and what you read at a show is larger.
+
+- Selected and primary controls use one muted ember fill. Green is PLAY, meters and good status only, and red is RECORD and danger.
+- Header chips are neutral until engaged. Armed strips lose their orange outlines, which now only appear on a rolling take.
+- Channel colour stays in the strip header and spine, so meters and faders read the same on every strip.
+- EDIT clips are dark, with the waveform in the track's colour. At a laptop window EDIT shows 8 full tracks instead of 6.
+- The clock row is shorter, and the setlist row is hidden while the setlist is empty.
+- A rolling take turns the whole clock plate deep red with a large REC. An alarm banner stays louder than that plate.
+- Pre-flight is a left-aligned checklist, with problems first. Audio Device is calmer and tighter.
+- Everything meant to be read reaches 4.5:1 contrast. Unselected choices look available, not disabled. Scrollbars are neutral.
+- Export's track list is quiet rows with a tick.
+
+### Added — status panel
+
+- Master loudness finally has a place: LUFS momentary and integrated plus true peak, on the status panel beside the clock, at every window size and in both views. True peak turns red within 1 dB of full scale.
+- One thin bar on the status panel shows how hard the disk is being pushed. It replaces the three bars, which no longer fit the shorter row.
+
+### Fixed — look
+
+- MIXER channel names were invisible at the default M strip size. The name is now the most readable thing on a strip at every size.
+- The fader value no longer reads `0....`.
+- PATCH numbers its columns the same way as MIXER and EDIT.
+- A stereo pair on an even input shows its routing in MIXER.
+- A refused RECORD is said once, in the banner, not in three places.
+- EDIT clips are titled with the channel name, not the file name.
+- Pre-flight no longer warns about an empty setlist, which is optional, or prints `322.924 min`.
+- Session Settings has the dialog header every other dialog has, and the Control Surfaces hint is current.
+- XS strips have a fader again, and narrow strips show routing and pan.
 
 ### Removed
 
