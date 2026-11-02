@@ -81,39 +81,13 @@ namespace
             g.fillRect (r.getX(), r.getY(), 5.0f, r.getHeight());
         }
 
-        inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)
+        // Channel number: a small line above the name, which is what gets read.
+        inline void drawNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based)
         {
-            const auto xf = juce::AffineTransform::scale (r.getWidth(), r.getHeight())
-                                                   .translated (r.getX(), r.getY());
-            juce::Path hex;
-            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
-            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
-            juce::Path chv;
-            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
-            chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
-            hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::wash));
-            g.fillPath (hex);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f));
-            g.strokePath (hex, juce::PathStrokeType (1.0f));
-            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.24f));
-            g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f),
-                                                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            const float s = r.getWidth() * 0.05f;
-            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.30f));
-            g.fillEllipse (r.getCentreX() - s, r.getY() + r.getHeight() * 0.27f - s, s * 2.0f, s * 2.0f);
-        }
-
-        // Deboss-stamped channel number -- font sizes to the box so it fits
-        // the strip's short name row. Engraved look: gloss underprint + dark face.
-        inline void drawDebossNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based)
-        {
-            const auto txt = juce::String (channel1Based).paddedLeft ('0', 2);
-            g.setFont (zynforge::brand::type::mono ((float) juce::jlimit (12, 26, box.getHeight()), true));
-            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));          // engraved shadow
-            g.drawText (txt, box.translated (0, 1), juce::Justification::centredLeft, false);
-            g.setColour (zynforge::brand::debossFace);                           // raised steel face
-            g.drawText (txt, box, juce::Justification::centredLeft, false);
+            g.setFont (zynforge::brand::type::mono (10.0f, true));
+            g.setColour (zynforge::brand::debossFace);
+            g.drawText (juce::String (channel1Based).paddedLeft ('0', 2), box,
+                        juce::Justification::centredLeft, false);
         }
     }
 }
@@ -648,9 +622,12 @@ namespace zynforge
         if (pairState != nullptr)
             meter.setStereoPartner (pairState);
         nameLabel.setText (s.name, juce::dontSendNotification);
-        nameLabel.setJustificationType (juce::Justification::centred);
         nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
         nameLabel.setFont (brand::type::channelName());
+        nameLabel.setJustificationType (juce::Justification::centredLeft);
+        nameLabel.setBorderSize ({});
+        nameLabel.setMinimumHorizontalScale (0.6f);   // squeeze before it ever truncates
+        nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         // Double-click to rename inline; single-click does nothing.
         nameLabel.setEditable (false, true, false);
         nameLabel.onTextChange = [this]
@@ -944,6 +921,12 @@ namespace zynforge
         addMouseListener (this, true);
     }
 
+    juce::Rectangle<int> ChannelStrip::numberBounds() const
+    {
+        return getLocalBounds().reduced (brand::space::sm, brand::space::sm)
+                               .removeFromTop (kIdRowH).withWidth (20);
+    }
+
     void ChannelStrip::paint (juce::Graphics& g)
     {
         // Condemned strip (invalidate() called, TrackState about to be / already
@@ -977,7 +960,7 @@ namespace zynforge
             steel::drawHammered    (g, r, 0.38f);              // ③ hammered steel
             g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::edgeSoft));  // light forged scrim -- lets colour show
             g.fillRect (r);
-            steel::drawSteelHeader (g, r.withHeight (30.0f));  // taller near-black stamped plate
+            steel::drawSteelHeader (g, r.withHeight ((float) kHeaderH));
             // Heated Steel: the spine breathes at ~1 Hz while record-armed.
             // Phase from the wall clock so it animates whenever paint() runs
             // (StripTimer repaints the spine column at 10 Hz when armed).
@@ -988,12 +971,7 @@ namespace zynforge
                              : 0.5f + 0.5f * std::sin ((float) (juce::Time::getMillisecondCounter() % 1000)
                                                        / 1000.0f * juce::MathConstants<float>::twoPi);
             steel::drawSpine       (g, r, armedNow, armPulse); // ① structural orange spine (pulses when armed)
-            if (getWidth() >= 78)                               // ② deboss channel number
-                steel::drawDebossNumber (g, { 15, 7, 30, 17 }, stripIndex + 1);
-            // ④ forge-mark top-right, only where no EG chip sits
-            const bool badgeHere = state.editGroup.load (std::memory_order_relaxed) >= 0;
-            if (! badgeHere)
-                steel::drawForgeMark (g, { r.getRight() - 18.0f, r.getY() + 3.0f, 13.0f, 13.0f }, armedNow);
+            steel::drawNumber (g, numberBounds(), stripIndex + 1);
         }
 
         // ── Ember armed-glow (brand signature) ──────────────────────────────
@@ -1072,58 +1050,20 @@ namespace zynforge
 
     void ChannelStrip::resized()
     {
-        auto r = getLocalBounds().reduced (brand::space::sm, brand::space::md);
+        auto r = getLocalBounds().reduced (brand::space::sm, brand::space::sm);
 
-        // ── 1. Name + colour swatch (top of strip) ── mock header layout
-        auto nameRow = r.removeFromTop (22);
-        const bool wideHdr  = getWidth() >= 78;
-        const bool veryWide = getWidth() >= 150;   // L preset -- name on its OWN row
-        const bool hasBadge = state.editGroup.load (std::memory_order_relaxed) >= 0;
-        if (veryWide)
-        {
-            // L view: the NAME sits INSIDE the black steel header plate,
-            // centred in the space between the painted deboss number (left)
-            // and the colour chip / caret / badge (right) -- no separate plate
-            // underneath it.
-            nameRow.removeFromLeft (44);     // painted deboss number
-            nameRow.removeFromRight (20);    // collapse caret
-            if (hasBadge)
-                nameRow.removeFromRight (36);
-            if (swatch != nullptr)
-                swatch->setBounds (nameRow.removeFromRight (18).withSizeKeepingCentre (12, 12));
-            nameLabel.setBounds (nameRow.reduced (4, 0));
-            nameLabel.setJustificationType (juce::Justification::centred);
-            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-        }
-        else if (wideHdr)
-        {
-            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-            // Painted deboss number occupies the far left -- reserve it.
-            nameRow.removeFromLeft (44);
-            // Reserve the far right for the collapse caret so the name never
-            // runs under it, then the colour chip -- mock header order.
-            nameRow.removeFromRight (20);
-            if (hasBadge && nameRow.getWidth() > 60)
-                nameRow.removeFromRight (36);
-            if (swatch != nullptr)
-                swatch->setBounds (nameRow.removeFromRight (18).withSizeKeepingCentre (12, 12));
-            nameLabel.setBounds (nameRow.reduced (2, 0));
-            nameLabel.setJustificationType (juce::Justification::centredLeft);
-        }
-        else
-        {
-            // Narrow header: a small colour chip + the NAME, which gets every
-            // remaining pixel -- the rename field always has room (the badge /
-            // group glyph is dropped here; the spine colour still IDs the
-            // strip). Left-justified so a truncated long name reads from its
-            // start, and double-click still opens the rename editor.
-            if (swatch != nullptr)
-                swatch->setBounds (nameRow.removeFromLeft (14).withSizeKeepingCentre (10, 10));
-            nameLabel.setBounds (nameRow.reduced (2, 0));
-            nameLabel.setJustificationType (juce::Justification::centredLeft);
-            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-        }
-        r.removeFromTop (brand::space::xs);
+        // ── 1. Header ── a thin line for the number + colour chip, then the
+        // NAME across the strip's whole width at every size: it is what gets
+        // read from the mix position, so nothing else shares its row.
+        auto idRow = r.removeFromTop (kIdRowH);
+        if (state.editGroup.load (std::memory_order_relaxed) >= 0 && getWidth() >= 78)
+            idRow.removeFromRight (26);      // painted EG badge
+        if (swatch != nullptr)
+            swatch->setBounds (idRow.removeFromRight (kIdRowH).withSizeKeepingCentre (10, 10));
+        const bool narrow = getWidth() < 78;
+        nameLabel.setFont (narrow ? brand::type::channelName() : brand::type::sectionTitle());
+        nameLabel.setBounds (r.removeFromTop (kNameRowH));
+        r.removeFromTop (brand::space::md);
 
         // Routing combos: keep them in flow but small -- they live above
         // the pan section in the existing UX (engineer can also use the

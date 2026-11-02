@@ -109,6 +109,13 @@ namespace zynforge
         void mouseExit  (const juce::MouseEvent&) override;
 
     private:
+        // The header plate: id row (number + chip) over the name row.
+        static constexpr int kIdRowH   = 12;
+        static constexpr int kNameRowH = 22;
+        static constexpr int kHeaderH  = kIdRowH + kNameRowH + 8;
+
+        juce::Rectangle<int> numberBounds() const;
+
         bool hovered { false };
         // Tracks whether an edit-group badge is currently shown so
         // the slow poll can re-lay-out the name label (which reserves room for
