@@ -2542,7 +2542,8 @@ namespace zynforge
                 wr.partFilesBackup    = t.partFiles;
                 if (stop.doPunch) pf.backup = punchPath (*backupCopy, t);
             }
-            for (size_t mi = 0; writers[i].active && mi < activeMirrors.size(); ++mi)
+            // Every track, armed or not: the report lists what each folder holds.
+            for (size_t mi = 0; mi < activeMirrors.size(); ++mi)
             {
                 const auto* copy = copyAt (2 + (int) mi);
                 if (copy == nullptr) continue;

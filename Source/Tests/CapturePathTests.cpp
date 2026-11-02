@@ -1431,6 +1431,38 @@ namespace zynforge
                         "a scan published over a newer report");
             }
 
+            beginTest ("The report lists every track on a mirror, armed in this pass or not");
+            {
+                const auto root = tempDir ("mirror-report");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 2);
+                rec.getTrack (0).armed.store (true);
+                rec.getTrack (1).armed.store (true);
+                expect (rec.setMirrors ({ { root.getChildFile ("mirror"), CaptureFormat::Wav24 } }));
+                std::vector<float> samples ((size_t) kBlock, 0.25f);
+                const float* inputs[] { samples.data(), samples.data() };
+                const auto pass = [&]
+                {
+                    expect (rec.startRecording (session));
+                    rec.waitForCopiesOpenForTests();
+                    for (int b = 0; b < 8; ++b) { rec.processBlock (inputs, 2, kBlock); rec.drainPendingForTests(); }
+                    rec.stopRecording();
+                };
+                pass();
+                rec.getTrack (1).armed.store (false);
+                rec.armContinue (0);
+                pass();
+                const auto report = juce::JSON::parse (session.getChildFile ("session.report.json"));
+                const auto mirrors = report["tracks"][1]["mirrors"];
+                expect (mirrors.isArray() && mirrors.size() == 1, "an unarmed track lost its mirror entry");
+                if (mirrors.size() == 1)
+                {
+                    expectEquals (mirrors[0]["files"].size(), 1);
+                    expectEquals ((int) mirrors[0]["totalSamples"], 8 * kBlock);
+                }
+            }
             beginTest ("A take file that closes short is a failed write, not a clean STOP");
             {
                 const auto root = tempDir ("short-close");
