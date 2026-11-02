@@ -273,12 +273,27 @@ namespace zynforge
                 : juce::String ("In ") + juce::String (i + 1);
             inputCombo.addItem (live ? label : (label + " (off)"), i + 2);
         }
+        ensureRoutingItem (inputCombo, current, n, "In ");
         if (current < 0) inputCombo.setSelectedId (1,            juce::dontSendNotification);
         else             inputCombo.setSelectedId (current + 2, juce::dontSendNotification);
     }
 
+    // A stereo strip lists the odd pairs (In 1-2, In 3-4), but a pair can sit on
+    // an even channel (In 6-7). Selecting an id the box doesn't hold blanks it,
+    // so the real entry is added on demand, as the EDIT row does.
+    void ChannelStrip::ensureRoutingItem (juce::ComboBox& box, int dev, int channels, const char* prefix)
+    {
+        if (dev < 0 || box.indexOfItemId (dev + 2) >= 0) return;
+        const bool stereoStrip = (pairState != nullptr);
+        auto label = juce::String (prefix) + juce::String (dev + 1);
+        if (stereoStrip) label << "-" << juce::String (dev + 2);
+        const bool live = stereoStrip ? (dev + 1 < channels) : (dev < channels);
+        box.addItem (live ? label : (label + " (off)"), dev + 2);
+    }
+
     void ChannelStrip::setAvailableOutputs (int n)
     {
+        availableOutputs = n;
         const bool stereoStrip = (pairState != nullptr);
         int current = state.outputRouting.load (std::memory_order_relaxed);
         // -2 default now resolves to -1 (master-only) so a fresh strip
@@ -297,6 +312,7 @@ namespace zynforge
                 : juce::String ("Out ") + juce::String (i + 1);
             outputCombo.addItem (live ? label : (label + " (off)"), i + 2);
         }
+        ensureRoutingItem (outputCombo, current, n, "Out ");
         if (current < 0) outputCombo.setSelectedId (1,            juce::dontSendNotification);
         else             outputCombo.setSelectedId (current + 2, juce::dontSendNotification);
     }
@@ -401,6 +417,8 @@ namespace zynforge
         const int wantedIn  = (inR  == -2) ? stripIndex + 2 : pick (inputCombo,  inR);
         const int wantedOut = (outR == -2) ? stripIndex + 2 : pick (outputCombo, outR);
 
+        ensureRoutingItem (inputCombo,  wantedIn  - 2, availableInputs,  "In ");
+        ensureRoutingItem (outputCombo, wantedOut - 2, availableOutputs, "Out ");
         if (inputCombo .getSelectedId() != wantedIn)
             inputCombo .setSelectedId (wantedIn,  juce::dontSendNotification);
         if (outputCombo.getSelectedId() != wantedOut)

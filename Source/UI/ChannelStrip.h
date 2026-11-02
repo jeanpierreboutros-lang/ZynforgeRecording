@@ -117,6 +117,7 @@ namespace zynforge
 
         juce::Rectangle<int> numberBounds() const;
         void showFaderValue();
+        void ensureRoutingItem (juce::ComboBox&, int deviceChannel, int deviceChannels, const char* prefix);
 
         bool hovered { false };
         // Tracks whether an edit-group badge is currently shown so
@@ -137,6 +138,7 @@ namespace zynforge
         const std::shared_ptr<TrackState> keepAlive;
         TrackState*  pairState { nullptr };   // R partner when this is a stereo strip
         int          availableInputs { 0 };   // device inputs, from setAvailableInputs
+        int          availableOutputs { 0 };  // device outputs, from setAvailableOutputs
         juce::Colour personality;
         ColourCallback colourCb;
         NameCallback   renameCb;
