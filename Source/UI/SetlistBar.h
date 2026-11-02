@@ -44,14 +44,6 @@ namespace zynforge
             juce::int64  samplePos { 0 };
             std::vector<StripSnapshot> strips;   // length = recorder.getNumTracks() at capture time
 
-            // Per-cue automation snapshot: the engine's volume/pan/mute
-            // lanes (engine.automationToJson()) captured when the cue was
-            // taken/updated. Recalling the cue reinstalls these lanes, so
-            // each song in the setlist carries its own automation. Void on
-            // older cues that predate per-cue automation (recall leaves the
-            // current lanes alone). An empty array means "this cue has no
-            // automation" and clears the lanes on recall.
-            juce::var automation;
         };
 
         SetlistBar();

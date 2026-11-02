@@ -160,12 +160,6 @@ public:
             e.rippleDeleteRange (0, 100, 200);
             expectEquals ((int) e.clipsFor (0).size(), 1); expectEquals (e.clipsFor (0)[0].fileLengthSamples, (juce::int64) 4800);
         }
-        beginTest ("Empty automation snapshot removes new lanes");
-        {
-            AudioEngine e; e.loadAutomationFromJson (juce::var (juce::Array<juce::var>()));
-            const auto before = e.automationToJson(); e.addAutomationPoint (2, AudioEngine::AutomationParam::Volume, 100, -12);
-            e.loadAutomationFromJson (before); expect (e.getAutomation (2, AudioEngine::AutomationParam::Volume).empty());
-        }
         beginTest ("Session mix restores strip UUIDs independently of global application settings");
         {
             Directory dir; AudioEngine e; e.setStripCount (2);
@@ -182,17 +176,15 @@ public:
             expectEquals (e.getRecorder().getTrack (0).stripId, id0);
             expectEquals (e.getRecorder().getTrack (1).stripId, id1);
         }
-        beginTest ("Reorder and deletion preserve audio, UUID, automation and persisted gains");
+        beginTest ("Reorder and deletion preserve audio, UUID and persisted gains");
         {
             Directory dir; expect (write (dir.track (1), 0.1f)); expect (write (dir.track (2), 0.2f)); expect (write (dir.track (3), 0.3f));
             AudioEngine e; e.setActiveSessionDir (dir.file); e.claimMixerFor (dir.file); e.loadSession (dir.file); e.setStripCount (3);
             e.setTrackName (0, "A"); e.setTrackName (1, "B"); e.setTrackName (2, "C"); e.setTrackGainDb (1, -7);
             const auto id = e.getRecorder().getTrack (1).stripId;
-            e.addAutomationPoint (1, AudioEngine::AutomationParam::Volume, 100, -12);
             expect (e.reorderTracks ({ 1, 0, 2 }));
             expectWithinAbsoluteError (sample (dir.track (1)), 0.2f, 0.001f);
             expectEquals (e.getRecorder().getTrack (0).stripId, id);
-            expectEquals ((int) e.getAutomation (0, AudioEngine::AutomationParam::Volume).size(), 1);
             e.setStripCount (3); expectWithinAbsoluteError (e.getRecorder().getTrack (0).gainDb.load(), -7.0f, 0.001f);
             expect (e.removeStripAt (0));
             expectEquals (e.getRecorder().getTrack (0).name, juce::String ("A"));

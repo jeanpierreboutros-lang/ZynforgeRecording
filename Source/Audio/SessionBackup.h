@@ -9,7 +9,7 @@
 #include <algorithm>
 
 // Full "backup session" snapshot. Copies the files that DEFINE a session --
-// the .zfproj (setlist/cues/playlists/automation/UI), session_mix.json,
+// the .zfproj (setlist/cues/playlists/UI), session_mix.json,
 // session_settings.json, markers.json -- into a timestamped sub-folder of the
 // session's own "Session File Backups/" folder, then prunes to the newest N.
 //

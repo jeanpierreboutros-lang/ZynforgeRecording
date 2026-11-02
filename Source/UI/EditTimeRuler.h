@@ -24,9 +24,8 @@ namespace zynforge
     //     H:MM:SS past an hour.
     //   - The transport playhead draws a bright line + a time-readout
     //     bubble; the edit cursor draws its own line; the loop region
-    //     and the automation punch range shade as bands. All share the
-    //     wave-pane's colours + sample->x mapping so the ruler lines up
-    //     with the lanes below.
+    //     shades as a band. All share the wave-pane's colours + sample->x
+    //     mapping so the ruler lines up with the lanes below.
     class EditTimeRuler final : public juce::Component, private juce::Timer
     {
     public:
@@ -84,41 +83,6 @@ namespace zynforge
         // dialog. The hit-test mirrors the paint layout: the flag is
         // an 8 px-wide triangle at the marker's x; the name extends
         // 120 px to the right of the flag tip.
-        // Shift-drag on the time-scale strip defines the automation
-        // punch range. The drag's start x = punch in, end x = punch
-        // out. The range is pushed straight into engine atomics so
-        // PUNCH (when armed on the toolbar) gates writes immediately.
-        // Plain mouseDown still goes through the wave pane's edit-
-        // cursor handler -- only Shift-modified drags hit this path.
-        void mouseDown (const juce::MouseEvent& e) override
-        {
-            if (! e.mods.isShiftDown()) return;
-            if (e.y < kMarkerStripH)    return;     // marker strip ignores
-            punchDragInSample  = pixelToSample (e.x);
-            punchDragOutSample = punchDragInSample;
-            engine.setAutomationPunchRange (punchDragInSample, punchDragInSample);
-            repaint();
-        }
-        void mouseDrag (const juce::MouseEvent& e) override
-        {
-            if (! e.mods.isShiftDown() || punchDragInSample < 0) return;
-            punchDragOutSample = pixelToSample (e.x);
-            const auto lo = juce::jmin (punchDragInSample, punchDragOutSample);
-            const auto hi = juce::jmax (punchDragInSample, punchDragOutSample);
-            engine.setAutomationPunchRange (lo, hi);
-            repaint();
-        }
-        void mouseUp (const juce::MouseEvent& e) override
-        {
-            if (! e.mods.isShiftDown() || punchDragInSample < 0) return;
-            // Collapse a no-drag click to "clear the range" so the
-            // engineer can wipe the in/out by shift-clicking once.
-            if (std::llabs ((long long) (punchDragOutSample - punchDragInSample)) < 16)
-                engine.setAutomationPunchRange (-1, -1);
-            punchDragInSample = punchDragOutSample = -1;
-            repaint();
-        }
-
         void mouseDoubleClick (const juce::MouseEvent& e) override
         {
             if (e.y >= kMarkerStripH) return;   // double-clicks on the time scale ignored
@@ -354,28 +318,6 @@ namespace zynforge
                             juce::Justification::centredLeft, false);
             }
 
-            // -------- Punch range overlay --------
-            // Translucent band representing the engine's stored automation
-            // punch range; bright when PUNCH is armed (writes gated), dim
-            // when it's just remembered.
-            const auto pIn  = engine.getAutomationPunchIn();
-            const auto pOut = engine.getAutomationPunchOut();
-            if (pIn >= 0 && pOut > pIn)
-            {
-                const int clampedIn  = juce::jmax (headerW,    secToX ((double) pIn  / sr));
-                const int clampedOut = juce::jmin (getWidth(), secToX ((double) pOut / sr));
-                if (clampedOut > clampedIn)
-                {
-                    const bool armed = engine.isAutomationPunchEnabled();
-                    g.setColour (brand::accentStatus.withAlpha (armed ? 0.22f : 0.08f));
-                    g.fillRect (juce::Rectangle<float> ((float) clampedIn, (float) rulerTop,
-                                                        (float) (clampedOut - clampedIn), (float) rulerH));
-                    g.setColour (brand::accentStatus.withAlpha (armed ? 1.0f : 0.45f));
-                    g.drawVerticalLine (clampedIn,      (float) rulerTop, (float) rulerBottom);
-                    g.drawVerticalLine (clampedOut - 1, (float) rulerTop, (float) rulerBottom);
-                }
-            }
-
             // -------- Graduated tick scale --------
             // Draw minors first (short, dim), then majors on top (tall +
             // labelled), with a mid tier so the spacing reads at a glance.
@@ -557,8 +499,6 @@ namespace zynforge
         int headerW      { 380 };   // matches TrackRow::headerW
         int contentW     { 1024 };
         int scrollOffsetX { 0 };    // viewport.getViewPositionX(), pushed by EditPage
-        juce::int64 punchDragInSample  { -1 };
-        juce::int64 punchDragOutSample { -1 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditTimeRuler)
     };

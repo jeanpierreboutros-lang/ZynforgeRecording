@@ -255,7 +255,7 @@ bool MainComponent::restoreDamagedFiles (const juce::File& dir,
 
 void MainComponent::restoreSessionDocuments (const juce::File& dir)
 {
-    // Playlists/automation must be restored after loadSession seeds its default
+    // Playlists must be restored after loadSession seeds its default
     // clips; loading them first caused the seed to erase the restored edits.
     loadSetlistFromActiveSession();
     loadUILayoutFromActiveSession();
@@ -423,7 +423,7 @@ void MainComponent::closeSession()
         return;
     }
 
-    // Closing loses any UNSAVED mixer / edit / cue / automation changes
+    // Closing loses any UNSAVED mixer / edit / cue changes
     // (recorded audio is always already on disk). Offer Save & Close /
     // Close Without Saving / Cancel -- the same choice as quitting, but it
     // only unloads the session and returns to Welcome (the app stays open).
@@ -433,8 +433,8 @@ void MainComponent::closeSession()
     auto* aw = new juce::AlertWindow (
         "Close session?",
         "Return to the Welcome screen without quitting the app.\n\n"
-        "Recorded audio is always on disk. Unsaved mixer / edit / cue / "
-        "automation changes since the last Save will be lost unless you save.",
+        "Recorded audio is always on disk. Unsaved mixer / edit / cue "
+        "changes since the last Save will be lost unless you save.",
         juce::MessageBoxIconType::QuestionIcon);
     aw->setLookAndFeel (&getLookAndFeel());
     aw->addButton ("Save & Close",         1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -745,7 +745,7 @@ void MainComponent::serviceAutosave()
 void MainComponent::showAutosaveSettings()
 {
     auto* aw = new juce::AlertWindow ("Auto-Save & Backup",
-        "Automatically save the session (mix, cues, automation, layout) on a timer and keep a "
+        "Automatically save the session (mix, cues, layout) on a timer and keep a "
         "timestamped backup snapshot (10 newest) in 'Session File Backups'. Recordings are always "
         "written separately; keep independent media backups for important takes.",
         juce::MessageBoxIconType::NoIcon);
@@ -1878,7 +1878,7 @@ void MainComponent::startSongExport (zynforge::songexport::Choice choice)
     sessionJobs.launch ([self, &eng = engine, plan] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
-        // The render reads clips and lanes under its own brief locks, as the
+        // The render reads clips under its own brief locks, as the
         // whole-session bounces do, so the UI timer keeps running.
         const auto outcome = sx::run (eng, plan, cancel, [self] (int done, int total, const juce::String& song)
         {
@@ -2331,7 +2331,7 @@ void MainComponent::loadUILayoutFromActiveSession()
     if (ui == nullptr) return;
 
     // View -- must call switchView (not just write currentView) so the
-    // page visibility + automation toolbar flip correctly.
+    // page visibility + tools palette flip correctly.
     const auto viewStr = ui->getProperty ("view").toString();
     if (viewStr.isNotEmpty())
         switchView (viewStr == "Edit" ? View::Edit : View::Mix);

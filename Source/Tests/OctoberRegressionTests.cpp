@@ -236,15 +236,6 @@ public:
             clips[1].muted = false; clips[1].sourceChannel = 1; expect (! e.healSeparationAt (0, 2400));
             clips[1].sourceChannel = clips[0].sourceChannel; expect (e.healSeparationAt (0, 2400));
         }
-        beginTest ("Automation copy and paste preserve tension");
-        {
-            AudioEngine e; setup (e); const auto p = AudioEngine::AutomationParam::Volume;
-            e.addAutomationPoint (0, p, 0, -12); e.addAutomationPoint (0, p, 10000, 0);
-            e.setAutomationTensionAt (0, p, 0, 1, 0.7f);
-            const auto copied = e.copyAutomationRange (0, p, 0, 10000);
-            e.pasteAutomationRange (1, p, 20000, copied);
-            expectWithinAbsoluteError (e.getAutomation (1, p)[0].tension, 0.7f, 0.0001f);
-        }
         beginTest ("Multipart readers reject channel layout changes");
         {
             Folder f; expect (write (f.track()));

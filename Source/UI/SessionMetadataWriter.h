@@ -38,12 +38,11 @@ namespace zynforge
         if (project == juce::File()) return { false, "Session project is unavailable" };
         const auto patch = juce::JSON::parse (snapshot.projectPatchJson);
         if (! patch.isObject()) return { false, "Invalid session metadata snapshot" };
-        // Cues, takes and automation come from the same in-memory session as
-        // the mixer: a session that was never loaded would lose them too.
+        // Cues and takes come from the same in-memory session as the mixer: a
+        // session that was never loaded would lose them too.
         const auto* fields = patch.getDynamicObject();
         const bool carriesSessionState = snapshot.settingsJson.isNotEmpty() || snapshot.mixJson.isNotEmpty()
-            || fields->hasProperty ("setlist") || fields->hasProperty ("playlists")
-            || fields->hasProperty ("automation");
+            || fields->hasProperty ("setlist") || fields->hasProperty ("playlists");
         if (carriesSessionState && snapshot.mixerOwner != snapshot.directory)
             return { false, sessionmix::notThisSessionsMixer (snapshot.directory) };
         if (snapshot.mixJson.isNotEmpty())

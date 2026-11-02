@@ -1,5 +1,4 @@
 #include "EditPage.h"
-#include "AutomationToolbar.h"
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
 #include "../Theme/BrandColors.h"
@@ -46,30 +45,16 @@ namespace zynforge
                 vp->mouseWheelMove (e.getEventRelativeTo (vp), w);
         }
 
-        // Push-down configuration: toolbar pointer.
-        // Stored here so newly-created rows pick them up automatically;
+        // Push-down configuration: the tools palette.
+        // Stored here so newly-created rows pick it up automatically;
         // existing rows are mutated through updateRowContext().
-        AutomationToolbar* sharedToolbar       { nullptr };
         EditToolsBar*      sharedToolsBar      { nullptr };
-        // Forwarded from EditPage -> MainComponent. When set, every
-        // per-point automation edit a TrackRow performs goes through
-        // this wrapper so Cmd+Z reverts it.
-        std::function<void (const juce::String& label,
-                            std::function<void()> mutate)> sharedAutomationEditWrapper;
-        // Drag begin / end -- coalesces a multi-tick drag into one
-        // undo step.
-        std::function<void()>                       sharedAutomationDragBegin;
-        std::function<void (const juce::String&)>   sharedAutomationDragEnd;
 
         void updateRowContext()
         {
             for (auto& r : rows)
             {
-                r->toolbar                = sharedToolbar;
                 r->toolsBar               = sharedToolsBar;
-                r->automationEditWrapper  = sharedAutomationEditWrapper;
-                r->automationDragBegin    = sharedAutomationDragBegin;
-                r->automationDragEnd      = sharedAutomationDragEnd;
                 r->repaint();
             }
         }
@@ -101,15 +86,6 @@ namespace zynforge
             rows[(size_t) target]->beginRename();
         }
 
-        void forceLaneMode (TrackRow::LaneMode lm)
-        {
-            for (auto& r : rows)
-            {
-                r->laneMode = lm;
-                r->repaint();
-            }
-        }
-
         // The viewport's visible height -- needed to resolve "fit to window".
         // EditPage sets this on every resize.
         void setViewportHeight (int h) { viewportHeight = juce::jmax (60, h); }
@@ -133,11 +109,7 @@ namespace zynforge
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
                 r->onTabRename  = [this] (TrackRow& from, bool shift) { tabRename (from, shift); };
                 r->onApplyToAllRows = [this] (TrackRow::Size s, int customPx) { applySizeToAll (s, customPx); };
-                r->toolbar                = sharedToolbar;
                 r->toolsBar               = sharedToolsBar;
-                r->automationEditWrapper  = sharedAutomationEditWrapper;
-                r->automationDragBegin    = sharedAutomationDragBegin;
-                r->automationDragEnd      = sharedAutomationDragEnd;
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
                 i += stereo ? 2 : 1;
@@ -411,13 +383,6 @@ namespace zynforge
 
         int rowCount() const { return (int) rows.size(); }
 
-        const TrackRow* rowForTrack (int physical) const
-        {
-            for (auto& r : rows)
-                if (r->getTrackIndex() == physical) return r.get();
-            return nullptr;
-        }
-
         // True when the rows were built for exactly this logical layout. A
         // count check alone misses a block move that keeps both the track and
         // row counts ([mono, stereo] -> [stereo, mono]) and would leave rows
@@ -519,13 +484,9 @@ namespace zynforge
         formatManager.registerBasicFormats();
 
         // Owned by EditPage so the lifetime tracks the page, but laid
-        // out by MainComponent on the same 28 px row as the automation
-        // toolbar -- the host re-parents it via getEditToolsBar() +
-        // addAndMakeVisible().
+        // out by MainComponent -- the host re-parents it via
+        // getEditToolsBar() + addAndMakeVisible().
         toolsBar = std::make_unique<EditToolsBar>();
-        // Likewise owned here, re-parented by the host via
-        // getAutomationToolbar() + addAndMakeVisible().
-        autoToolbar = std::make_unique<AutomationToolbar>();
 
         // Waveform scans must yield disk access to recording, playback and
         // metadata saves. Keep the existing shard/cache layout, but never run
@@ -647,10 +608,6 @@ namespace zynforge
         // cleared once waveforms are present (see refresh()).
         addChildComponent (placeholder);
 
-        // Now that the rows exist, point the EDIT view at its own
-        // automation toolbar (wires list->sharedToolbar + row lanes).
-        setAutomationToolbar (autoToolbar.get());
-
         refresh();
         startTimerHz (24);
     }
@@ -702,60 +659,6 @@ namespace zynforge
             wavecache::save (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
             waveCacheSaving = false;
         });
-    }
-
-    void EditPage::setAutomationEditWrapper (AutoEditWrapper fn)
-    {
-        automationEditWrapper = std::move (fn);
-        if (list != nullptr)
-        {
-            list->sharedAutomationEditWrapper = automationEditWrapper;
-            list->updateRowContext();
-        }
-    }
-
-    void EditPage::setAutomationDragHooks (std::function<void()> begin,
-                                           std::function<void (const juce::String&)> end)
-    {
-        if (list == nullptr) return;
-        list->sharedAutomationDragBegin = std::move (begin);
-        list->sharedAutomationDragEnd   = std::move (end);
-        list->updateRowContext();
-    }
-
-    void EditPage::setAutomationToolbar (AutomationToolbar* t)
-    {
-        toolbar = t;
-        if (list != nullptr)
-        {
-            list->sharedToolbar = t;
-            list->sharedAutomationEditWrapper = automationEditWrapper;
-            list->updateRowContext();
-        }
-        applyToolbarParamToAllRows();
-        repaint();
-    }
-
-    std::optional<AudioEngine::AutomationParam> EditPage::activeRowAutomationParam() const
-    {
-        if (list == nullptr) return {};
-        const auto* row = list->rowForTrack (activeRowTrackIndex);
-        return row != nullptr ? row->shownAutomationParam() : std::nullopt;
-    }
-
-    void EditPage::applyToolbarParamToAllRows()
-    {
-        if (toolbar == nullptr || list == nullptr) return;
-        focusedPointIdx = -1;   // it named a point on the lane being replaced
-
-        TrackRow::LaneMode lm = TrackRow::LaneMode::Volume;
-        switch (toolbar->getParam())
-        {
-            case AutomationToolbar::Param::Volume: lm = TrackRow::LaneMode::Volume; break;
-            case AutomationToolbar::Param::Pan:    lm = TrackRow::LaneMode::Pan;    break;
-            case AutomationToolbar::Param::Mute:   lm = TrackRow::LaneMode::Mute;   break;
-        }
-        list->forceLaneMode (lm);
     }
 
     int EditPage::selectedClipIndexOn (const SelectedClip& s) const
@@ -961,10 +864,10 @@ namespace zynforge
 
     void EditPage::repaintLanes()
     {
-        // Explicit per-row repaint -- the selection highlight + automation are
+        // Explicit per-row repaint -- the selection highlight is
         // drawn inside each row's paint(), and repainting only the parent list
         // doesn't reliably redraw the (header-pinned) children. Used after a
-        // selection change (Cmd+A / clear) or a cue recall changes automation.
+        // selection change (Cmd+A / clear).
         if (list != nullptr) list->repaintRows();
         repaint();
     }

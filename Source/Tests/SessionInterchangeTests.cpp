@@ -431,17 +431,15 @@ namespace zynforge
                         "the pan law must match the session's");
             }
 
-            beginTest ("Automation and sends are left out, and the summary says so");
+            beginTest ("Sends are left out, and the summary says so");
             {
                 ix::SessionInput in;
                 in.anySolo = true;
                 ix::StripInput strip;
-                strip.automationLanes = 2;
                 strip.hasSends = true;
                 in.strips.push_back (strip);
                 const auto r = ix::resolve (in, noCancel);
                 const auto notes = r.project.notes.joinIntoString (" ");
-                expect (notes.contains ("Automation is not exported (2 lanes)"));
                 expect (notes.contains ("Aux sends"));
                 expect (notes.contains ("Solo"));
             }

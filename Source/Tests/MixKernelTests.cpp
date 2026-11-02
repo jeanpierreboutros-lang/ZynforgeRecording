@@ -40,46 +40,6 @@ namespace zynforge
                 expect (! mix::audible (true,  false, vcaSolo, false, true), "VCA solo keeps the strip's mute");
             }
 
-            beginTest ("A stereo pair's right half reads its left partner's lanes");
-            {
-                expectEquals (mix::automationChannel (0, false), 0);
-                expectEquals (mix::automationChannel (3, false), 3);
-                expectEquals (mix::automationChannel (3, true),  2);
-                expectEquals (mix::automationChannel (0, true),  0);   // no track -1
-            }
-
-            beginTest ("resolveLanes: static values and lanes");
-            {
-                // Fake lanes: channel -> (lane -> value). Missing = fallback.
-                std::map<std::pair<int, int>, float> lanes;
-                auto read = [&lanes] (int ch, mix::Lane lane, float fallback) noexcept
-                {
-                    const auto it = lanes.find ({ ch, (int) lane });
-                    return it == lanes.end() ? fallback : it->second;
-                };
-
-                // Stopped, or the lock lost: static values.
-                auto m = mix::resolveLanes (1, 0, -6.0f, 0.25f, false, read);
-                expectEquals (m.volDb, -6.0f);
-                expectEquals (m.pan, 0.25f);
-                expect (! m.muteLane);
-
-                // Rolling with lanes: Volume + Mute come from autoCh, Pan
-                // from the strip itself.
-                lanes[{ 0, (int) mix::Lane::Volume }] = -20.0f;
-                lanes[{ 1, (int) mix::Lane::Volume }] = +6.0f;    // ignored: pair reads ch 0
-                lanes[{ 1, (int) mix::Lane::Pan }]    = -1.0f;
-                lanes[{ 0, (int) mix::Lane::Mute }]   = 0.0f;
-                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, read);
-                expectEquals (m.volDb, -20.0f);
-                expectEquals (m.pan, -1.0f);
-                expect (! m.muteLane);
-
-                lanes[{ 0, (int) mix::Lane::Mute }] = 1.0f;
-                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, read);
-                expect (m.muteLane);
-            }
-
             beginTest ("Solo gets a muted strip heard; every other strip stays out");
             {
                 expect (mix::audible (true, true, {}, true, false), "solo beats the strip's own mute");
@@ -89,13 +49,12 @@ namespace zynforge
 
             beginTest ("The stream bus takes mutes and ignores solo");
             {
-                expect (mix::streamAudible (false, {}, false));
-                expect (! mix::streamAudible (true, {}, false));
-                expect (! mix::streamAudible (false, {}, true));
+                expect (mix::streamAudible (false, {}));
+                expect (! mix::streamAudible (true, {}));
                 mix::VcaGate soloedVca  { true, false, true };
                 mix::VcaGate mutedVca   { true, true,  false };
-                expect (mix::streamAudible (false, soloedVca, false));
-                expect (! mix::streamAudible (false, mutedVca, false));
+                expect (mix::streamAudible (false, soloedVca));
+                expect (! mix::streamAudible (false, mutedVca));
             }
 
             beginTest ("Trim-Follow offset: a real move, limited; no reference, none");
@@ -131,10 +90,9 @@ namespace zynforge
 
             beginTest ("Post-fader sends follow every mute; pre-fader sends do not");
             {
-                expect (! mix::postFaderMuted (false, false, false));
-                expect (mix::postFaderMuted (true,  false, false));
-                expect (mix::postFaderMuted (false, true,  false));
-                expect (mix::postFaderMuted (false, false, true));
+                expect (! mix::postFaderMuted (false, false));
+                expect (mix::postFaderMuted (true,  false));
+                expect (mix::postFaderMuted (false, true));
 
                 expectWithinAbsoluteError (mix::sendGain (0.0f, true, 0.5f), 0.5f, 1.0e-6f);
                 expectWithinAbsoluteError (mix::sendGain (0.0f, true, 0.0f), 0.0f, 1.0e-6f);

@@ -119,7 +119,7 @@ namespace zynforge
         };
 
         // ── Playback-feed helpers ─────────────────────────────────────
-        // The VCA-gain / automation / aux-send paths all read from
+        // The VCA-gain / aux-send paths all read from
         // `playerScratch`, which is empty unless a real session is
         // loaded. These helpers record a known signal to disk via the
         // real capture path, then let a fixture play it back so the
@@ -475,58 +475,6 @@ namespace zynforge
                 f.process (256);
                 expect (f.peakOut (0, 256) > 0.2f, "above the floor the two still sum");
                 f.engine.setTrackVcaGroup (0, -1);
-            }
-
-            beginTest ("Losing the automation try-lock mid-roll holds the lanes instead of un-muting");
-            {
-                // Any message-thread holder of automationLock (an automation
-                // edit, WRITE thinning, the strip poll) made the callback's
-                // try-lock fail, and that block fell back to static values:
-                // Mute-lane-muted strips blipped through, volume lanes jumped
-                // to the fader.
-                const auto dir = recordTestSession (1, 0.5f);
-                {
-                    CallbackFixture f (1, 1, 2);
-                    expect (f.engine.loadSession (dir, false, false) == 1);
-                    f.engine.setMasterOutputs (0, 1);
-                    f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.05f, "session never became audible");
-
-                    using P = AudioEngine::AutomationParam;
-                    f.engine.addAutomationPoint (0, P::Volume, 0, -20.0f);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    const float laneLevel = f.peakOut (0, 256);
-                    expect (laneLevel > 0.01f);
-
-                    auto renderWithLockHeld = [&f]
-                    {
-                        std::atomic<bool> held { false }, release { false };
-                        std::thread holder ([&]
-                        {
-                            const juce::ScopedLock sl (f.engine.automationLock);
-                            held.store (true);
-                            while (! release.load()) juce::Thread::sleep (1);
-                        });
-                        while (! held.load()) juce::Thread::sleep (1);
-                        f.engine.getPlayer().setPositionSamples (0);
-                        f.process (256);
-                        release.store (true);
-                        holder.join();
-                        return f.peakOut (0, 256);
-                    };
-
-                    expectWithinAbsoluteError (renderWithLockHeld(), laneLevel, 0.002f,
-                                               "a missed try-lock jumped the volume lane to the fader");
-
-                    f.engine.addAutomationPoint (0, P::Mute, 0, 1.0f);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    expectEquals (f.peakOut (0, 256), 0.0f);
-                    expectEquals (renderWithLockHeld(), 0.0f, "a missed try-lock un-muted a Mute-lane strip");
-                    f.engine.stopPlayback();
-                }
-                dir.deleteRecursively();
             }
 
             // ─── Stereo-pair summing ─────────────────────────────────
@@ -898,48 +846,6 @@ namespace zynforge
                     expect (lastMag  > 0.30f);
                 }
                 sessionDir.deleteRecursively();
-            }
-
-            beginTest ("Automation WRITE thinning collapses a dense fader stream into sparse points");
-            {
-                // The touch/latch/write path a fader drives during a pass:
-                // writeAutomationPointThinned is fed a 60 Hz value stream and
-                // must thin it to the requested minimum spacing so the lane
-                // doesn't fan out into per-frame cruft (the round-8 gap).
-                using AP = AudioEngine::AutomationParam;
-                CallbackFixture f (1, 1, 2);   // one track + its automation lane
-                auto& e = f.engine;
-                e.setAutomationWriteMode (AudioEngine::AutomationWriteMode::Write);
-                expect (e.getAutomationWriteMode() == AudioEngine::AutomationWriteMode::Write);
-
-                const int         sr     = 48000;
-                const juce::int64 minGap = 4800;     // thin to >= 10 Hz
-                float lastVal = 0.0f;
-                for (int n = 0; n < 60; ++n)         // ~1 s of 60 Hz fader intent
-                {
-                    const juce::int64 pos = (juce::int64) n * (sr / 60);   // 800-sample steps
-                    lastVal = juce::jmap ((float) n, 0.0f, 59.0f, -12.0f, 6.0f);
-                    e.writeAutomationPointThinned (0, AP::Volume, pos, lastVal, minGap);
-                }
-
-                const auto& lane = e.getAutomation (0, AP::Volume);
-                expect (! lane.empty(), "WRITE mode captured nothing");
-                // 60 intents thinned to >= 4800-sample spacing => ~11 points,
-                // an order of magnitude fewer than 60 -- no fan-out cruft.
-                expect ((int) lane.size() >= 6 && (int) lane.size() < 30,
-                        "thinning did not collapse the 60 Hz stream sensibly");
-                for (size_t i = 1; i < lane.size(); ++i)
-                {
-                    expect (lane[i].samplePos > lane[i - 1].samplePos, "points not monotonic in time");
-                    expect (lane[i].samplePos - lane[i - 1].samplePos >= minGap, "two points closer than the thin gap");
-                }
-                for (const auto& p : lane)
-                    expect (p.value >= -12.001f && p.value <= 6.001f, "captured value out of fader range");
-                // The ramp's direction survives the thinning.
-                expect (lane.back().value > lane.front().value, "thinned ramp lost its shape");
-
-                e.setAutomationWriteMode (AudioEngine::AutomationWriteMode::Off);
-                expect (e.getAutomationWriteMode() == AudioEngine::AutomationWriteMode::Off);
             }
 
             beginTest ("Equal-power crossfade across two overlapping clips has no dropout");
@@ -2197,7 +2103,7 @@ namespace zynforge
                 expect (f.peakOut (1, 256) > 0.20f);
             }
 
-            // ─── Playback feed: VCA gain / automation / aux send ─────
+            // ─── Playback feed: VCA gain / aux send ───────────────────
             // These exercise the paths that were impossible to test
             // without a loaded playerScratch feed (see the round-4 gap
             // list in tasks.md). Each records a real WAV, plays it back,
@@ -2344,45 +2250,6 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
-            beginTest ("Volume automation attenuates the playback output by position");
-            {
-                const auto dir = recordTestSession (1, 0.5f, 192);   // ~1.02 s
-                {
-                    CallbackFixture f (1, 1, 2);
-                    f.engine.getPlayer().loadSession (dir);
-                    using P = AudioEngine::AutomationParam;
-                    // Full level at the head, -40 dB by ~0.83 s.
-                    f.engine.addAutomationPoint (0, P::Volume, 0,      0.0f);
-                    f.engine.addAutomationPoint (0, P::Volume, 40000, -40.0f);
-                    f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.20f);   // buffer is now warm at pos 0
-
-                    // Measure the HEAD first, while the BufferingAudioReader is
-                    // still warm at position 0. (Measuring it after seeking away
-                    // to the tail used to read unbuffered silence -> a flaky
-                    // 'high' as the background reader moved its window.)
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    const float high = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
-
-                    // Tail (curve fully down): re-seek into the -40 dB region and
-                    // let the background reader load it (brief sleeps), so 'low'
-                    // reflects the real attenuated level, not an unbuffered read.
-                    float low = high;
-                    for (int i = 0; i < 40; ++i)
-                    {
-                        f.engine.getPlayer().setPositionSamples (40000);
-                        f.process (256);
-                        low = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
-                        juce::Thread::sleep (8);
-                    }
-
-                    expect (high > 0.20f);
-                    expect (low  < high * 0.1f);
-                }
-                dir.deleteRecursively();
-            }
-
             beginTest ("Aux send routes playback through a bus track to its output");
             {
                 const auto dir = recordTestSession (1, 0.5f);   // only Track_01.wav
@@ -2458,10 +2325,9 @@ namespace zynforge
                 // MixKernel.h is the one definition of the mix rules. Render
                 // one session through BOTH of its users -- the audio callback
                 // and renderStereoMix -- and compare them sample for sample.
-                // Every rule is in play: fader, VCA, a stereo pair whose right
-                // half follows its left partner's lanes, a Volume ramp, a Pan
-                // ramp, a Mute lane, pre- and post-fader sends into a bus, the
-                // master fader, and then a solo.
+                // Every rule is in play: fader, pan, VCA, a stereo pair, a mute,
+                // pre- and post-fader sends into a bus, the master fader, and
+                // then a solo.
                 const auto dir = recordTestSession (3, 0.5f);   // Track_01..03, 49152 samples
                 {
                     CallbackFixture f (4, 3, 2);                // strip 3 = bus, no file
@@ -2472,7 +2338,6 @@ namespace zynforge
                     f.engine.setMasterOutputs (0, 1);
                     f.engine.setStreamOutputs (-1, -1);
 
-                    using P = AudioEngine::AutomationParam;
                     auto& rec = f.engine.getRecorder();
                     f.engine.setTrackStereo (0, true);          // strips 0 + 1: one pair
                     rec.getTrack (0).gainDb.store (-3.0f);
@@ -2482,14 +2347,9 @@ namespace zynforge
                     f.engine.setTrackVcaGroup (0, 0);
                     f.engine.setTrackVcaGroup (1, 0);
                     f.engine.getVca (0).gainDb.store (-2.0f);
-                    f.engine.addAutomationPoint (0, P::Volume, 0, -12.0f);
-                    f.engine.addAutomationPoint (0, P::Volume, 40000, 0.0f);
-                    f.engine.addAutomationPoint (0, P::Mute, 0, 0.0f);
-                    f.engine.addAutomationPoint (0, P::Mute, 24000, 1.0f);
                     f.engine.setTrackSend (1, 0, 3, -6.0f, true);     // post: follows the pair's mute
                     rec.getTrack (2).gainDb.store (-4.0f);
-                    f.engine.addAutomationPoint (2, P::Pan, 0, -1.0f);
-                    f.engine.addAutomationPoint (2, P::Pan, 40000, 1.0f);
+                    rec.getTrack (2).pan.store (-0.7f);
                     f.engine.setTrackSend (2, 0, 3, -10.0f, false);   // pre
                     f.engine.setTrackIsBus (3, true);
                     rec.getTrack (3).gainDb.store (-1.0f);
@@ -2500,8 +2360,6 @@ namespace zynforge
                     juce::AudioBuffer<float> offline;
                     f.engine.startPlayback();
 
-                    // Live blocks start on the bounce's 512-sample automation
-                    // grid, so both paths read every lane at the same position.
                     // The player buffers on a background thread, so re-render
                     // the block until it is fully buffered (it then matches).
                     auto compareAt = [&] (juce::int64 pos, const juce::String& what)
@@ -2523,9 +2381,13 @@ namespace zynforge
                     };
 
                     expect (f.engine.renderStereoMix (offline, arrLen));
-                    compareAt (2048,  "early in the ramps");
-                    compareAt (15360, "mid-ramp, pair audible");
-                    compareAt (35840, "pair muted by its lane, its post send silent");
+                    compareAt (2048,  "fader, pan and sends");
+                    compareAt (15360, "further into the take");
+
+                    f.engine.setTrackMuted (0, true);
+                    expect (f.engine.renderStereoMix (offline, arrLen));
+                    compareAt (15360, "pair muted, its post send silent");
+                    f.engine.setTrackMuted (0, false);
 
                     rec.getTrack (2).soloed.store (true);
                     expect (f.engine.renderStereoMix (offline, arrLen));

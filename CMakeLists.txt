@@ -121,7 +121,6 @@ add_library(ZynforgeCore STATIC
     Source/UI/AudioDeviceDialog.cpp
     Source/UI/MasterStrip.cpp
     Source/UI/AddTracksDialog.cpp
-    Source/UI/AutomationToolbar.cpp
     Source/UI/NewSessionDialog.cpp
     Source/UI/WelcomeDialog.cpp
     Source/UI/PerfDashboard.cpp
@@ -133,7 +132,6 @@ add_library(ZynforgeCore STATIC
     Source/UI/TransportBar.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
-    Source/Audio/AudioEngineAutomation.cpp
     Source/Audio/AudioEngineClips.cpp
     Source/Audio/AudioImport.cpp
     Source/Audio/ClockSource.cpp
@@ -212,8 +210,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/AudioImportTests.cpp
     Source/Tests/AuditFixTests.cpp
     Source/Tests/AuditSecurityTests.cpp
-    Source/Tests/AutomationTests.cpp
-    Source/Tests/AutomationToolbarAccessibilityTests.cpp
     Source/Tests/CaptureDaemonTests.cpp
     Source/Tests/CaptureFixTests.cpp
     Source/Tests/CaptureLinkTests.cpp

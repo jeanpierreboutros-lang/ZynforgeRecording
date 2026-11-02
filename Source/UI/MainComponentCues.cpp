@@ -96,11 +96,6 @@ void MainComponent::loadSetlistFromActiveSession()
                                 }
                             }
                         }
-                        // Per-cue automation lanes (optional). Kept as the
-                        // raw array; jumpToCue feeds it to loadAutomationFromJson.
-                        const auto av = c->getProperty ("automation");
-                        if (av.isArray()) cue.automation = av;
-
                         cues.push_back (std::move (cue));
                     }
                 }
@@ -128,11 +123,6 @@ void MainComponent::loadSetlistFromActiveSession()
                     engine.reconcileClipsWithMedia (root->getProperty ("mediaLengths"),
                                                     proj.getSiblingFile ("recording.session").existsAsFile());
                 }
-                // Automation lanes (formatVersion >= 3). Older saves
-                // have no automation key, so the if-check is enough
-                // to keep them loadable.
-                const auto autom = root->getProperty ("automation");
-                if (autom.isArray()) engine.loadAutomationFromJson (autom);
             }
         }
     }
@@ -165,12 +155,6 @@ juce::String MainComponent::captureProjectPatchJson() const
         }
         entry->setProperty ("strips", juce::var (stripArr));
 
-        // Per-cue automation snapshot (volume/pan/mute lanes). Stored as the
-        // same array automationToJson() produces, so the recall path can feed
-        // it straight back into loadAutomationFromJson.
-        if (c.automation.isArray())
-            entry->setProperty ("automation", c.automation);
-
         arr.add (juce::var (entry.get()));
     }
     obj->setProperty ("setlist",   juce::var (arr));
@@ -178,12 +162,8 @@ juce::String MainComponent::captureProjectPatchJson() const
     // meant every alternate take was lost on app quit.
     obj->setProperty ("playlists",  engine.playlistsToJson());
     obj->setProperty ("mediaLengths", engine.mediaLengthsToJson());
-    // Persist per-track automation lanes (volume/pan/mute points +
-    // curve types). Without this, every point the engineer drew was
-    // lost on app quit. Same data-loss class as the Takes bug fix.
-    obj->setProperty ("automation", engine.automationToJson());
     // .zfproj schema version: 2 introduced playlists + stable strip
-    // IDs. v3 adds automation lanes. Older saves read transparently.
+    // IDs. Older saves read transparently.
     obj->setProperty ("formatVersion", 3);
     obj->setProperty ("updatedAt",     juce::Time::getCurrentTime().toISO8601 (true));
 
@@ -212,31 +192,6 @@ void MainComponent::jumpToCue (int index)
     auto& player = engine.getPlayer();
     if (! playheadLockedForPunch())   // the mixer recall below still runs
         player.setPositionSamples (cue.samplePos);
-
-    // Reinstall this cue's automation lanes so the song plays back with its
-    // own volume / pan / mute moves. An empty array clears the lanes; a void
-    // var (older cues) leaves the current lanes untouched.
-    int autoPts = 0;
-    if (cue.automation.isArray())
-    {
-        // Clear EVERY lane first, then load the cue's snapshot. A cue only
-        // stores automation for tracks that had any WHEN IT WAS CAPTURED, so
-        // loadAutomationFromJson alone would leave a track that another cue
-        // automated still showing that other cue's curve. Clearing first makes
-        // recall fully authoritative -- the view + playback show exactly this
-        // song's moves and nothing leaks across cues.
-        engine.clearAutomation (AudioEngine::AutomationParam::Volume);
-        engine.clearAutomation (AudioEngine::AutomationParam::Pan);
-        engine.clearAutomation (AudioEngine::AutomationParam::Mute);
-        engine.loadAutomationFromJson (cue.automation);
-        if (auto* arr = cue.automation.getArray())
-            for (const auto& trk : *arr)
-                if (auto* o = trk.getDynamicObject())
-                    for (const char* lane : { "volume", "pan", "mute" })
-                        if (auto* la = o->getProperty (lane).getArray())
-                            autoPts += la->size();
-        if (editPage != nullptr) editPage->repaintLanes();   // redraw the curves now
-    }
 
     // Recall the mixer state captured with this cue: gain / pan /
     // input + output routing / mute / solo / mon / arm -- for every
@@ -295,8 +250,7 @@ void MainComponent::jumpToCue (int index)
 
     updateTransportLabels();
     showStatus ("Cue " + juce::String (index + 1) + " '" + cue.name + "' recalled -- "
-                + juce::String (n) + " strips, " + juce::String (autoPts) + " automation pts"
-                + (autoPts > 0 ? " (plays during transport)" : "")
+                + juce::String (n) + " strips"
                 + (recording ? " (arm + input held -- recording)" : ""));
 }
 
@@ -353,10 +307,6 @@ void MainComponent::addCueAtTransport()
         for (int i = 0; i < total; ++i)
             c.strips.push_back (snapshotStrip (rec.getTrack (i)));
 
-        // Snapshot the automation lanes too, so this song recalls its own
-        // volume / pan / mute moves -- not whatever was last edited globally.
-        c.automation = engine.automationToJson();
-
         cues.push_back (std::move (c));
         currentCueIndex = (int) cues.size() - 1;
         setlistBar.setCues (cues, currentCueIndex);
@@ -406,10 +356,6 @@ void MainComponent::updateCueAtTransport()
     cue.strips.reserve ((size_t) total);
     for (int i = 0; i < total; ++i)
         cue.strips.push_back (snapshotStrip (rec.getTrack (i)));
-
-    // Re-capture the automation lanes too -- Update means 'this is the
-    // mix AND automation this song should recall to'.
-    cue.automation = engine.automationToJson();
 
     setlistBar.setCues (cues, currentCueIndex);
     saveCueChanges ("Cue '" + cue.name + "' updated -- "

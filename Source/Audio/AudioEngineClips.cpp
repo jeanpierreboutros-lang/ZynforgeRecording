@@ -268,7 +268,6 @@ namespace zynforge
 
             if (! out.empty()) ++tracksWithAudio;
         }
-        cutAutomationLanes (cut, tracks);
         cutSessionTimeline (cut);
         return tracksWithAudio;
     }
@@ -323,20 +322,17 @@ namespace zynforge
                 return "A locked clip on track " + juce::String (t + 1)
                      + " would have to move -- unlock it first";
         }
-        if (automationBlocksCut (tracks))
-            return "Automation Safe is on for a track this edit moves -- turn it off first";
         return {};
     }
 
     AudioEngine::TimelineState AudioEngine::captureTimelineState() const
     {
-        return { playlistsToJson(), automationToJson(), markers.getAll() };
+        return { playlistsToJson(), markers.getAll() };
     }
 
     void AudioEngine::restoreTimelineState (const TimelineState& state)
     {
         restorePlaylistSnapshot (state.playlists);
-        loadAutomationFromJson (state.automation);
         markers.replaceAll (state.markers);
     }
 
@@ -733,9 +729,7 @@ namespace zynforge
     {
         // Offline renders run in fixed windows so memory stays O(window)
         // regardless of arrangement length -- a multi-hour show no longer
-        // needs a multi-GB flat buffer. 65536 is a multiple of the
-        // 512-sample automation step, so windowed and whole-buffer renders
-        // evaluate automation at identical sample positions.
+        // needs a multi-GB flat buffer.
         constexpr int kRenderWindowSamples = 1 << 16;
 
         // One track's offline render source: the resolved clip list plus
@@ -1010,10 +1004,8 @@ namespace zynforge
             bool audible {}, needed {};
             ArrangementSource src;
             float baseDb {}, basePan {}, vcaDb {};
-            int   autoCh {};
             bool  isBus {}, muted {}, vcaMuted {};
             std::array<SendSnapshot, TrackState::kNumSends> sends {};
-            mix::StripLanes lanes;   // this automation step's resolved lanes
         };
         std::vector<std::unique_ptr<TrackCtx>> live;
         int nTracks = 0;
@@ -1071,8 +1063,6 @@ namespace zynforge
                                       mix::sendFoldGain (isStereoHalf (t),
                                                          bus >= 0 && bus < recorder.getNumTracks() && isStereoHalf (bus)) };
                 }
-                ctx->autoCh   = mix::automationChannel (
-                    t, t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed));
                 live.push_back (std::move (ctx));
             }
         }
@@ -1096,17 +1086,15 @@ namespace zynforge
             }
         }
 
-        const int step = 512;   // re-evaluate automation every ~10 ms
-
         // Master MUTE keeps playback out of the PA. It is a monitoring switch,
         // not part of the mix, so a render follows the master fader alone.
         const double mGain = mix::masterGain (false, masterState.gainDb.load (std::memory_order_relaxed));
 
         juce::AudioBuffer<float> stereo (2, kRenderWindowSamples), raw (juce::jmax (1, nTracks), kRenderWindowSamples), tmp (1, 0);
-        // Windows stay on the absolute grid wherever a range starts: automation
-        // is read at each 512-sample step of it, so a range cut anywhere plays
-        // exactly the samples a whole render puts there. Only the part of the
-        // first window that lies inside the range reaches `consume`.
+        // Windows stay on the absolute grid wherever a range starts, so a range
+        // cut anywhere plays exactly the samples a whole render puts there. Only
+        // the part of the first window that lies inside the range reaches
+        // `consume`.
         for (juce::int64 winStart = startSample - startSample % kRenderWindowSamples;
              winStart < endSample; winStart += kRenderWindowSamples)
         {
@@ -1120,55 +1108,34 @@ namespace zynforge
                 if (cp->needed && ! cp->isBus
                     && ! cp->src.mixWindow (raw.getWritePointer (cp->track), winStart, winLen, tmp)) return false;
 
-            for (int i = 0; i < winLen; i += step)
+            // Sends precede solo filtering, as in live playback: a soloed bus
+            // still receives its unsoloed source strips.
+            for (auto& cp : live)
             {
-                const int n = juce::jmin (step, winLen - i);
-                const juce::int64 pos = winStart + i;
-
-                // Every strip's lanes for this step, under ONE automation
-                // lock -- the same resolve the audio callback runs per block.
-                // BLOCKING, unlike the callback's try-lock: the rendered file
-                // must follow the curves exactly, and a lost try-lock would
-                // bake the static fader into that step.
+                if (! cp->needed || cp->isBus) continue;
+                const bool muted = mix::postFaderMuted (cp->muted, cp->vcaMuted);
+                const float postGain = muted ? 0.0f
+                    : juce::Decibels::decibelsToGain (mix::stripDb (cp->baseDb, cp->vcaDb), -60.0f);
+                for (const auto& send : cp->sends)
                 {
-                    const juce::ScopedLock automationSl (automationLock);
-                    const bool readLanes = ! automationReadSuspended.load (std::memory_order_acquire);
-                    for (auto& cp : live)
-                        if (cp->needed)
-                            cp->lanes = resolveStripLanesLocked (cp->track, cp->autoCh, cp->baseDb, cp->basePan,
-                                                                 pos, readLanes);
+                    const int bus = send.bus;
+                    if (bus < 0 || bus >= nTracks || ! live[(size_t) bus]->isBus) continue;
+                    raw.addFrom (bus, 0, raw, cp->track, 0, winLen,
+                                 send.fold * mix::sendGain (send.levelDb, send.post, postGain));
                 }
+            }
 
-                // Sends precede solo filtering, as in live playback: a soloed
-                // bus still receives its unsoloed source strips. Buses only
-                // read rows [i, i + n) here, which every send has filled.
-                for (auto& cp : live)
+            for (auto& cp : live)
+            {
+                if (! cp->audible) continue;
+                const double gain = juce::Decibels::decibelsToGain ((double) mix::stripDb (cp->baseDb, cp->vcaDb), -60.0);
+                const auto [gL, gR] = mix::constantPowerPan (gain, cp->basePan);
+                const auto* s = raw.getReadPointer (cp->track);
+                for (int k = 0; k < winLen; ++k)
                 {
-                    if (! cp->needed || cp->isBus) continue;
-                    const bool muted = mix::postFaderMuted (cp->muted, cp->vcaMuted, cp->lanes.muteLane);
-                    const float postGain = muted ? 0.0f
-                        : juce::Decibels::decibelsToGain (mix::stripDb (cp->lanes.volDb, cp->vcaDb), -60.0f);
-                    for (const auto& send : cp->sends)
-                    {
-                        const int bus = send.bus;
-                        if (bus < 0 || bus >= nTracks || ! live[(size_t) bus]->isBus) continue;
-                        raw.addFrom (bus, i, raw, cp->track, i, n,
-                                     send.fold * mix::sendGain (send.levelDb, send.post, postGain));
-                    }
-                }
-
-                for (auto& cp : live)
-                {
-                    if (! cp->audible || cp->lanes.muteLane) continue;
-                    const double gain = juce::Decibels::decibelsToGain ((double) mix::stripDb (cp->lanes.volDb, cp->vcaDb), -60.0);
-                    const auto [gL, gR] = mix::constantPowerPan (gain, cp->lanes.pan);
-                    const auto* s = raw.getReadPointer (cp->track);
-                    for (int k = 0; k < n; ++k)
-                    {
-                        const float v = s[i + k];
-                        oL[i + k] += (float) (v * gL);
-                        oR[i + k] += (float) (v * gR);
-                    }
+                    const float v = s[k];
+                    oL[k] += (float) (v * gL);
+                    oR[k] += (float) (v * gR);
                 }
             }
 
@@ -1358,10 +1325,6 @@ namespace zynforge
             }
         }
 
-        const juce::ScopedLock lanes (automationLock);
-        for (int t = 0; t < (int) input.strips.size(); ++t)
-            for (auto param : { AutomationParam::Volume, AutomationParam::Pan, AutomationParam::Mute })
-                input.strips[(size_t) t].automationLanes += getAutomation (t, param).empty() ? 0 : 1;
         return input;
     }
 
@@ -1827,7 +1790,6 @@ namespace zynforge
         }
         if (changed == 0) return 0;
 
-        cutAutomationLanes (cut, tracks);
         // On some strips only, the rest of the session stays where it was, so
         // the markers stay with it.
         if (namesEveryStrip (tracks)) cutSessionTimeline (cut);

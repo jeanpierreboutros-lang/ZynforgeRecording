@@ -96,7 +96,7 @@ namespace zynforge
         using Progress = std::function<void (int, int, const juce::String&)>;
 
         // Worker thread, under the session-job reservation. Reads the engine's
-        // clips and lanes, never the message thread's UI. Refuses during a take.
+        // clips, never the message thread's UI. Refuses during a take.
         Outcome run (AudioEngine&, const Plan&, const std::atomic<bool>& cancel, const Progress&);
 
         // What a finished mix render must add to "done": a silent file is not a

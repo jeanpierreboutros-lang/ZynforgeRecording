@@ -298,26 +298,15 @@ void MainComponent::resized()
     }
 
     auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;
-    if (automationToolbar->isVisible())
+    if (editToolsBar != nullptr && editToolsBar->isVisible())
     {
         auto topRow = viewportArea.removeFromTop (44).reduced (2, 0);
-        if (editToolsBar != nullptr && editToolsBar->isVisible())
-        {
-            const int toolsW = 394;
-            editToolsBar->setBounds (topRow.removeFromRight (toolsW));
-            topRow.removeFromRight (brand::space::sm);
-        }
-        else if (editToolsBar != nullptr)
-        {
-            editToolsBar->setBounds ({});
-        }
-        automationToolbar->setBounds (topRow);
+        editToolsBar->setBounds (topRow.removeFromRight (394));
         viewportArea.removeFromTop (brand::space::xs);
     }
-    else
+    else if (editToolsBar != nullptr)
     {
-        automationToolbar->setBounds ({});
-        if (editToolsBar != nullptr) editToolsBar->setBounds ({});
+        editToolsBar->setBounds ({});
     }
 
     stripsViewport.setBounds (viewportArea);

@@ -1,14 +1,13 @@
 // Edit-operation methods on MainComponent (undo/redo, cut/copy/paste,
-// solo, crop, split, range markers, marker drop, automation
-// transactions). Extracted from MainComponent.cpp as part of the
+// solo, crop, split, range markers, marker drop). Extracted from
+// MainComponent.cpp as part of the
 // 2026-05-24 god-class split. Every method is a member of
 // MainComponent and accesses private state via the usual
 // out-of-line member-definition path.
 //
 // The anonymous-namespace block carries the strip-snapshot helpers
-// and the two UndoableAction subclasses (AutomationSnapshotAction +
-// MixerSnapshotAction). Both were only used by the edit cluster --
-// moved with it so the file is self-contained.
+// and the UndoableAction subclasses. They are only used by the edit
+// cluster -- moved with it so the file is self-contained.
 
 #include "MainComponent.h"
 #include "../Theme/DialogChrome.h"
@@ -55,29 +54,6 @@ namespace
 // snapshot. This is coarse but always-correct for any strip-level edit.
 namespace
 {
-    // Snapshot the engine's automation lanes before / after a user
-    // edit. On undo() the engine is reverted to the 'before' var;
-    // on redo() it's pushed forward to the 'after' var. Wraps every
-    // EditPage automation mouseDown / drag / context-menu mutation.
-    struct AutomationSnapshotAction final : public juce::UndoableAction
-    {
-        AutomationSnapshotAction (zynforge::AudioEngine& e,
-                                  juce::var beforeIn, juce::var afterIn)
-            : engine (e), before (std::move (beforeIn)), after (std::move (afterIn)) {}
-
-        bool perform() override
-        {
-            if (firstRun) { firstRun = false; return true; }   // already applied
-            engine.loadAutomationFromJson (after);
-            return true;
-        }
-        bool undo() override { engine.loadAutomationFromJson (before); return true; }
-
-        zynforge::AudioEngine& engine;
-        juce::var before, after;
-        bool      firstRun { true };
-    };
-
     struct MixerSnapshotAction final : public juce::UndoableAction
     {
         MixerSnapshotAction (zynforge::AudioEngine& e, juce::var before)
@@ -232,35 +208,29 @@ void MainComponent::restoreTimeline (TimelineSnapshot target, const TimelineSnap
     saveCueChanges ({});
 }
 
-// Cues move with the audio like markers do, and each cue's own automation
-// snapshot moves with the live lanes it reinstalls on recall.
+// Cues move with the audio like markers do.
 std::vector<SetlistBar::Cue> MainComponent::cuesAfterCut (const std::vector<SetlistBar::Cue>& cues,
                                                           const timelinecut::Cut& cut,
-                                                          const std::vector<int>& tracks,
                                                           bool wholeTimeline)
 {
+    if (! wholeTimeline) return cues;
     std::vector<SetlistBar::Cue> kept;
     for (auto cue : cues)
-    {
-        cue.automation = AudioEngine::cutAutomationSnapshot (cue.automation, cut, tracks);
-        if (wholeTimeline)
+        if (const auto pos = cut.map (cue.samplePos))
         {
-            const auto pos = cut.map (cue.samplePos);
-            if (! pos) continue;
             cue.samplePos = *pos;
+            kept.push_back (std::move (cue));
         }
-        kept.push_back (std::move (cue));
-    }
     return kept;
 }
 
-// The engine has moved the clips, automation and markers; this finishes the
+// The engine has moved the clips and markers; this finishes the
 // edit. The save is immediate because markers.json is already written: a crash
 // must not leave the markers moved and the clips not.
 void MainComponent::commitTimelineCut (const juce::String& label, const TimelineSnapshot& before,
                                        const timelinecut::Cut& cut, const std::vector<int>& tracks)
 {
-    cues = cuesAfterCut (cues, cut, tracks, engine.namesEveryStrip (tracks));
+    cues = cuesAfterCut (cues, cut, engine.namesEveryStrip (tracks));
     finishTimelineEdit (label, before);
 }
 
@@ -311,7 +281,7 @@ int MainComponent::rippleSpans (const juce::String& label,
         const int moved = engine.rippleDeleteTracks (span.tracks, span.start, span.end);
         if (moved <= 0) continue;
         changed += moved;
-        cues = cuesAfterCut (cues, { span.start, span.end, false }, span.tracks,
+        cues = cuesAfterCut (cues, { span.start, span.end, false },
                              engine.namesEveryStrip (span.tracks));
     }
     if (changed > 0) finishTimelineEdit (label, before);
@@ -658,7 +628,7 @@ void MainComponent::editCropToLoopRange()
     constexpr int kCrop = 1, kCancel = 2;
     auto* aw = new juce::AlertWindow ("Crop to loop range?",
         "Trim every track to the " + juce::String (secs, 2) + " s loop region?\n"
-        "Markers, automation, cues and other takes move with the "
+        "Markers, cues and other takes move with the "
         "audio, and whatever lies outside the region goes.\n"
         "Non-destructive -- the recordings on disk are untouched and Cmd+Z restores everything.",
         juce::MessageBoxIconType::NoIcon, this);
@@ -812,49 +782,6 @@ bool MainComponent::canMutateTimeline (const juce::String& action)
     if (sessionLocked)
     { showStatus ("LOCKED -- click UNLOCK to resume control"); return false; }
     return true;
-}
-
-void MainComponent::runAutomationEdit (const juce::String& label,
-                                       std::function<void()> mutate)
-{
-    if (! canMutateTimeline()) return;
-    if (! mutate) return;
-    const auto before = engine.automationToJson();
-    mutate();
-    const auto after  = engine.automationToJson();
-
-    undoManager.beginNewTransaction (label);
-    undoManager.perform (new AutomationSnapshotAction (engine, before, after));
-    if (editPage != nullptr) editPage->repaint();
-}
-
-void MainComponent::beginAutomationTransaction()
-{
-    if (engine.isRecording()) return;
-    // Re-entry guard. If a drag fires mouseDown again before mouseUp
-    // (shouldn't happen, but JUCE event ordering occasionally bunches
-    // things up under stress), the earlier snapshot wins.
-    if (automationTransactionOpen) return;
-    pendingAutomationBefore = engine.automationToJson();
-    automationTransactionOpen = true;
-}
-
-void MainComponent::endAutomationTransaction (const juce::String& label)
-{
-    if (! automationTransactionOpen) return;
-    automationTransactionOpen = false;
-    const auto after = engine.automationToJson();
-    // A click that grabbed a point and moved nothing is not an edit: Cmd+Z
-    // must not spend a press on it.
-    if (juce::JSON::toString (pendingAutomationBefore) != juce::JSON::toString (after))
-    {
-        undoManager.beginNewTransaction (label);
-        undoManager.perform (new AutomationSnapshotAction (engine,
-                                                           pendingAutomationBefore,
-                                                           after));
-    }
-    pendingAutomationBefore = juce::var();
-    if (editPage != nullptr) editPage->repaint();
 }
 
 // The physical tracks an edit acts on: the selected strips (incl. their

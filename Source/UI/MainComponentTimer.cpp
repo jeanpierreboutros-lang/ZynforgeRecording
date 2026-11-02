@@ -245,19 +245,13 @@ void MainComponent::syncStripsWithEngine()
 {
     // Keep each strip's input/output combos in sync with engine state --
     // the PATCH page can mutate routing behind the strip's back. Also
-    // refresh name + colour so changes made from the EDIT view show up,
-    // and push the per-track automation LED state (WRITE-armed +
-    // Safe-locked) so the strip header reads true.
-    const bool autoWriting = engine.isAutomationWriting();
+    // refresh name + colour so changes made from the EDIT view show up.
     for (size_t k = 0; k < strips.size(); ++k)
     {
         auto& s = strips[k];
         if (s == nullptr) continue;
         s->refreshRoutingSelection();
         s->refreshAppearance();
-        const int trackIdx = s->getStripIndex();
-        const bool safe = engine.isTrackAutomationSafe (trackIdx);
-        s->setAutomationLed (autoWriting && ! safe, safe);
     }
 }
 
@@ -356,8 +350,6 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
         if (editPage->isEnabled() != enableEditor)
             editPage->setEnabled (enableEditor);
     }
-    if (automationToolbar != nullptr)
-        automationToolbar->setEnabled (! rec && ! sessionIoBusy.load() && ! sessionLocked);
 
     // Free space on the volume the take ACTUALLY lands on. This used to
     // hardcode ~/Music/Zynforge Sessions, so an engineer recording to an

@@ -154,39 +154,6 @@ namespace zynforge
         }
     };
 
-    class PunchModeTests final : public juce::UnitTest
-    {
-    public:
-        PunchModeTests() : UnitTest ("Punch mode", "zynforge") {}
-
-        void runTest() override
-        {
-            AudioEngine::setTestModeSkipAudioInit (true);
-
-            beginTest ("Automation punch range round-trip");
-            {
-                AudioEngine eng;
-                eng.setAutomationPunchRange (1000, 2000);
-                expectEquals (eng.getAutomationPunchIn(),  (juce::int64) 1000);
-                expectEquals (eng.getAutomationPunchOut(), (juce::int64) 2000);
-                expect (  eng.isInsideAutomationPunchRange (1500));
-                expect (! eng.isInsideAutomationPunchRange (500));
-                expect (! eng.isInsideAutomationPunchRange (2500));
-                // Boundary semantics: in inclusive, out exclusive.
-                expect (  eng.isInsideAutomationPunchRange (1000));
-                expect (! eng.isInsideAutomationPunchRange (2000));
-            }
-
-            beginTest ("Cleared range allows writes anywhere");
-            {
-                AudioEngine eng;
-                eng.setAutomationPunchRange (-1, -1);
-                expect (eng.isInsideAutomationPunchRange (0));
-                expect (eng.isInsideAutomationPunchRange (999999));
-            }
-        }
-    };
-
     // Regression guard for the clip-edit / take desync bug: live clip
     // edits (editClip / gain / mute / delete / duplicate / split / crop)
     // used to mutate trackClips but never mirror into the active take.
@@ -452,6 +419,5 @@ namespace zynforge
 
     static RecorderStateTests       recorderStateTestsInstance;
     static SessionPlayerStateTests  sessionPlayerStateTestsInstance;
-    static PunchModeTests           punchModeTestsInstance;
     static ClipEditPersistenceTests clipEditPersistenceTestsInstance;
 }

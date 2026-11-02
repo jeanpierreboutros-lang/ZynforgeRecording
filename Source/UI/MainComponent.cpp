@@ -1086,7 +1086,6 @@ void MainComponent::applyLockState()
                                              || pendingMetadataSaves != 0 || captureMetadataPending);
         if (auto* tools = editPage->getEditToolsBar()) tools->setEnabled (e);
     }
-    if (automationToolbar != nullptr) automationToolbar->setEnabled (e);
     // Floating panels that change the mix or the patch lock with the rest.
     if (vcaPanel != nullptr) vcaPanel->setEnabled (e);
     if (patchDialog != nullptr) patchDialog->setEnabled (e);

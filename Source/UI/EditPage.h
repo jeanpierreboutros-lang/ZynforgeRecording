@@ -28,7 +28,6 @@ namespace zynforge
     // rows and tracks the SessionPlayer position. State is shared with the
     // mixer view (TrackState), so mute / solo / rename changes propagate
     // both ways.
-    class AutomationToolbar;
     class EditToolsBar;
     class EditTimeRuler;
     class EditPage final : public juce::Component, private juce::Timer
@@ -37,21 +36,12 @@ namespace zynforge
         explicit EditPage (AudioEngine& engine);
         ~EditPage() override;
 
-        // The EDIT rows query this toolbar on every mouse event to know
-        // which tool (Select / Add / Delete) and which parameter
-        // (Volume / Pan / Mute) the engineer has chosen.
-        void setAutomationToolbar (AutomationToolbar* t);
-
         // Pro Tools-style edit-mode toolbar (Smart / Selector / Trim /
         // Grabber / Fade). EditPage owns it and lays it out
         // along the top edge; TrackRow consults it on every left-click
         // to bias the hit-test.
         EditToolsBar* getEditToolsBar() noexcept { return toolsBar.get(); }
 
-        // Owned automation toolbar (mirrors getEditToolsBar). EditPage
-        // creates it; the host re-parents it for layout and wires its
-        // callbacks. Lives here so the EDIT view owns its own chrome.
-        AutomationToolbar* getAutomationToolbar() noexcept { return autoToolbar.get(); }
 
         // Horizontal zoom -- content widens past the viewport so the
         // engineer can navigate a 90-min show. 1.0 = fit, 16.0 = 16×.
@@ -151,28 +141,13 @@ namespace zynforge
         void  zoomToSamples (juce::int64 a, juce::int64 b);
 
         // Active row tracking. TrackRow's mouse-down handler sets the
-        // row index that was last clicked; paste targets it and the
-        // automation keys edit its lane. -1 = no active row.
+        // row index that was last clicked; paste targets it. -1 = no
+        // active row.
         int  getActiveRowTrackIndex() const noexcept { return activeRowTrackIndex; }
         void setActiveRowTrackIndex (int trackIdx) noexcept
         {
-            if (trackIdx != activeRowTrackIndex)
-            {
-                activeRowTrackIndex = trackIdx;
-                focusedPointIdx     = -1;
-            }
+            activeRowTrackIndex = trackIdx;
         }
-
-        // The automation lane the active row shows, if it shows one. Keyboard
-        // point edits act on this lane and no other.
-        std::optional<AudioEngine::AutomationParam> activeRowAutomationParam() const;
-
-        // Focused automation point index (within the active row's
-        // active lane). -1 = no focus. Set by arrow-key navigation.
-        // Paint shows the focused point with a brighter highlight
-        // ring so the engineer sees where Up/Down/Delete will act.
-        int  getFocusedPointIdx() const noexcept { return focusedPointIdx; }
-        void setFocusedPointIdx (int idx) noexcept { focusedPointIdx = idx; repaint(); }
 
         // Selected clip(s) (clicked with the Smart / Move tool). Every clip
         // command acts on the whole set, grown to each clip's stereo half and
@@ -203,35 +178,10 @@ namespace zynforge
         void toggleSelectedClips (const std::vector<ClipRef>& refs, ClipRef clicked);
         void clearSelectedClip();
 
-        // Optional hook into MainComponent's UndoManager. When set,
-        // every automation-point add / remove / drag goes through
-        // this wrapper so Cmd+Z reverts the lane to its prior state.
-        // When unset, edits go direct -- still functional, just no
-        // undo. setAutomationEditWrapper also propagates the function
-        // down into the TrackList -> TrackRow chain so newly-created
-        // rows see it on next rebuild.
-        using AutoEditWrapper = std::function<void (const juce::String&,
-                                                    std::function<void()>)>;
-        void setAutomationEditWrapper (AutoEditWrapper fn);
-        AutoEditWrapper automationEditWrapper;
-
-        // Begin / end an automation drag transaction. The host
-        // (MainComponent) snapshots automation lanes at begin and
-        // again at end, pushing a single AutomationSnapshotAction
-        // so the whole drag is one undo step instead of N. Reaches
-        // every row, present and future, when called.
-        void setAutomationDragHooks (std::function<void()> begin,
-                                     std::function<void (const juce::String&)> end);
-
-        // Force every row's lane content to follow the toolbar's
-        // Param choice. Called whenever the toolbar's onParamChanged
-        // fires.
-        void applyToolbarParamToAllRows();
-
         // Re-scan the session dir, rebuild row list, and re-issue
         // thumbnail-load requests for each track. Safe to call repeatedly.
         void refresh();
-        void repaintLanes();        // force every track row to repaint (e.g. after a cue recall changes automation)
+        void repaintLanes();        // force every track row to repaint
         void updatePlaceholder();   // show/hide the empty-state overlay by channel count
         void rescanWaveforms();     // drop cached peaks + re-scan every row (e.g. after a strip reorder renamed files)
 
@@ -350,10 +300,7 @@ namespace zynforge
         std::set<std::pair<int, int>> selClips;
         int        selectionTrackGen   { -1 };   // track generation the selection was made under
         juce::File selectionSessionDir;          // ...and session; refresh() clears it on a change
-        int        focusedPointIdx     { -1 };
-        AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;
-        std::unique_ptr<AutomationToolbar> autoToolbar;   // owned; host re-parents for layout
         std::unique_ptr<EditTimeRuler> ruler;
 
         // DAW-style edge zoom clusters overlaid on the view: a vertical

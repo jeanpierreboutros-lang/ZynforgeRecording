@@ -73,11 +73,6 @@ namespace
                     { "Cmd + C",      "Copy selected strips" },
                     { "Cmd + V",      "Paste strips" },
                 }},
-                { "Automation (EDIT view, click a row to activate)", {
-                    { "Left / Right", "Walk to prev / next automation point (seeks playhead)" },
-                    { "Up / Down",    "Nudge focused point's value" },
-                    { "Delete",       "Remove focused point" },
-                }},
                 { "Mixer", {
                     { "Shift + click", "Toggle multi-selection (additive)" },
                     { "Cmd + A",      "Select every strip" },

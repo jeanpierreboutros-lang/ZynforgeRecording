@@ -7,7 +7,7 @@
 namespace zynforge::timelinecut
 {
     // What a Crop or a Ripple Delete does to a position on the timeline. Audio,
-    // automation, markers and cues all follow this one rule, so
+    // markers and cues all follow this one rule, so
     // nothing can land on different audio after the edit.
     struct Cut
     {

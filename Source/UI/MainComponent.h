@@ -12,7 +12,6 @@
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AlarmBanner.h"
-#include "AutomationToolbar.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
 #include "ChannelStrip.h"
@@ -233,11 +232,11 @@ private:
                               const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
 public:
-    // The cue list after a Crop or Ripple Delete on `tracks`. With a whole
-    // timeline the cues themselves move; a cue in the removed audio goes.
+    // The cue list after a Crop or Ripple Delete. With a whole timeline the
+    // cues move; a cue in the removed audio goes. On some strips only they stay.
     static std::vector<zynforge::SetlistBar::Cue> cuesAfterCut (
         const std::vector<zynforge::SetlistBar::Cue>& cues, const zynforge::timelinecut::Cut&,
-        const std::vector<int>& tracks, bool wholeTimeline);
+        bool wholeTimeline);
     // Called from Main.cpp's systemRequestedQuit so an unsaved
     // session / running recording prompts BEFORE the app shuts down.
     void confirmAndQuit();
@@ -470,7 +469,7 @@ private:
     void dropMarkerAndPromptName();
 
     // The ONE gate for timeline mutations (clips, ranges, markers,
-    // automation, undo/redo). Refuses -- with the reason on the status
+    // undo/redo). Refuses -- with the reason on the status
     // line -- while capture rolls (local or daemon), while a session
     // operation owns persistence (sessionIoBusy: copy/move/bounce or a
     // pending metadata save), and while LOCKed. The key handler, menu and
@@ -479,20 +478,6 @@ private:
     // mutation checks here rather than repeating its own partial guard.
     // `action` completes "Stop recording before ..." (e.g. "cropping").
     bool canMutateTimeline (const juce::String& action = "editing");
-
-    // EditPage calls this to bracket an automation edit. The lambda
-    // performs the mutation; the helper snapshots automationData
-    // before and after, pushes a single AutomationSnapshotAction so
-    // Cmd+Z reverts cleanly.
-    void runAutomationEdit (const juce::String& label,
-                            std::function<void()> mutate);
-
-    // Drag-coalesce variant. beginAutomationTransaction snapshots
-    // the engine's current automation lanes; endAutomationTransaction
-    // snapshots again and pushes ONE AutomationSnapshotAction so a
-    // multi-tick mouseDrag becomes a single undo step.
-    void beginAutomationTransaction();
-    void endAutomationTransaction (const juce::String& label);
 
     double pendingSampleRate { 48000.0 };
     // Last device sample rate we warned about (mismatch vs the session rate);
@@ -675,11 +660,6 @@ private:
     bool manualPunchActive { false };
     bool cursorPunchAnswered { false };   // true only around the press that "Replace From Cursor" makes
     juce::Component::SafePointer<juce::AlertWindow> cursorPunchQuestion;
-    // Held during a multi-tick automation drag so endAutomationTransaction
-    // can compare against the pre-drag state.
-    juce::var pendingAutomationBefore;
-    bool      automationTransactionOpen { false };
-    zynforge::AutomationToolbar* automationToolbar { nullptr };   // owned by editPage
 
     // Per-session cue list -- populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.

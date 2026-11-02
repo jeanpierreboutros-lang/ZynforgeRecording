@@ -37,7 +37,6 @@ namespace zynforge::interchange
         bool  vcaAssigned { false };
         bool  vcaMuted   { false };
         bool  hasSends   { false };
-        int   automationLanes { 0 };        // lanes holding points
         // nullopt: never given a clip list, so it plays its whole file. An
         // empty list is different: the engineer deleted every clip, and the
         // strip stays silent however much media sits on disk.
@@ -360,13 +359,12 @@ namespace zynforge::interchange
         if (! audioDir.isDirectory()) audioDir = in.sessionDir;
 
         MediaCache media;
-        int approximatedFades = 0, automation = 0, splitPairs = 0, sends = 0, vcas = 0;
+        int approximatedFades = 0, splitPairs = 0, sends = 0, vcas = 0;
         const int count = (int) in.strips.size();
         for (int index = 0; index < count; ++index)
         {
             if (cancel.load (std::memory_order_relaxed)) { result.error = "Cancelled"; return result; }
             const auto& strip = in.strips[(size_t) index];
-            automation += strip.automationLanes;
             sends      += strip.hasSends ? 1 : 0;
             vcas       += strip.vcaAssigned ? 1 : 0;
 
@@ -427,9 +425,6 @@ namespace zynforge::interchange
         }
 
         auto& notes = project.notes;
-        if (automation > 0)
-            notes.add ("Automation is not exported (" + plural (automation, "lane")
-                       + "): tracks carry their static fader, pan and mute.");
         if (sends > 0)
             notes.add ("Aux sends and bus routing are not exported (" + plural (sends, "strip")
                        + " with sends): bus tracks arrive empty.");

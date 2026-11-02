@@ -4,10 +4,9 @@
 // offline stereo bounce (AudioEngineClips.cpp).
 //
 // Both paths used to carry their own copy of the solo / mute / VCA gate, the
-// stereo-pair automation rule, the mute-lane semantics, the pan law and the
-// aux-send gain. A fix in one (a mute lane reaching the sends, a VCA reaching
-// the monitor) then had to be found and repeated by hand in the other, and a
-// bounce could silently stop matching what the engineer heard. Each rule now
+// pan law and the aux-send gain. A fix in one (a VCA reaching the monitor) then
+// had to be found and repeated by hand in the other, and a bounce could
+// silently stop matching what the engineer heard. Each rule now
 // has exactly one definition, here. AudioCallbackTests renders one session
 // both ways and compares them sample for sample, and the invariants gate
 // ("mix rules live only in MixKernel.h") refuses a second copy.
@@ -21,18 +20,6 @@
 
 namespace zynforge::mix
 {
-    // Automation lanes a strip's mix reads. Values match
-    // AudioEngine::AutomationParam (static_assert'ed there).
-    enum class Lane : int { Volume = 0, Pan = 1, Mute = 2 };
-
-    // Stereo pairs store volume + mute automation on the LEFT track, so the
-    // RIGHT partner reads its left neighbour's lanes. Pan stays per channel
-    // so the image isn't collapsed.
-    constexpr int automationChannel (int track, bool previousTrackIsStereoLeft) noexcept
-    {
-        return (track > 0 && previousTrackIsStereoLeft) ? track - 1 : track;
-    }
-
     // The VCA a strip belongs to, as the solo / mute gate sees it.
     struct VcaGate
     {
@@ -44,8 +31,7 @@ namespace zynforge::mix
     // Console solo / mute gate: a muted VCA silences its strips; a VCA solo
     // drops every other VCA's strips AND the ungrouped ones; then a strip
     // solo passes only soloed strips (solo beats the strip's own mute);
-    // otherwise the strip's mute decides. The Mute LANE is separate -- see
-    // StripLanes -- because the paths apply it at different points.
+    // otherwise the strip's mute decides.
     constexpr bool audible (bool muted, bool soloed, VcaGate vca,
                             bool anySolo, bool anyVcaSolo) noexcept
     {
@@ -64,44 +50,12 @@ namespace zynforge::mix
     // The stream bus and StereoMix.wav are a record of the mix, and solo is a
     // monitoring tool: it must not strip the show out of the file because the
     // engineer checked a mic. Only a mute removes a strip here.
-    constexpr bool streamAudible (bool muted, VcaGate vca, bool muteLane) noexcept
+    constexpr bool streamAudible (bool muted, VcaGate vca) noexcept
     {
-        return ! muteLane && audible (muted, false, vca, false, false);
+        return audible (muted, false, vca, false, false);
     }
 
-    // One strip's lane-driven mix inputs at one timeline position.
-    struct StripLanes
-    {
-        float volDb        { 0.0f };   // fader, or the Volume lane (+ trim)
-        float pan          { 0.0f };   // static pan, or the Pan lane (+ trim)
-        bool  muteLane     { false };  // the Mute lane is on (false without a lane)
-    };
-
-    // A Mute lane holds 0..1, so a negative fallback means "no lane here".
-    inline constexpr float kNoMuteLane = -1.0f;
-
-    // Resolve one strip's lanes. `readLane (channel, Lane, fallback)` returns
-    // the lane value or the fallback; the caller already holds the automation
-    // lock. `readLanes` is false when the transport is stopped, the lock was
-    // lost or automation is suspended -- then the static values stand. The
-    // strip's static mute is not here: audible() owns it, with solo over it.
-    template <typename LaneReader>
-    StripLanes resolveLanes (int track, int autoCh, float faderDb, float staticPan,
-                             bool readLanes, LaneReader&& readLane) noexcept
-    {
-        StripLanes m;
-        m.volDb = faderDb;
-        m.pan   = staticPan;
-        if (readLanes)
-        {
-            m.volDb = readLane (autoCh, Lane::Volume, m.volDb);
-            m.pan   = readLane (track,  Lane::Pan,    m.pan);
-            m.muteLane = readLane (autoCh, Lane::Mute, kNoMuteLane) > 0.5f;
-        }
-        return m;
-    }
-
-    // A strip's fader (or Volume lane) and its VCA meet in dB, and either one
+    // A strip's fader and its VCA meet in dB, and either one
     // at its -60 dB floor is OFF, as on a console. Summing first left a strip
     // pulled to the floor at -48 dB under a VCA at +12, and a VCA at the floor
     // still passed strips set above 0 dB. `vcaDb` is 0 for an unassigned
@@ -114,10 +68,10 @@ namespace zynforge::mix
     }
 
     // A POST-fader send follows the channel mute like a real console: the
-    // strip's own mute, its VCA's mute and the drawn Mute lane all silence it.
-    constexpr bool postFaderMuted (bool staticMute, bool vcaMuted, bool muteLane) noexcept
+    // strip's own mute and its VCA's mute both silence it.
+    constexpr bool postFaderMuted (bool stripMute, bool vcaMuted) noexcept
     {
-        return staticMute || vcaMuted || muteLane;
+        return stripMute || vcaMuted;
     }
 
     // Aux-send gain. A POST-fader send scales by the strip's post-fader gain

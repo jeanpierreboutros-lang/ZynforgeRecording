@@ -354,14 +354,9 @@ namespace zynforge
         if (muteButton.getToggleState() != muted)  { muteButton.setToggleState (muted,  juce::dontSendNotification); dirty = true; }
         if (soloButton.getToggleState() != soloed) { soloButton.setToggleState (soloed, juce::dontSendNotification); dirty = true; }
 
-        // Fader + pan. During playback the display hooks return the
-        // AUTOMATED value at the playhead so the fader / pan track the EDIT
-        // curve (views stay linked); when stopped (or unhooked) they return
-        // the stored manual value.
-        float gainDb = state.gainDb.load (std::memory_order_relaxed);
-        if (displayGainDb) gainDb = displayGainDb (gainDb);
-        float panL = state.pan.load (std::memory_order_relaxed);
-        if (displayPanL) panL = displayPanL (panL);
+        // Fader + pan.
+        const float gainDb = state.gainDb.load (std::memory_order_relaxed);
+        const float panL = state.pan.load (std::memory_order_relaxed);
         if (std::abs ((float) gainFader.getValue() - gainDb) > 0.05f)
         {
             gainFader.setValue (gainDb, juce::dontSendNotification);
@@ -374,8 +369,7 @@ namespace zynforge
         }
         if (pairState != nullptr)
         {
-            float panR = pairState->pan.load (std::memory_order_relaxed);
-            if (displayPanR) panR = displayPanR (panR);
+            const float panR = pairState->pan.load (std::memory_order_relaxed);
             if (std::abs ((float) panSliderR.getValue() - panR) > 0.01f)
             {
                 panSliderR.setValue (panR, juce::dontSendNotification);
@@ -528,10 +522,6 @@ namespace zynforge
         const bool outMuted = state.outputMuted.load (std::memory_order_relaxed);
         menu.addItem (6, outMuted ? "Unmute physical output" : "Mute physical output (FOH only)",
                       true, outMuted);
-        menu.addSeparator();
-        menu.addItem (20, autoSafeOn ? "Automation Safe -- ON (writes blocked)"
-                                      : "Automation Safe -- OFF",
-                      true, autoSafeOn);
 
         // VCA assignment submenu. Engineer picks a bus index 1..8 or
         // "None" to detach. Persisted on engine; mute / gain inherited
@@ -622,18 +612,6 @@ namespace zynforge
                          }
                          break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
-                case 20:
-                    {
-                        const bool next = ! autoSafeOn;
-                        // Optimistic local update so the LED flips
-                        // before the host polls back; host will re-
-                        // push via setAutomationLed and that's a
-                        // no-op when the state already matches.
-                        autoSafeOn = next;
-                        repaint();
-                        if (onAutomationSafeChanged) onAutomationSafeChanged (next);
-                    }
-                    break;
                 default:
                     // VCA assignment: 700 = None, 701..708 = VCA 1..8.
                     if (chosen == 700 || (chosen >= 701 && chosen <= 708))
@@ -1181,27 +1159,6 @@ namespace zynforge
             g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
         }
 
-        // Automation LED -- 6 px dot just below the colour swatch in
-        // the top-left. Red when WRITE-mode is armed and playback is
-        // rolling, amber when the strip is locked Safe. Both at once
-        // = Safe (Safe always wins because writes are blocked).
-        if (autoWriteArmed || autoSafeOn)
-        {
-            const auto led = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + 20.0f, 6.0f, 6.0f);
-            const auto c   = autoSafeOn ? brand::engagedAmber : brand::accentRecord;
-            g.setColour (c.withAlpha (zynforge::brand::alpha::bold));
-            g.fillEllipse (led);
-            g.setColour (brand::lift (c, 0.45f));
-            g.drawEllipse (led, 0.6f);
-        }
-    }
-
-    void ChannelStrip::setAutomationLed (bool writeArmed, bool safeOn)
-    {
-        if (writeArmed == autoWriteArmed && safeOn == autoSafeOn) return;
-        autoWriteArmed = writeArmed;
-        autoSafeOn     = safeOn;
-        repaint();
     }
 
     void ChannelStrip::mouseEnter (const juce::MouseEvent&)
