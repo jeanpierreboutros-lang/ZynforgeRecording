@@ -581,9 +581,10 @@ namespace zynforge
     // the PUNCH-mode position window (MainComponent::servicePunch). Either way
     // this recorder just stashes + splices; it doesn't know which path armed it.
     bool MultitrackRecorder::recoverInterruptedPunches (const juce::File& audioDir,
-                                                        int* recovered)
+                                                        int* recovered, bool* leadInsOwed)
     {
         if (recovered != nullptr) *recovered = 0;
+        if (leadInsOwed != nullptr) *leadInsOwed = false;
         if (! audioDir.isDirectory()) return true;
         // First, so anything below that opens or archives a take reads its
         // real length. A failed repair loses nothing: the audio stays in the
@@ -593,7 +594,7 @@ namespace zynforge
         wavrepair::repairTakeFolder (audioDir);
         // A take interrupted before STOP may still owe a copy its silent
         // lead-in (see PendingLeadIn); without it the new audio sits early.
-        if (! recoverPendingLeadIns (audioDir)) return false;
+        if (! recoverPendingLeadIns (audioDir) && leadInsOwed != nullptr) *leadInsOwed = true;
 
         juce::Array<juce::File> sidecars;
         for (const auto& file : audioDir.findChildFiles (juce::File::findFiles, false,
@@ -950,7 +951,12 @@ namespace zynforge
     bool MultitrackRecorder::recoverPrimaryPunches (const TakeStart& take)
     {
         int recovered = 0;
-        return recoverInterruptedPunches (take.audioFilesDir, &recovered)
+        bool leadInsOwed = false;
+        const bool restored = recoverInterruptedPunches (take.audioFilesDir, &recovered, &leadInsOwed);
+        if (leadInsOwed)
+            startError = "Recording refused: a track still owes its silent lead-in and this drive will not take it. "
+                         "Free some space and press RECORD again.";
+        return restored && ! leadInsOwed
             && recovered == 0; // > 0: the caller must reopen the restored take
     }
 
@@ -1424,8 +1430,11 @@ namespace zynforge
                 return left ("has a strip move that could not be put back");
 
             int recovered = 0;
-            if (! recoverInterruptedPunches (audioDir, &recovered))
+            bool leadInsOwed = false;
+            if (! recoverInterruptedPunches (audioDir, &recovered, &leadInsOwed))
                 return left ("has an interrupted punch that could not be put back");
+            if (leadInsOwed)
+                return left ("still owes a silent lead-in it could not write");
             if (recovered > 0)
                 return left ("had an interrupted punch put back, so it needs the session reopened");
 
@@ -1881,8 +1890,15 @@ namespace zynforge
         for (const auto& marker : folder.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
                                                          false, "*.json"))
         {
+            // A marker nothing can read can never be finished, so it must not
+            // hold every later pass. It is kept beside the others, as a record.
+            const auto setAside = [&marker, &ok]
+            {
+                marker.moveFileTo (marker.withFileExtension ("unreadable"));
+                ok = false;
+            };
             const auto v = juce::JSON::parse (marker);
-            if (! v.isObject()) { ok = false; continue; }
+            if (! v.isObject()) { setAside(); continue; }
             PendingLeadIn lead;
             lead.audioDir      = audioDir;
             lead.trackName     = v["track"].toString();
@@ -1897,7 +1913,7 @@ namespace zynforge
             lead.timelineStart = (juce::int64) v["timelineStart"];
             if (! lead.trackName.startsWith ("Track_") || lead.ext.isEmpty() || lead.parts < 1
                 || lead.firstPart < 1 || lead.sampleRate <= 0.0)
-            { ok = false; continue; }
+            { setAside(); continue; }
             if (writeLeadIn (lead, lead.timelineStart)) marker.deleteFile();
             else ok = false;
         }

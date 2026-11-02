@@ -169,8 +169,12 @@ namespace zynforge
         // Restore originals left in .punchbase sidecars by an interrupted
         // punch. Any partial new take is retained under Session File Backups.
         // Returns false without discarding either file when recovery fails.
+        // leadInsOwed: a track's silent lead-in could not be finished. That costs
+        // one track its alignment and no audio, so it is no failure here: the
+        // session opens, and a new pass into it is what has to wait.
         static bool recoverInterruptedPunches (const juce::File& audioDir,
-                                               int* recovered = nullptr);
+                                               int* recovered = nullptr,
+                                               bool* leadInsOwed = nullptr);
 
         // Next continuation file for a take: Track_NN.<ext> is part 1, then
         // Track_NN_part02, _part03 ... Returns the path to write next + its part

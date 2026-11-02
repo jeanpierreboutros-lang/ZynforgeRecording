@@ -19,6 +19,7 @@
 #include <thread>
 #include <vector>
 #include <CoreFoundation/CoreFoundation.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace zynforge
@@ -98,6 +99,15 @@ namespace zynforge
         {
             auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                 .getChildFile ("zf-capture-path-" + tag + "-" + juce::Uuid().toString());
+            dir.createDirectory();
+            return dir;
+        }
+
+        // On the system volume. A test home can sit on exFAT, which has neither
+        // file modes nor sparse files.
+        static juce::File systemTempDir (const juce::String& tag)
+        {
+            auto dir = juce::File ("/tmp").getChildFile ("zf-capture-path-" + tag + "-" + juce::Uuid().toString());
             dir.createDirectory();
             return dir;
         }
@@ -850,6 +860,73 @@ namespace zynforge
 
         void testCrashRemains()
         {
+            beginTest ("A lead-in that cannot be written leaves the session open and says what is wrong");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                MainComponent::s_testConstruct = true;
+                const auto root = systemTempDir ("lead-in");
+                const auto audio = root.getChildFile ("Audio Files");
+                const juce::ScopeGuard cleanUp { [&]
+                {
+                    MainComponent::s_testConstruct = false;
+                    audio.setReadOnly (false);
+                    ::chmod (audio.getFullPathName().toRawUTF8(), 0755);
+                    root.deleteRecursively();
+                } };
+                audio.createDirectory();
+                writeWav (audio.getChildFile ("Track_01.wav"), 1, 24, 96000);
+                writeWav (audio.getChildFile ("Track_02_part02.wav"), 1, 24, 48000);
+                const auto markers = audio.getChildFile ("Pending Lead-ins");
+                markers.createDirectory();
+                const auto marker = markers.getChildFile ("Track_02.json");
+                expect (marker.replaceWithText (R"({"track":"Track_02","ext":".wav","firstPart":1,"parts":1,"container":0,
+                                                    "bitDepth":24,"channels":1,"sampleRate":48000,"priorLength":0,
+                                                    "timelineStart":48000})"));
+                ::chmod (audio.getFullPathName().toRawUTF8(), 0555);
+
+                bool owed = false;
+                int recovered = 0;
+                expect (MultitrackRecorder::recoverInterruptedPunches (audio, &recovered, &owed),
+                        "a lead-in was reported as a failed punch");
+                expect (owed);
+                {
+                    MainComponent main;
+                    expect (main.openSessionFolder (root, true) >= 0, "the session would not open");
+                    main.engine.clearAllStripOverrides();
+                }
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (kRate, kBlock, 1);
+                    rec.getTrack (0).armed.store (true);
+                    rec.armContinue (0);
+                    expect (! rec.startRecording (root));
+                    expect (rec.getStartError().contains ("lead-in"), rec.getStartError());
+                    expect (! rec.getStartError().contains ("punch"), rec.getStartError());
+                }
+
+                ::chmod (audio.getFullPathName().toRawUTF8(), 0755);
+                owed = true;
+                expect (MultitrackRecorder::recoverInterruptedPunches (audio, &recovered, &owed));
+                expect (! owed);
+                expect (! marker.existsAsFile());
+                expect (audio.getChildFile ("Track_02.wav").existsAsFile());
+            }
+
+            beginTest ("A marker nothing can read is set aside and holds nothing up");
+            {
+                const auto root = tempDir ("bad-marker");
+                const juce::ScopeGuard cleanUp { [&] { root.deleteRecursively(); } };
+                const auto markers = root.getChildFile ("Pending Lead-ins");
+                markers.createDirectory();
+                expect (markers.getChildFile ("Track_01.json").replaceWithText ("not json at all"));
+                bool owed = false;
+                expect (MultitrackRecorder::recoverInterruptedPunches (root, nullptr, &owed));
+                expect (owed);
+                expect (markers.getChildFile ("Track_01.unreadable").existsAsFile());
+                expect (MultitrackRecorder::recoverInterruptedPunches (root, nullptr, &owed));
+                expect (! owed, "the same marker held the session up twice");
+            }
+
             beginTest ("A WAV a crash left gets its last seconds back, on every copy, and only once");
             {
                 const auto root = tempDir ("wav");
@@ -939,10 +1016,7 @@ namespace zynforge
 
             beginTest ("A take past 4 GiB whose header never said so comes back as RF64");
             {
-                // Sparse files need the system volume: a test home on exFAT would
-                // write all 4 GiB.
-                const auto root = juce::File ("/tmp").getChildFile ("zf-rf64-" + juce::Uuid().toString());
-                root.createDirectory();
+                const auto root = systemTempDir ("rf64");
                 const juce::ScopeGuard cleanUp { [&] { root.deleteRecursively(); } };
                 const auto file = root.getChildFile ("Track_01.wav");
                 writeWav (file, 2, 24, 1000);

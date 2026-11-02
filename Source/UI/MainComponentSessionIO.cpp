@@ -156,6 +156,7 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
     int interruptedPunches = 0, repairedHeaders = 0, unrepairedHeaders = 0;
+    bool leadInsOwed = false;
     const auto audioDirForRecovery = dir.getChildFile ("Audio Files");
     zynforge::aiffrepair::repairTakeFolder (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
                                             &repairedHeaders, &unrepairedHeaders);
@@ -163,7 +164,7 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
                                            &repairedHeaders, &unrepairedHeaders);
     if (! zynforge::MultitrackRecorder::recoverInterruptedPunches (
             audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
-            &interruptedPunches))
+            &interruptedPunches, &leadInsOwed))
     {
         showStatus ("Interrupted punch could not be recovered; original sidecars were retained");
         return -1;
@@ -212,6 +213,9 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
                     Toast::Kind::Warning);
     if (interruptedPunches > 0)
         toast.show ("Recovered " + zynforge::counted (interruptedPunches, "interrupted punch file") + "; partial audio is in Session File Backups",
+                    Toast::Kind::Warning);
+    if (leadInsOwed)
+        toast.show ("A track's silent lead-in could not be written; it plays early until the drive has room",
                     Toast::Kind::Warning);
     if (! damaged.empty()) reportDamagedFiles (dir, damaged);
     return n;
