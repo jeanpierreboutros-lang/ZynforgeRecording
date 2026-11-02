@@ -87,10 +87,10 @@ namespace zynforge
         void applyRowView (TrackRow& r) const
         {
             const auto saved = rowViews.find (r.getStripKey());
-            if (saved == rowViews.end()) return;
-            r.setRowSize (saved->second.size);
-            r.setCustomHeight (saved->second.height);
-            r.laneMode = saved->second.lane;
+            const auto view = saved != rowViews.end() ? saved->second : RowView {};
+            r.setRowSize (view.size);
+            r.setCustomHeight (view.height);
+            r.laneMode = view.lane;
         }
 
         // By the recorder's strips, not the rows: a save can land between a
@@ -115,6 +115,8 @@ namespace zynforge
             return out;
         }
 
+        // What the session saved wins, over rows a view change may already have
+        // built from the last session's values for the same strip.
         void restoreRowViews (const juce::var& saved)
         {
             rowViews.clear();
@@ -542,7 +544,12 @@ namespace zynforge
         juce::AudioFormatManager&                 formats;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>>& thumbCaches;
         std::vector<std::unique_ptr<TrackRow>>    rows;
-        struct RowView { TrackRow::Size size; int height; TrackRow::LaneMode lane; };
+        struct RowView
+        {
+            TrackRow::Size     size   { TrackRow::Size::Small };
+            int                height { TrackRow::pixelsFor (TrackRow::Size::Small) };
+            TrackRow::LaneMode lane   { TrackRow::LaneMode::Waveform };
+        };
         std::map<juce::String, RowView>           rowViews;   // by TrackState::stripId
         juce::File waveformSession;   // the folder the rows last resolved against
         int                                       viewportHeight { 480 };

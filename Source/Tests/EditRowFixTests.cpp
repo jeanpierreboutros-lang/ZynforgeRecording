@@ -12,6 +12,7 @@
 #include "../UI/MainComponent.h"
 #include "../UI/PatchPage.h"
 #include "../UI/RenameLabel.h"
+#include "../UI/SessionProjPath.h"
 #include "../UI/WaveCacheFile.h"
 
 #include <cmath>
@@ -851,6 +852,9 @@ namespace zynforge
                 rows[1]->applyRowMenuChoice (5);
                 rows[1]->applyRowMenuChoice (Row::kMenuLaneMarkers);
                 expect (pumpUntil ([&] { return main.pendingMetadataSaves == 0; }), "the layout save never ended");
+                const auto project = juce::JSON::parse (findSessionProj (first));
+                const auto* views = project.getProperty ("ui", {}).getProperty ("editRows", {}).getArray();
+                expect (views != nullptr && views->size() == 1, "the session's layout does not hold the row's view");
 
                 show.session ({ "OTHER" }, false, false);
                 expect (pumpUntil ([&] { return show.rowsReadLive() && rowsOf (show.page()).size() == 1; }), "setup: other session");
