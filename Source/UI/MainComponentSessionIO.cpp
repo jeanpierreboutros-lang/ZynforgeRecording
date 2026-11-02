@@ -693,6 +693,13 @@ void MainComponent::requestUILayoutSave()
 
 void MainComponent::saveCueChanges (const juce::String& success)
 {
+    // Nothing goes to the take's drive during a take, and a save that stalled
+    // there would hold every key but Space. STOP's save carries the cues.
+    if (engine.isTakeOnDisk())
+    {
+        if (success.isNotEmpty()) showStatus (success + " -- saved at STOP");
+        return;
+    }
     enqueueMetadataSave (engine.getActiveSessionDir(), success);
 }
 

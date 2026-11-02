@@ -9,6 +9,7 @@
 #include "MainComponent.h"
 #include "../Audio/AtomicFile.h"
 #include "../Theme/DialogChrome.h"
+#include "RecordPosition.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -286,11 +287,10 @@ void MainComponent::addCueAtTransport()
         showStatus ("Open or create a session before adding cues");
         return;
     }
-    auto& player = engine.getPlayer();
-    const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+    const auto pos = currentPlayheadSamples (engine);
     const auto suggested = "Song " + juce::String ((int) cues.size() + 1);
 
-    promptCueName ("Add Cue", suggested, [this, pos, &player] (const juce::String& name)
+    const auto addCue = [this, pos] (const juce::String& name)
     {
         zynforge::SetlistBar::Cue c;
         c.name      = name.isEmpty()
@@ -311,9 +311,20 @@ void MainComponent::addCueAtTransport()
         currentCueIndex = (int) cues.size() - 1;
         setlistBar.setCues (cues, currentCueIndex);
         saveCueChanges ("Added cue '" + cues.back().name + "' at "
-                    + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2)
+                    + juce::String ((double) pos / timelineRate(), 2)
                     + " s (mix snapshot captured)");
-    });
+    };
+
+    // A modal stands between the engineer and STOP, so during a take the cue
+    // keeps its suggested name until there is time to change it.
+    if (engine.isRecording()) { addCue (suggested); return; }
+    promptCueName ("Add Cue", suggested, addCue);
+}
+
+// What currentPlayheadSamples counts in. A first take has no player rate yet.
+double MainComponent::timelineRate()
+{
+    return juce::jmax (1.0, engine.isRecording() ? shownTakeRate : engine.getPlayer().getSampleRate());
 }
 
 void MainComponent::renameCurrentCue()
@@ -321,6 +332,11 @@ void MainComponent::renameCurrentCue()
     if (currentCueIndex < 0 || currentCueIndex >= (int) cues.size())
     {
         showStatus ("Pick a cue first, then right-click to rename");
+        return;
+    }
+    if (engine.isRecording())
+    {
+        showStatus ("Rename the cue after the take -- its prompt would stand in front of STOP");
         return;
     }
     const auto idx     = currentCueIndex;
@@ -343,8 +359,7 @@ void MainComponent::updateCueAtTransport()
         showStatus ("Pick a cue first, then Update to move it");
         return;
     }
-    auto& player = engine.getPlayer();
-    const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+    const auto pos = currentPlayheadSamples (engine);
     auto& cue = cues[(size_t) currentCueIndex];
     cue.samplePos = pos;
 
@@ -359,7 +374,7 @@ void MainComponent::updateCueAtTransport()
 
     setlistBar.setCues (cues, currentCueIndex);
     saveCueChanges ("Cue '" + cue.name + "' updated -- "
-                + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s, "
+                + juce::String ((double) pos / timelineRate(), 2) + " s, "
                 + juce::String (total) + " strip mix snapshotted");
 }
 

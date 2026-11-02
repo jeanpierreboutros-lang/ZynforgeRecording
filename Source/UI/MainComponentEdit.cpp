@@ -14,6 +14,7 @@
 #include "ClipEditTargets.h"
 #include "MarkerListDialog.h"
 #include "MixerSnapshot.h"
+#include "RecordPosition.h"
 
 #include <algorithm>
 #include <map>
@@ -24,16 +25,6 @@ using namespace zynforge;
 
 namespace
 {
-    juce::int64 currentPlayheadSamples (zynforge::AudioEngine& eng)
-    {
-        if (eng.isRecording())
-            return eng.isCaptureWindowActive() && eng.getPlayer().isPlaying()
-                ? eng.getPlayer().getPositionSamples()
-                : eng.getRecordTimelineSamples();
-        if (eng.getPlayer().isLoaded()) return eng.getPlayer().getPositionSamples();
-        return 0;
-    }
-
     // Strip snapshot/restore for Cut / Copy / Paste and mixer undo share one
     // field table with the undo change fingerprint (MixerSnapshot.h).
     using zynforge::mixersnapshot::snapshotStrip;
@@ -369,6 +360,9 @@ void MainComponent::pollMixerUndo()
 
 void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> onConfirm)
 {
+    // Asked over a rolling take, this would stand in front of STOP for an edit
+    // the take refuses anyway.
+    if (! canMutateTimeline ("deleting audio")) return;
     if (confirmForTests) { confirmForTests (std::move (onConfirm)); return; }
     juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
@@ -390,8 +384,12 @@ void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> o
 
 void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
 {
-    const int n = (int) selectedLogical.size();
-    if (n <= 0 || engine.isRecording()) return;
+    confirmDeleteChannels ((int) selectedLogical.size(), std::move (onConfirm));
+}
+
+void MainComponent::confirmDeleteChannels (int n, std::function<void()> onConfirm)
+{
+    if (n <= 0 || ! canMutateTimeline ("deleting a channel")) return;
     if (confirmForTests) { confirmForTests (std::move (onConfirm)); return; }
 
     juce::Component::SafePointer<MainComponent> self (this);
@@ -401,7 +399,7 @@ void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
             .withTitle (n > 1 ? "Delete channels?" : "Delete channel?")
             .withMessage (juce::String (n > 1
                 ? "Delete the " + juce::String (n) + " selected channels?"
-                : "Delete the selected channel?")
+                : "Delete this channel?")
                 + "\n\nRecorded files stay on disk -- this removes the "
                   "channel(s) from the session. It clears the undo history, "
                   "so Cmd+Z cannot bring them back.")
@@ -732,6 +730,13 @@ void MainComponent::dropMarkerAndPromptName()
         mut.zoom = editPage->getZoom();
     }
     engine.getMarkers().save();
+    // A modal stands between the engineer and STOP, so during a take the marker
+    // keeps its name until there is time to change it.
+    if (engine.isRecording())
+    {
+        showStatus ("Marker " + juce::String (newCount) + " dropped -- name it after the take");
+        return;
+    }
     showStatus ("Marker " + juce::String (newCount) + " dropped");
 
     // 3. Open the rename dialog with the default name selected, so

@@ -418,6 +418,7 @@ private:
     // view (right-click ▸ Delete Channel, or Delete on a selected channel).
     // Recorded files stay on disk; runs onConfirm only on "Delete".
     void confirmDeleteChannels (std::function<void()> onConfirm);
+    void confirmDeleteChannels (int count, std::function<void()> onConfirm);
 
     // Coalesced mixer undo. The everyday strip mutations (fader, pan, mute,
     // solo, arm, monitor, rename, recolour, routing) have no dedicated undo
@@ -683,6 +684,7 @@ private:
     bool saveSetlistToActiveSession (bool writeBackup = true) const;
     void jumpToCue (int index);
     void addCueAtTransport();
+    double timelineRate();
     void updateCueAtTransport();
     void renameCurrentCue();
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)

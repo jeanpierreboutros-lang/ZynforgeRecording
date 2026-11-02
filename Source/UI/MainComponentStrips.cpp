@@ -442,6 +442,8 @@ void MainComponent::showBatchRenameDialog()
 {
     const int total = engine.getRecorder().getNumTracks();
     if (total <= 0) { showStatus ("No channels to rename"); return; }
+    if (engine.isRecording())
+    { showStatus ("Batch rename waits until the take has stopped -- its window would stand in front of STOP"); return; }
 
     auto* aw = new juce::AlertWindow ("Rename Channels",
                                       "Edit any channel name, then Apply. Changes show "
@@ -483,6 +485,8 @@ void MainComponent::showBatchColourDialog()
 {
     const int total = engine.getRecorder().getNumTracks();
     if (total <= 0) { showStatus ("No channels to colour"); return; }
+    if (engine.isRecording())
+    { showStatus ("Batch colour waits until the take has stopped -- its window would stand in front of STOP"); return; }
 
     // Snapshot every colour so Cancel can revert (the table applies live).
     std::vector<juce::uint32> snapshot;

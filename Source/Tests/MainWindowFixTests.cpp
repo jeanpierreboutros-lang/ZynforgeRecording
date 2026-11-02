@@ -5,6 +5,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../UI/MainComponent.h"
+#include "../UI/SessionProjPath.h"
 #include "../Audio/ChannelAlarm.h"
 #include "../Audio/SessionBackup.h"
 #include "SilentTestDevice.h"
@@ -168,6 +169,8 @@ namespace zynforge
             bannerHoldsEverything();
             bannerTakesTurns();
             testTone();
+            nothingStandsInFrontOfStop();
+            cuesDuringATake();
         }
 
     private:
@@ -648,6 +651,114 @@ namespace zynforge
                 Outputs outputs;
                 expectEquals (outputs.peakOver (engine, 0, 4), 0.0f);
                 engine.setMasterOutputs (0, 1);
+            }
+        }
+
+        static int modalCount() { return juce::ModalComponentManager::getInstance()->getNumModalComponents(); }
+
+        static void feed (MultitrackRecorder& rec, int blocks)
+        {
+            const int tracks = rec.getNumTracks();
+            std::vector<float> audio ((size_t) kBlock, 0.1f);
+            std::vector<const float*> inputs ((size_t) tracks, audio.data());
+            for (int b = 0; b < blocks; ++b) rec.processBlock (inputs.data(), tracks, kBlock);
+        }
+
+        void stopTake (Window& w)
+        {
+            w.main.onStopClicked();
+            w.main.onStopClicked();
+            expect (w.stopped());
+        }
+
+        void nothingStandsInFrontOfStop()
+        {
+            beginTest ("M, + Cue and the delete keys open no modal over a rolling take");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording());
+                const auto markers = w.engine().getMarkers().getCount();
+
+                w.main.dropMarkerAndPromptName();
+                expectEquals (modalCount(), 0, "M opened a prompt in front of STOP");
+                expectEquals (w.engine().getMarkers().getCount(), markers + 1, "the marker went missing");
+
+                w.main.addCueAtTransport();
+                expectEquals (modalCount(), 0, "+ Cue opened a prompt in front of STOP");
+                expectEquals ((int) w.main.cues.size(), 1, "the cue went missing");
+                expectEquals (w.main.cues.back().name, juce::String ("Song 1"));
+
+                w.main.renameCurrentCue();
+                expectEquals (modalCount(), 0, "Rename opened a prompt in front of STOP");
+
+                bool asked = false;
+                w.main.confirmForTests = [&asked] (std::function<void()>) { asked = true; };
+                w.main.confirmDeleteRecording (false, [] {});
+                w.main.selectedLogical.insert (0);
+                w.main.confirmDeleteChannels ([] {});
+                w.main.confirmForTests = {};
+                w.main.selectedLogical.clear();
+                expect (! asked, "a delete asked over a take it would refuse");
+
+                w.main.showBatchRenameDialog();
+                w.main.showBatchColourDialog();
+                expectEquals (modalCount(), 0, "a batch dialog opened over the take");
+                stopTake (w);
+            }
+
+            beginTest ("Between takes M and + Cue still ask for a name");
+            {
+                Window w;
+                w.main.dropMarkerAndPromptName();
+                expectEquals (modalCount(), 1, "the marker prompt is gone at idle");
+                dismissModals();
+                w.main.addCueAtTransport();
+                expectEquals (modalCount(), 1, "the cue prompt is gone at idle");
+                dismissModals();
+            }
+        }
+
+        void cuesDuringATake()
+        {
+            beginTest ("A cue during a take lands where the take is, not where the player parked");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.player().setPositionSamples (0);
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording());
+                feed (w.recorder(), 8);
+                const auto at = w.engine().getRecordTimelineSamples();
+                expect (at > 0);
+                w.main.addCueAtTransport();
+                expectEquals (w.main.cues.back().samplePos, at, "+ Cue stored the parked playhead");
+
+                feed (w.recorder(), 8);
+                const auto later = w.engine().getRecordTimelineSamples();
+                w.main.updateCueAtTransport();
+                expectEquals (w.main.cues.back().samplePos, later, "Update stored the parked playhead");
+                stopTake (w);
+            }
+
+            beginTest ("Cue edits during a take stay off the drive and arrive with STOP's save");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording());
+                const auto backups = w.session.getChildFile ("Session File Backups");
+                const auto before = backups.getNumberOfChildFiles (juce::File::findDirectories);
+                w.main.addCueAtTransport();
+                w.main.updateCueAtTransport();
+                w.main.setlistBar.onMoveCue (1);
+                expectEquals (w.main.pendingMetadataSaves, 0, "a cue edit started a save during the take");
+                expect (! w.main.sessionIoBusy.load(), "a cue edit raised the session-busy flag during the take");
+                expectEquals (backups.getNumberOfChildFiles (juce::File::findDirectories), before);
+                stopTake (w);
+                const auto saved = findSessionProj (w.session).loadFileAsString();
+                expect (saved.contains ("Song 1"), "STOP's save left the cue behind");
             }
         }
 
