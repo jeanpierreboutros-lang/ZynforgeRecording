@@ -1054,6 +1054,14 @@ namespace zynforge
         const juce::ScopedLock sl (recorder.getStructureLock());
         EngineStatus s;
         s.captureDeviceLost = recorder.hasCaptureDeviceLost();
+        // In tests a take can roll with no device behind it at all.
+        const bool watchCallback = recorder.isRecording() && deviceManager.getCurrentAudioDevice() != nullptr;
+        const auto nowMs = juce::Time::getMillisecondCounter();
+        s.deviceStalled = callbackWatchdog.update (watchCallback, callbackCount.load (std::memory_order_relaxed),
+                                                   nowMs, deviceErrorSeen.load (std::memory_order_relaxed));
+        if (! watchCallback) deviceErrorSeen.store (false, std::memory_order_relaxed);
+        else                 recorder.noteDeviceStall (callbackWatchdog.stalledMs (nowMs));
+        s.deviceStallMs = recorder.getDeviceStallMs();
         s.recording        = isRecording();
         if (s.recording)
             s.sessionPath = recorder.getActiveSessionDir().getFullPathName();
@@ -2530,11 +2538,19 @@ namespace zynforge
         }
     }
 
+    // Any failed HAL call lands here, and on a device pair JUCE's combiner
+    // stops the device and says nothing else. Which thread it comes from varies.
+    void AudioEngine::audioDeviceError (const juce::String&)
+    {
+        deviceErrorSeen.store (true, std::memory_order_relaxed);
+    }
+
     void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
                                                         float* const* outputs, int numOutputs,
                                                         int numSamples,
                                                         const juce::AudioIODeviceCallbackContext&)
     {
+        callbackCount.fetch_add (1, std::memory_order_relaxed);
         if (deferredDeviceAudio.load (std::memory_order_acquire))
         {
             for (int channel = 0; channel < numOutputs; ++channel)

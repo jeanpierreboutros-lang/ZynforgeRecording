@@ -1842,6 +1842,7 @@ namespace zynforge
         missedSamples    .store (0, std::memory_order_relaxed);
         latches->primaryLostFrames.store (0, std::memory_order_relaxed);
         captureDeviceLost.store (false, std::memory_order_relaxed);
+        deviceStallMs.store (0, std::memory_order_relaxed);
         for (auto& f : fifos) f->resetCaptureTimeline();
         alarmFrames.store (0, std::memory_order_relaxed);
         // Clear each track's live waveform overview so a new take draws fresh
@@ -2138,6 +2139,7 @@ namespace zynforge
         juce::Time  stoppedAt;
         juce::int64 totalSamples {}, totalMissed {};
         bool        deviceLostAtStop {};
+        juce::int64 deviceStallMsAtStop {};
         double      totalSeconds {};
         bool        backupWasRunning {}, backupHadFailure {};
         bool        doPunch {};
@@ -2178,6 +2180,7 @@ namespace zynforge
         double      passSeconds {};
         bool        backupWasRunning {}, reportedBackupFailure {}, reportedPrimaryFailure {},
                     reportedPunchFailure {}, reportedMirrorFailure {}, reportedDeviceLoss {};
+        juce::int64 reportedDeviceStallMs {};
         int         reportedMirrorsSkipped {};
         juce::int64  timeReference {};
         juce::String timeReferenceSource;
@@ -2338,6 +2341,7 @@ namespace zynforge
         stop.totalSamples     = samplesSinceStart.load (std::memory_order_relaxed);
         stop.totalMissed      = getMissedSamples();
         stop.deviceLostAtStop = captureDeviceLost.load (std::memory_order_relaxed);
+        stop.deviceStallMsAtStop = deviceStallMs.load (std::memory_order_relaxed);
         stop.totalSeconds     = sampleRate > 0.0 ? (double) stop.totalSamples / sampleRate : 0.0;
         stop.backupWasRunning = isBackupActive();
         stop.backupHadFailure = backupFailed.load (std::memory_order_relaxed);
@@ -2934,6 +2938,7 @@ namespace zynforge
         report.passMissed  = stop.totalMissed;
         report.reportedMirrorsSkipped = (int) previousInt ("mirrorsSkipped") + mirrorsSkipped;
         report.reportedDeviceLoss = previousBool ("captureDeviceLost") || stop.deviceLostAtStop;
+        report.reportedDeviceStallMs = previousInt ("deviceStallMs") + stop.deviceStallMsAtStop;
         report.reportedPrimaryFailure = previousBool ("primaryFailed") || primFailed;
         report.reportedBackupFailure = previousBool ("backupFailed") || stop.backupHadFailure;
         report.reportedPunchFailure = previousBool ("punchSpliceFailed") || punchFailed;
@@ -2982,6 +2987,7 @@ namespace zynforge
         report->setProperty ("passSeconds",    passSeconds);
         report->setProperty ("passMissedSamples", (juce::int64) passMissed);
         report->setProperty ("captureDeviceLost", reportedDeviceLoss);
+        report->setProperty ("deviceStallMs", reportedDeviceStallMs);
         report->setProperty ("backupActive",   backupWasRunning);
         report->setProperty ("backupFailed",   reportedBackupFailure);
         report->setProperty ("primaryFailed",  reportedPrimaryFailure);

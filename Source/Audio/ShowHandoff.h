@@ -239,6 +239,7 @@ namespace zynforge::showhandoff
                                  || (bool) report.getProperty ("sha256Failed", false)
                                  || (juce::int64) report.getProperty ("missedSamples", 0) > 0
                                  || (bool) report.getProperty ("captureDeviceLost", false)
+                                 || (juce::int64) report.getProperty ("deviceStallMs", 0) > 0
                                  || (bool) report.getProperty ("primaryFailed", false)
                                  || (bool) report.getProperty ("backupFailed", false)
                                  || (bool) report.getProperty ("mirrorFailed", false)

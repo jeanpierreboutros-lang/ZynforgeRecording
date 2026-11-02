@@ -2,6 +2,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include "../Audio/CallbackWatchdog.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Network/CaptureLink.h"
 
@@ -9,6 +10,8 @@
 #include <functional>
 #include <mutex>
 #include <thread>
+
+namespace zynforge { class EngineFixTests; }
 
 namespace zynforge::capture
 {
@@ -70,13 +73,16 @@ namespace zynforge::capture
                                                const juce::AudioIODeviceCallbackContext&) override;
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;
         void audioDeviceStopped() override;
+        void audioDeviceError (const juce::String&) override;
 
     private:
         friend class ReviewCaptureStartupTests;
+        friend class zynforge::EngineFixTests;
         std::function<void()> registerCallbackForTests;
         void handleCommand (const Command&);
         void statusLoop();
         EngineStatus buildStatus();
+        bool watchCallback();
 
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
@@ -91,6 +97,9 @@ namespace zynforge::capture
         std::atomic<float>  audioLoadPct { 0.0f };
         std::atomic<bool>   deviceAvailable { false };
         std::atomic<bool>   captureDeviceLost { false };
+        std::atomic<juce::uint32> callbackCount { 0 };
+        std::atomic<bool>   deviceErrorSeen { false };
+        CallbackWatchdog    callbackWatchdog;              // under commandLock
         double              lastDiskHealthUpdateMs { 0.0 }; // under commandLock
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureDaemon)

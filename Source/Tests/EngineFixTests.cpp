@@ -7,7 +7,9 @@
 
 #include "../UI/AudioDeviceDialog.h"
 #include "../UI/MainComponent.h"
+#include "../Audio/CallbackWatchdog.h"
 #include "../Audio/DeviceChoice.h"
+#include "../Capture/CaptureDaemon.h"
 
 #include <functional>
 #include <map>
@@ -186,6 +188,7 @@ namespace zynforge
         void runTest() override
         {
             deviceRules();
+            callbackWatchdogRules();
             AudioEngine::setTestModeSkipAudioInit (true);
             MainComponent::s_testConstruct = true;
             const juce::ScopeGuard restoreTestMode { []
@@ -195,6 +198,7 @@ namespace zynforge
             } };
             chosenDeviceComesBack();
             recordAsksAboutTheDevice();
+            deviceThatStopsCallingBack();
         }
 
     private:
@@ -375,6 +379,129 @@ namespace zynforge
                 save (none, noInput);
                 expect (load (none).saved, "a choice of no input read as never chosen");
             }
+        }
+
+        void callbackWatchdogRules()
+        {
+            beginTest ("The callback watchdog goes by wall time, from outside the callback");
+            {
+                CallbackWatchdog dog;
+                expect (! dog.update (false, 0, 1000, false), "idle is not a stall");
+                expect (! dog.update (true, 0, 1000, false));
+                expect (! dog.update (true, 0, 2900, false), "1.9 s is not yet a stall");
+                expect (dog.update (true, 0, 3000, false), "2 s with no callback went unseen");
+                expectEquals ((int) dog.stalledMs (3500), 2500);
+
+                expect (! dog.update (true, 1, 3600, false), "progress did not clear the alarm");
+                expectEquals ((int) dog.stalledMs (9000), 2600, "a closed stall was lost or grew");
+
+                expect (! dog.update (true, 2, 10000, true));
+                expect (! dog.update (true, 2, 10200, true));
+                expect (dog.update (true, 2, 10300, true), "a device error did not bring the check forward");
+                expect (! dog.update (true, 3, 10400, true), "a device that ran through its error stayed alarmed");
+
+                expect (! dog.update (false, 3, 20000, false));
+                expect (! dog.update (true, 3, 20000, false));
+                expect (! dog.update (true, 3, 21000, false));
+                expectEquals ((int) dog.stalledMs (21000), 0, "a new take inherited the last take's stalls");
+            }
+        }
+
+        void deviceThatStopsCallingBack()
+        {
+            MainComponent main;
+            main.setSize (1320, 820);
+            forgetChosenDevice (main.engine);
+            Rig rig;
+            rig.inputs = { { "Rig", 8 } };
+            rig.defaultInput = "Rig";
+
+            beginTest ("A device that stops calling back raises the alarm and never stops the take");
+            {
+                Show show (main, rig, 1);
+                show.on.choose ("Rig");
+                show.patchStraight();
+                show.arm ({ 0 });
+                main.onRecordClicked();
+                expect (main.engine.isRecording(), main.statusLabel.getText());
+
+                feedCallback (main.engine, 8, 2);
+                expect (! main.engine.captureStatus().deviceStalled);
+                expect (pumpUntil ([&main] { return main.engine.captureStatus().deviceStalled; }, 6000),
+                        "no alarm after the callback stopped");
+                const auto stalled = main.engine.captureStatus();
+                expect (main.engine.isRecording(), "the watchdog stopped the take");
+                expect (stalled.deviceStallMs >= 2000);
+
+                main.updateCaptureWarnings (stalled);
+                expect (main.activeCaptureWarning.contains ("NO AUDIO FROM THE DEVICE"), main.activeCaptureWarning);
+                expect (main.alarmBanner.getText().contains ("NO AUDIO"), main.alarmBanner.getText());
+
+                feedCallback (main.engine, 8, 1);
+                const auto back = main.engine.captureStatus();
+                expect (! back.deviceStalled, "the alarm outlived the stall");
+                expect (back.deviceStallMs >= 2000, "the stall was forgotten when the device came back");
+                main.updateCaptureWarnings (back);
+                expect (main.activeCaptureWarning.contains ("not in the take"), main.activeCaptureWarning);
+
+                show.stop();
+                main.updateCaptureWarnings (main.engine.captureStatus());
+                const auto report = juce::JSON::parse (show.session.getChildFile ("session.report.json"));
+                expectGreaterOrEqual ((juce::int64) report.getProperty ("deviceStallMs", 0), (juce::int64) 2000,
+                                      "the report does not say the take has a hole");
+            }
+
+            beginTest ("A device error brings the alarm forward without waiting two seconds");
+            {
+                Show show (main, rig, 1);
+                show.on.choose ("Rig");
+                show.patchStraight();
+                show.arm ({ 0 });
+                main.onRecordClicked();
+                expect (main.engine.isRecording(), main.statusLabel.getText());
+                feedCallback (main.engine, 8, 1);
+                main.engine.captureStatus();
+                const auto start = juce::Time::getMillisecondCounter();
+                main.engine.audioDeviceError ("CoreAudio error");
+                expect (pumpUntil ([&main] { return main.engine.captureStatus().deviceStalled; }, 1500),
+                        "the error was not seen");
+                expectLessThan ((int) (juce::Time::getMillisecondCounter() - start), 1800);
+                expect (main.engine.isRecording(), "a device error stopped the take");
+                show.stop();
+            }
+
+            beginTest ("The capture daemon carries the same alarm in its status");
+            {
+                capture::CaptureDaemon daemon;
+                daemon.setTestModeNoDevice (true);
+                daemon.prepareForTests (kRate, kBlock, 1);
+                auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("zf-engine-" + juce::Uuid().toString());
+                auto& recorder = daemon.getRecorder();
+                recorder.getTrack (0).armed.store (true);
+                expect (recorder.startRecording (folder));
+
+                std::vector<float> audio ((size_t) kBlock, 0.1f);
+                const float* inputs[] { audio.data() };
+                daemon.processTestBlock (inputs, 1, kBlock);
+                expect (! daemon.buildStatus().deviceStalled);
+                expect (pumpUntil ([&daemon] { return daemon.buildStatus().deviceStalled; }, 6000),
+                        "the daemon did not see its callback stop");
+                expect (daemon.isRecording(), "the daemon's watchdog stopped the take");
+
+                const auto wire = EngineStatus::fromJson (daemon.buildStatus().toJson());
+                expect (wire.deviceStalled, "the alarm did not cross the wire");
+                expectGreaterOrEqual (wire.deviceStallMs, (juce::int64) 2000);
+
+                daemon.processTestBlock (inputs, 1, kBlock);
+                const auto back = daemon.buildStatus();
+                expect (! back.deviceStalled);
+                expectGreaterOrEqual (back.deviceStallMs, (juce::int64) 2000);
+                recorder.stopRecording();
+                folder.deleteRecursively();
+            }
+
+            forgetChosenDevice (main.engine);
         }
 
         void chosenDeviceComesBack()

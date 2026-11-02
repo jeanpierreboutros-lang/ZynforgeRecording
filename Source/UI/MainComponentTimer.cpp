@@ -509,7 +509,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int mirrorsSkipped = status.mirrorsSkipped;
         const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
         const bool primaryNotAnswering = status.primaryDiskStale && status.source != "daemon-unavailable";
-        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
+        const bool deviceStalled = status.deviceStalled || status.deviceStallMs > 0;
+        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || status.captureDeviceLost || deviceStalled || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
             || ! status.copyProblems.isEmpty())
         {
@@ -517,6 +518,9 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             // buttons, and a long list can run out of room at the far end.
             juce::String warn;
             if (status.captureDeviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
+            if (status.deviceStalled) warn << "!! NO AUDIO FROM THE DEVICE -- the take is open but nothing is being captured; check the interface  ";
+            else if (deviceStalled)   warn << "! DEVICE STOPPED FOR " << juce::String (status.deviceStallMs / 1000.0, 1)
+                                           << " s -- that time is not in the take  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";

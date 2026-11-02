@@ -9,6 +9,7 @@
 #include <array>
 #include <functional>
 #include <map>
+#include "CallbackWatchdog.h"
 #include "ClipModel.h"
 #include "DeviceChoice.h"
 #include "DisplayText.h"
@@ -881,6 +882,7 @@ namespace zynforge
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;
         void audioDeviceStopped() override;
+        void audioDeviceError (const juce::String&) override;
         void audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
                                                float* const* outputs, int numOutputs,
                                                int numSamples,
@@ -918,6 +920,9 @@ namespace zynforge
         juce::uint64 captureStopSequence = 0;
         AsyncHandle asyncHandle;
         juce::AudioDeviceManager deviceManager;
+        std::atomic<juce::uint32> callbackCount { 0 };       // bumped first in every callback
+        std::atomic<bool>         deviceErrorSeen { false };  // any thread
+        CallbackWatchdog          callbackWatchdog;           // under the structure lock
         devicechoice::Chosen     chosenDevice;
         devicechoice::Answers    deviceAnswers;
         // The ids go with a device list; the list changes far less often than

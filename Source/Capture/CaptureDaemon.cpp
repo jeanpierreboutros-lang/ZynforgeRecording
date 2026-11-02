@@ -69,6 +69,7 @@ namespace zynforge::capture
 
     void CaptureDaemon::processTestBlock (const float* const* inputs, int numChannels, int numSamples)
     {
+        callbackCount.fetch_add (1, std::memory_order_relaxed);
         recorder.processBlock (inputs, numChannels, numSamples);
     }
 
@@ -119,6 +120,7 @@ namespace zynforge::capture
                                                           int numSamples,
                                                           const juce::AudioIODeviceCallbackContext&)
     {
+        callbackCount.fetch_add (1, std::memory_order_relaxed);
         const auto cbStart = juce::Time::getHighResolutionTicks();
         const float* routed[256] {};
         const int count = juce::jmin (256, recorder.getNumTracks());
@@ -358,6 +360,24 @@ namespace zynforge::capture
         }
     }
 
+    void CaptureDaemon::audioDeviceError (const juce::String&)
+    {
+        deviceErrorSeen.store (true, std::memory_order_relaxed);
+    }
+
+    // The take outlives its window, so this runs with nobody attached too. It
+    // only reports: a device that comes back must find its take still rolling.
+    bool CaptureDaemon::watchCallback()
+    {
+        const bool rolling = recorder.isRecording();
+        const auto nowMs = juce::Time::getMillisecondCounter();
+        const bool stalled = callbackWatchdog.update (rolling, callbackCount.load (std::memory_order_relaxed),
+                                                      nowMs, deviceErrorSeen.load (std::memory_order_relaxed));
+        if (! rolling) deviceErrorSeen.store (false, std::memory_order_relaxed);
+        else           recorder.noteDeviceStall (callbackWatchdog.stalledMs (nowMs));
+        return stalled;
+    }
+
     EngineStatus CaptureDaemon::buildStatus()
     {
         const auto nowMs = juce::Time::getMillisecondCounterHiRes();
@@ -385,6 +405,8 @@ namespace zynforge::capture
         s.blockSize      = currentBlockSize.load();
         s.audioLoadPct    = audioLoadPct.load();
         s.captureDeviceLost = captureDeviceLost.load();
+        s.deviceStalled  = watchCallback();
+        s.deviceStallMs  = recorder.getDeviceStallMs();
         s.diskMBPerSec   = bytesToMB (recorder.getDiskBytesPerSec());
         s.ringFillPct    = recorder.getRingFillPct();
         s.lastWriteMs    = recorder.getLastWriteMs();
@@ -440,6 +462,7 @@ namespace zynforge::capture
                 // and goes while nobody is attached never reaches the report.
                 const std::lock_guard<std::mutex> g (commandLock);
                 recorder.evaluateChannelAlarms();
+                watchCallback();
             }
             for (int i = 0; i < 10 && running.load(); ++i)
                 juce::Thread::sleep (10);

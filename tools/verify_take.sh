@@ -156,6 +156,8 @@ else
     fi
     [[ "$missed" == "0" ]] && grn "  OK — missedSamples = 0" || { red "  missedSamples = $missed (DROPPED AUDIO)"; fail=1; }
     [[ "$deviceLost" == "false" ]] || { red "  capture audio device stopped during the take"; fail=1; }
+    stallMs=$(jq -r '.deviceStallMs // 0' "$REPORT")
+    [[ "$stallMs" == "0" ]] || { red "  no audio from the device for $stallMs ms during the take"; fail=1; }
     if [[ "$(jq -r '.sha256Failed // false' "$REPORT")" == "true" ]]; then
         red "  report hashing failed"
         fail=1

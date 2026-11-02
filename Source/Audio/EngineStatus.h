@@ -102,6 +102,8 @@ namespace zynforge
         bool          stereoMixFailed { false };
         bool          diskStruggling { false };
         bool          captureDeviceLost { false }; // latched if a rolling daemon loses its audio callback
+        bool          deviceStalled { false };     // no audio callback for ~2 s of a rolling take
+        juce::int64   deviceStallMs { 0 };         // this take's time with no audio so far
         int           captureFormat { 0 };     // CaptureFormat as int
         // Live dead-channel alarms. Additive on the daemon wire: a peer that
         // does not know the field ignores it.
@@ -145,6 +147,8 @@ namespace zynforge
             o->setProperty ("stereoMixFailed", stereoMixFailed);
             o->setProperty ("diskStruggling", diskStruggling);
             o->setProperty ("captureDeviceLost", captureDeviceLost);
+            o->setProperty ("deviceStalled", deviceStalled);
+            o->setProperty ("deviceStallMs", deviceStallMs);
             o->setProperty ("captureFormat", captureFormat);
             juce::Array<juce::var> alarms;
             for (const auto& a : channelAlarms) alarms.add (a.toJson());
@@ -192,6 +196,8 @@ namespace zynforge
             s.stereoMixFailed = (bool) v.getProperty ("stereoMixFailed", false);
             s.diskStruggling = (bool) v.getProperty ("diskStruggling", false);
             s.captureDeviceLost = (bool) v.getProperty ("captureDeviceLost", false);
+            s.deviceStalled = (bool) v.getProperty ("deviceStalled", false);
+            s.deviceStallMs = (juce::int64) v.getProperty ("deviceStallMs", 0);
             s.captureFormat = (int) v.getProperty ("captureFormat", 0);
             if (auto* problems = v.getProperty ("copyProblems", {}).getArray())
                 for (const auto& problem : *problems) s.copyProblems.add (problem.toString());
