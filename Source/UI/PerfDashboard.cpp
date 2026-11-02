@@ -54,6 +54,51 @@ namespace zynforge
         repaint();
     }
 
+    // Silence and anything below the BS.1770 gate read as no figure at all.
+    static juce::String loudnessFigure (float value)
+    {
+        return value > -70.0f ? juce::String (value, 1) : juce::String ("--");
+    }
+
+    static constexpr float kTopRowPt = 10.0f;
+    static constexpr float kPanelInsetX = 12.0f;    // 4 px margin + 8 px padding, each side
+    static constexpr float kTopRowMinGap = 8.0f;
+
+    static float widthOf (const juce::String& text)
+    {
+        return juce::GlyphArrangement::getStringWidth (brand::type::mono (kTopRowPt, true), text);
+    }
+
+    void PerfDashboard::setLoudness (float integratedLufs, float momentaryLufs, float truePeak)
+    {
+        // Rounded to what is shown, so meter jitter doesn't force a repaint.
+        auto shown = [] (float v) { return std::round (v * 10.0f) / 10.0f; };
+        const float newIntegrated = shown (integratedLufs);
+        const float newMomentary  = shown (momentaryLufs);
+        const float newPeak       = shown (truePeak);
+        if (newIntegrated == integrated && newMomentary == momentary && newPeak == truePeakDb) return;
+        integrated = newIntegrated;
+        momentary  = newMomentary;
+        truePeakDb = newPeak;
+        repaint();
+    }
+
+    juce::String PerfDashboard::getLoudnessText() const
+    {
+        return "LUFS M " + loudnessFigure (momentary) + "  I " + loudnessFigure (integrated)
+             + "  TP " + loudnessFigure (truePeakDb);
+    }
+
+    bool PerfDashboard::truePeakIsHot() const noexcept { return truePeakDb >= -1.0f; }
+
+    bool PerfDashboard::loudnessFits() const
+    {
+        // Measured on the widest this row can ever read, not on today's figures.
+        const float room = (float) getWidth() - 2.0f * kPanelInsetX;
+        return widthOf ("192.0 kHz / 2048") + kTopRowMinGap
+             + widthOf ("LUFS M -69.9  I -69.9  TP -69.9") <= room;
+    }
+
     static juce::Colour ledColour (float pct)
     {
         if (pct < 50.0f) return brand::accentPlay;
@@ -71,145 +116,70 @@ namespace zynforge
 
         auto r = getLocalBounds().toFloat().reduced (4.0f);
 
-        // Panel background.
-        g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.05f, 0.12f));
+        g.setColour (brand::bgPanel);
         g.fillRoundedRectangle (r, brand::radius::md);
         // While recording, ring the panel in record-red so the load / buffer
         // / disk read is unmistakable on a dark stage.
         g.setColour (recording ? brand::accentRecord : brand::edge);
         g.drawRoundedRectangle (r, brand::radius::md, recording ? 1.5f : 1.0f);
 
-        auto inner = r.reduced (8.0f, 6.0f);
+        auto inner = r.reduced (8.0f, 5.0f);
 
-        // A short row can't hold three bars: the numbers are what matter, so
-        // they share one line under the device format.
-        if (getHeight() < 72)
-        {
-            auto top = inner.removeFromTop (inner.getHeight() * 0.5f);
-            g.setColour (brand::textSecondary);
-            g.setFont (brand::type::mono (10.0f, true));
-            g.drawText ((sampleRate > 0.0 && blockSize > 0)
-                            ? juce::String (sampleRate / 1000.0, 1) + " kHz  /  " + juce::String (blockSize) + " smp"
-                            : juce::String ("-- kHz  /  -- smp"),
-                        top, juce::Justification::centredLeft, false);
-            if (missed > 0)
-            {
-                g.setColour (brand::accentRecord);
-                g.drawText ("DROP " + juce::String (missed), top, juce::Justification::centredRight, false);
-            }
+        // One thin bar: how hard the disk is being pushed, full at 50 MB/s,
+        // the same scale as the colour on the DISK figure above it.
+        const float diskPct = juce::jmin (100.0f, disk * 2.0f);
+        auto bar = inner.removeFromBottom (3.0f);
+        inner.removeFromBottom (2.0f);
+        g.setColour (brand::lift (brand::bgDeep, 0.05f));
+        g.fillRoundedRectangle (bar, 1.5f);
+        g.setColour (ledColour (diskPct).withAlpha (zynforge::brand::alpha::bold));
+        g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * diskPct / 100.0f), 1.5f);
 
-            // Value widths in em for the longest each can read, so the three
-            // sit evenly and a changing digit can't push its neighbour along.
-            const float valuePt = recording ? 13.0f : 11.0f;
-            const float pctW = valuePt * 2.5f, diskW = valuePt * 6.2f;
-            const float labelsW = 32.0f + 28.0f + 24.0f;
-            const float gap = juce::jmax (4.0f, (inner.getWidth() - labelsW - 2.0f * pctW - diskW) / 2.0f);
-            auto cell = [&] (const char* label, float labelW, const juce::String& value, float valueW, juce::Colour colour)
-            {
-                g.setColour (brand::textTertiary);
-                g.setFont (brand::type::ledLabel());
-                g.drawText (label, inner.removeFromLeft (labelW), juce::Justification::centredLeft, false);
-                g.setColour (colour);
-                g.setFont (brand::type::mono (valuePt, true));
-                g.drawText (value, inner.removeFromLeft (valueW), juce::Justification::centredLeft, false);
-                inner.removeFromLeft (gap);
-            };
-            cell ("AUDIO", 32.0f, juce::String ((int) std::round (cpu)) + "%", pctW, ledColour (cpu));
-            cell ("DISK",  28.0f, juce::String (disk, 1) + " MB/s", diskW, ledColour (juce::jmin (100.0f, disk * 2.0f)));
-            cell ("BUF",   24.0f, juce::String ((int) std::round (buf)) + "%", pctW, ledColour (buf));
-            return;
-        }
+        auto top = inner.removeFromTop (inner.getHeight() * 0.5f);
+        g.setColour (brand::textSecondary);
+        g.setFont (brand::type::mono (kTopRowPt, true));
+        g.drawText ((sampleRate > 0.0 && blockSize > 0)
+                        ? juce::String (sampleRate / 1000.0, 1) + " kHz / " + juce::String (blockSize)
+                        : juce::String ("-- kHz / --"),
+                    top, juce::Justification::centredLeft, false);
 
-        // Header line: live device format -- sample rate + actual buffer
-        // (block) size in samples. The buffer is the real glitch-headroom
-        // number; smaller = tighter. "-- " until the device reports.
-        {
-            auto hdr = inner.removeFromTop (recording ? 15.0f : 13.0f);
-            g.setColour (brand::textSecondary);
-            g.setFont (brand::type::mono (recording ? 11.0f : 10.0f, true));
-            const juce::String fmt = (sampleRate > 0.0 && blockSize > 0)
-                ? juce::String (sampleRate / 1000.0, 1) + " kHz  /  "
-                      + juce::String (blockSize) + " smp"
-                : juce::String ("-- kHz  /  -- smp");
-            g.drawText (fmt, hdr, juce::Justification::centred, false);
-            inner.removeFromTop (2.0f);
-        }
-
-        // Three rows: AUDIO (callback load), DISK, BUF. Each row =
-        // [label 36px] [bar fills] [value 70px].
-        const float rowH   = inner.getHeight() / 3.0f;
-        const float labelW = 36.0f;
-        const float valueW = 70.0f;
-        const float gap    = 4.0f;
-
-        auto drawRow = [&] (juce::Rectangle<float> row,
-                            const char* label,
-                            float pct,
-                            const juce::String& valueText)
-        {
-            // Label (left) -- proportional UI font, muted colour
-            g.setColour (brand::textTertiary);
-            g.setFont (brand::type::ledLabel());
-            g.drawText (label, row.removeFromLeft (labelW),
-                        juce::Justification::centredLeft, false);
-
-            // Value (right) -- tabular mono so the % digit doesn't twitch
-            // every frame as CPU load swings.
-            const auto col = ledColour (pct);
-            g.setColour (col);
-            g.setFont (brand::type::mono (recording ? 13.0f : 11.0f, true));
-            g.drawText (valueText, row.removeFromRight (valueW),
-                        juce::Justification::centredRight, false);
-
-            row.removeFromLeft (gap);
-            row.removeFromRight (gap);
-
-            // LED bar -- segmented (12 segments) so a track-by-track read
-            // is obvious even at a glance from across the room.
-            const float barH = juce::jmin (8.0f, row.getHeight() - 4.0f);
-            auto bar = row.withSizeKeepingCentre (row.getWidth(), barH);
-
-            constexpr int   segments = 12;
-            const float segW = (bar.getWidth() - (segments - 1)) / (float) segments;
-            const int lit    = juce::jlimit (0, segments,
-                                              (int) std::round (pct / 100.0f * segments));
-
-            for (int i = 0; i < segments; ++i)
-            {
-                juce::Rectangle<float> seg (bar.getX() + i * (segW + 1.0f),
-                                            bar.getY(), segW, bar.getHeight());
-                if (i < lit)
-                {
-                    const float p = (float) (i + 1) / segments * 100.0f;
-                    g.setColour (ledColour (p).withAlpha (zynforge::brand::alpha::bold));
-                }
-                else
-                {
-                    g.setColour (brand::lift (brand::bgDeep, 0.05f));
-                }
-                g.fillRoundedRectangle (seg, 1.5f);
-            }
-        };
-
-        auto row1 = inner.removeFromTop (rowH);
-        auto row2 = inner.removeFromTop (rowH);
-        auto row3 = inner;
-
-        // "AUDIO" = the real CoreAudio callback load (getAudioLoadPct) -- the
-        // number that predicts dropouts -- NOT whole-app CPU.
-        drawRow (row1, "AUDIO", cpu, juce::String ((int) std::round (cpu)) + " %");
-        drawRow (row2, "DISK", juce::jmin (100.0f, disk * 2.0f),
-                              juce::String (disk, 1) + " MB/s");
-        drawRow (row3, "BUF",  buf,  juce::String ((int) std::round (buf)) + " %");
-
-        // Missed-samples warning glows red at the bottom-right when non-zero.
+        // A dropped sample outranks everything else on this row.
         if (missed > 0)
         {
             g.setColour (brand::accentRecord);
-            g.setFont (brand::type::mono (10.0f, true));
-            const auto warn = "DROP " + juce::String (missed);
-            g.drawText (warn, r.reduced (8.0f, 4.0f),
-                        juce::Justification::bottomRight, false);
+            g.drawText ("DROP " + juce::String (missed), top, juce::Justification::centredRight, false);
         }
+        else
+        {
+            const auto peak = "TP " + loudnessFigure (truePeakDb);
+            g.setColour (truePeakIsHot() ? brand::accentRecord : brand::textSecondary);
+            g.drawText (peak, top, juce::Justification::centredRight, false);
+            top.removeFromRight (widthOf (peak + "  "));
+            g.setColour (brand::textSecondary);
+            g.drawText (getLoudnessText().upToFirstOccurrenceOf ("  TP", false, false),
+                        top, juce::Justification::centredRight, false);
+        }
+
+        // Value widths in em for the longest each can read, so the three sit
+        // evenly and a changing digit can't push its neighbour along.
+        const float valuePt = recording ? 13.0f : 11.0f;
+        const float pctW = valuePt * 2.5f, diskW = valuePt * 6.2f;
+        const float labelsW = 32.0f + 28.0f + 24.0f;
+        const float gap = juce::jmax (4.0f, (inner.getWidth() - labelsW - 2.0f * pctW - diskW) / 2.0f);
+        auto cell = [&] (const char* label, float labelW, const juce::String& value, float valueW, juce::Colour colour)
+        {
+            g.setColour (brand::textTertiary);
+            g.setFont (brand::type::ledLabel());
+            g.drawText (label, inner.removeFromLeft (labelW), juce::Justification::centredLeft, false);
+            g.setColour (colour);
+            g.setFont (brand::type::mono (valuePt, true));
+            g.drawText (value, inner.removeFromLeft (valueW), juce::Justification::centredLeft, false);
+            inner.removeFromLeft (gap);
+        };
+        // "AUDIO" = the real CoreAudio callback load (getAudioLoadPct) -- the
+        // number that predicts dropouts -- NOT whole-app CPU.
+        cell ("AUDIO", 32.0f, juce::String ((int) std::round (cpu)) + "%", pctW, ledColour (cpu));
+        cell ("DISK",  28.0f, juce::String (disk, 1) + " MB/s", diskW, ledColour (diskPct));
+        cell ("BUF",   24.0f, juce::String ((int) std::round (buf)) + "%", pctW, ledColour (buf));
     }
 }

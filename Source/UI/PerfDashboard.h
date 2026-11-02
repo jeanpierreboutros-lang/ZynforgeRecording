@@ -4,14 +4,14 @@
 
 namespace zynforge
 {
-    // Compact three-bar performance dashboard for the header.
+    // Compact status panel beside the clock.
     //
-    //  CPU   ▓▓▓▓▓░░░░░  47 %
-    //  DISK  ▓▓▓▓▓▓▓▓▓░  31 MB/s
-    //  BUF   ▓▓░░░░░░░░  12 %
+    //  48.0 kHz / 256        LUFS M -18.2  I -23.1  TP -1.0
+    //  AUDIO 12%     DISK 8.1 MB/s     BUF 3%
+    //  ==== (thin disk bar)
     //
-    // Each bar reads green / yellow / red based on threshold; numeric
-    // value is shown to the right. Polled at 4 Hz from MainComponent.
+    // Each figure reads green / yellow / red on the same thresholds. It sits
+    // in both views at every window size, so what has to stay visible does.
     class PerfDashboard final : public juce::Component
     {
     public:
@@ -28,9 +28,20 @@ namespace zynforge
         // the actual buffer/block size in samples. 0 = unknown (device down).
         void setDeviceInfo (double sampleRate, int blockSizeSamples);
 
+        // Master loudness, BS.1770: integrated + momentary LUFS, true-peak dBTP.
+        void setLoudness (float integratedLufs, float momentaryLufs, float truePeakDb);
+
         // When recording, the dashboard draws larger type + a red-emphasis
         // border so the engineer can read load / buffer / disk at a glance.
         void setRecording (bool isRecording);
+
+        // The loudness line as drawn; a figure below the gate reads "--".
+        juce::String getLoudnessText() const;
+        // True peak within 1 dB of full scale turns red.
+        bool truePeakIsHot() const noexcept;
+        // Whether the row holds the device format and the loudness line at their
+        // widest, so a window size can't quietly lose the readout.
+        bool loudnessFits() const;
 
         void paint (juce::Graphics&) override;
 
@@ -41,6 +52,9 @@ namespace zynforge
         juce::int64 missed { 0 };
         double sampleRate { 0.0 };
         int    blockSize  { 0 };
+        float  integrated { -120.0f };
+        float  momentary  { -120.0f };
+        float  truePeakDb { -120.0f };
         bool   recording  { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PerfDashboard)

@@ -63,19 +63,6 @@ namespace zynforge
         if (changed) repaint();
     }
 
-    void BigClockPanel::setLoudness (float integ, float momentary, float tp)
-    {
-        // 0.1-unit change detection so meter jitter doesn't force repaints.
-        auto q = [] (float v) { return std::round (v * 10.0f) / 10.0f; };
-        const bool changed = q (integ)     != q (lufsIntegrated)
-                          || q (momentary) != q (lufsMomentary)
-                          || q (tp)        != q (truePeakDb);
-        lufsIntegrated = integ;
-        lufsMomentary  = momentary;
-        truePeakDb     = tp;
-        if (changed) repaint();
-    }
-
     void BigClockPanel::setArmedReady (bool ready)
     {
         if (armedReady != ready) { armedReady = ready; repaint(); }

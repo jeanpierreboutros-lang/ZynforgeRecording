@@ -294,6 +294,7 @@ namespace zynforge
             lockHolds();
             alarmsStandOut();
             sessionLeaving();
+            statusPanel();
             soundcheckReport();
             analysisStaysOutOfTheTake();
             consoleWaitsForTheTake();
@@ -957,6 +958,40 @@ namespace zynforge
                 expect (w.main.alarmBanner.getText().containsIgnoreCase ("device"), w.main.alarmBanner.getText());
                 manager.restartLastAudioDevice();
                 expect (manager.getCurrentAudioDevice() != nullptr, "the fixture lost its device");
+            }
+        }
+
+        void statusPanel()
+        {
+            beginTest ("Master loudness stays on screen in both views at every window size");
+            {
+                Window w;
+                for (const auto view : { MainComponent::View::Mix, MainComponent::View::Edit })
+                {
+                    w.main.switchView (view);
+                    for (const auto& [width, height] : { std::pair (1120, 700), std::pair (1320, 820), std::pair (2200, 1200) })
+                    {
+                        w.main.setSize (width, height);
+                        w.main.resized();
+                        expect (w.main.perfDashboard.isVisible());
+                        expect (w.main.perfDashboard.loudnessFits(), "the readout does not fit at width " + juce::String (width));
+                    }
+                }
+                w.main.switchView (MainComponent::View::Mix);
+            }
+
+            beginTest ("The loudness line reads what the master measures and marks a hot true peak");
+            {
+                PerfDashboard panel;
+                expectEquals (panel.getLoudnessText(), juce::String ("LUFS M --  I --  TP --"));
+                expect (! panel.truePeakIsHot());
+
+                panel.setLoudness (-23.14f, -18.26f, -3.0f);
+                expectEquals (panel.getLoudnessText(), juce::String ("LUFS M -18.3  I -23.1  TP -3.0"));
+                expect (! panel.truePeakIsHot());
+
+                panel.setLoudness (-23.1f, -18.3f, -0.9f);
+                expect (panel.truePeakIsHot(), "true peak within 1 dB of full scale stayed calm");
             }
         }
 

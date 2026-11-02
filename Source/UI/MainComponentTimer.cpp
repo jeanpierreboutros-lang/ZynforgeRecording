@@ -397,10 +397,9 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
                           status.primaryDiskStale ? BigClockPanel::DiskReading::PrimaryStale
                           : status.copyDiskStale  ? BigClockPanel::DiskReading::CopyStale
                                                   : BigClockPanel::DiskReading::Fresh);
-    bigClock.setLoudness (status.integratedLufs,
-                          status.momentaryLufs,
-                          status.truePeakDb);
-
+    perfDashboard.setLoudness (status.integratedLufs,
+                               status.momentaryLufs,
+                               status.truePeakDb);
     perfDashboard.setMetrics (status.audioLoadPct,
                               (float) status.diskMBPerSec,
                               status.ringFillPct,

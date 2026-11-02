@@ -241,9 +241,9 @@ void MainComponent::resized()
     // in EDIT, which also puts its tools here instead of on a row of their own.
     const int clockRowH = currentView == View::Edit ? 56 : 72;
     auto clockRow = r.removeFromTop (clockRowH).reduced (brand::space::lg, brand::space::xs);
-    // Give the performance dashboard more room while recording so audio
-    // load / buffer / disk are readable at a glance during a take.
-    const int dashW = engine.isRecording() ? 320 : 240;
+    // Wide enough for the loudness line at every window size; more room while
+    // recording so audio load / buffer / disk read at a glance during a take.
+    const int dashW = engine.isRecording() ? 320 : 272;
     perfDashboard.setBounds (clockRow.removeFromRight (dashW));
     clockRow.removeFromRight (brand::space::sm);
     auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;

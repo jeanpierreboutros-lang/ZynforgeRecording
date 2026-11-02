@@ -24,8 +24,6 @@ namespace zynforge
         enum class DiskReading { Fresh, CopyStale, PrimaryStale };
         void setDiskInfo  (double freeGB, int lastWriteMs, juce::int64 missedSamples,
                            double remainingSeconds, DiskReading reading);
-        // BS.1770 master loudness: integrated + momentary LUFS, true-peak dBTP.
-        void setLoudness  (float integratedLufs, float momentaryLufs, float truePeakDb);
 
         // True when any strip is record-armed but the transport is
         // still idle. Lights the lamp amber and reads ARMED, so the engineer
@@ -44,9 +42,6 @@ namespace zynforge
         double remainingSeconds { 0.0 };
         DiskReading diskReading { DiskReading::Fresh };
         bool   armedReady       { false };
-        float  lufsIntegrated   { -120.0f };
-        float  lufsMomentary    { -120.0f };
-        float  truePeakDb       { -120.0f };
 
         // Pulse animation. timerCallback advances pulsePhase while Recording
         // is active; paint reads it to modulate the background. Otherwise the
