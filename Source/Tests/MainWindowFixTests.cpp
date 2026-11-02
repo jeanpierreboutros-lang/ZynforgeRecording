@@ -171,6 +171,7 @@ namespace zynforge
             testTone();
             nothingStandsInFrontOfStop();
             cuesDuringATake();
+            stripDeleteAsks();
         }
 
     private:
@@ -759,6 +760,36 @@ namespace zynforge
                 stopTake (w);
                 const auto saved = findSessionProj (w.session).loadFileAsString();
                 expect (saved.contains ("Song 1"), "STOP's save left the cue behind");
+            }
+        }
+
+        void stripDeleteAsks()
+        {
+            beginTest ("The strip menu's Delete asks first, like every other delete");
+            {
+                Window w (3);
+                w.main.rebuildStrips();
+                std::function<void()> answer;
+                w.main.confirmForTests = [&answer] (std::function<void()> yes) { answer = std::move (yes); };
+                w.main.strips[1]->requestDelete();
+                expect ((bool) answer, "the strip went without a question");
+                expectEquals (w.recorder().getNumTracks(), 3, "the strip went before the answer");
+                answer();
+                w.main.confirmForTests = {};
+                expectEquals (w.recorder().getNumTracks(), 2, "Delete did not delete");
+            }
+
+            beginTest ("Delete answered after the layout changed removes nothing");
+            {
+                Window w (3);
+                w.main.rebuildStrips();
+                std::function<void()> answer;
+                w.main.confirmForTests = [&answer] (std::function<void()> yes) { answer = std::move (yes); };
+                w.main.strips[1]->requestDelete();
+                w.main.confirmForTests = {};
+                w.recorder().bumpTrackGeneration();
+                answer();
+                expectEquals (w.recorder().getNumTracks(), 3, "the answer hit another strip");
             }
         }
 

@@ -391,6 +391,39 @@ void MainComponent::deleteSelectedStrips()
                 : "Could not remove strips; check disk permissions and Session File Backups");
 }
 
+void MainComponent::removeStrip (int firstTrack, int width)
+{
+    if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
+    {
+        showStatus (sessionLocked         ? "LOCKED -- click UNLOCK to resume control"
+                    : engine.isRecording() ? "Stop recording before removing a strip"
+                                           : "Wait for the session operation to finish");
+        return;
+    }
+    std::vector<int> order;
+    for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
+        if (t < firstTrack || t >= firstTrack + width) order.push_back (t);
+    condemnAllStrips();
+    const bool ok = engine.reorderTracks (order);
+    lastTrackCount = -1;
+    showStatus (ok ? "Strip removed; audio retained in Removed Tracks"
+                : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
+                : "Could not remove strip safely");
+}
+
+MainComponent::QuestionScope MainComponent::questionScope()
+{
+    return { engine.getActiveSessionDir(), engine.getRecorder().getTrackGeneration() };
+}
+
+bool MainComponent::stillInScope (const QuestionScope& scope)
+{
+    if (scope.session == engine.getActiveSessionDir()
+        && scope.layout == engine.getRecorder().getTrackGeneration()) return true;
+    showStatus ("The session changed while that question was open -- nothing was changed");
+    return false;
+}
+
 void MainComponent::colourSelectedStrips()
 {
     if (selectedLogical.empty()) return;

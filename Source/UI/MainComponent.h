@@ -283,6 +283,7 @@ private:
     void colourSelectedStrips();
     void moveSelectedStrips (int delta);
     void clearStripSelection();
+    void removeStrip (int firstTrack, int width);
     void selectAllStrips();
     int  physicalFromLogicalIdx (int logical);
     int  logicalFromPhysicalIdx (int physical);
@@ -682,6 +683,11 @@ private:
 
     void loadSetlistFromActiveSession();
     bool saveSetlistToActiveSession (bool writeBackup = true) const;
+    // What an open question was raised about. By the time it is answered the
+    // menu bar, a Finder open or a remote can have changed either.
+    struct QuestionScope { juce::File session; int layout { -1 }; };
+    QuestionScope questionScope();
+    bool stillInScope (const QuestionScope&);
     void jumpToCue (int index);
     void addCueAtTransport();
     double timelineRate();

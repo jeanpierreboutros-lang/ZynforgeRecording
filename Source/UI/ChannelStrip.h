@@ -66,6 +66,8 @@ namespace zynforge
         bool isSelected() const noexcept { return selected; }
         int  getStripIndex() const noexcept { return stripIndex; }
         bool isStereo()     const noexcept { return pairState != nullptr; }
+        // Asks the host; the strip stays live until the answer comes.
+        void requestDelete() { if (deleteCb) deleteCb(); }
         std::function<void (bool /*additive*/)> onToggleSelection;
 
         // Tab / Shift+Tab in the name field: ask the host to commit and

@@ -495,16 +495,7 @@ namespace zynforge
                                                            std::memory_order_relaxed);
                         break;
                 case 10: if (addCb)        addCb();        break;
-                case 11: if (deleteCb)
-                         {
-                             // deleteCb() runs engine.removeStripAt, freeing
-                             // this strip's TrackState synchronously. Stop the
-                             // StripTimer BEFORE that so it can't dereference
-                             // the dangling reference before the next rebuild.
-                             invalidate();
-                             deleteCb();
-                         }
-                         break;
+                case 11: requestDelete(); break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
                 default:
                     // Edit group assignment: 900 = None, 901..908 = group 0..7.

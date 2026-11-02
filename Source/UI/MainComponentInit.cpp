@@ -790,26 +790,12 @@ void MainComponent::rebuildStrips()
         // Right-click menu wiring.
         auto deleteCb     = [this, i, step]
         {
-            if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
+            // It clears undo, so it asks like every other way of deleting one.
+            juce::Component::SafePointer<MainComponent> self (this);
+            confirmDeleteChannels (1, [self, i, step, scope = questionScope()]
             {
-                // The strip already stopped its meter timer (ChannelStrip
-                // invalidates before calling this). Rebuild it, or it stays
-                // frozen for the rest of the show.
-                lastTrackCount = -1;
-                showStatus (sessionLocked         ? "LOCKED -- click UNLOCK to resume control"
-                            : engine.isRecording() ? "Stop recording before removing a strip"
-                                                   : "Wait for the session operation to finish");
-                return;
-            }
-            std::vector<int> order;
-            for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
-                if (t < i || t >= i + step) order.push_back (t);
-            condemnAllStrips();
-            const bool ok = engine.reorderTracks (order);
-            lastTrackCount = -1;
-            showStatus (ok ? "Strip removed; audio retained in Removed Tracks"
-                        : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
-                        : "Could not remove strip safely");
+                if (self != nullptr && self->stillInScope (scope)) self->removeStrip (i, step);
+            });
         };
         auto addCb        = [this] { if (! sessionLocked) engine.addOneStrip(); };
         auto linkStereoCb = [this, i]
