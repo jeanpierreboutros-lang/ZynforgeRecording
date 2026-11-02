@@ -8,12 +8,10 @@
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
 #include "EditToolsBar.h"
-#include "../Audio/MidiClockOut.h"
 #include "../Audio/PreflightProbes.h"
 #include "BackupMirrorDialog.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
-#include "ClickSettingsDialog.h"
 #include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 #include "RecordPosition.h"
@@ -442,10 +440,7 @@ void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
         // What the strip hears on this device: a saved patch past a smaller
         // device's inputs already wraps live and must not be overwritten here.
         const int dev = engine.getEffectiveInputRouting (i);
-        // Playback-only strips (notably the generated Click) and buses have
-        // no input by design. Never turn them into live-input strips here.
-        if (isArmed && ! t.isBus.load (std::memory_order_relaxed)
-            && i != clickTrackIndex && (dev < 0 || dev >= numInputs))
+        if (isArmed && (dev < 0 || dev >= numInputs))
         {
             const int target = numInputs > 0 ? (i % numInputs) : 0;
             engine.setTrackInputRouting (i, target);
@@ -1076,7 +1071,6 @@ void MainComponent::applyLockState()
     metersButton .setEnabled (e);
     addChannelButton.setEnabled (e && ! engine.isRecording());
     setlistBar.setEnabled (e);
-    tempoBar.setEnabled (e);
     if (transportBar != nullptr) transportBar->setEnabled (e);
     if (masterStrip != nullptr) masterStrip->setEnabled (e);
 
@@ -1089,9 +1083,7 @@ void MainComponent::applyLockState()
                                              || pendingMetadataSaves != 0 || captureMetadataPending);
         if (auto* tools = editPage->getEditToolsBar()) tools->setEnabled (e);
     }
-    if (automationToolbar != nullptr) automationToolbar->setEnabled (e);
     // Floating panels that change the mix or the patch lock with the rest.
-    if (vcaPanel != nullptr) vcaPanel->setEnabled (e);
     if (patchDialog != nullptr) patchDialog->setEnabled (e);
     if (deviceDialog != nullptr) deviceDialog->setEnabled (e);
     if (twinDialog != nullptr) twinDialog->setEnabled (e);
@@ -1125,7 +1117,6 @@ void MainComponent::forgetSessionUiState()
     cues.clear();
     currentCueIndex = -1;
     setlistBar.setCues (cues, currentCueIndex);
-    cueRamp.active = false;     // its strip indices mean nothing in the next session
     wasInsidePunch = false;
     analysisJobs.cancel();
 }
@@ -1301,7 +1292,7 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
         engine.clearSessionState();
         forgetSessionUiState();
         engine.setStripCount (0);
-        clickTrackIndex = -1; lastTrackCount = -1;
+        lastTrackCount = -1;
         undoManager.clearUndoHistory();
         updateTransportLabels(); explicitDocumentOpened = false; showStartupWelcome();
     }
@@ -1587,9 +1578,6 @@ void MainComponent::showPreflightChecklist()
 
     body << backupChecklistRow();
     body << "\n\n";
-
-    if (engine.getMidiClockOut().isEnabled())
-        body << "[OK]  MIDI clock master: " << engine.getMidiClockOut().getOutputDeviceName() << "\n";
 
     if (device != nullptr)
     {

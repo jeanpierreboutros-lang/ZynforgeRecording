@@ -121,25 +121,19 @@ add_library(ZynforgeCore STATIC
     Source/UI/AudioDeviceDialog.cpp
     Source/UI/MasterStrip.cpp
     Source/UI/AddTracksDialog.cpp
-    Source/UI/AutomationToolbar.cpp
     Source/UI/NewSessionDialog.cpp
     Source/UI/WelcomeDialog.cpp
     Source/UI/PerfDashboard.cpp
     Source/UI/SessionInfoDialog.cpp
     Source/UI/SetlistBar.cpp
-    Source/UI/TempoBar.cpp
-    Source/UI/ClickSettingsDialog.cpp
     Source/Network/RemoteControl.cpp
     Source/Network/TwinLink.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
-    Source/Audio/AudioEngineAutomation.cpp
     Source/Audio/AudioEngineClips.cpp
     Source/Audio/AudioImport.cpp
-    Source/Audio/ClickEngine.cpp
-    Source/Audio/ClickTrackRenderer.cpp
     Source/Audio/ClockSource.cpp
     Source/Audio/MultitrackRecorder.cpp
     Source/Audio/SessionPlayer.cpp
@@ -216,8 +210,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/AudioImportTests.cpp
     Source/Tests/AuditFixTests.cpp
     Source/Tests/AuditSecurityTests.cpp
-    Source/Tests/AutomationTests.cpp
-    Source/Tests/AutomationToolbarAccessibilityTests.cpp
     Source/Tests/CaptureDaemonTests.cpp
     Source/Tests/CaptureFixTests.cpp
     Source/Tests/CaptureLinkTests.cpp
@@ -227,7 +219,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ChannelAlarmTests.cpp
     Source/Tests/ChannelCsvTests.cpp
     Source/Tests/ChannelStripAccessibilityTests.cpp
-    Source/Tests/ClickTrackRendererTests.cpp
     Source/Tests/ConcurrencyAuditTests.cpp
     Source/Tests/ConsoleLinkTests.cpp
     Source/Tests/ConsoleTransportTests.cpp
@@ -295,7 +286,6 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TwinLinkHostTests.cpp
     Source/Tests/MixKernelTests.cpp
     Source/Tests/TransportBarAccessibilityTests.cpp
-    Source/Tests/VcaPanelAccessibilityTests.cpp
 )
 
 target_compile_definitions(ZynforgeRecordingTests PRIVATE

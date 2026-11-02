@@ -472,15 +472,6 @@ namespace zynforge
                                   "the selected strips swapped with each other");
                     expect (main.selectedLogical == std::set<int> { 0, 1 });
 
-                    beginTest ("LOCK also locks the VCA panel");
-                    if (main.vcaPanel != nullptr)
-                    {
-                        main.onLockToggled();
-                        expect (! main.vcaPanel->isEnabled(), "the VCA panel stayed live under LOCK");
-                        main.onLockToggled();
-                        expect (main.vcaPanel->isEnabled());
-                    }
-
                     beginTest ("Layout changes during a session job wait instead of failing");
                     const auto active = tempDir ("active");
                     active.getChildFile ("Audio Files").createDirectory();
@@ -516,11 +507,6 @@ namespace zynforge
                         main.engine.setTrackLinkedRouting (0, 9);
                         expectEquals (recorder.getTrack (0).outputRouting.load(), 3,
                                       "a linked patch change half-applied during a take");
-                        main.clickTrackIndex = 0;
-                        main.tempoBar.onBpmChanged (131.0f);
-                        expect (main.clickRefreshPending, "a tempo change during a take never re-renders the click");
-                        main.clickTrackIndex = -1;
-                        main.clickRefreshPending = false;
                         recorder.stopRecording();
                     }
                     r.location.deleteRecursively();

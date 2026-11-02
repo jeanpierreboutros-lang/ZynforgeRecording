@@ -8,10 +8,8 @@
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
 #include "EditToolsBar.h"
-#include "../Audio/MidiClockOut.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
-#include "ClickSettingsDialog.h"
 #include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 
@@ -36,24 +34,7 @@ MainComponent::MainComponent()
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {
-        cueRamp.active = false;   // its targets are strip indices, and those just moved
-        for (auto& cue : cues)
-            if (auto* lanes = cue.automation.getArray())
-            {
-                juce::Array<juce::var> remapped;
-                for (const auto& lane : *lanes)
-                {
-                    const int old = (int) lane["track"];
-                    if (old < 0 || old >= (int) destination.size() || destination[(size_t) old] < 0) continue;
-                    auto copy = lane.clone();
-                    if (auto* item = copy.getDynamicObject())
-                    { item->setProperty ("track", destination[(size_t) old]); remapped.add (copy); }
-                }
-                cue.automation = juce::var (remapped);
-            }
         clipClipboard = juce::var(); // any copied implicit track index is now stale
-        if (clickTrackIndex >= 0 && clickTrackIndex < (int) destination.size())
-            clickTrackIndex = destination[(size_t) clickTrackIndex];
         undoManager.clearUndoHistory(); // old per-index snapshots must not undo onto different audio
         rebaselineMixerUndo();
         // reorderTracks bumps the track generation, so the strips rebuild on
@@ -97,11 +78,6 @@ MainComponent::MainComponent()
     // Alarm prefixes must stay in view when a long warning is clipped.
     statusLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (statusLabel);
-
-    midiStatusLabel.setColour (juce::Label::textColourId, brand::featureEngaged);
-    midiStatusLabel.setJustificationType (juce::Justification::centredLeft);
-    midiStatusLabel.setFont (brand::type::caption());
-    addAndMakeVisible (midiStatusLabel);
 
     nextCueLabel.setColour (juce::Label::textColourId, brand::accentVS);
     nextCueLabel.setJustificationType (juce::Justification::centredRight);
@@ -292,9 +268,7 @@ MainComponent::MainComponent()
                 for (int i = 0; i < e.count && cursor < target; ++i)
                 {
                     const int suffix = e.count > 1 ? i + 1 : 0;
-                    const auto defaultName = e.isBus ? juce::String ("Bus ") + juce::String (cursor + 1)
-                                                      : juce::String (cursor + 1);
-                    const auto base  = e.baseName.isNotEmpty() ? e.baseName : defaultName;
+                    const auto base  = e.baseName.isNotEmpty() ? e.baseName : juce::String (cursor + 1);
                     if (e.stereo && cursor + 1 < target)
                     {
                         const auto label = suffix > 0 ? base + " " + juce::String (suffix) : base;
@@ -302,16 +276,10 @@ MainComponent::MainComponent()
                         engine.setTrackName  (cursor + 1, label + " R");
                         engine.setTrackStereo (cursor,     true);
                         engine.setTrackStereo (cursor + 1, false);
-                        engine.setTrackIsBus  (cursor,     e.isBus);
-                        engine.setTrackIsBus  (cursor + 1, e.isBus);
                         // Hard-pan the new pair L/R so it reproduces its full
-                        // stereo image from the start (buses excepted -- a
-                        // stereo bus sums centred). Matches import.
-                        if (! e.isBus)
-                        {
-                            engine.setTrackPan (cursor,     -1.0f);
-                            engine.setTrackPan (cursor + 1,  1.0f);
-                        }
+                        // stereo image from the start. Matches import.
+                        engine.setTrackPan (cursor,     -1.0f);
+                        engine.setTrackPan (cursor + 1,  1.0f);
                         cursor += 2;
                         ++totalStereo;
                     }
@@ -320,7 +288,6 @@ MainComponent::MainComponent()
                         engine.setTrackName  (cursor, suffix > 0 ? base + " " + juce::String (suffix)
                                                                   : base);
                         engine.setTrackStereo (cursor, false);
-                        engine.setTrackIsBus  (cursor, e.isBus);
                         ++cursor;
                     }
                 }
@@ -405,178 +372,8 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (setlistBar);
 
-    // EDIT page owns the automation toolbar (mirrors getEditToolsBar).
-    // Create the page here so the toolbar exists before we wire its
-    // callbacks, then re-parent the toolbar onto MainComponent for the
-    // top-row layout. The page's other wiring stays below.
     editPage = std::make_unique<zynforge::EditPage> (engine);
     addChildComponent (*editPage);          // hidden by default; switchView toggles
-    automationToolbar = editPage->getAutomationToolbar();
-    addAndMakeVisible (*automationToolbar);
-
-    // Automation toolbar -- visible only when the EDIT view is active.
-    // Tool / parameter changes are exposed to the EDIT rows via the
-    // engine + a simple poll (TrackRow::resized + paint pick the
-    // current laneMode from the toolbar's param choice).
-    automationToolbar->setVisible (false);
-    automationToolbar->onToolChanged  = [this] (zynforge::AutomationToolbar::Tool)
-        { if (editPage != nullptr) editPage->repaint(); };
-    automationToolbar->onParamChanged = [this] (zynforge::AutomationToolbar::Param)
-    {
-        if (editPage != nullptr)
-        {
-            // Toolbar param choice drives every row's lane content --
-            // engineer doesn't have to flip the per-row VIEW menu first.
-            editPage->applyToolbarParamToAllRows();
-            editPage->repaint();
-        }
-    };
-    // editPage doesn't exist yet here -- the real wiring happens below
-    // after `editPage = std::make_unique<EditPage>(...)`.
-
-    // onClearAll wipes the active parameter across every track.
-    automationToolbar->onClearAll = [this]
-    {
-        if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
-        { showStatus ("Stop recording or unlock the session before clearing automation"); return; }
-        using Param = zynforge::AutomationToolbar::Param;
-        const auto p = automationToolbar->getParam();
-        // Click and Tempo hold no automation points. Falling through to Mute
-        // here erased every Mute lane while the row showed something else.
-        if (p != Param::Volume && p != Param::Pan && p != Param::Mute)
-        { showStatus ("Clear works on the Volume, Pan and Mute lanes -- pick one first"); return; }
-        const auto engineParam = p == Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
-                               : p == Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
-                                                    : zynforge::AudioEngine::AutomationParam::Mute;
-        // Wrap in an undoable transaction so a stray click can be
-        // recovered with Cmd+Z. AutomationSnapshotAction captures
-        // before/after, undo restores the full automation table.
-        runAutomationEdit ("Clear automation lane",
-                           [this, engineParam] { engine.clearAutomation (engineParam); });
-        showStatus ("Cleared automation points for the active parameter (Cmd+Z to undo)");
-    };
-
-    // WRITE-mode dropdown -- forward to engine's write-mode state.
-    // While the mode is anything other than Off AND playback is
-    // rolling, every fader / pan / mute move drops a new automation
-    // point at the current playhead (thinned to ~50 ms resolution by
-    // writeAutomationPointThinned in writeAutoIfPlaying below).
-    automationToolbar->onWriteModeChanged = [this] (zynforge::AutomationToolbar::WriteMode wm)
-    {
-        using EM = zynforge::AudioEngine::AutomationWriteMode;
-        engine.setAutomationWriteMode ((EM) (int) wm);
-        const char* label = "Off";
-        switch (wm)
-        {
-            case zynforge::AutomationToolbar::WriteMode::Off:   label = "Off";   break;
-            case zynforge::AutomationToolbar::WriteMode::Touch: label = "Touch"; break;
-            case zynforge::AutomationToolbar::WriteMode::Latch: label = "Latch"; break;
-            case zynforge::AutomationToolbar::WriteMode::Write: label = "Write"; break;
-        }
-        showStatus (juce::String ("Automation WRITE: ") + label);
-    };
-
-    automationToolbar->onTrimModeChanged = [this] (bool trimOn)
-    {
-        engine.setAutomationTrimMode (trimOn);
-        showStatus (trimOn ? "Automation TRIM armed (fader moves nudge the per-track trim, not the lane shape)"
-                           : "Automation TRIM off");
-    };
-
-    // SUSPEND -- engine ignores every lane at read time. Useful for
-    // auditioning a raw fader pass without overwriting automation.
-    automationToolbar->onSuspendChanged = [this] (bool on)
-    {
-        engine.setAutomationReadSuspended (on);
-        showStatus (on ? "Automation SUSPEND on -- playback ignores every lane (raw faders only)"
-                       : "Automation SUSPEND off -- playback follows stored automation again");
-    };
-
-    // PUNCH -- writes only fire inside the engine's punch range
-    // (the EDIT page's selection on the time ruler, when one
-    // exists). Outside the range, writes are no-ops.
-    automationToolbar->onPunchChanged = [this] (bool on)
-    {
-        engine.setAutomationPunchEnabled (on);
-        if (on)
-        {
-            const auto in  = engine.getAutomationPunchIn();
-            const auto out = engine.getAutomationPunchOut();
-            if (in < 0 || out <= in)
-                showStatus ("PUNCH on -- no range set yet; drag a selection on the EDIT timeline to define one");
-            else
-                showStatus ("PUNCH on -- automation writes will only fire inside the selected range");
-        }
-        else
-        {
-            showStatus ("PUNCH off -- automation writes fire anywhere on the timeline");
-        }
-    };
-
-    tempoBar.setBpm (engine.getSessionTempoBpm());
-    tempoBar.onBpmChanged = [this] (float bpm)
-    {
-        engine.setSessionTempoBpm (bpm);
-        tempoBar.setBpm (engine.getSessionTempoBpm());   // clamp echo
-
-        // If a click track has already been created in this session,
-        // regenerate it so the metronome stays locked to the new tempo. A take
-        // or session job refuses the render; the timer redoes it afterwards.
-        if (clickTrackIndex >= 0)
-        {
-            if (engine.isRecording() || sessionIoBusy.load()) clickRefreshPending = true;
-            else generateOrRefreshClickTrack();
-        }
-    };
-    tempoBar.onCreateClickTrack = [this]
-    {
-        // CLICK button now opens the Click II dialog. The real-time
-        // click engine runs in the audio thread so tempo / voice /
-        // subdivision changes take effect on the next beat without
-        // ever stopping playback.
-        auto& cl = engine.getClickEngine();
-        zynforge::ClickSettings init;
-        // Seed the dialog from the LIVE click engine, not fabricated defaults.
-        // The engine DOES expose getters (used by the offline click render), so
-        // reopening to just toggle ON no longer resets the engineer's cowbell /
-        // level / subdivision back to Click / 0 dB / quarter.
-        init.on              = cl.isEnabled();
-        init.click1.volumeDb = cl.getVol1Db();
-        init.click1.voice    = (zynforge::ClickSettings::Voice) cl.getVoice1();
-        init.click1.sub      = (zynforge::ClickSettings::Subdivision) cl.getSub1();
-        init.click2.volumeDb = cl.getVol2Db();
-        init.click2.voice    = (zynforge::ClickSettings::Voice) cl.getVoice2();
-        init.click2.sub      = (zynforge::ClickSettings::Subdivision) cl.getSub2();
-
-        juce::Component::SafePointer<MainComponent> self (this);
-        zynforge::ClickSettingsDialog::launch (init, engine.getSessionTempoBpm(),
-            [self] (const zynforge::ClickSettings& s)
-            {
-                if (self == nullptr) return;
-                auto& c = self->engine.getClickEngine();
-                c.setEnabled    (s.on);
-                c.setVolume1Db  (s.click1.volumeDb);
-                c.setVolume2Db  (s.click2.volumeDb);
-                c.setVoice1     ((zynforge::ClickEngine::Voice) s.click1.voice);
-                c.setVoice2     ((zynforge::ClickEngine::Voice) s.click2.voice);
-                c.setSub1       ((zynforge::ClickEngine::Subdivision) s.click1.sub);
-                c.setSub2       ((zynforge::ClickEngine::Subdivision) s.click2.sub);
-            },
-            [self] (std::function<void (bool)> completion)
-            {
-                // 'Generate click track' button -- render an audio file
-                // of the click for offline workflows (mixdown / export).
-                // The result matters: the dialog only switches the live click
-                // engine off if the render actually happened.
-                if (self == nullptr)
-                {
-                    if (completion) completion (false);
-                    return;
-                }
-                self->generateOrRefreshClickTrack (std::move (completion));
-            });
-    };
-    addAndMakeVisible (tempoBar);
 
     transportBar = std::make_unique<zynforge::TransportBar> (engine);
     transportBar->onRequestPlay   = [this] { onPlayClicked();   };
@@ -589,25 +386,8 @@ MainComponent::MainComponent()
     addAndMakeVisible (stripsViewport);
     addChildComponent (mixerPlaceholder);   // empty-state overlay (manages own visibility)
 
-    // editPage was created above (it owns the automation toolbar). The
-    // rest of its wiring lives here.
-    // Forward the undo wrapper so EditPage TrackRows can push
-    // per-point Add / Delete edits through the same undo stack the
-    // Clear All button uses. Goes through setAutomationEditWrapper
-    // so it propagates into TrackList + every TrackRow.
-    editPage->setAutomationEditWrapper (
-        [this] (const juce::String& label, std::function<void()> fn)
-        {
-            runAutomationEdit (label, std::move (fn));
-        });
+    // editPage was created above. The rest of its wiring lives here.
     editPage->canMutateTimeline = [this] { return canMutateTimeline(); };
-    editPage->tempoEditWrapper = [this] (const juce::String& label, std::function<void()> fn)
-    {
-        runTempoEdit (label, std::move (fn));
-    };
-    editPage->setAutomationDragHooks (
-        [this] { beginAutomationTransaction(); },
-        [this] (const juce::String& label) { endAutomationTransaction (label); });
     // Save per-session zoom into .zfproj on every idle change.
     // A zoom click during capture changes only the view. The normal stop-save
     // persists its final value without writing to the active take volume.
@@ -678,32 +458,13 @@ MainComponent::MainComponent()
         pushClipUndo (label, before);
     };
     // Re-parent the EDIT-tools palette onto MainComponent so it can
-    // share the same 28 px row as the automation toolbar. (The earlier
-    // if-block tried this too but ran before editPage existed.)
+    // sit on its own row above the page.
     if (auto* tb = editPage->getEditToolsBar())
         addAndMakeVisible (*tb);
     switchView (View::Mix);
 
     masterStrip = std::make_unique<zynforge::MasterStrip> (engine);
     addAndMakeVisible (*masterStrip);
-
-    vcaPanel = std::make_unique<zynforge::VcaPanel> (engine);
-    addChildComponent (*vcaPanel);   // hidden by default; VCA button toggles
-
-    vcaToggleButton.setColour (juce::TextButton::buttonColourId,
-                                brand::sink (brand::featureEngaged, 0.55f));
-    vcaToggleButton.setColour (juce::TextButton::textColourOffId,
-                                brand::lift (brand::featureEngaged, 0.10f));
-    vcaToggleButton.setTooltip ("Toggle the 8-bus VCA fader panel -- group faders for "
-                                 "drums / vocals / etc. Strips opt in via right-click > Assign to VCA.");
-    vcaToggleButton.onClick = [this]
-    {
-        showVcaPanel = ! showVcaPanel;
-        if (vcaPanel != nullptr) vcaPanel->setVisible (showVcaPanel);
-        resized();
-        requestUILayoutSave();
-    };
-    addAndMakeVisible (vcaToggleButton);
 
     setWantsKeyboardFocus (true);
     addKeyListener (this);
@@ -717,7 +478,7 @@ MainComponent::MainComponent()
     startTimerHz (10);  // poll for input-channel count + transport position
 
     // If the previous run had a session pinned, rehydrate its setlist
-    // AND its UI layout (view, strip width, VCA panel, EDIT zoom).
+    // AND its UI layout (view, strip width, EDIT zoom).
     loadSetlistFromActiveSession();
     juce::Component::SafePointer<MainComponent> startupSelf (this);
     juce::Timer::callAfterDelay (50, [startupSelf]
@@ -860,8 +621,6 @@ void MainComponent::switchView (View v)
             self->grabKeyboardFocus();
     });
 
-    // Automation toolbar is part of the EDIT-view chrome.
-    automationToolbar->setVisible (! mix);
     if (editPage != nullptr)
         if (auto* tb = editPage->getEditToolsBar())
             tb->setVisible (! mix);
@@ -885,8 +644,8 @@ void MainComponent::switchView (View v)
 }
 
 // Every session swap and layout change comes through rebuildStrips. The strip
-// selection and the click row are positions in ONE layout of ONE session: left
-// alone, a range edit, Delete or a paste hits whatever now sits at the old index.
+// selection holds positions in ONE layout of ONE session: left alone, a range
+// edit, Delete or a paste hits whatever now sits at the old index.
 void MainComponent::syncStripSelectionScope()
 {
     const int layout = engine.getRecorder().getTrackGeneration();
@@ -897,8 +656,6 @@ void MainComponent::syncStripSelectionScope()
         selectionLayoutGen = layout;
         selectionSession   = session;
     }
-    if (editPage != nullptr)
-        editPage->setClickTrackPresent (clickTrackIndex >= 0, clickTrackIndex);
 }
 
 void MainComponent::rebuildStrips()
@@ -961,47 +718,10 @@ void MainComponent::rebuildStrips()
                 engine.setTrackName (i + 1, chosen.isEmpty() ? juce::String()
                                                              : chosen + " R");
         };
-        // Helper: routes fader / pan moves into one of three sinks
-        // depending on toolbar state:
-        //   WRITE  - drop a new automation point at the playhead
-        //   TRIM   - nudge the per-track trim atomic by (new - prev)
-        //   neither- direct only (engine.setTrack* already ran)
-        auto writeAutoIfPlaying = [this] (int trackIdx,
-                                          zynforge::AudioEngine::AutomationParam p,
-                                          float value)
-        {
-            if (engine.isAutomationTrimming())
-            {
-                // Trim: store the absolute fader value as the trim
-                // delta from the lane value at the playhead. Result:
-                // moving the fader to -3 dB while the lane reads 0
-                // sets trim = -3, riding the automation down 3 dB.
-                const auto pos       = engine.getPlayer().getPositionSamples();
-                const float laneVal  = engine.getAutomation (trackIdx, p).empty()
-                                       ? 0.0f
-                                       : engine.automationValueAt (trackIdx, p, pos, 0.0f);
-                engine.setAutomationTrim (trackIdx, p, value - laneVal);
-                return;
-            }
-            if (! engine.isAutomationWriting()) return;
-            const auto pos = engine.getPlayer().getPositionSamples();
-            // Punch gate -- when PUNCH is on, only write inside the
-            // engine's punch range. Outside the range, do nothing.
-            if (engine.isAutomationPunchEnabled()
-                && ! engine.isInsideAutomationPunchRange (pos))
-                return;
-            // Throttle WRITE-mode drops to ~50 ms apart so a 60 Hz
-            // fader.onValueChange stream doesn't blow up the lane.
-            const auto sr = (juce::int64) juce::jmax (1.0, engine.getPlayer().getSampleRate());
-            const auto minGap = sr / 20;        // 50 ms
-            engine.writeAutomationPointThinned (trackIdx, p, pos, value, minGap);
-        };
-
         // Pro Tools-style Edit Group broadcast. When strip `i` is
         // in an edit group, the gain / pan change is mirrored onto
         // every other strip in the same group. Returns the list of
-        // peers (excluding self) so each callback can decide
-        // whether to also write automation for them.
+        // peers (excluding self).
         auto editGroupPeers = [this] (int src) -> std::vector<int>
         {
             const int g = engine.getTrackEditGroup (src);
@@ -1011,39 +731,27 @@ void MainComponent::rebuildStrips()
             return all;
         };
 
-        auto gainCb   = [this, i, step, writeAutoIfPlaying, editGroupPeers] (float dB)
+        auto gainCb   = [this, i, step, editGroupPeers] (float dB)
         {
             engine.setTrackGainDb (i, dB);
-            writeAutoIfPlaying (i, zynforge::AudioEngine::AutomationParam::Volume, dB);
             if (step == 2)
-            {
                 engine.setTrackGainDb (i + 1, dB);
-                writeAutoIfPlaying (i + 1, zynforge::AudioEngine::AutomationParam::Volume, dB);
-            }
             for (int peer : editGroupPeers (i))
-            {
                 engine.setTrackGainDb (peer, dB);
-                writeAutoIfPlaying (peer, zynforge::AudioEngine::AutomationParam::Volume, dB);
-            }
         };
         // L pan persists to track i. For a stereo strip, the R pan
         // travels through its own panRCb (below) -- the two sides are
         // INDEPENDENT, not mirrored, so the engineer can pan the L
         // channel hard-left and R hard-right (or whatever they want).
-        auto panCb  = [this, i, writeAutoIfPlaying, editGroupPeers] (float pan)
+        auto panCb  = [this, i, editGroupPeers] (float pan)
         {
             engine.setTrackPan (i, pan);
-            writeAutoIfPlaying (i, zynforge::AudioEngine::AutomationParam::Pan, pan);
             for (int peer : editGroupPeers (i))
-            {
                 engine.setTrackPan (peer, pan);
-                writeAutoIfPlaying (peer, zynforge::AudioEngine::AutomationParam::Pan, pan);
-            }
         };
-        auto panRCb = [this, i, writeAutoIfPlaying] (float pan)
+        auto panRCb = [this, i] (float pan)
         {
             engine.setTrackPan (i + 1, pan);
-            writeAutoIfPlaying (i + 1, zynforge::AudioEngine::AutomationParam::Pan, pan);
         };
 
         // Stereo routing: L → device[N], R → device[N+1].
@@ -1070,32 +778,6 @@ void MainComponent::rebuildStrips()
                                                  tR,
                                                  (step == 2) ? std::move (panRCb)
                                                              : ChannelStrip::FloatCallback{});
-
-        // Read-mode display follow: while playback rolls, the MIXER fader /
-        // pan show the AUTOMATED value at the playhead so they track the EDIT
-        // automation curve (the views stay linked). Stopped -> manual value.
-        // Volume automation lives on the L track of a stereo pair, so the
-        // stereo strip fader reads track i; each pan knob reads its own
-        // channel's lane.
-        s->displayGainDb = [this, i] (float manualDb) -> float
-        {
-            if (! engine.isPlaying()) return manualDb;
-            return engine.automationValueAt (i, zynforge::AudioEngine::AutomationParam::Volume,
-                                             engine.getPlayer().getPositionSamples(), manualDb);
-        };
-        s->displayPanL = [this, i] (float manualPan) -> float
-        {
-            if (! engine.isPlaying()) return manualPan;
-            return engine.automationValueAt (i, zynforge::AudioEngine::AutomationParam::Pan,
-                                             engine.getPlayer().getPositionSamples(), manualPan);
-        };
-        if (step == 2)
-            s->displayPanR = [this, i] (float manualPan) -> float
-            {
-                if (! engine.isPlaying()) return manualPan;
-                return engine.automationValueAt (i + 1, zynforge::AudioEngine::AutomationParam::Pan,
-                                                 engine.getPlayer().getPositionSamples(), manualPan);
-            };
 
         // Right-click menu wiring.
         auto deleteCb     = [this, i, step]
@@ -1131,18 +813,6 @@ void MainComponent::rebuildStrips()
                              std::move (addCb),
                              std::move (linkStereoCb));
 
-        // VCA assignment from the strip's right-click menu -- the
-        // ChannelStrip sets state.vcaGroup directly for immediate
-        // audio-thread effect; this callback persists the choice
-        // through appProps so a relaunch restores it. For stereo
-        // pairs both halves must persist, otherwise R loses its
-        // assignment on relaunch even though it ran with L in-memory.
-        s->onVcaGroupChanged = [this, i, step] (int vcaIdx)
-        {
-            engine.setTrackVcaGroup (i, vcaIdx);
-            if (step == 2) engine.setTrackVcaGroup (i + 1, vcaIdx);
-        };
-
         s->onEditGroupChanged = [this, i, step] (int groupId)
         {
             engine.setTrackEditGroup (i, groupId);
@@ -1153,25 +823,6 @@ void MainComponent::rebuildStrips()
                               + " -> Edit Group " + juce::String (groupId + 1));
         };
 
-        // Aux send wiring -- feed the strip the live bus list so its
-        // 'Send to bus' submenu populates, and persist whatever the
-        // engineer picks for send slot 0. Unity post-fader default.
-        s->getBusList = [this]() -> std::vector<std::pair<int, juce::String>>
-        {
-            std::vector<std::pair<int, juce::String>> out;
-            for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
-            {
-                auto& ts = engine.getRecorder().getTrack (t);
-                if (ts.isBus.load (std::memory_order_relaxed))
-                    out.emplace_back (t, ts.name.isEmpty() ? juce::String ("Bus ") + juce::String (t + 1)
-                                                              : ts.name);
-            }
-            return out;
-        };
-        s->onSendTargetChanged = [this, i] (int target)
-        {
-            engine.setTrackSend (i, 0, target, 0.0f /* dB */, true /* post */);
-        };
         s->onStreamSendChanged = [this, i] (bool on)
         {
             engine.setTrackStream (i, on);
@@ -1180,10 +831,6 @@ void MainComponent::rebuildStrips()
                             "Session > Recording & Sync > Stream Bus Output, or record StereoMix");
         };
 
-        // Per-track Automation Safe lock. When on, the engine
-        // refuses every write to this track (Add, Remove, Paste,
-        // WRITE-mode drops, TRIM offsets). The strip mirrors via
-        // setAutomationLed in the slow poll below.
         // Edit-group broadcast for the four toggles. The strip
         // mutates its own state immediately; we mirror to every
         // peer in the same edit group so a single click on, say,
@@ -1208,15 +855,6 @@ void MainComponent::rebuildStrips()
         s->onAfterMonitorToggle  = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::monitor); };
         s->onAfterMuteToggle     = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::muted);   };
         s->onAfterSoloToggle     = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::soloed);  };
-
-        s->onAutomationSafeChanged = [this, i] (bool safeOn)
-        {
-            engine.setTrackAutomationSafe (i, safeOn);
-            if (safeOn) showStatus (juce::String ("Track ") + juce::String (i + 1)
-                                    + ": Automation Safe -- writes blocked");
-            else        showStatus (juce::String ("Track ") + juce::String (i + 1)
-                                    + ": Automation Safe off");
-        };
 
         // Hook shift/cmd-click selection. The toggle handler is keyed
         // on the LOGICAL strip index (i.e. stereo pairs count as one).

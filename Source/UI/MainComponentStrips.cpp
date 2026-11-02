@@ -617,12 +617,8 @@ bool MainComponent::setStereoLink (int i, bool link)
     { showStatus ("Stop recording before linking or unlinking a stereo pair"); return false; }
     // Newly linked stereo -> hard-pan L/R for the full image; unlinked back to
     // mono -> recentre both halves so a mono strip isn't left stuck hard-right.
-    // (Buses sum centred, so skip them.)
-    if (! engine.getRecorder().getTrack (i).isBus.load())
-    {
-        engine.setTrackPan (i,     link ? -1.0f : 0.0f);
-        engine.setTrackPan (i + 1, link ?  1.0f : 0.0f);
-    }
+    engine.setTrackPan (i,     link ? -1.0f : 0.0f);
+    engine.setTrackPan (i + 1, link ?  1.0f : 0.0f);
     // Trigger a full rebuild on the next timer tick.
     lastTrackCount = -1;
     return true;

@@ -152,6 +152,8 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         return -1;
     }
 
+    keepRemovedFeatureData (dir);
+
     // Condemn the current strips before loading -- a smaller session shrinks
     // the recorder vector and frees TrackStates the live strips still point at.
     // Before anything loads: a damaged file read as empty, and the next save
@@ -197,6 +199,22 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
                     Toast::Kind::Warning);
     if (! damaged.empty()) reportDamagedFiles (dir, damaged);
     return n;
+}
+
+void MainComponent::keepRemovedFeatureData (const juce::File& dir)
+{
+    const auto kept = removeddata::keepOriginals (dir);
+    if (kept == removeddata::Kept::nothingToDo) return;
+    const auto message = kept == removeddata::Kept::justCopied
+        ? "This session used features that are gone. Its original files are in Session File Backups/"
+              + juce::String (removeddata::kFolderName)
+        : "! Could not copy this session's original files to Session File Backups: it cannot be saved until they are";
+    // Whoever opened the session ends with its own line, which would replace this.
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::MessageManager::callAsync ([self, message]
+    {
+        if (self != nullptr) self->showStatus (message);
+    });
 }
 
 void MainComponent::reportDamagedFiles (const juce::File& dir,
@@ -255,7 +273,7 @@ bool MainComponent::restoreDamagedFiles (const juce::File& dir,
 
 void MainComponent::restoreSessionDocuments (const juce::File& dir)
 {
-    // Playlists/automation must be restored after loadSession seeds its default
+    // Playlists must be restored after loadSession seeds its default
     // clips; loading them first caused the seed to erase the restored edits.
     loadSetlistFromActiveSession();
     loadUILayoutFromActiveSession();
@@ -288,25 +306,6 @@ void MainComponent::restoreSessionDocuments (const juce::File& dir)
     }
     if (engine.getPlayer().isLoaded()) pendingSampleRate = engine.getPlayer().getSampleRate();
     engine.setSessionSampleRate (pendingSampleRate);
-    // The click strip's index is SESSION-scoped. Reset it and re-detect from
-    // the just-loaded session, so a stale index carried over from a previous
-    // session can never deleteFile()/overwrite THIS session's Track_NN.wav on
-    // a tempo change -- and so tempo refresh keeps working when reopening a
-    // session that already contains a "Click" strip.
-    clickTrackIndex = -1;
-    {
-        // Regeneration owns only explicitly generated reference media. A
-        // recorded console Click return can also be routed to None for playback.
-        auto& rec = engine.getRecorder();
-        for (int i = 0; i < rec.getNumTracks(); ++i)
-        {
-            auto& t = rec.getTrack (i);
-            if (t.referenceMedia.load (std::memory_order_relaxed)
-                && t.getNameThreadSafe() == "Click"
-                && t.inputRouting.load (std::memory_order_relaxed) < 0)
-            { clickTrackIndex = i; break; }
-        }
-    }
     lastTrackCount = -1;                      // force a strip rebuild on the next tick
     undoManager.clearUndoHistory();           // a fresh session starts with a clean undo stack
     rebaselineMixerUndo();                    // don't record the load itself as a mixer undo step
@@ -322,6 +321,8 @@ void MainComponent::adoptDaemonTakeSession (const zynforge::EngineStatus& status
     const juce::File dir (status.sessionPath);
     if (status.sessionPath.isEmpty() || engine.isRecording() || engine.mixerBelongsTo (dir))
         return;
+
+    keepRemovedFeatureData (dir);
 
     // A session opened before the daemon was found still holds unsaved work.
     if (const auto held = engine.getMixerSession(); held.isDirectory())
@@ -442,7 +443,7 @@ void MainComponent::closeSession()
         return;
     }
 
-    // Closing loses any UNSAVED mixer / edit / cue / automation changes
+    // Closing loses any UNSAVED mixer / edit / cue changes
     // (recorded audio is always already on disk). Offer Save & Close /
     // Close Without Saving / Cancel -- the same choice as quitting, but it
     // only unloads the session and returns to Welcome (the app stays open).
@@ -452,8 +453,8 @@ void MainComponent::closeSession()
     auto* aw = new juce::AlertWindow (
         "Close session?",
         "Return to the Welcome screen without quitting the app.\n\n"
-        "Recorded audio is always on disk. Unsaved mixer / edit / cue / "
-        "automation changes since the last Save will be lost unless you save.",
+        "Recorded audio is always on disk. Unsaved mixer / edit / cue "
+        "changes since the last Save will be lost unless you save.",
         juce::MessageBoxIconType::QuestionIcon);
     aw->setLookAndFeel (&getLookAndFeel());
     aw->addButton ("Save & Close",         1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -480,7 +481,6 @@ void MainComponent::closeSession()
             self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
             engine.setStripCount (0);
 
-            self->clickTrackIndex = -1;           // session-scoped; must not survive a close
             self->undoManager.clearUndoHistory();
             self->lastTrackCount = -1;            // force a strip rebuild (now empty)
             self->updateTransportLabels();
@@ -765,7 +765,7 @@ void MainComponent::serviceAutosave()
 void MainComponent::showAutosaveSettings()
 {
     auto* aw = new juce::AlertWindow ("Auto-Save & Backup",
-        "Automatically save the session (mix, cues, automation, layout) on a timer and keep a "
+        "Automatically save the session (mix, cues, layout) on a timer and keep a "
         "timestamped backup snapshot (10 newest) in 'Session File Backups'. Recordings are always "
         "written separately; keep independent media backups for important takes.",
         juce::MessageBoxIconType::NoIcon);
@@ -814,7 +814,6 @@ juce::var MainComponent::captureUILayoutJson() const
                     : stripWidthPreset == StripWidth::S  ? "S"
                     : stripWidthPreset == StripWidth::L  ? "L"
                                                          : "M");
-    ui->setProperty ("vcaPanel",     showVcaPanel);
     ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
     return juce::var (ui.get());
 }
@@ -1898,7 +1897,7 @@ void MainComponent::startSongExport (zynforge::songexport::Choice choice)
     sessionJobs.launch ([self, &eng = engine, plan] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
-        // The render reads clips and lanes under its own brief locks, as the
+        // The render reads clips under its own brief locks, as the
         // whole-session bounces do, so the UI timer keeps running.
         const auto outcome = sx::run (eng, plan, cancel, [self] (int done, int total, const juce::String& song)
         {
@@ -2308,14 +2307,6 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
     const int n = (int) obj->getProperty ("trackCount");
     if (n <= 0) { showStatus ("Template has no strips"); return; }
 
-    // The click strip is SESSION-scoped and a template replaces the whole strip
-    // layout, so any index carried over is stale. Leaving it set made the
-    // "is this really a Click strip?" guard in generateOrRefreshClickTrack fail
-    // forever after ("Click slot isn't a Click strip"), permanently disabling
-    // Generate Click Track for the rest of the session -- every other
-    // session-boundary path (open / close / new) already resets it.
-    clickTrackIndex = -1;
-
     // Stop the live strips' meter timers before setStripCount frees
     // the TrackStates they reference (a template with fewer strips shrinks the
     // recorder vector); the strips rebuild on the next 10 Hz tick.
@@ -2359,7 +2350,7 @@ void MainComponent::loadUILayoutFromActiveSession()
     if (ui == nullptr) return;
 
     // View -- must call switchView (not just write currentView) so the
-    // page visibility + automation toolbar flip correctly.
+    // page visibility + tools palette flip correctly.
     const auto viewStr = ui->getProperty ("view").toString();
     if (viewStr.isNotEmpty())
         switchView (viewStr == "Edit" ? View::Edit : View::Mix);
@@ -2370,10 +2361,6 @@ void MainComponent::loadUILayoutFromActiveSession()
     else if (sw == "S")  setStripWidthPreset (StripWidth::S);
     else if (sw == "L")  setStripWidthPreset (StripWidth::L);
     else if (sw == "M")  setStripWidthPreset (StripWidth::M);
-
-    // VCA panel visibility.
-    showVcaPanel = (bool) ui->getProperty ("vcaPanel");
-    if (vcaPanel != nullptr) vcaPanel->setVisible (showVcaPanel);
 
     // EDIT zoom level.
     if (editPage != nullptr)
@@ -2521,7 +2508,6 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     forgetSessionUiState();
     engine.clearAllStripOverrides();
     engine.claimMixerFor (sessionFolder);
-    clickTrackIndex = -1;
     // The previous session's undo steps would apply to this one's files and
     // strips. Retake the mixer baseline on the next idle tick, after the
     // caller has applied its template, so that is not an undo step either.

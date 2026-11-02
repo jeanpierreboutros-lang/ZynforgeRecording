@@ -111,11 +111,11 @@ namespace zynforge::dawproject
         application->setAttribute ("version", appVersion);
 
         auto* transport = root.createNewChildElement ("Transport");
-        addParameter (*transport, "Tempo", "bpm", 20.0, 999.0, project.tempoBpm, ids, "Tempo");
+        addParameter (*transport, "Tempo", "bpm", 20.0, 999.0, 120.0, ids, "Tempo");
         auto* signature = transport->createNewChildElement ("TimeSignature");
         signature->setAttribute ("id", ids.next());
-        signature->setAttribute ("numerator", project.timeSigNum);
-        signature->setAttribute ("denominator", project.timeSigDen);
+        signature->setAttribute ("numerator", 4);
+        signature->setAttribute ("denominator", 4);
 
         auto* structure = root.createNewChildElement ("Structure");
         const auto masterChannelId = ids.next();

@@ -73,17 +73,12 @@ namespace
                     { "Cmd + C",      "Copy selected strips" },
                     { "Cmd + V",      "Paste strips" },
                 }},
-                { "Automation (EDIT view, click a row to activate)", {
-                    { "Left / Right", "Walk to prev / next automation point (seeks playhead)" },
-                    { "Up / Down",    "Nudge focused point's value" },
-                    { "Delete",       "Remove focused point" },
-                }},
                 { "Mixer", {
                     { "Shift + click", "Toggle multi-selection (additive)" },
                     { "Cmd + A",      "Select every strip" },
                     { "Esc",          "Clear strip selection" },
                     { "Right-click strip",
-                                      "Rename / Colour / Stereo / Stream send / VCA assign / Output-mute" },
+                                      "Rename / Colour / Stereo / Stream send / Output-mute" },
                 }},
                 { "Edit view", {
                     { "Right-click row",  "Row size" },
@@ -294,7 +289,7 @@ void MainComponent::showUserGuide()
         "MIXER VIEW\n"
         "  Channel strips run left-to-right; each has R / I / M / S "
         "buttons, a pan knob, and a fader. Right-click for rename, "
-        "colour, stereo link, stream send, VCA assign, output mute.\n\n"
+        "colour, stereo link, stream send, output mute.\n\n"
         "EDIT VIEW\n"
         "  Waveform of each Track_NN.wav. Edit tools palette top-right: "
         "Smart / Selector / Trim / Grabber / Fade. "
@@ -316,20 +311,13 @@ void MainComponent::showUserGuide()
         "incremental patching.\n\n"
         "CUE LIST (top bar)\n"
         "  + Cue captures current fader / pan / routing / mute / arm + "
-        "playback position + tempo. Recall via cue buttons OR number "
+        "playback position. Recall via cue buttons OR number "
         "keys 1-""9. 250 ms soft-takeover prevents clicks.\n\n"
-        "VCA PANEL (toggle with the VCA button)\n"
-        "  8 group faders. Assign strips via right-click > Assign to VCA. "
-        "VCA fader sums into each assigned strip's gain. VCA mute / solo "
-        "follows console (solo-in-place) convention.\n\n"
         "DEVICE / FORMAT / BACKUP\n"
         "  DEVICE opens the audio interface picker. FILE > New Session "
         "configures format + sample rate. BACKUP opens Backup & Mirror "
         "Drives: the drives every track is copied to as you record, each "
         "in its own format.\n\n"
-        "MIDI CLOCK\n"
-        "  Session > MIDI clock out picks an output. Tempo drives "
-        "24 PPQN; play / pause / stop send midi-start / continue / stop.\n\n"
         "DANTE\n"
         "  Native Dante requires Audinate's paid SDK + NDA. Practical "
         "path: install Audinate's free Dante Virtual Soundcard (DVS) "

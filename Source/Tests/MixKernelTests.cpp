@@ -20,82 +20,25 @@ namespace zynforge
 
         void runTest() override
         {
-            using mix::VcaGate;
-
-            beginTest ("Solo / mute / VCA gate follows console rules");
+            beginTest ("Solo / mute gate follows console rules");
             {
-                const VcaGate none;
-                const VcaGate vca      { true, false, false };
-                const VcaGate vcaMuted { true, true,  false };
-                const VcaGate vcaSolo  { true, false, true  };
-
-                expect (  mix::audible (false, false, none, false, false));
-                expect (! mix::audible (true,  false, none, false, false), "strip mute");
-                expect (! mix::audible (false, false, none, true,  false), "someone else soloed");
-                expect (  mix::audible (true,  true,  none, true,  false), "solo beats the strip's own mute");
-                expect (! mix::audible (false, true,  vcaMuted, true, false), "a muted VCA beats a strip solo");
-                expect (! mix::audible (false, false, vca,  false, true), "another VCA is soloed");
-                expect (  mix::audible (false, false, vcaSolo, false, true));
-                expect (! mix::audible (false, false, none, false, true), "ungrouped strips drop under a VCA solo");
-                expect (! mix::audible (true,  false, vcaSolo, false, true), "VCA solo keeps the strip's mute");
-            }
-
-            beginTest ("A stereo pair's right half reads its left partner's lanes");
-            {
-                expectEquals (mix::automationChannel (0, false), 0);
-                expectEquals (mix::automationChannel (3, false), 3);
-                expectEquals (mix::automationChannel (3, true),  2);
-                expectEquals (mix::automationChannel (0, true),  0);   // no track -1
-            }
-
-            beginTest ("resolveLanes: static values and lanes");
-            {
-                // Fake lanes: channel -> (lane -> value). Missing = fallback.
-                std::map<std::pair<int, int>, float> lanes;
-                auto read = [&lanes] (int ch, mix::Lane lane, float fallback) noexcept
-                {
-                    const auto it = lanes.find ({ ch, (int) lane });
-                    return it == lanes.end() ? fallback : it->second;
-                };
-
-                // Stopped, or the lock lost: static values.
-                auto m = mix::resolveLanes (1, 0, -6.0f, 0.25f, false, read);
-                expectEquals (m.volDb, -6.0f);
-                expectEquals (m.pan, 0.25f);
-                expect (! m.muteLane);
-
-                // Rolling with lanes: Volume + Mute come from autoCh, Pan
-                // from the strip itself.
-                lanes[{ 0, (int) mix::Lane::Volume }] = -20.0f;
-                lanes[{ 1, (int) mix::Lane::Volume }] = +6.0f;    // ignored: pair reads ch 0
-                lanes[{ 1, (int) mix::Lane::Pan }]    = -1.0f;
-                lanes[{ 0, (int) mix::Lane::Mute }]   = 0.0f;
-                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, read);
-                expectEquals (m.volDb, -20.0f);
-                expectEquals (m.pan, -1.0f);
-                expect (! m.muteLane);
-
-                lanes[{ 0, (int) mix::Lane::Mute }] = 1.0f;
-                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, read);
-                expect (m.muteLane);
+                expect (mix::audible (false, false, false));
+                expect (! mix::audible (true, false, false), "the strip's mute");
+                expect (! mix::audible (false, false, true), "another strip is soloed");
+                expect (mix::audible (false, true, true));
             }
 
             beginTest ("Solo gets a muted strip heard; every other strip stays out");
             {
-                expect (mix::audible (true, true, {}, true, false), "solo beats the strip's own mute");
-                expect (! mix::audible (true, false, {}, false, false));
-                expect (! mix::audible (false, false, {}, true, false));
+                expect (mix::audible (true, true, true), "solo beats the strip's own mute");
+                expect (! mix::audible (true, false, false));
+                expect (! mix::audible (false, false, true));
             }
 
             beginTest ("The stream bus takes mutes and ignores solo");
             {
-                expect (mix::streamAudible (false, {}, false));
-                expect (! mix::streamAudible (true, {}, false));
-                expect (! mix::streamAudible (false, {}, true));
-                mix::VcaGate soloedVca  { true, false, true };
-                mix::VcaGate mutedVca   { true, true,  false };
-                expect (mix::streamAudible (false, soloedVca, false));
-                expect (! mix::streamAudible (false, mutedVca, false));
+                expect (mix::streamAudible (false));
+                expect (! mix::streamAudible (true));
             }
 
             beginTest ("Trim-Follow offset: a real move, limited; no reference, none");
@@ -129,21 +72,6 @@ namespace zynforge
                 expect (! mix::busHeldOffOutputs (true, 8, true), "the engineer said this rig may share");
             }
 
-            beginTest ("Post-fader sends follow every mute; pre-fader sends do not");
-            {
-                expect (! mix::postFaderMuted (false, false, false));
-                expect (mix::postFaderMuted (true,  false, false));
-                expect (mix::postFaderMuted (false, true,  false));
-                expect (mix::postFaderMuted (false, false, true));
-
-                expectWithinAbsoluteError (mix::sendGain (0.0f, true, 0.5f), 0.5f, 1.0e-6f);
-                expectWithinAbsoluteError (mix::sendGain (0.0f, true, 0.0f), 0.0f, 1.0e-6f);
-                expectWithinAbsoluteError (mix::sendGain (0.0f, false, 0.0f), 1.0f, 1.0e-6f);
-                expectWithinAbsoluteError (mix::sendGain (-6.0f, false, 0.0f),
-                                           juce::Decibels::decibelsToGain (-6.0f), 1.0e-6f);
-                expectEquals (mix::sendGain (-60.0f, false, 1.0f), 0.0f);
-            }
-
             beginTest ("Constant-power pan law and master gain");
             {
                 const auto c = mix::constantPowerPan (1.0, 0.0f);
@@ -161,16 +89,12 @@ namespace zynforge
                                            juce::Decibels::decibelsToGain (-6.0), 1.0e-12);
             }
 
-            beginTest ("A fader or VCA at the -60 dB floor is off; above it they sum");
+            beginTest ("A fader at the -60 dB floor is off");
             {
-                auto gain = [] (float fader, float vca) { return juce::Decibels::decibelsToGain (mix::stripDb (fader, vca), -60.0f); };
-                expectEquals (gain (-60.0f, 12.0f), 0.0f);
-                expectEquals (gain (12.0f, -60.0f), 0.0f);
-                expectEquals (gain (-60.0f, 0.0f), 0.0f);
+                expectEquals (juce::Decibels::decibelsToGain (mix::stripDb (-60.0f), -60.0f), 0.0f);
                 // Even a trim added afterwards (trim-follow) stays off.
-                expect (mix::stripDb (-60.0f, 12.0f) + 24.0f < mix::kFaderFloorDb);
-                expectWithinAbsoluteError (mix::stripDb (-6.0f, 3.0f), -3.0f, 1.0e-6f);
-                expectWithinAbsoluteError (mix::stripDb (-59.0f, 12.0f), -47.0f, 1.0e-6f);
+                expect (mix::stripDb (-60.0f) + 24.0f < mix::kFaderFloorDb);
+                expectWithinAbsoluteError (mix::stripDb (-6.0f), -6.0f, 1.0e-6f);
             }
         }
     };

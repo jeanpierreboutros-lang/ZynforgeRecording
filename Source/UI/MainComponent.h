@@ -12,7 +12,6 @@
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AlarmBanner.h"
-#include "AutomationToolbar.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
 #include "ChannelStrip.h"
@@ -29,10 +28,8 @@
 #include "SessionJobRunner.h"
 #include "SessionMetadataWriter.h"
 #include "../Audio/SettingsFile.h"
-#include "TempoBar.h"
 #include "Toast.h"
 #include "PlaceholderView.h"
-#include "VcaPanel.h"
 #include "TransportBar.h"
 #include "ClipEditTargets.h"
 
@@ -182,6 +179,9 @@ private:
     // Stands in for the dialog, which a headless test cannot answer.
     std::function<void (const std::vector<zynforge::sessionrepair::DamagedFile>&)> damagedFilesPromptForTests;
     void restoreSessionDocuments (const juce::File& dir);
+    // Copies, once, the documents of a session that holds data of a feature this
+    // build no longer has, before anything can overwrite them.
+    void keepRemovedFeatureData (const juce::File& dir);
     void adoptRollingDaemonTake (const zynforge::EngineStatus& status, juce::int64 receivedAtMs);
     void adoptDaemonTakeSession (const zynforge::EngineStatus& status);
     void releaseHeldRecordPress();
@@ -234,11 +234,11 @@ private:
                               const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
 public:
-    // The cue list after a Crop or Ripple Delete on `tracks`. With a whole
-    // timeline the cues themselves move; a cue in the removed audio goes.
+    // The cue list after a Crop or Ripple Delete. With a whole timeline the
+    // cues move; a cue in the removed audio goes. On some strips only they stay.
     static std::vector<zynforge::SetlistBar::Cue> cuesAfterCut (
         const std::vector<zynforge::SetlistBar::Cue>& cues, const zynforge::timelinecut::Cut&,
-        const std::vector<int>& tracks, bool wholeTimeline);
+        bool wholeTimeline);
     // Called from Main.cpp's systemRequestedQuit so an unsaved
     // session / running recording prompts BEFORE the app shuts down.
     void confirmAndQuit();
@@ -364,11 +364,7 @@ private:
     bool playheadLockedForPunch();
 
     // Snap modes -- cycled by the '4' key (also surfaced in the
-    // Edit menu). Off / Markers / Bars; Bars uses the engine's
-    // tempo map + time-sig to align edits to bar boundaries. The
-    // bool name is kept for source compatibility with code that
-    // checks "is snap on at all"; new code should branch on
-    // snapMode for the actual snap behaviour.
+    // Edit menu).
     enum class SnapMode { Off = 0, Markers = 1 };
     SnapMode snapMode      { SnapMode::Off };
     bool     snapToMarkers { false };   // mirrors (snapMode == Markers) for legacy reads
@@ -413,8 +409,6 @@ private:
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
-    // One undo step around a tempo-map edit; a generated click follows it.
-    void runTempoEdit (const juce::String& label, std::function<void()> mutate);
     // Test seam: receives what either delete prompt would run on "Delete".
     std::function<void (std::function<void()>)> confirmForTests;
 
@@ -477,7 +471,7 @@ private:
     void dropMarkerAndPromptName();
 
     // The ONE gate for timeline mutations (clips, ranges, markers,
-    // automation, undo/redo). Refuses -- with the reason on the status
+    // undo/redo). Refuses -- with the reason on the status
     // line -- while capture rolls (local or daemon), while a session
     // operation owns persistence (sessionIoBusy: copy/move/bounce or a
     // pending metadata save), and while LOCKed. The key handler, menu and
@@ -486,20 +480,6 @@ private:
     // mutation checks here rather than repeating its own partial guard.
     // `action` completes "Stop recording before ..." (e.g. "cropping").
     bool canMutateTimeline (const juce::String& action = "editing");
-
-    // EditPage calls this to bracket an automation edit. The lambda
-    // performs the mutation; the helper snapshots automationData
-    // before and after, pushes a single AutomationSnapshotAction so
-    // Cmd+Z reverts cleanly.
-    void runAutomationEdit (const juce::String& label,
-                            std::function<void()> mutate);
-
-    // Drag-coalesce variant. beginAutomationTransaction snapshots
-    // the engine's current automation lanes; endAutomationTransaction
-    // snapshots again and pushes ONE AutomationSnapshotAction so a
-    // multi-tick mouseDrag becomes a single undo step.
-    void beginAutomationTransaction();
-    void endAutomationTransaction (const juce::String& label);
 
     double pendingSampleRate { 48000.0 };
     // Last device sample rate we warned about (mismatch vs the session rate);
@@ -552,7 +532,7 @@ private:
     // dir and opens it in the default browser (engineer prints from
     // there, or saves as PDF via the browser's print dialog).
     void  printSetlist();
-    // Restore UI layout (view / strip width / VCA panel / EDIT zoom)
+    // Restore UI layout (view / strip width / EDIT zoom)
     // from the active session's .zfproj. Called after loadSession so
     // the engineer reopens their show with their layout intact.
     void  loadUILayoutFromActiveSession();
@@ -621,7 +601,6 @@ private:
     zynforge::AlarmBanner alarmBanner;
     juce::String recordRefusal;              // shown in the banner, then clears itself
     juce::uint32 recordRefusalShownMs { 0 };
-    juce::Label  midiStatusLabel   { {}, "" };
     juce::Label  nextCueLabel      { {}, "" };
     juce::Label  danteLabel        { {}, "" };
     juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner
@@ -672,7 +651,6 @@ private:
     zynforge::VolumeProbe::Reader recordDriveReaderForTests;
     zynforge::PerfDashboard perfDashboard;
     zynforge::SetlistBar    setlistBar;
-    zynforge::TempoBar      tempoBar;
     zynforge::Toast         toast;
 
     // STOP-while-recording two-tap guard. Tracks the message-counter
@@ -684,36 +662,11 @@ private:
     bool manualPunchActive { false };
     bool cursorPunchAnswered { false };   // true only around the press that "Replace From Cursor" makes
     juce::Component::SafePointer<juce::AlertWindow> cursorPunchQuestion;
-    // Held during a multi-tick automation drag so endAutomationTransaction
-    // can compare against the pre-drag state.
-    juce::var pendingAutomationBefore;
-    bool      automationTransactionOpen { false };
-    zynforge::AutomationToolbar* automationToolbar { nullptr };   // owned by editPage
 
     // Per-session cue list -- populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.
     std::vector<zynforge::SetlistBar::Cue> cues;
     int currentCueIndex { -1 };
-
-    // Cue-transition ramp state. Active while a Fade-mode cue is in
-    // flight; updated by the existing 24 Hz timerCallback. Each strip
-    // gets its own (start, target) pair and we lerp gain + pan toward
-    // the target proportionally to elapsed beats.
-    struct RampState
-    {
-        bool        active { false };
-        double      startMs { 0.0 };
-        double      durationMs { 0.0 };
-        std::vector<std::pair<float, float>> gainStartTarget; // per snapshot entry
-        std::vector<std::pair<float, float>> panStartTarget;  // per snapshot entry
-        // Resolved destination track index for each entry above (matched by
-        // stripId, like the Snap path), so a Fade recall after a reorder /
-        // delete ramps the correct strips rather than raw array positions.
-        std::vector<int>                     targetTrack;
-    };
-    RampState cueRamp;
-    void startCueRampTo (const zynforge::SetlistBar::Cue&);
-    void updateCueRamp();
 
     void loadSetlistFromActiveSession();
     bool saveSetlistToActiveSession (bool writeBackup = true) const;
@@ -721,16 +674,6 @@ private:
     void addCueAtTransport();
     void updateCueAtTransport();
     void renameCurrentCue();
-    // Build / refresh the metronome track. Walks the current tempo
-    // (and tempoMap, if any) to lay down a click WAV in the session's
-    // Audio Files/ folder. Tracks the file path so a re-press just
-    // overwrites it in place rather than piling up tracks.
-    // The render runs on the owned session-I/O worker. Completion (when given)
-    // is delivered on the message thread after the file is installed/reloaded.
-    void generateOrRefreshClickTrack (std::function<void (bool)> completion = {});
-    int  clickTrackIndex { -1 };   // -1 = not yet created in this session
-    bool clickRefreshPending { false };   // tempo changed while the render was refused
-
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
     bool songExportRunning { false };   // message thread; turns menu item 967 into its cancel
 
@@ -741,7 +684,7 @@ private:
     std::atomic<bool> sessionIoBusy { false };
 
     // Every unbounded session-file job (track export, stem/mix bounce,
-    // import, Save As copy, relocation, show handoff, click render) runs on
+    // import, Save As copy, relocation, show handoff) runs on
     // this ONE owned worker, never on the message thread and never detached.
     // It releases sessionIoBusy on every exit path before the job's
     // completion runs, and the destructor cancels + joins it while the engine
@@ -763,9 +706,6 @@ private:
     zynforge::PlaceholderView mixerPlaceholder;   // MIXER empty-state overlay
     std::unique_ptr<zynforge::EditPage>     editPage;
     std::unique_ptr<zynforge::MasterStrip>  masterStrip;
-    std::unique_ptr<zynforge::VcaPanel>     vcaPanel;
-    zynforge::IconButton vcaToggleButton  { zynforge::icons::Glyph::Mix, "VCA" };
-    bool                 showVcaPanel { false };
 
     juce::TooltipWindow tooltipWindow { this, 500 };
 

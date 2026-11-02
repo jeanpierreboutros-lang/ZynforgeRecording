@@ -616,7 +616,6 @@ namespace zynforge
         // playhead that paused would put the take late against the old audio.
         if (startPos != nextRenderPosition && startPos != heldJump)
         {
-            if (nextRenderPosition >= 0) jumpCount.fetch_add (1, std::memory_order_acq_rel);
             heldJump = startPos;
             heldJumpSamples = 0;
         }

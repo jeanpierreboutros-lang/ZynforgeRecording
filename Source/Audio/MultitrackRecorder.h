@@ -561,7 +561,7 @@ namespace zynforge
             // Does this channel PARTICIPATE in the take? The drain keys on this
             // rather than on any one copy's file, so a primary that failed or
             // never opened does not stop its backup and mirrors. Empty R slots
-            // and unarmed/bus channels stay false and are skipped.
+            // and unarmed channels stay false and are skipped.
             bool         active { false };
         };
 

@@ -89,7 +89,6 @@ namespace zynforge
                 t.gainDb.store (0.0f); t.pan.store (0.0f); t.muted.store (false); t.soloed.store (false);
                 t.isStereo.store (false); t.setNameThreadSafe ("Strip " + juce::String (i + 1));
                 t.colourARGB.store (0);
-                e.setTrackVcaGroup (i, -1);
             }
         }
 
@@ -272,22 +271,6 @@ namespace zynforge
                 expectEquals ((int) resolved (e).tracks[0].items.size(), 1, "another active take must change the export");
             }
 
-            beginTest ("A bus plays no media, even after a stereo take");
-            {
-                Folder f;
-                expect (writeAudio (f.audio().getChildFile ("Track_01.wav"), 4800, 2, 1));
-                ix::SessionInput in;
-                in.sessionDir = f.dir;
-                in.strips.push_back (ix::StripInput());
-                ix::StripInput bus;
-                bus.isBus = true;
-                in.strips.push_back (bus);
-                const auto r = ix::resolve (in, noCancel);
-                expect (r.ok(), r.error);
-                expectEquals ((int) r.project.tracks.size(), 2);
-                expect (r.project.tracks[1].items.empty(), "the bus picked up the take's right channel");
-            }
-
             beginTest ("Deleting every clip stays silent; a strip never edited plays its file");
             {
                 Folder f;
@@ -404,26 +387,23 @@ namespace zynforge
                         "DAWproject has no clip gain field and must say so");
             }
 
-            beginTest ("Track fader folds the VCA in; floors and mutes stay off");
+            beginTest ("Track fader, floors and mutes reach the project");
             {
                 ix::StripInput strip;
-                strip.faderDb = -6.0f;
-                strip.vcaAssigned = true;
-                strip.vcaDb = 6.0f;
+                strip.faderDb = 0.0f;
                 ix::SessionInput in;
                 in.strips.push_back (strip);
                 strip.faderDb = -60.0f;
                 strip.pan = 0.5f;
                 in.strips.push_back (strip);
                 strip.faderDb = 0.0f;
-                strip.vcaMuted = true;
+                strip.muted = true;
                 in.strips.push_back (strip);
                 const auto r = ix::resolve (in, noCancel);
                 expect (r.ok(), r.error);
                 expectWithinAbsoluteError (r.project.tracks[0].gain, 1.0, 1.0e-6);
-                expectEquals (r.project.tracks[1].gain, 0.0, "a fader at its floor is off whatever the VCA says");
-                expect (r.project.tracks[2].muted, "a muted VCA mutes the track");
-                expect (r.project.notes.joinIntoString (" ").contains ("VCA"));
+                expectEquals (r.project.tracks[1].gain, 0.0, "a fader at its floor is off");
+                expect (r.project.tracks[2].muted);
 
                 const auto rpp = rppFor (r.project, juce::File ("/tmp/Show.RPP"));
                 expect (rpp.contains ("PANMODE 3"), "a mono track is in balance mode");
@@ -431,20 +411,14 @@ namespace zynforge
                         "the pan law must match the session's");
             }
 
-            beginTest ("Automation, sends and tempo changes are left out, and the summary says so");
+            beginTest ("Solo is left out, and the summary says so");
             {
                 ix::SessionInput in;
-                in.hasTempoMap = true;
                 in.anySolo = true;
                 ix::StripInput strip;
-                strip.automationLanes = 2;
-                strip.hasSends = true;
                 in.strips.push_back (strip);
                 const auto r = ix::resolve (in, noCancel);
                 const auto notes = r.project.notes.joinIntoString (" ");
-                expect (notes.contains ("Automation is not exported (2 lanes)"));
-                expect (notes.contains ("Aux sends"));
-                expect (notes.contains ("Tempo changes"));
                 expect (notes.contains ("Solo"));
             }
 
@@ -671,14 +645,11 @@ namespace zynforge
                 }
             }
 
-            beginTest ("Reaper project header, markers, tempo and colour");
+            beginTest ("Reaper project header, markers, default tempo and colour");
             {
                 ix::SessionInput in;
                 in.sessionName = "Show";
                 in.sampleRate = 44100.0;
-                in.tempoBpm = 132.5;
-                in.timeSigNum = 3;
-                in.timeSigDen = 8;
                 in.masterDb = -6.0f;
                 in.masterMuted = true;
                 in.markers.push_back ({ 44100, "One" });
@@ -692,7 +663,7 @@ namespace zynforge
                 expect (rpp.startsWith ("<REAPER_PROJECT 0.1"));
                 expect (rpp.trimEnd().endsWith (">"));
                 expect (rpp.contains ("SAMPLERATE 44100 1 0"));
-                expect (rpp.contains ("TEMPO 132.500000 3 8"));
+                expect (rpp.contains ("TEMPO 120 4 4"));
                 expect (rpp.contains ("ITEMMIX 1"), "overlapping clips must sum, as they do in the session");
                 expect (rpp.contains ("TIMELOCKMODE 0"), "the audio must not follow tempo edits");
                 expect (rpp.contains ("MASTERMUTESOLO 1"));
@@ -881,8 +852,6 @@ namespace zynforge
             rec.getTrack (11).pan.store (-0.5f);
             rec.getTrack (12).pan.store (0.25f);
             e.getMasterState().gainDb.store (-2.0f);
-            e.setSessionTempoBpm (97.0f);
-            e.addTempoChange (s, 120.0f);      // left out, so the project carries a note
             e.loadSession (session);
 
             auto& kick = e.clipsFor (0);
@@ -951,7 +920,6 @@ namespace zynforge
                 expect (writer->writeFromAudioSampleBuffer (mix, 0, mix.getNumSamples()));
             }
             e.clearAllStripOverrides();
-            e.clearTempoMap();
         }
     };
 

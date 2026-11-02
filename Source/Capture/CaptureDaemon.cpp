@@ -311,7 +311,7 @@ namespace zynforge::capture
                     auto& t = recorder.getTrack (i); const auto& v = (*tracks)[i];
                     t.setNameThreadSafe (v["name"].toString()); t.stripId = v["uid"].toString();
                     t.inputRouting.store ((int) v["input"]); t.armed.store ((bool) v["armed"]);
-                    t.isStereo.store ((bool) v["stereo"]); t.isBus.store ((bool) v["bus"]);
+                    t.isStereo.store ((bool) v["stereo"]);
                 }
                 recorder.setPreRollSeconds (juce::jlimit (0, 30, (int) cfg["preRoll"]));
                 recorder.setBackupDirectory (juce::File (cfg["backup"].toString()));

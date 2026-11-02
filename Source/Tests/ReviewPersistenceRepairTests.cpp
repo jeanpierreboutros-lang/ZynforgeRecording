@@ -150,66 +150,6 @@ public:
             host.engine.clearAllStripOverrides();
         }
 
-        beginTest ("Reopening a recorded Click channel with input None never adopts or overwrites its take");
-        {
-            Folder f;
-            expect (writeAudio (f.track()));
-            const auto original = bytes (f.track());
-            MainComponent host; prepare (host, f);
-            host.engine.setTrackName (0, "Click");
-            host.engine.setTrackInputRouting (0, -1);
-            host.engine.getRecorder().getTrack (0).referenceMedia.store (false);
-            expect (host.saveSessionStateTo (f.dir));
-            expect (host.openSessionFolder (f.dir, true) > 0);
-            expectEquals (host.clickTrackIndex, -1, "ordinary recording was adopted as generated media");
-            // Tempo changes refresh only an adopted click slot, exactly as the UI callback does.
-            host.engine.setSessionTempoBpm (132.0f);
-            if (host.clickTrackIndex >= 0) host.generateOrRefreshClickTrack();
-            expect (pumpUntil ([&] { return ! host.sessionIoBusy.load(); }));
-            expect (bytes (f.track()) == original, "tempo refresh replaced recorded audio");
-            expect (! host.engine.getRecorder().getTrack (0).referenceMedia.load(), "recording ownership was relabelled");
-            host.engine.clearAllStripOverrides();
-        }
-
-        beginTest ("Click regeneration independently refuses a stale index pointing to ordinary recorded media");
-        {
-            Folder f;
-            expect (writeAudio (f.track()));
-            const auto original = bytes (f.track());
-            MainComponent host; prepare (host, f);
-            host.engine.setTrackName (0, "Click");
-            host.engine.setTrackInputRouting (0, -1);
-            host.engine.getRecorder().getTrack (0).referenceMedia.store (false);
-            host.clickTrackIndex = 0;
-            bool complete = false, success = false;
-            host.generateOrRefreshClickTrack ([&] (bool ok) { success = ok; complete = true; });
-            expect (pumpUntil ([&] { return complete; }));
-            expect (! success, "ordinary media was accepted for regeneration");
-            expect (bytes (f.track()) == original);
-            expect (! host.engine.getRecorder().getTrack (0).referenceMedia.load());
-            host.engine.clearAllStripOverrides();
-        }
-
-        beginTest ("Explicit reference click media remains regeneratable after reopen");
-        {
-            Folder f;
-            expect (writeAudio (f.track()));
-            const auto original = bytes (f.track());
-            MainComponent host; prepare (host, f);
-            host.engine.setTrackName (0, "Click");
-            host.engine.setTrackInputRouting (0, -1);
-            host.engine.getRecorder().getTrack (0).referenceMedia.store (true);
-            expect (host.saveSessionStateTo (f.dir));
-            expect (host.openSessionFolder (f.dir, true) > 0);
-            expectEquals (host.clickTrackIndex, 0);
-            bool complete = false, success = false;
-            host.generateOrRefreshClickTrack ([&] (bool ok) { success = ok; complete = true; });
-            expect (pumpUntil ([&] { return complete; }));
-            expect (success);
-            expect (bytes (f.track()) != original);
-            host.engine.clearAllStripOverrides();
-        }
-
         beginTest ("Raw export resolves legacy and modern media per track with modern precedence");
         {
             Folder f, output;

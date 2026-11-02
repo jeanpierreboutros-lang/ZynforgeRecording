@@ -183,7 +183,6 @@ namespace zynforge
                 beginTest ("LOCK disables EDIT controls and refuses remote playback");
                 main.onLockToggled();
                 expect (main.editPage != nullptr && ! main.editPage->isEnabled());
-                expect (main.automationToolbar != nullptr && ! main.automationToolbar->isEnabled());
                 juce::String lockError;
                 expect (! main.engine.performRemoteTransport (
                             AudioEngine::RemoteTransportAction::StartPlay, lockError));

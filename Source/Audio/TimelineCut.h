@@ -2,14 +2,12 @@
 
 #include <juce_core/juce_core.h>
 
-#include <algorithm>
 #include <optional>
-#include <vector>
 
 namespace zynforge::timelinecut
 {
     // What a Crop or a Ripple Delete does to a position on the timeline. Audio,
-    // automation, markers, the tempo map and cues all follow this one rule, so
+    // markers and cues all follow this one rule, so
     // nothing can land on different audio after the edit.
     struct Cut
     {
@@ -32,34 +30,4 @@ namespace zynforge::timelinecut
         }
     };
 
-    // The tempo map is a step function, so the tempo in force where playback
-    // resumes after the removed span has to survive at the join.
-    template <class Change>
-    std::vector<Change> cutTempoMap (const std::vector<Change>& map, const Cut& cut)
-    {
-        const auto resume   = cut.crop ? cut.start : cut.end;
-        const auto joinedAt = cut.crop ? juce::int64 (0) : cut.start;
-        std::vector<Change> out;
-        std::optional<float> inForce;
-        bool changeAtJoin = false;
-        for (const auto& change : map)
-        {
-            if (const auto pos = cut.map (change.samplePos))
-            {
-                changeAtJoin = changeAtJoin || *pos == joinedAt;
-                out.push_back ({ *pos, change.bpm });
-            }
-            else if (change.samplePos < resume)
-            {
-                inForce = change.bpm;
-            }
-        }
-        if (inForce && ! changeAtJoin)
-        {
-            const auto at = std::lower_bound (out.begin(), out.end(), joinedAt,
-                [] (const Change& c, juce::int64 pos) { return c.samplePos < pos; });
-            out.insert (at, { joinedAt, *inForce });
-        }
-        return out;
-    }
 }

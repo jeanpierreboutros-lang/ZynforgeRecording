@@ -69,12 +69,11 @@ namespace zynforge
                 auto& t = e.getRecorder().getTrack (i);
                 t.gainDb.store (0.0f); t.pan.store (0.0f); t.muted.store (false); t.soloed.store (false);
                 t.isStereo.store (false); t.setNameThreadSafe ("Strip " + juce::String (i + 1));
-                e.setTrackVcaGroup (i, -1);
             }
         }
 
-        // A stereo pair, a mono strip with edits, and a cross-track clip, with
-        // automation on the mono strip: everything a render reads.
+        // A stereo pair, a mono strip with edits, and a cross-track clip:
+        // everything a render reads.
         static void buildArrangement (AudioEngine& e, const Folder& f)
         {
             jassert (e.getRecorder().getNumTracks() >= 4);
@@ -104,11 +103,6 @@ namespace zynforge
             cross.fileStartSamples = 100;
             cross.fileLengthSamples = 50000;
             e.clipsFor (3) = { cross };
-
-            e.addAutomationPoint (2, AudioEngine::AutomationParam::Volume, 30000, -12.0f);
-            e.addAutomationPoint (2, AudioEngine::AutomationParam::Volume, 140000, 3.0f);
-            e.addAutomationPoint (2, AudioEngine::AutomationParam::Pan, 50000, -0.5f);
-            e.addAutomationPoint (2, AudioEngine::AutomationParam::Pan, 130000, 0.5f);
         }
 
         static juce::AudioBuffer<float> whole (AudioEngine& e, int track, juce::int64 length)
@@ -233,8 +227,7 @@ namespace zynforge
                 expect (mix.getMagnitude (0, mix.getNumSamples()) > 0.0f);
                 const auto mono = whole (e, 2, length);
 
-                // Off every grid: the 512-sample automation step, the 64k window,
-                // and through the straddling clip's fades and body.
+                // Off the 64k window, and through the straddling clip's fades and body.
                 const std::vector<std::pair<juce::int64, juce::int64>> spans
                     { { 0, 777 }, { 1, 512 }, { 511, 513 }, { 41000, 70001 }, { 65535, 65537 },
                       { 65536, 131072 }, { 70001, 131073 }, { 150001, length }, { 12345, length } };

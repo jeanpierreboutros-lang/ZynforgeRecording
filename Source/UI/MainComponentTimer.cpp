@@ -40,16 +40,8 @@ void MainComponent::timerCallback()
     updatePunchPill();
     updateNextCueCountdown();
 
-    if (clickRefreshPending && clickTrackIndex >= 0 && ! engine.isRecording()
-        && ! sessionIoBusy.load() && ! captureMetadataPending && pendingMetadataSaves == 0)
-    {
-        clickRefreshPending = false;   // a tempo change during a take/job
-        generateOrRefreshClickTrack();
-    }
-
     if (uiLayoutSavePending && ! sessionIoBusy.load()) requestUILayoutSave();
 
-    if (cueRamp.active) updateCueRamp();
     cancelAnalysisForTake();
     if (! engine.isRecording()) punchWindowTakeActive = false;
     if (engine.isPunchModeOn())
@@ -173,18 +165,6 @@ void MainComponent::rebuildStripsIfLayoutChanged()
 
 void MainComponent::updateStatusPills()
 {
-    // MIDI clock status pill -- visible reassurance that the engineer's
-    // outboard sync is alive. Empty string when disabled hides it.
-    {
-        const auto& clock = engine.getMidiClockOut();
-        const auto label = clock.isEnabled()
-            ? juce::String ("MIDI * ") + clock.getOutputDeviceName()
-            : juce::String();
-        if (midiStatusLabel.getText() != label)
-        { midiStatusLabel.setText (label, juce::dontSendNotification); resized(); }
-        midiStatusLabel.setTooltip (label);
-    }
-
     // DANTE detection -- flag the active audio device when its name
     // contains 'Dante' / 'DVS' (Audinate's Dante Virtual Soundcard).
     {
@@ -265,19 +245,13 @@ void MainComponent::syncStripsWithEngine()
 {
     // Keep each strip's input/output combos in sync with engine state --
     // the PATCH page can mutate routing behind the strip's back. Also
-    // refresh name + colour so changes made from the EDIT view show up,
-    // and push the per-track automation LED state (WRITE-armed +
-    // Safe-locked) so the strip header reads true.
-    const bool autoWriting = engine.isAutomationWriting();
+    // refresh name + colour so changes made from the EDIT view show up.
     for (size_t k = 0; k < strips.size(); ++k)
     {
         auto& s = strips[k];
         if (s == nullptr) continue;
         s->refreshRoutingSelection();
         s->refreshAppearance();
-        const int trackIdx = s->getStripIndex();
-        const bool safe = engine.isTrackAutomationSafe (trackIdx);
-        s->setAutomationLed (autoWriting && ! safe, safe);
     }
 }
 
@@ -376,8 +350,6 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
         if (editPage->isEnabled() != enableEditor)
             editPage->setEnabled (enableEditor);
     }
-    if (automationToolbar != nullptr)
-        automationToolbar->setEnabled (! rec && ! sessionIoBusy.load() && ! sessionLocked);
 
     // Free space on the volume the take ACTUALLY lands on. This used to
     // hardcode ~/Music/Zynforge Sessions, so an engineer recording to an
@@ -748,8 +720,7 @@ void MainComponent::serviceTimecodeChase()
         const juce::int64 target = engine.getChaseTargetSamples();
 
         // Locate BEFORE starting: startPlayback refuses with nothing ahead of
-        // the playhead (STOP parks it at the take end), and the MIDI clock's
-        // Song Position Pointer is taken from where playback starts.
+        // the playhead (STOP parks it at the take end).
         const juce::int64 cur   = engine.getPlayer().getPositionSamples();
         const juce::int64 slack = (juce::int64) (0.08 * sr);   // 80 ms lock window
         if (std::llabs ((long long) (cur - target)) > slack)

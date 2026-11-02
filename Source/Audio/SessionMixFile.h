@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AtomicFile.h"
+#include "SessionRemovedData.h"
 
 // The one way session_mix.json is written. The recorder's strips are not
 // always a session's mixer: the active session can be pinned from settings, or
@@ -50,6 +51,8 @@ namespace zynforge::sessionmix
                        const juce::String& json, juce::String* error = nullptr)
     {
         auto why = refusal (sessionDir, mixerOwner, json);
+        if (why.isEmpty() && removeddata::keepOriginals (sessionDir) == removeddata::Kept::failed)
+            why = removeddata::refusal (sessionDir);
         if (why.isEmpty() && ! atomicfile::writeText (sessionDir.getChildFile (kFileName), json))
             why = "Could not save " + juce::String (kFileName);
         if (error != nullptr) *error = why;

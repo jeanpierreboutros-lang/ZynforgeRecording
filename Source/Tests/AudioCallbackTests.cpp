@@ -58,21 +58,9 @@ namespace zynforge
                     t.soloed  .store (false);
                     t.armed   .store (false);
                     t.monitor .store (false);
-                    t.vcaGroup.store (-1);   // unassigned
                     t.isStereo.store (false);
                     engine.setTrackInputRouting  (i, juce::jlimit (-1, numInputs - 1, i));
                     engine.setTrackOutputRouting (i, -1);   // master-only
-                    engine.setTrackVcaGroup      (i, -1);   // also wipes appProps key
-                }
-                // Reset every VCA to a clean baseline so leftover
-                // gain/mute/solo from a prior test doesn't leak.
-                for (int v = 0; v < AudioEngine::kNumVcas; ++v)
-                {
-                    auto& vca = engine.getVca (v);
-                    vca.gainDb.store (0.0f);
-                    vca.muted .store (false);
-                    vca.soloed.store (false);
-                    vca.rampSamplesRemaining.store (0);
                 }
                 inBuf .clear();
                 outBuf.clear();
@@ -119,7 +107,7 @@ namespace zynforge
         };
 
         // ── Playback-feed helpers ─────────────────────────────────────
-        // The VCA-gain / automation / aux-send paths all read from
+        // The gain paths all read from
         // `playerScratch`, which is empty unless a real session is
         // loaded. These helpers record a known signal to disk via the
         // real capture path, then let a fixture play it back so the
@@ -347,203 +335,22 @@ namespace zynforge
                 expect (f.peakOut (0, 256) > 0.20f);
             }
 
-            // ─── VCA groups ──────────────────────────────────────────
-            beginTest ("VCA group assignment round-trips through the audio thread");
+            beginTest ("A fader at its -60 dB floor is off");
             {
-                // Design note: VCA *gain* applies only on the per-strip
-                // output-routing path (effectiveGainDb, summed at the
-                // FOH-style strip-out stage) -- NOT on the engineer's
-                // monitor sum, which uses the strip's gainDb directly.
-                // VCA *mute* and *solo* gate via channelAudible, which
-                // DOES feed the monitor sum (see the next two tests).
-                // Exercising VCA gain end-to-end needs a loaded session
-                // (playerScratch must have data), which is out of scope
-                // for these headless tests. We round-trip the state to
-                // confirm the atomics + API wiring at least.
-                CallbackFixture f (2, 2, 4);
-                f.engine.setTrackVcaGroup (0, 3);
-                f.engine.setTrackVcaGroup (1, 3);
-                f.engine.getVca (3).gainDb.store (-12.0f);
-                expectEquals (f.engine.getRecorder().getTrack (0).vcaGroup.load(), 3);
-                expectEquals (f.engine.getRecorder().getTrack (1).vcaGroup.load(), 3);
-                expectWithinAbsoluteError (f.engine.getVca (3).gainDb.load(), -12.0f, 0.001f);
-                // Process a block; nothing should crash.
-                f.writeInput (0, 0.5f, 256);
-                f.process (256);
-            }
-
-            beginTest ("VCA mute gates every strip assigned to that bus");
-            {
-                CallbackFixture f (2, 2, 2);
-                for (int i = 0; i < 2; ++i)
-                {
-                    auto& t = f.engine.getRecorder().getTrack (i);
-                    t.armed.store (true); t.monitor.store (true);
-                    f.engine.setTrackVcaGroup (i, 0);
-                }
-                f.engine.getVca (0).muted.store (true);
-                f.engine.setMasterOutputs (0, 1);
-                f.writeInput (0, 0.5f, 256);
-                f.writeInput (1, 0.5f, 256);
-                f.process (256);
-                expectEquals (f.peakOut (0, 256), 0.0f);
-                expectEquals (f.peakOut (1, 256), 0.0f);
-            }
-
-            beginTest ("VCA gain attenuates the monitor sum (not just routed outputs)");
-            {
-                // Regression: VCA fader moves were applied only on the routed
-                // per-strip output path (effectiveGainDb); the monitor sum
-                // used the strip's own gainDb directly, so pulling the VCA
-                // master down left the monitored audio at full level.
-                CallbackFixture f (2, 2, 2);
-                for (int i = 0; i < 2; ++i)
-                {
-                    auto& t = f.engine.getRecorder().getTrack (i);
-                    t.armed.store (true); t.monitor.store (true);
-                    f.engine.setTrackVcaGroup (i, 0);
-                }
-                f.engine.setMasterOutputs (0, 1);
-
-                // VCA at unity -> the monitored input is audible.
-                f.engine.getVca (0).gainDb.store (0.0f);
-                f.writeInput (0, 0.5f, 256);
-                f.writeInput (1, 0.5f, 256);
-                f.process (256);
-                expect (f.peakOut (0, 256) > 0.1f);
-
-                // Pull the VCA master fully down -> monitor sum drops to ~silence.
-                f.engine.getVca (0).gainDb.store (-60.0f);
-                f.writeInput (0, 0.5f, 256);
-                f.writeInput (1, 0.5f, 256);
-                f.process (256);
-                expect (f.peakOut (0, 256) < 0.02f);
-            }
-
-            beginTest ("VCA solo silences ungrouped strips");
-            {
-                CallbackFixture f (3, 3, 2);
-                for (int i = 0; i < 3; ++i)
-                {
-                    auto& t = f.engine.getRecorder().getTrack (i);
-                    t.armed.store (true); t.monitor.store (true);
-                }
-                // Strip 0 -> VCA 0 (soloed). Strips 1 + 2 ungrouped.
-                f.engine.setTrackVcaGroup (0, 0);
-                f.engine.getVca (0).soloed.store (true);
-                f.engine.getVca (0).gainDb.store (0.0f);
-                f.engine.setMasterOutputs (0, 1);
-                f.writeInput (0, 0.5f, 256);
-                f.writeInput (1, 0.5f, 256);
-                f.writeInput (2, 0.5f, 256);
-                // Let any soft-takeover ramps settle.
-                for (int n = 0; n < 8; ++n) f.process (256);
-                // Only strip 0 (VCA-soloed) passes; 1 + 2 drop out.
-                // Result is ~ one strip's worth on the monitor bus
-                // (constant 0.5 input * constant-power 0.707 = 0.353).
-                const float pk = f.peakOut (0, 256);
-                expect (pk > 0.20f);
-                expect (pk < 0.50f);
-            }
-
-            beginTest ("A fader or VCA at its -60 dB floor is off, whatever the other one says");
-            {
-                // Strip and VCA dB are summed: a strip pulled to the floor
-                // under a VCA at +12 played at -48 dB, and a VCA pulled to
-                // the floor still passed strips set above 0 dB.
                 CallbackFixture f (1, 1, 2);
                 auto& t = f.engine.getRecorder().getTrack (0);
                 t.monitor.store (true);
                 f.engine.setMasterOutputs (0, 1);
-                f.engine.setTrackVcaGroup (0, 0);
 
                 t.gainDb.store (-60.0f);
-                f.engine.getVca (0).gainDb.store (12.0f);
                 f.writeInput (0, 0.5f, 256);
                 f.process (256);
-                expectEquals (f.peakOut (0, 256), 0.0f, "strip fader at the floor is audible under a +12 dB VCA");
-
-                t.gainDb.store (12.0f);
-                f.engine.getVca (0).gainDb.store (-60.0f);
-                f.writeInput (0, 0.5f, 256);
-                f.process (256);
-                expectEquals (f.peakOut (0, 256), 0.0f, "VCA at the floor passes a strip set to +12 dB");
+                expectEquals (f.peakOut (0, 256), 0.0f, "a strip fader at the floor is audible");
 
                 t.gainDb.store (-6.0f);
-                f.engine.getVca (0).gainDb.store (3.0f);
                 f.writeInput (0, 0.5f, 256);
                 f.process (256);
-                expect (f.peakOut (0, 256) > 0.2f, "above the floor the two still sum");
-                f.engine.setTrackVcaGroup (0, -1);
-            }
-
-            beginTest ("Losing the automation try-lock mid-roll holds the lanes instead of un-muting");
-            {
-                // Any message-thread holder of automationLock (an automation
-                // edit, WRITE thinning, the strip poll) made the callback's
-                // try-lock fail, and that block fell back to static values:
-                // Mute-lane-muted strips blipped through, volume lanes jumped
-                // to the fader.
-                const auto dir = recordTestSession (1, 0.5f);
-                {
-                    CallbackFixture f (1, 1, 2);
-                    expect (f.engine.loadSession (dir, false, false) == 1);
-                    f.engine.setMasterOutputs (0, 1);
-                    f.engine.getClickEngine().setEnabled (false);
-                    f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.05f, "session never became audible");
-
-                    using P = AudioEngine::AutomationParam;
-                    f.engine.addAutomationPoint (0, P::Volume, 0, -20.0f);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    const float laneLevel = f.peakOut (0, 256);
-                    expect (laneLevel > 0.01f);
-
-                    auto renderWithLockHeld = [&f]
-                    {
-                        std::atomic<bool> held { false }, release { false };
-                        std::thread holder ([&]
-                        {
-                            const juce::ScopedLock sl (f.engine.automationLock);
-                            held.store (true);
-                            while (! release.load()) juce::Thread::sleep (1);
-                        });
-                        while (! held.load()) juce::Thread::sleep (1);
-                        f.engine.getPlayer().setPositionSamples (0);
-                        f.process (256);
-                        release.store (true);
-                        holder.join();
-                        return f.peakOut (0, 256);
-                    };
-
-                    expectWithinAbsoluteError (renderWithLockHeld(), laneLevel, 0.002f,
-                                               "a missed try-lock jumped the volume lane to the fader");
-
-                    f.engine.addAutomationPoint (0, P::Mute, 0, 1.0f);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    expectEquals (f.peakOut (0, 256), 0.0f);
-                    expectEquals (renderWithLockHeld(), 0.0f, "a missed try-lock un-muted a Mute-lane strip");
-                    f.engine.stopPlayback();
-                }
-                dir.deleteRecursively();
-            }
-
-            // ─── Click track follows the monitor bus ─────────────────
-            beginTest ("Click engine writes to the configured master output pair");
-            {
-                CallbackFixture f (0, 0, 8);
-                f.engine.getClickEngine().setEnabled (true);
-                f.engine.setMasterStereo (true);
-                f.engine.setMasterOutputs (4, 5);
-                // ClickEngine fires at the first sample of the first
-                // block (samplesUntilNextBeat1 = 0 after prepare).
-                f.process (256);
-                // Click sample should land on outs 4/5; not on 0/1.
-                expect      (f.peakOut (4, 256) > 0.0f);
-                expectEquals (f.peakOut (0, 256), 0.0f);
-                expectEquals (f.peakOut (1, 256), 0.0f);
+                expect (f.peakOut (0, 256) > 0.1f, "above the floor the strip plays");
             }
 
             // ─── Stereo-pair summing ─────────────────────────────────
@@ -717,7 +524,7 @@ namespace zynforge
             {
                 // Regression: a second take that armed a DIFFERENT channel
                 // used to wipe the first take's file, because startRecording
-                // opened (and truncated) a writer for every non-bus track,
+                // opened (and truncated) a writer for every track,
                 // armed or not. Take 1 records track 0; take 2 records only
                 // track 1 into the SAME session -- track 0's file must
                 // survive intact.
@@ -915,48 +722,6 @@ namespace zynforge
                     expect (lastMag  > 0.30f);
                 }
                 sessionDir.deleteRecursively();
-            }
-
-            beginTest ("Automation WRITE thinning collapses a dense fader stream into sparse points");
-            {
-                // The touch/latch/write path a fader drives during a pass:
-                // writeAutomationPointThinned is fed a 60 Hz value stream and
-                // must thin it to the requested minimum spacing so the lane
-                // doesn't fan out into per-frame cruft (the round-8 gap).
-                using AP = AudioEngine::AutomationParam;
-                CallbackFixture f (1, 1, 2);   // one track + its automation lane
-                auto& e = f.engine;
-                e.setAutomationWriteMode (AudioEngine::AutomationWriteMode::Write);
-                expect (e.getAutomationWriteMode() == AudioEngine::AutomationWriteMode::Write);
-
-                const int         sr     = 48000;
-                const juce::int64 minGap = 4800;     // thin to >= 10 Hz
-                float lastVal = 0.0f;
-                for (int n = 0; n < 60; ++n)         // ~1 s of 60 Hz fader intent
-                {
-                    const juce::int64 pos = (juce::int64) n * (sr / 60);   // 800-sample steps
-                    lastVal = juce::jmap ((float) n, 0.0f, 59.0f, -12.0f, 6.0f);
-                    e.writeAutomationPointThinned (0, AP::Volume, pos, lastVal, minGap);
-                }
-
-                const auto& lane = e.getAutomation (0, AP::Volume);
-                expect (! lane.empty(), "WRITE mode captured nothing");
-                // 60 intents thinned to >= 4800-sample spacing => ~11 points,
-                // an order of magnitude fewer than 60 -- no fan-out cruft.
-                expect ((int) lane.size() >= 6 && (int) lane.size() < 30,
-                        "thinning did not collapse the 60 Hz stream sensibly");
-                for (size_t i = 1; i < lane.size(); ++i)
-                {
-                    expect (lane[i].samplePos > lane[i - 1].samplePos, "points not monotonic in time");
-                    expect (lane[i].samplePos - lane[i - 1].samplePos >= minGap, "two points closer than the thin gap");
-                }
-                for (const auto& p : lane)
-                    expect (p.value >= -12.001f && p.value <= 6.001f, "captured value out of fader range");
-                // The ramp's direction survives the thinning.
-                expect (lane.back().value > lane.front().value, "thinned ramp lost its shape");
-
-                e.setAutomationWriteMode (AudioEngine::AutomationWriteMode::Off);
-                expect (e.getAutomationWriteMode() == AudioEngine::AutomationWriteMode::Off);
             }
 
             beginTest ("Equal-power crossfade across two overlapping clips has no dropout");
@@ -2214,7 +1979,7 @@ namespace zynforge
                 expect (f.peakOut (1, 256) > 0.20f);
             }
 
-            // ─── Playback feed: VCA gain / automation / aux send ─────
+            // ─── Playback feed ────────────────────────────────────────
             // These exercise the paths that were impossible to test
             // without a loaded playerScratch feed (see the round-4 gap
             // list in tasks.md). Each records a real WAV, plays it back,
@@ -2277,28 +2042,6 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
-            beginTest ("VCA gain attenuates playback end-to-end on the monitor sum");
-            {
-                const auto dir = recordTestSession (1, 0.5f);
-                {
-                    CallbackFixture f (1, 1, 2);
-                    f.engine.getPlayer().loadSession (dir);
-                    f.engine.setTrackVcaGroup (0, 2);          // strip 0 -> VCA 2
-                    f.engine.getVca (2).gainDb.store (0.0f);
-                    f.engine.startPlayback();
-                    const float unity = fillPlaybackBuffer (f);
-                    expect (unity > 0.20f);
-
-                    // Pull the VCA master down 40 dB -> playback ~silenced.
-                    f.engine.getVca (2).gainDb.store (-40.0f);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    const float pulled = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
-                    expect (pulled < unity * 0.1f);
-                }
-                dir.deleteRecursively();
-            }
-
             beginTest ("Trim-follow shifts soundcheck playback by the console gain delta");
             {
                 const auto dir = recordTestSession (1, 0.5f);
@@ -2334,192 +2077,34 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
-            beginTest ("VCA gain attenuates a routed hardware output during playback");
-            {
-                const auto dir = recordTestSession (1, 0.5f);
-                {
-                    CallbackFixture f (1, 1, 4);               // 4 outs -> route to Out 2
-                    f.engine.getPlayer().loadSession (dir);
-                    f.engine.setTrackOutputRouting (0, 2);     // strip 0 -> Out 2
-                    f.engine.setTrackVcaGroup (0, 1);
-                    f.engine.getVca (1).gainDb.store (0.0f);
-                    f.engine.startPlayback();
-                    // Buffer fills via the monitor sum -- the strip still
-                    // sums there even when routed to a hardware output.
-                    expect (fillPlaybackBuffer (f) > 0.20f);
-
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    const float unityOut = f.peakOut (2, 256);
-                    expect (unityOut > 0.20f);
-
-                    f.engine.getVca (1).gainDb.store (-40.0f);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    expect (f.peakOut (2, 256) < unityOut * 0.1f);
-                }
-                dir.deleteRecursively();
-            }
-
-            beginTest ("Volume automation attenuates the playback output by position");
-            {
-                const auto dir = recordTestSession (1, 0.5f, 192);   // ~1.02 s
-                {
-                    CallbackFixture f (1, 1, 2);
-                    f.engine.getPlayer().loadSession (dir);
-                    using P = AudioEngine::AutomationParam;
-                    // Full level at the head, -40 dB by ~0.83 s.
-                    f.engine.addAutomationPoint (0, P::Volume, 0,      0.0f);
-                    f.engine.addAutomationPoint (0, P::Volume, 40000, -40.0f);
-                    f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.20f);   // buffer is now warm at pos 0
-
-                    // Measure the HEAD first, while the BufferingAudioReader is
-                    // still warm at position 0. (Measuring it after seeking away
-                    // to the tail used to read unbuffered silence -> a flaky
-                    // 'high' as the background reader moved its window.)
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    const float high = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
-
-                    // Tail (curve fully down): re-seek into the -40 dB region and
-                    // let the background reader load it (brief sleeps), so 'low'
-                    // reflects the real attenuated level, not an unbuffered read.
-                    float low = high;
-                    for (int i = 0; i < 40; ++i)
-                    {
-                        f.engine.getPlayer().setPositionSamples (40000);
-                        f.process (256);
-                        low = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
-                        juce::Thread::sleep (8);
-                    }
-
-                    expect (high > 0.20f);
-                    expect (low  < high * 0.1f);
-                }
-                dir.deleteRecursively();
-            }
-
-            beginTest ("Aux send routes playback through a bus track to its output");
-            {
-                const auto dir = recordTestSession (1, 0.5f);   // only Track_01.wav
-                {
-                    CallbackFixture f (3, 1, 4);   // strip 0 source, strip 2 bus
-                    // Wipe any sends the prefs file might inject before we
-                    // configure the single send under test.
-                    for (int i = 0; i < 3; ++i)
-                        for (int s = 0; s < TrackState::kNumSends; ++s)
-                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
-
-                    f.engine.getPlayer().loadSession (dir);    // 1 reader -> row 0
-                    f.engine.setTrackIsBus (2, true);          // strip 2 = bus
-                    f.engine.setTrackOutputRouting (2, 3);     // bus -> Out 3
-                    f.engine.setTrackOutputRouting (0, -1);    // source master-only
-                    // Source pre-fader send at unity into the bus.
-                    f.engine.setTrackSend (0, 0, /*bus*/ 2, /*levelDb*/ 0.0f, /*post*/ false);
-                    f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.20f);
-
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    expect (f.peakOut (3, 256) > 0.20f);   // the send reaches the bus output
-
-                    // Kill the send -> the bus output goes silent.
-                    f.engine.setTrackSend (0, 0, -1, 0.0f, false);
-                    f.engine.getPlayer().setPositionSamples (0);
-                    f.process (256);
-                    expect (f.peakOut (3, 256) < 0.02f);
-                }
-                dir.deleteRecursively();
-            }
-
-            beginTest ("A stereo strip's send keeps a mono bus at the level the send shows");
-            {
-                const auto dir = recordTestSession (2, 0.5f);
-                {
-                    CallbackFixture f (3, 2, 4);
-                    for (int i = 0; i < 3; ++i)
-                        for (int s = 0; s < TrackState::kNumSends; ++s)
-                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
-
-                    f.engine.getPlayer().loadSession (dir);
-                    f.engine.setTrackIsBus (2, true);
-                    f.engine.setTrackOutputRouting (2, 3);
-                    f.engine.setTrackOutputRouting (0, -1);
-                    f.engine.setTrackOutputRouting (1, -1);
-                    f.engine.setTrackSend (0, 0, 2, 0.0f, false);
-                    f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.20f);
-
-                    const auto busPeak = [&]
-                    {
-                        f.engine.getPlayer().setPositionSamples (0);
-                        f.process (256);
-                        return f.peakOut (3, 256);
-                    };
-                    const float oneChannel = busPeak();
-                    expect (oneChannel > 0.20f);
-
-                    f.engine.setTrackStereo (0, true);
-                    f.engine.setTrackSend (0, 0, 2, 0.0f, false);
-                    expectWithinAbsoluteError (busPeak(), oneChannel, 0.01f);
-
-                    f.engine.stopPlayback();
-                    f.engine.setTrackStereo (0, false);
-                }
-                dir.deleteRecursively();
-            }
-
             beginTest ("Live playback and the offline bounce mix the same session identically");
             {
                 // MixKernel.h is the one definition of the mix rules. Render
                 // one session through BOTH of its users -- the audio callback
                 // and renderStereoMix -- and compare them sample for sample.
-                // Every rule is in play: fader, VCA, a stereo pair whose right
-                // half follows its left partner's lanes, a Volume ramp, a Pan
-                // ramp, a Mute lane, pre- and post-fader sends into a bus, the
+                // Every rule is in play: fader, pan, a stereo pair, a mute, the
                 // master fader, and then a solo.
                 const auto dir = recordTestSession (3, 0.5f);   // Track_01..03, 49152 samples
                 {
-                    CallbackFixture f (4, 3, 2);                // strip 3 = bus, no file
-                    for (int i = 0; i < 4; ++i)
-                        for (int s = 0; s < TrackState::kNumSends; ++s)
-                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
+                    CallbackFixture f (3, 3, 2);
                     expect (f.engine.loadSession (dir, false, false) == 3);
                     f.engine.setMasterOutputs (0, 1);
                     f.engine.setStreamOutputs (-1, -1);
-                    f.engine.getClickEngine().setEnabled (false);
 
-                    using P = AudioEngine::AutomationParam;
                     auto& rec = f.engine.getRecorder();
                     f.engine.setTrackStereo (0, true);          // strips 0 + 1: one pair
                     rec.getTrack (0).gainDb.store (-3.0f);
                     rec.getTrack (1).gainDb.store (-3.0f);
                     rec.getTrack (0).pan.store (-0.6f);
                     rec.getTrack (1).pan.store ( 0.6f);
-                    f.engine.setTrackVcaGroup (0, 0);
-                    f.engine.setTrackVcaGroup (1, 0);
-                    f.engine.getVca (0).gainDb.store (-2.0f);
-                    f.engine.addAutomationPoint (0, P::Volume, 0, -12.0f);
-                    f.engine.addAutomationPoint (0, P::Volume, 40000, 0.0f);
-                    f.engine.addAutomationPoint (0, P::Mute, 0, 0.0f);
-                    f.engine.addAutomationPoint (0, P::Mute, 24000, 1.0f);
-                    f.engine.setTrackSend (1, 0, 3, -6.0f, true);     // post: follows the pair's mute
                     rec.getTrack (2).gainDb.store (-4.0f);
-                    f.engine.addAutomationPoint (2, P::Pan, 0, -1.0f);
-                    f.engine.addAutomationPoint (2, P::Pan, 40000, 1.0f);
-                    f.engine.setTrackSend (2, 0, 3, -10.0f, false);   // pre
-                    f.engine.setTrackIsBus (3, true);
-                    rec.getTrack (3).gainDb.store (-1.0f);
-                    rec.getTrack (3).pan.store (0.3f);
+                    rec.getTrack (2).pan.store (-0.7f);
                     f.engine.getMasterState().gainDb.store (-2.0f);
 
                     const auto arrLen = f.engine.getArrangementLengthSamples();
                     juce::AudioBuffer<float> offline;
                     f.engine.startPlayback();
 
-                    // Live blocks start on the bounce's 512-sample automation
-                    // grid, so both paths read every lane at the same position.
                     // The player buffers on a background thread, so re-render
                     // the block until it is fully buffered (it then matches).
                     auto compareAt = [&] (juce::int64 pos, const juce::String& what)
@@ -2541,9 +2126,13 @@ namespace zynforge
                     };
 
                     expect (f.engine.renderStereoMix (offline, arrLen));
-                    compareAt (2048,  "early in the ramps");
-                    compareAt (15360, "mid-ramp, pair audible");
-                    compareAt (35840, "pair muted by its lane, its post send silent");
+                    compareAt (2048,  "fader and pan");
+                    compareAt (15360, "further into the take");
+
+                    f.engine.setTrackMuted (0, true);
+                    expect (f.engine.renderStereoMix (offline, arrLen));
+                    compareAt (15360, "pair muted");
+                    f.engine.setTrackMuted (0, false);
 
                     rec.getTrack (2).soloed.store (true);
                     expect (f.engine.renderStereoMix (offline, arrLen));

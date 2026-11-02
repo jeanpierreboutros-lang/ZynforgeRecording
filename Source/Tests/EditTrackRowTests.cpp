@@ -245,7 +245,6 @@ namespace zynforge
     public:
         EditViewAuditTests() : juce::UnitTest ("EDIT view audit 2026-10-29", "zynforge") {}
 
-        using AP   = AudioEngine::AutomationParam;
         using Lane = EditPage::TrackRow::LaneMode;
 
         // A session folder with real takes, loaded into a test-mode engine.
@@ -417,99 +416,6 @@ namespace zynforge
         {
             AudioEngine::setTestModeSkipAudioInit (true);
 
-            // ── #1: a lane that does not SHOW automation must not edit it ────
-            beginTest ("A Waveform or Markers lane never edits the automation it does not show");
-            {
-                EditTrackRowTests::Host h (2);
-                h.engine.clearAutomation (AP::Volume);
-                AutomationToolbar toolbar;
-                EditPage::TrackRow row (0, false, h.engine, h.formats, h.cache);
-                sizeRow (row);
-                row.toolbar = &toolbar;
-
-                pressButton (toolbar, "+ Point");
-                for (auto mode : { Lane::Waveform, Lane::Markers })
-                {
-                    row.laneMode = mode;
-                    click (row, { laneX (row, 0.3), 20 });
-                    expect (h.engine.getAutomation (0, AP::Volume).empty(),
-                            "+ Point on a waveform/markers lane wrote a hidden Volume point");
-                }
-
-                const auto tempoBefore = h.engine.getTempoMap().size();
-                toolbar.setParamSilently (AutomationToolbar::Param::Tempo);
-                row.laneMode = Lane::Waveform;
-                click (row, { laneX (row, 0.5), 20 });
-                expectEquals ((int) h.engine.getTempoMap().size(), (int) tempoBefore,
-                              "a waveform lane must not write the session tempo map");
-
-                // Select grabbing a hidden point and dragging rewrites its value.
-                toolbar.setParamSilently (AutomationToolbar::Param::Volume);
-                pressButton (toolbar, "Select");
-                row.laneMode = Lane::Waveform;
-                const auto hiddenAt = (juce::int64) (0.6 * (double) notionalEmptyLaneSamples (48000.0));
-                h.engine.addAutomationPoint (0, AP::Volume, hiddenAt, -6.0f);
-                drag (row, { laneX (row, 0.6), 50 }, { laneX (row, 0.6), 90 });
-                const auto& lane = h.engine.getAutomation (0, AP::Volume);
-                expectEquals ((int) lane.size(), 1);
-                if (! lane.empty())
-                {
-                    expectEquals (lane.front().samplePos, hiddenAt, "hidden point moved");
-                    expectWithinAbsoluteError (lane.front().value, -6.0f, 0.001f, "hidden point re-valued");
-                }
-                h.engine.clearAutomation (AP::Volume);
-            }
-
-            // ── #9: the row edits the lane it draws and labels ───────────────
-            beginTest ("A row edits the lane its VIEW shows, not the toolbar's last pick");
-            {
-                EditTrackRowTests::Host h (2);
-                h.engine.clearAutomation (AP::Volume);
-                h.engine.clearAutomation (AP::Pan);
-                AutomationToolbar toolbar;
-                EditPage::TrackRow row (0, false, h.engine, h.formats, h.cache);
-                sizeRow (row);
-                row.toolbar = &toolbar;
-                pressButton (toolbar, "+ Point");
-                // Another row's VIEW pick set the toolbar to Volume silently;
-                // this row still shows (and labels) Pan.
-                toolbar.setParamSilently (AutomationToolbar::Param::Volume);
-                row.laneMode = Lane::Pan;
-                click (row, { laneX (row, 0.4), 20 });
-                expectEquals ((int) h.engine.getAutomation (0, AP::Pan).size(), 1,
-                              "the point must land on the Pan lane the row shows");
-                expect (h.engine.getAutomation (0, AP::Volume).empty(),
-                        "the hidden Volume lane must not change");
-                h.engine.clearAutomation (AP::Pan);
-            }
-
-            // ── #5: dragging a point over a neighbour keeps the neighbour ────
-            beginTest ("Dragging an automation point onto a neighbour does not erase it");
-            {
-                EditTrackRowTests::Host h (2);
-                h.engine.clearAutomation (AP::Volume);
-                AutomationToolbar toolbar;
-                EditPage::TrackRow row (0, false, h.engine, h.formats, h.cache);
-                sizeRow (row);
-                row.toolbar = &toolbar;
-                row.laneMode = Lane::Volume;
-                pressButton (toolbar, "+ Point");
-                click (row, { laneX (row, 0.3), 20 });
-                click (row, { laneX (row, 0.4), 70 });
-                expectEquals ((int) h.engine.getAutomation (0, AP::Volume).size(), 2, "setup");
-                const float neighbourValue = h.engine.getAutomation (0, AP::Volume).back().value;
-
-                pressButton (toolbar, "Select");
-                drag (row, { laneX (row, 0.3), 20 }, { laneX (row, 0.4), 40 });
-                const auto& lane = h.engine.getAutomation (0, AP::Volume);
-                expectEquals ((int) lane.size(), 2, "the drag erased the neighbour it landed on");
-                const bool neighbourKept = std::any_of (lane.begin(), lane.end(), [&] (const auto& p)
-                    { return std::abs (p.value - neighbourValue) < 0.001f; });
-                expect (neighbourKept, "the neighbour's value must survive");
-                h.engine.clearAutomation (AP::Volume);
-            }
-
-            // ── #2: clip menu items on a stereo row edit BOTH halves ─────────
             beginTest ("Clip menu mute, fades and curve apply to both halves of a stereo row");
             {
                 Session s (2, { 48000, 48000 });
@@ -802,14 +708,14 @@ namespace zynforge
                 expectWithinAbsoluteError (s.clips (0)[1].gainDb, 0.0f, 0.001f, "the gain handle took the trim edge");
             }
 
-            // ── #10: the backdrop under an automation lane sits on its timeline ─
-            beginTest ("The waveform behind an automation lane is drawn where the audio plays");
+            // ── #10: the backdrop under the markers lane sits on its timeline ──
+            beginTest ("The waveform behind the markers lane is drawn where the audio plays");
             {
                 // Track 1 is half the session: its audio covers the left half only.
                 Session s (2, { 24000, 48000 });
                 EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
                 sizeRow (row);
-                row.laneMode = Lane::Volume;
+                row.laneMode = Lane::Markers;
                 auto render = [&row]
                 {
                     juce::Image img (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);

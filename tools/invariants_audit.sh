@@ -153,16 +153,6 @@ report "no bare reload() on the shared settings file" \
        "use reloadAppPropsBeforeWrite() / reloadReplace() -- a plain reload merges" \
        "$HITS"
 
-# ── 7. The audio thread's automation read is never used offline ─────────────
-# automationValueAt is try-lock + fall-back-to-static (correct for the audio
-# thread). A render that used it baked static fader values into the file.
-# The bounce resolves each step's lanes under ONE blocking automationLock.
-HITS=$(sed -n '/forEachStereoMixWindow/,/^    bool AudioEngine::renderStereoMix/p' \
-       Source/Audio/AudioEngineClips.cpp 2>/dev/null | grep -n "automationValueAt (\|ScopedTryLock")
-report "offline renders read automation under a blocking lock" \
-       "the RT try-lock variant silently bakes static values into a bounce" \
-       "$HITS"
-
 # ── 8. Device reconfiguration is guarded against a live take ───────────────
 # setAudioDeviceSetup()/initialise() RESTART the device, and
 # AudioEngine::audioDeviceStopped -> recorder.release() -> stopRecording(). So
@@ -338,10 +328,6 @@ report "persistent text writes use atomic replacement" \
        "$HITS"
 
 HITS=""
-grep -q "sessionJobs.launch (" Source/UI/MainComponentTools.cpp \
-    || HITS="Source/UI/MainComponentTools.cpp: click-track render returned to the message thread"
-grep -q "temporary.replaceFileIn (destination)" Source/Audio/ClickTrackRenderer.cpp \
-    || HITS+=$'\nSource/Audio/ClickTrackRenderer.cpp: click render replaces/deletes the previous file before success'
 grep -q "installCompletedExport" Source/Audio/TrackExporter.cpp \
     || HITS+=$'\nSource/Audio/TrackExporter.cpp: track export no longer installs transactionally'
 grep -q "installBounce" Source/Audio/AudioEngineClips.cpp \
@@ -377,9 +363,9 @@ report "UI workers never hold the structure lock across a render" \
        "$HITS"
 
 # The mix rules have ONE definition, Source/Audio/MixKernel.h, shared by the
-# audio callback and the offline bounce. A pan law, VCA-solo gate, stereo-pair
-# lane rule or send gain re-derived in either file is how the two drifted.
-HITS=$(grep -nE 'MathConstants<double>::halfPi|anyVcaSolo && !|\? *[a-zA-Z_]+ - 1 : [a-zA-Z_]+;|decibelsToGain \((sendDb|send\.levelDb)' \
+# audio callback and the offline bounce. A pan law, solo gate, fader floor or
+# master gain re-derived in either file is how the two drifted.
+HITS=$(grep -nE 'MathConstants<double>::halfPi|anySolo *\?|kFaderFloorDb|decibelsToGain.*masterState' \
        Source/Audio/AudioEngine.cpp Source/Audio/AudioEngineClips.cpp 2>/dev/null \
        | grep -vE '^[^:]+:[0-9]+: *//')
 report "mix rules live only in MixKernel.h" \
@@ -480,7 +466,7 @@ report "UI settings writes reload first" \
 # copy it into backups or journal it; they never write the in-memory mixer.
 HITS=$(grep -rnE '"session_mix\.json"' $SCOPE 2>/dev/null \
     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
-    | grep -vE '^Source/Audio/(SessionMixFile|SessionBackup|ShowHandoff|TrackFileTransaction)\.h:' \
+    | grep -vE '^Source/Audio/(SessionMixFile|SessionBackup|SessionRemovedData|ShowHandoff|TrackFileTransaction)\.h:' \
     | grep -vE '^Source/UI/(MainComponentCues|MainComponentHelp)\.cpp:')
 grep -q 'sessionmix::refusal' Source/UI/SessionMetadataWriter.h \
     || HITS+=$'\nSource/UI/SessionMetadataWriter.h: the metadata writer no longer applies the mixer guard'

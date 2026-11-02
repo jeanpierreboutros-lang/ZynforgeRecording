@@ -109,12 +109,11 @@ namespace zynforge::reaperproject
         // enclosed item replace the one around it.
         out << "  ITEMMIX 1\n"
             // A live recording has no grid: a tempo change in the DAW must not
-            // move or stretch the audio.
+            // move or stretch the audio. The tempo itself is only a default.
             << "  TIMELOCKMODE 0\n"
             << "  TEMPOENVLOCKMODE 0\n"
             << "  SAMPLERATE " << juce::roundToInt (project.sampleRate) << " 1 0\n"
-            << "  TEMPO " << number (project.tempoBpm, 6) << " " << project.timeSigNum
-            << " " << project.timeSigDen << "\n"
+            << "  TEMPO 120 4 4\n"
             << "  MASTERMUTESOLO " << (project.masterMuted ? 1 : 0) << "\n"
             << "  MASTER_NCH 2 2\n"
             << "  MASTER_VOLUME " << number (project.masterGain, 10) << " 0 -1 -1 1\n";

@@ -4,9 +4,6 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "Markers.h"
-#include "ClickEngine.h"
-#include "MidiClockOut.h"
-#include "VcaBus.h"
 #include "../Network/RemoteControl.h"
 
 #include <array>
@@ -36,14 +33,12 @@ namespace zynforge
     namespace interchange { struct SessionInput; }
 
     class MainTransportRegressionTests;
-    class AudioCallbackTests;
 
     class AudioEngine final : public juce::AudioIODeviceCallback,
                               public juce::MidiInputCallback
     {
         friend class SettingsBatchAuditTests;
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
-        friend class AudioCallbackTests;           // holds automationLock to force a missed try-lock
     public:
         AudioEngine();
         ~AudioEngine() override;
@@ -260,11 +255,11 @@ namespace zynforge
         // Load a session's audio into the player + seed clips. preserveEdits
         // is false for a genuine session OPEN (wipe stale clips; the caller's
         // .zfproj playlist restore repopulates) and true for a SAME-session
-        // reload (click-track regen) that must keep the engineer's edits.
+        // reload that must keep the engineer's edits.
         int  loadSession (const juce::File& sessionDir, bool preserveEdits = false, bool appendRecordedAudio = false);
 
         // Per-SESSION strip mix state: name, colour, gain, pan, mute, solo,
-        // monitor, arm, input/output routing, stereo flag, VCA + edit group.
+        // monitor, arm, input/output routing, stereo flag, edit group.
         // These otherwise live only in global appProps keyed by strip index,
         // so they'd leak between different sessions opened at the same
         // positions. saveSessionMixTo writes them all into session_mix.json
@@ -288,53 +283,17 @@ namespace zynforge
             // network/remote entry points (OSC play, MCU Play) and timecode
             // chase reach here directly, so the guard belongs at the engine.
             if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return;
-            const bool wasPlaying = player.isPlaying();
             // Nothing to roll (no session, or parked at/after the end with no
-            // loop to wrap): don't start, and don't tell slaved gear to -- a
-            // chase target past the last take sent Start ten times a second.
-            if (! wasPlaying && ! player.hasAudioAhead()) return;
+            // loop to wrap): don't start.
+            if (! player.isPlaying() && ! player.hasAudioAhead()) return;
             player.start();
-            const auto pos = player.getPositionSamples();
-            if (wasPlaying)    midiClockOut.sendContinue();
-            else if (pos <= 0) midiClockOut.sendStart();
-            else               midiClockOut.sendContinueFrom (midiBeatsAt (pos));
         }
-        void stopPlayback()
-        {
-            player.stop();
-            midiClockOut.sendStop();
-        }
-
-        // 16th notes (MIDI beats, the Song Position Pointer unit) from the
-        // session start to `samplePos`, through the tempo map. Message thread.
-        int midiBeatsAt (juce::int64 samplePos) const;
-
-        // MIDI clock master (24 PPQN) -- drives outboard synths /
-        // drum machines / DAW slaves from the session tempo.
-        MidiClockOut& getMidiClockOut() noexcept { return midiClockOut; }
-
-        // ── VCA buses ─────────────────────────────────────────────
-        // 8 group "ghost faders". Strips opt-in via setTrackVcaGroup
-        // and inherit the bus's gainDb / muted. Set with ramping to
-        // avoid clicks when a cue snapshot recalls a different value.
-        static constexpr int kNumVcas = 8;
-        VcaBus&  getVca (int idx) noexcept { return vcas[(size_t) juce::jlimit (0, kNumVcas - 1, idx)]; }
-        const VcaBus&  getVca (int idx) const noexcept { return vcas[(size_t) juce::jlimit (0, kNumVcas - 1, idx)]; }
-        void  setVcaGainDb  (int idx, float dB);
-        void  setVcaGainDbRamped (int idx, float dB, double seconds);
-        void  setVcaMuted   (int idx, bool muted);
-        void  setVcaSoloed  (int idx, bool soloed);
-        void  setVcaName    (int idx, const juce::String& name);
-        void  setVcaColour  (int idx, juce::Colour c);
-        void  setTrackVcaGroup (int channelIndex, int vcaIdx);  // -1 = unassigned
+        void stopPlayback() { player.stop(); }
 
         // Snap mode -- shared between the host (which sets it from
         // the Edit menu / '4' hotkey) and the edit operations that
         // should respect it (split, eventually clip move + loop in/out).
-        // Off = no snap, Markers = snap to nearest marker. Bars used
-        // to exist for tempo-map-grid snapping; removed in 2026-05-25
-        // along with the Bars|Beats ruler -- live recorders don't
-        // navigate by bars.
+        // Off = no snap, Markers = snap to nearest marker.
         enum class SnapMode : int { Off = 0, Markers = 1 };
         void     setSnapMode (SnapMode m) noexcept { snapMode.store ((int) m, std::memory_order_relaxed); }
         SnapMode getSnapMode() const noexcept { return (SnapMode) snapMode.load (std::memory_order_relaxed); }
@@ -353,16 +312,6 @@ namespace zynforge
         int   getTrackEditGroup (int channelIndex) noexcept;
         std::vector<int> getStripsInEditGroup (int groupId);
 
-        // Aux sends + bus tracks ─────────────────────────────────────
-        // setTrackIsBus marks a track as a bus destination (no input,
-        // no record, sums sends + routes to outputs like a regular
-        // strip).
-        void  setTrackIsBus (int channelIndex, bool isBus);
-        // setTrackSend configures one of 4 send slots on a non-bus
-        // strip. targetBus < 0 disables the send. Persisted to appProps
-        // so sends survive a relaunch.
-        void  setTrackSend (int channelIndex, int sendSlot,
-                            int targetBus, float levelDb, bool postFader);
         bool isPlaying() const noexcept                    { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }
@@ -561,237 +510,6 @@ namespace zynforge
         juce::int64   getEditCursorSample() const noexcept;
         void          clearEditCursor() noexcept { setEditCursorSample (-1); }
 
-        // Session tempo. setSessionTempoBpm() is the canonical setter --
-        // it updates currentTempoBpm + persists to appProps. The tempo
-        // map is a sorted list of (samplePos, bpm) change points; the
-        // engine doesn't consume it on the audio thread yet (no MIDI
-        // click out), but TempoBar / EDIT view / cue snapshot all read
-        // and write it through these getters.
-        struct TempoChange { juce::int64 samplePos; float bpm; };
-        float  getSessionTempoBpm() const noexcept { return currentTempoBpm.load (std::memory_order_relaxed); }
-        void   setSessionTempoBpm (float bpm);
-
-        // Time signature -- clicks accent beat 1 of each bar; the click
-        // engine consumes (numerator, denominator). Persisted to appProps.
-        int   getTimeSignatureNumerator()   const noexcept { return timeSigNumerator  .load (std::memory_order_relaxed); }
-        int   getTimeSignatureDenominator() const noexcept { return timeSigDenominator.load (std::memory_order_relaxed); }
-        void  setTimeSignature (int numerator, int denominator);
-
-        const std::vector<TempoChange>& getTempoMap() const noexcept { return tempoMap; }
-        void   setTempoMap (std::vector<TempoChange> newMap);
-        void   addTempoChange (juce::int64 samplePos, float bpm);
-        void   removeTempoChangeNear (juce::int64 samplePos, juce::int64 tolerance);
-        void   clearTempoMap();
-
-        // Per-track automation. Three discrete parameter lanes:
-        //   Volume (-60..+12 dB)
-        //   Pan    (-1..+1)
-        //   Mute   (0/1, but stored as float so the lane editor can
-        //          fade between values if we ever extend the renderer)
-        enum class AutomationParam : int { Volume = 0, Pan = 1, Mute = 2 };
-        static_assert ((int) AutomationParam::Volume == (int) mix::Lane::Volume
-                       && (int) AutomationParam::Pan == (int) mix::Lane::Pan
-                       && (int) AutomationParam::Mute == (int) mix::Lane::Mute,
-                       "mix::Lane must mirror AutomationParam");
-
-        // Pro Tools-style automation write mode. Off = playback only
-        // reads existing points; Touch / Latch / Write progressively
-        // expose more aggressive write behaviour. Today the engine
-        // honours Off vs anything-else (writes a point whenever the
-        // engineer moves the fader during playback); future commits
-        // distinguish the three write flavours.
-        enum class AutomationWriteMode : int { Off = 0, Touch = 1, Latch = 2, Write = 3 };
-        void setAutomationWriteMode (AutomationWriteMode m) noexcept
-        {
-            automationWriteMode.store ((int) m, std::memory_order_release);
-        }
-        AutomationWriteMode getAutomationWriteMode() const noexcept
-        {
-            return (AutomationWriteMode) automationWriteMode.load (std::memory_order_acquire);
-        }
-        bool isAutomationWriting() const noexcept
-        {
-            return getAutomationWriteMode() != AutomationWriteMode::Off
-                && player.isPlaying();
-        }
-
-        // TRIM mode (mutually exclusive with WRITE on the toolbar).
-        // When on + playing, fader / pan moves nudge the per-track
-        // trim atomic instead of dropping new automation points.
-        void setAutomationTrimMode (bool on) noexcept
-        {
-            automationTrimMode.store (on, std::memory_order_release);
-        }
-        bool isAutomationTrimming() const noexcept
-        {
-            return automationTrimMode.load (std::memory_order_acquire)
-                && player.isPlaying();
-        }
-
-        // Global read suspend. When on, automationValueAt returns the
-        // caller's fallback value (the live fader) regardless of lane
-        // contents. Lets the engineer hear raw faders without
-        // disturbing the stored automation.
-        void setAutomationReadSuspended (bool on) noexcept
-        {
-            automationReadSuspended.store (on, std::memory_order_release);
-        }
-        bool isAutomationReadSuspended() const noexcept
-        {
-            return automationReadSuspended.load (std::memory_order_acquire);
-        }
-
-        // Punch range. When on AND a valid [in, out) range is set,
-        // automation writes only fire while the playhead is inside
-        // the region. Outside the region, write calls are no-ops.
-        // Set both endpoints to -1 to clear.
-        void setAutomationPunchEnabled (bool on) noexcept
-        {
-            automationPunchEnabled.store (on, std::memory_order_release);
-        }
-        bool isAutomationPunchEnabled() const noexcept
-        {
-            return automationPunchEnabled.load (std::memory_order_acquire);
-        }
-        void setAutomationPunchRange (juce::int64 inSample, juce::int64 outSample) noexcept
-        {
-            automationPunchIn .store (inSample,  std::memory_order_release);
-            automationPunchOut.store (outSample, std::memory_order_release);
-        }
-        juce::int64 getAutomationPunchIn()  const noexcept { return automationPunchIn .load (std::memory_order_acquire); }
-        juce::int64 getAutomationPunchOut() const noexcept { return automationPunchOut.load (std::memory_order_acquire); }
-        bool isInsideAutomationPunchRange (juce::int64 samplePos) const noexcept
-        {
-            const auto in  = getAutomationPunchIn();
-            const auto out = getAutomationPunchOut();
-            if (in < 0 || out <= in) return true;  // no valid range = always in
-            return samplePos >= in && samplePos < out;
-        }
-
-        // Per-track Automation Safe lock. Engine refuses Add /
-        // Remove / Paste / WRITE / TRIM writes to a safe track.
-        void setTrackAutomationSafe (int track, bool safe);
-        bool isTrackAutomationSafe  (int track) const;
-
-        // WRITE-thinned point drop. Skips the call when the previous
-        // write to the same (track, param) was less than 'minSamples'
-        // ago. Used by the WRITE-mode fader callback so a 60 Hz
-        // fader.onValueChange stream doesn't fan out into 60
-        // points/sec of automation cruft.
-        void writeAutomationPointThinned (int track, AutomationParam,
-                                          juce::int64 samplePos, float value,
-                                          juce::int64 minSamplesBetween);
-        // Curve type controls how the value evolves from this point
-        // to the NEXT point. Hold = step (old behaviour); Linear =
-        // straight ramp; SCurve = smoothstep; ExpUp/ExpDown = legacy
-        // presets, now expressed as a non-zero `tension` on a Linear
-        // curve and re-mapped on load (kept in the enum so old .zfproj
-        // files round-trip without losing shape). Mute always ignores
-        // both fields and behaves as Hold so it never fades through
-        // 0.5.
-        //
-        // `tension` is a continuous knob bent by the EDIT lane's
-        // drag handle. 0 = linear, +1 = strongly ease-out (slow
-        // start, fast end), -1 = strongly ease-in (fast start, slow
-        // end). Only honoured when curve == Linear.
-        enum class AutomationCurve : int { Hold = 0, Linear = 1, SCurve = 2, ExpUp = 3, ExpDown = 4 };
-        struct AutomationPoint
-        {
-            juce::int64     samplePos { 0 };
-            float           value     { 0.0f };
-            AutomationCurve curve     { AutomationCurve::Linear };
-            float           tension   { 0.0f };
-        };
-
-        // Returns the points for (track, parameter). Empty when none.
-        const std::vector<AutomationPoint>& getAutomation (int track, AutomationParam) const;
-
-        // Drop a new point. Replaces an existing one if it lands within
-        // a tolerance window (so dragging never produces fan-out clouds).
-        // For Mute, the value is snapped to 0 or 1 with curve=Hold.
-        void addAutomationPoint (int track, AutomationParam, juce::int64 samplePos, float value);
-
-        // Remove the nearest point inside the given sample tolerance.
-        // Change one point's value and nothing else: its position, curve and
-        // bend stay. samplePos is the point's exact position.
-        void setAutomationPointValue (int track, AutomationParam, juce::int64 samplePos, float value);
-        void removeAutomationPointNear (int track, AutomationParam,
-                                        juce::int64 samplePos, juce::int64 tolerance);
-
-        // Per-point curve setter. Affects the segment FROM this point.
-        void setAutomationCurveAt (int track, AutomationParam,
-                                   juce::int64 samplePos, juce::int64 tolerance,
-                                   AutomationCurve);
-        // Per-segment tension setter. Bends the Linear segment that
-        // starts at the matched point into an ease-in (-1..0) or
-        // ease-out (0..+1) curve. No-op when the point's curve is
-        // Hold or SCurve. Clamps tension to [-1, +1].
-        void setAutomationTensionAt (int track, AutomationParam,
-                                     juce::int64 samplePos, juce::int64 tolerance,
-                                     float tension);
-
-        // Snapshot every track's automation lanes into a JSON-compatible
-        // var so the engine can round-trip through .zfproj.
-        juce::var      automationToJson() const;
-        void           loadAutomationFromJson (const juce::var&);
-        // The same lanes after a Crop or Ripple Delete on `tracks`.
-        static juce::var cutAutomationSnapshot (const juce::var& snapshot, const timelinecut::Cut&,
-                                                const std::vector<int>& tracks);
-
-        // ── Range operations on one lane ────────────────────────
-        // copyAutomationRange returns every point whose samplePos
-        // lies inside [startSample, endSample]. Points are returned
-        // with samplePos rebased to (samplePos - startSample) so the
-        // caller / paste path can position them at an arbitrary
-        // anchor without preserving session-absolute times.
-        std::vector<AutomationPoint> copyAutomationRange (int track, AutomationParam,
-                                                          juce::int64 startSample,
-                                                          juce::int64 endSample) const;
-        // Wipe every point in [startSample, endSample] for (track, p).
-        void clearAutomationRange (int track, AutomationParam,
-                                   juce::int64 startSample, juce::int64 endSample);
-        // Drop every point in `points` at anchor + point.samplePos.
-        // Points should be in 'relative' form (samplePos = offset
-        // from the original copy range start) -- the format returned
-        // by copyAutomationRange.
-        void pasteAutomationRange (int track, AutomationParam,
-                                   juce::int64 anchorSample,
-                                   const std::vector<AutomationPoint>& points);
-
-        // ── Trim mode -- per (track, param) offset added to the
-        // automation value at playback. Defaults to 0 (no trim).
-        // Volume trim is in dB. Pan trim is added then clamped to
-        // [-1, +1]. Mute trim is ignored.
-        void  setAutomationTrim (int track, AutomationParam, float trim);
-        float getAutomationTrim (int track, AutomationParam) const;
-        void  clearAllAutomationTrims();
-
-        void clearAutomation (AutomationParam);
-        void clearAutomationForTrack (int track, AutomationParam);
-
-        // RT-safe lookup of the automated parameter value at the given
-        // sample position. Holds automationLock with tryEnter on the
-        // audio thread; if contended (UI thread mid-edit), returns the
-        // static fallback so the mix doesn't glitch.
-        float automationValueAt (int track, AutomationParam, juce::int64 samplePos,
-                                 float fallback) const noexcept;
-
-        // OFFLINE lookup for the render / bounce path. Identical maths, but it
-        // BLOCKS on automationLock instead of falling back to the static value
-        // when contended. A rendered file must reproduce the arrangement
-        // exactly; the RT fallback above (correct for the audio thread, which
-        // must never block) would silently bake static fader levels into the
-        // bounce wherever it lost the try-lock. Never call this from the audio
-        // thread.
-        float automationValueAtOffline (int track, AutomationParam, juce::int64 samplePos,
-                                        float fallback) const;
-    private:
-        // Shared curve evaluation for the two lookups above. Caller must
-        // already hold automationLock.
-        float automationValueAtLocked (int track, AutomationParam, juce::int64 samplePos,
-                                       float fallback) const noexcept;
-    public:
-
         // Per-track clip list. Lazy: a track stays in 'whole file' mode
         // (no entry in trackClips, or one full-range entry) until the
         // engineer splits or trims it. The EDIT view + future playback
@@ -842,7 +560,7 @@ namespace zynforge
                                      juce::int64 totalSamples);
         // Render the whole edited arrangement summed to a stereo mix --
         // each track's clip render (above) through its gain / pan / mute /
-        // solo + volume/pan/mute automation + VCA, then master gain.
+        // solo, then master gain.
         // Offline; call from a background thread.
         bool renderStereoMix (juce::AudioBuffer<float>& outStereo, juce::int64 totalSamples);
 
@@ -898,10 +616,9 @@ namespace zynforge
         // are not finished. Asked before a job starts and by the job itself.
         juce::String exportRefusal() const;
         // What Detect Songs listens to: one voice per logical strip, as the
-        // arrangement plays it. A generated click is on all the time, so it
-        // would hold the quorum open across every gap between songs.
+        // arrangement plays it.
         std::vector<songs::Voice> songScanVoices();
-        // Any strip or VCA soloed. A mix render follows solo, so its file
+        // Any strip soloed. A mix render follows solo, so its file
         // holds only what is soloed, and the engineer must be told.
         bool isAnySoloActive();
         // Plain copies of everything a DAW project carries. Message thread:
@@ -967,13 +684,12 @@ namespace zynforge
         // the gap closes. Returns true if anything changed.
         bool rippleDeleteRange (int track, juce::int64 start, juce::int64 end);
         // Ripple Delete across `tracks`, moving what plays with their audio:
-        // every take and their automation. Naming every strip moves the
-        // session's timeline too (markers, tempo map). Returns the tracks
+        // every take. Naming every strip moves the session's timeline too
+        // (markers). Returns the tracks
         // changed, or -1 when timelineCutRefusal refuses.
         int  rippleDeleteTracks (const std::vector<int>& tracks, juce::int64 start, juce::int64 end);
         // Why a Crop or Ripple Delete cannot run, or empty when it can. A
-        // locked clip would have to move or go, and Automation Safe protects
-        // lanes the edit would have to move.
+        // locked clip would have to move or go.
         juce::String timelineCutRefusal (const timelinecut::Cut&, const std::vector<int>& tracks) const;
         // Every strip index a whole-session edit has to touch.
         std::vector<int> allTimelineTracks() const;
@@ -981,9 +697,8 @@ namespace zynforge
         // Everything a Crop or Ripple Delete changes, for its one undo step.
         struct TimelineState
         {
-            juce::var playlists, automation;
+            juce::var playlists;
             std::vector<Marker> markers;
-            std::vector<TempoChange> tempoMap;
         };
         TimelineState captureTimelineState() const;
         void restoreTimelineState (const TimelineState&);
@@ -1021,8 +736,8 @@ namespace zynforge
 
         // Non-destructive crop: on EVERY track, replace its clip list with
         // the parts that fall inside the timeline range [start, end),
-        // shifted so the range start becomes timeline 0. Every take, the
-        // automation, the markers and the tempo map move with them. The
+        // shifted so the range start becomes timeline 0. Every take and the
+        // markers move with them. The
         // underlying Track_NN.wav files are never touched. Returns the number
         // of tracks left with at least one clip, or -1 when timelineCutRefusal
         // refuses.
@@ -1250,13 +965,7 @@ namespace zynforge
         std::atomic<bool> punchEnabled { false };
         bool              punchLoopWasEnabled { false };
 
-        ClickEngine        click;
-        MidiClockOut       midiClockOut;
         std::atomic<bool> controlsLocked { false };
-        std::array<VcaBus, kNumVcas> vcas;
-    public:
-        ClickEngine& getClickEngine() noexcept { return click; }
-    private:
         RemoteControl remotes { *this };   // OSC, desk macros, control surface
         std::unique_ptr<juce::PropertiesFile> appProps;
         RemoteTransportHandler remoteTransportHandler;
@@ -1325,104 +1034,13 @@ namespace zynforge
                 std::memory_order_relaxed);
         }
     private:
-        std::atomic<float>  currentTempoBpm     { 120.0f };
-        std::atomic<int>    timeSigNumerator    { 4 };
-        std::atomic<int>    timeSigDenominator  { 4 };
         // Pro Tools-style edit cursor. -1 = unset (drop-marker /
         // split / paste use the playhead as the fallback).
         std::atomic<juce::int64> editCursorSample { -1 };
-        std::vector<TempoChange> tempoMap;   // sorted by samplePos
-        // Guards tempoMap against the audio-thread reader (click tempo-map
-        // lookup) racing the message-thread mutators. Writers take a
-        // ScopedLock; the audio thread uses a ScopedTryLock and, if it can't
-        // acquire, keeps the click at its last resolved bpm for that block.
-        mutable juce::CriticalSection tempoLock;
         // Active snap grid. Read by snapSampleToGrid + by the
         // splitTrackAtPlayhead path. Default Off.
         std::atomic<int> snapMode { 0 };
 
-        // Per-track, per-parameter automation. UI-thread only for now
-        // (audio thread doesn't yet consume these -- the engineer reads
-        // them visually and they ride along in cue snapshots).
-        struct TrackAutomation
-        {
-            std::vector<AutomationPoint> volume, pan, mute;
-            // Trim offsets (Pro Tools-style). Added on top of the
-            // automation value at read time. Volume in dB, pan in
-            // linear -1..+1, mute ignored. Atomics so the audio
-            // thread can read without locking.
-            std::atomic<float> volumeTrim { 0.0f };
-            std::atomic<float> panTrim    { 0.0f };
-
-            // Per-track Automation Safe lock. Engine refuses writes
-            // to this track when true. Read path is unaffected.
-            std::atomic<bool>  safe { false };
-
-            // Last write sample per param -- used by writeAutomation-
-            // PointThinned to throttle WRITE-mode point drops.
-            // Index: 0 volume / 1 pan / 2 mute. -1 = no prior write.
-            std::atomic<juce::int64> lastWriteSample[3] { {-1}, {-1}, {-1} };
-
-            TrackAutomation() = default;
-            TrackAutomation (TrackAutomation&& o) noexcept
-                : volume (std::move (o.volume)),
-                  pan    (std::move (o.pan)),
-                  mute   (std::move (o.mute)),
-                  volumeTrim (o.volumeTrim.load()),
-                  panTrim    (o.panTrim.load()),
-                  safe (o.safe.load())
-            {
-                for (int i = 0; i < 3; ++i) lastWriteSample[i].store (o.lastWriteSample[i].load());
-            }
-            TrackAutomation& operator= (TrackAutomation&& o) noexcept
-            {
-                volume = std::move (o.volume);
-                pan    = std::move (o.pan);
-                mute   = std::move (o.mute);
-                volumeTrim.store (o.volumeTrim.load());
-                panTrim   .store (o.panTrim   .load());
-                safe      .store (o.safe      .load());
-                for (int i = 0; i < 3; ++i) lastWriteSample[i].store (o.lastWriteSample[i].load());
-                return *this;
-            }
-            TrackAutomation (const TrackAutomation&) = delete;
-            TrackAutomation& operator= (const TrackAutomation&) = delete;
-        };
-        std::vector<TrackAutomation> automationData;
-        mutable juce::CriticalSection automationLock;
-
-        // Per-block mix inputs, written and read ONLY by the audio callback.
-        // Every automation lane a strip needs is read ONCE per block under ONE
-        // try-lock (mix::resolveLanes), so the aux sends, routed outputs,
-        // stream bus and monitor all see the same values. They used to make up
-        // to six separate try-locks per strip, so a UI edit landing between two
-        // of them mixed one block from the curve on one path and the fader on
-        // another. The offline bounce resolves the same struct per step.
-        static constexpr int kMaxResolvedStrips = 256;   // == setStripCount's ceiling
-        std::array<mix::StripLanes, kMaxResolvedStrips> resolvedMix {};
-        // What resolvedMix was last resolved from (audio thread only): a
-        // missed try-lock mid-roll holds it only if it came from the lanes
-        // for the same strips (count + track generation).
-        bool resolvedMixFromLanes  { false };
-        int  resolvedMixTracks     { -1 };
-        int  resolvedMixGeneration { -1 };
-
-        // mix::resolveLanes over this engine's lanes at `pos`. The caller holds
-        // automationLock -- the callback via its one try-lock per block, the
-        // bounce via one blocking lock per automation step.
-        mix::StripLanes resolveStripLanesLocked (int track, int autoCh, float faderDb, float pan,
-                                                 juce::int64 pos, bool readLanes) const noexcept;
-        std::atomic<int>              automationWriteMode { 0 };   // AutomationWriteMode::Off
-        std::atomic<bool>             automationTrimMode  { false };
-        // SUSPEND: temporarily ignore every lane's stored points at
-        // read time so the engineer can audition raw fader / pan /
-        // mute values. PUNCH: when on, WRITE is gated to a single
-        // [punchInSample, punchOutSample) range; outside that range
-        // the engine reads existing automation but does not record.
-        std::atomic<bool>             automationReadSuspended { false };
-        std::atomic<bool>             automationPunchEnabled  { false };
-        std::atomic<juce::int64>      automationPunchIn       { -1 };
-        std::atomic<juce::int64>      automationPunchOut      { -1 };
         // Per-track clip lists. Empty/missing entry → 'play the whole
         // Track_NN.wav' (the current behaviour). Once the engineer
         // splits or trims, the entry has one or more Clips covering
@@ -1437,13 +1055,8 @@ namespace zynforge
         // active take's clips mirror trackClips above so the player
         // path doesn't need to know about takes.
         std::vector<Playlist> trackPlaylists;
-        std::vector<AutomationPoint> emptyAutomation;   // returned by ref when none
 
         void cutSessionTimeline (const timelinecut::Cut&);
-        void cutAutomationLanes (const timelinecut::Cut&, const std::vector<int>& tracks);
-        bool automationBlocksCut (const std::vector<int>& tracks) const;
-        std::vector<AutomationPoint>* findLane (int track, AutomationParam);
-        const std::vector<AutomationPoint>* findLane (int track, AutomationParam) const;
         std::atomic<float>  diskMBPerSec     { 0.0f };
         std::atomic<float>  ringFillPct      { 0.0f };
     public:
@@ -1528,7 +1141,7 @@ namespace zynforge
         }
 
         // Wipe every persisted per-strip override (name, colour, gain, pan,
-        // routing, stereo, edit group, VCA, sends, bus flag, UUID) for the
+        // routing, stereo, edit group, UUID) for the
         // half-open index range [firstIndex, lastIndexExclusive). Used to
         // give freshly-added strips a clean slate so they don't inherit a
         // previous session's layout by array position.

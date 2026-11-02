@@ -497,11 +497,9 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
-            // The audible contract for cue automation: a recalled cue loads
-            // its volume lane, and DURING PLAYBACK that lane must attenuate the
-            // routed output. Drives the full AudioEngine callback (not just
-            // SessionPlayer) so it exercises the gain path automation rides on.
-            beginTest ("Volume automation attenuates the routed output during playback");
+            // DURING PLAYBACK the fader must attenuate the routed output. Drives
+            // the full AudioEngine callback (not just SessionPlayer).
+            beginTest ("The fader attenuates the routed output during playback");
             {
                 auto dir = recordSession (numCh, numBlocks, block);
                 AudioEngine::setTestModeSkipAudioInit (true);
@@ -517,7 +515,7 @@ namespace zynforge
                 // Isolate output 0 = ONLY track 0's routed signal. Send the
                 // master monitor sum (which mixes every track) to outs 2/3 and
                 // route the other track to master-only, so the master sum can't
-                // leak un-automated audio onto output 0.
+                // leak other audio onto output 0.
                 eng.setMasterOutputs (2, 3);
                 eng.setTrackOutputRouting (0, 0);                 // track 0 -> hardware out 0
                 eng.setTrackGainDb (0, 0.0f);
@@ -554,15 +552,13 @@ namespace zynforge
                 const float base = renderPeak (probe, 120);
                 expect (base > 0.05f, "playback produced no output on the routed channel");
 
-                // Single -60 dB volume point at 0 -> held forward to probe -> silence.
-                eng.addAutomationPoint (0, AudioEngine::AutomationParam::Volume, 0, -60.0f);
+                eng.setTrackGainDb (0, -60.0f);
                 const float dipped = renderPeak (probe, 10);
-                expect (dipped < base * 0.1f, "volume automation did not attenuate playback");
+                expect (dipped < base * 0.1f, "the fader did not attenuate playback");
 
-                // Lift the lane back to 0 dB -> audible again (proves recall both ways).
-                eng.clearAutomation (AudioEngine::AutomationParam::Volume);
+                eng.setTrackGainDb (0, 0.0f);
                 const float restored = renderPeak (probe, 120);
-                expect (restored > 0.05f, "clearing automation did not restore playback level");
+                expect (restored > 0.05f, "raising the fader did not restore playback level");
 
                 eng.stopPlayback();
                 }   // engine + reader threads destroyed here

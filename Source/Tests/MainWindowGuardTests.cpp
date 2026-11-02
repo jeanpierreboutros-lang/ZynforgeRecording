@@ -796,7 +796,7 @@ namespace zynforge
                 for (auto& s : w.main.strips) expect (s->isEnabled());
             }
 
-            beginTest ("LOCK stops the right-click menus on strips, setlist and VCAs");
+            beginTest ("LOCK stops the right-click menus on strips and the setlist");
             {
                 Window w;
                 w.main.rebuildStrips();
@@ -806,9 +806,6 @@ namespace zynforge
                 w.main.onLockToggled();
                 expect (! rightClickOpensMenu (strip), "a strip menu opened under LOCK");
                 expect (! rightClickOpensMenu (w.main.setlistBar), "a setlist menu opened under LOCK");
-                if (w.main.vcaPanel != nullptr)
-                    for (auto* child : w.main.vcaPanel->getChildren())
-                        expect (! rightClickOpensMenu (*child), "a VCA menu opened under LOCK");
                 w.main.onLockToggled();
             }
 
@@ -989,18 +986,16 @@ namespace zynforge
                 expect (! w.main.statusLabel.getText().containsIgnoreCase ("finalization"), w.main.statusLabel.getText());
             }
 
-            beginTest ("The setlist bar and a running cue fade end with the session");
+            beginTest ("The setlist bar ends with the session");
             {
                 Window w;
                 w.main.cues.push_back ({});
                 w.main.cues.back().name = "Old";
                 w.main.currentCueIndex = 0;
                 w.main.setlistBar.setCues (w.main.cues, 0);
-                w.main.cueRamp.active = true;
                 w.main.engine.clearSessionState();
                 w.main.forgetSessionUiState();
                 expect (w.main.cues.empty());
-                expect (! w.main.cueRamp.active, "a fade ran on into the next session");
                 for (auto* child : w.main.setlistBar.getChildren())
                     if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
                         expectEquals (combo->getNumItems(), 0, "the setlist bar kept the closed session's cues");
@@ -1371,27 +1366,7 @@ namespace zynforge
                 expect (w.main.srWarnLabel.getText().isEmpty());
             }
 
-            beginTest ("A strip named Click keeps its R and I; the generated click does not");
-            {
-                Window w;
-                w.engine().setTrackName (0, "Click");
-                w.main.rebuildStrips();
-                w.main.strips.front()->setSize (120, 500);
-                auto armVisible = [&]
-                {
-                    for (auto* child : w.main.strips.front()->getChildren())
-                        if (child->getTitle().containsIgnoreCase ("arm") || child->getTitle().containsIgnoreCase ("record"))
-                            return child->isVisible();
-                    return false;
-                };
-                expect (armVisible(), "a recorded click return lost its R button");
-                w.recorder().getTrack (0).referenceMedia.store (true);
-                w.main.strips.front()->resized();
-                expect (! armVisible(), "the generated click grew an R button");
-                w.recorder().getTrack (0).referenceMedia.store (false);
-            }
-
-            beginTest ("A session saved before the flag still knows its click strip");
+            beginTest ("A session saved before the flag still knows its reference bed");
             {
                 Window w;
                 w.engine().setTrackName (1, "Click");
@@ -1452,36 +1427,6 @@ namespace zynforge
                     expect (token->getText().isNotEmpty());
                     w.engine().getRemotes().stopOsc();
                 }
-            }
-
-            beginTest ("A cue fade stops when strips move, and a click refresh waits for the take");
-            {
-                Window w (3);
-                w.main.cueRamp.active = true;
-                expect (w.engine().reorderTracks ({ 2, 1, 0 }));
-                expect (! w.main.cueRamp.active, "a fade kept writing to indices that moved");
-            }
-
-            beginTest ("A tempo cue recalled during a take refreshes the click afterwards");
-            {
-                Window w;
-                w.main.clickTrackIndex = 0;
-                w.recorder().getTrack (0).referenceMedia.store (true);
-                w.engine().setSessionTempoBpm (120.0f);
-                SetlistBar::Cue cue;
-                cue.name = "Fast";
-                cue.tempoBpm = 150.0f;
-                w.main.cues.push_back (cue);
-                w.arm ({ 1 });
-                w.engine().armContinue (w.engine().getCaptureLengthSamples());
-                expect (w.engine().startRecording (w.session), w.recorder().getStartError());
-                w.main.jumpToCue (0);
-                expect (w.main.clickRefreshPending, "the promised click refresh was never queued");
-                w.main.clickRefreshPending = false;
-                w.main.clickTrackIndex = -1;
-                feedAll (w.recorder(), 0.1f, 4);
-                w.main.stopActiveCaptureAsync (false);
-                expect (w.stopped());
             }
 
             beginTest ("Tap STOP again shows at once, ahead of anything queued");

@@ -6,7 +6,6 @@
 // EditPage.cpp.
 
 #include "EditPage.h"
-#include "AutomationToolbar.h"
 #include "ClipEditTargets.h"
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
@@ -132,26 +131,9 @@ namespace zynforge
             meter.detach();
         }
 
-        // Toolbar / click-overlay context -- set by the host EditPage
-        // after construction so all rows share the same global view.
-        AutomationToolbar* toolbar  { nullptr };
+        // Tools palette -- set by the host EditPage after construction so
+        // all rows share the same global view.
         EditToolsBar*      toolsBar { nullptr };
-        std::function<void (const juce::String& label,
-                            std::function<void()> mutate)> automationEditWrapper;
-        std::function<void()>                       automationDragBegin;
-        std::function<void (const juce::String&)>   automationDragEnd;
-        // Index of the Click track when one exists. Used to suppress
-        // automation-lane edits on that row (engineers don't draw
-        // gain points on the metronome). -1 = no click track.
-        int    clickRowIdx  { -1 };
-        // Drag tracking -- while > -1, mouseDrag moves the indexed
-        // point on the active lane.
-        int    draggingPointIdx { -1 };
-        // Tension drag tracking. When > -1, mouseDrag bends the
-        // segment starting at this point index (i.e. the segment
-        // between points[i] and points[i+1]) by translating the
-        // handle's current y into a tension value.
-        int    draggingTensionSegIdx { -1 };
 
         // Clip-edit drag tracking. When the engineer grabs a clip's
         // left edge, right edge, body, a fade handle or its gain line,
@@ -299,7 +281,7 @@ namespace zynforge
             // warp are reserved for future builds and stay disabled).
             viewButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
             viewButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
-            viewButton.setTooltip ("Pick what this row's lane draws -- waveform / volume / pan / ...");
+            viewButton.setTooltip ("Pick what this row's lane draws -- waveform or markers");
             viewButton.onClick = [this]
             {
                 // Lane-content picker. Reserved Pro Tools-style items
@@ -309,13 +291,6 @@ namespace zynforge
                 juce::PopupMenu m;
                 m.addItem (22, "waveform",    true, laneMode == LaneMode::Waveform);
                 m.addItem (20, "markers",     true, laneMode == LaneMode::Markers);
-                // 'volume trim' was a duplicate of 'volume' with a
-                // different label and no backing trim store -- removed.
-                m.addSeparator();
-                m.addItem (30, "volume",      true, laneMode == LaneMode::Volume);
-                m.addItem (32, "mute",        true, laneMode == LaneMode::Mute);
-                m.addItem (33, "pan",         true, laneMode == LaneMode::Pan);
-                m.addItem (34, "click",       true, laneMode == LaneMode::Click);
 
                 juce::Component::SafePointer<TrackRow> self (this);
                 m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&viewButton),
@@ -326,33 +301,7 @@ namespace zynforge
                     {
                         case 20: self->laneMode = LaneMode::Markers;    break;
                         case 22: self->laneMode = LaneMode::Waveform;   break;
-                        case 30: self->laneMode = LaneMode::Volume;     break;
-                        case 32: self->laneMode = LaneMode::Mute;       break;
-                        case 33: self->laneMode = LaneMode::Pan;        break;
-                        case 34: self->laneMode = LaneMode::Click;      break;
                         default: return;
-                    }
-                    // A focused point belongs to the lane that just left.
-                    if (auto* page = self->findParentComponentOfClass<EditPage>())
-                        if (page->getActiveRowTrackIndex() == self->index)
-                            page->setFocusedPointIdx (-1);
-                    // Keep the AUTOMATION toolbar's Lane combo in
-                    // lockstep with the per-row VIEW pick, so the
-                    // toolbar param the engineer adds/deletes points
-                    // for matches what they're looking at. Silent
-                    // setter -- doesn't bounce back through
-                    // onParamChanged.
-                    if (self->toolbar != nullptr)
-                    {
-                        using P = AutomationToolbar::Param;
-                        switch (self->laneMode)
-                        {
-                            case LaneMode::Volume: self->toolbar->setParamSilently (P::Volume); break;
-                            case LaneMode::Pan:    self->toolbar->setParamSilently (P::Pan);    break;
-                            case LaneMode::Mute:   self->toolbar->setParamSilently (P::Mute);   break;
-                            case LaneMode::Click:  self->toolbar->setParamSilently (P::Click);  break;
-                            default: break;   // Waveform / Markers don't map to an automation param
-                        }
                     }
                     self->repaint();
                 });
@@ -883,13 +832,11 @@ namespace zynforge
             const auto waveColour = brand::lift (getStripColour(), 0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
-            // All lane-content drawing runs inside this lambda. The non-waveform
-            // lane modes (Click / Tempo / Markers / Volume·Pan·Mute automation)
-            // early-`return` once they've drawn their lane -- by
-            // doing so from the lambda (not paint()), they no longer SKIP the
-            // pinned header painted LAST below. Skipping it left the header
-            // un-redrawn, so the automation line/curve bled over the channel name
-            // + I/O combos (the bug). paintHeader now runs in every lane mode.
+            // All lane-content drawing runs inside this lambda. The Markers
+            // lane early-`return`s once it has drawn -- by doing so from the
+            // lambda (not paint()), it does not SKIP the pinned header painted
+            // LAST below, which left lane content bled over the channel name
+            // + I/O combos. paintHeader runs in every lane mode.
             auto drawLane = [&]()
             {
 
@@ -987,17 +934,16 @@ namespace zynforge
             };
 
             // Pro Tools-style: the waveform is ALWAYS the base layer,
-            // even when a different lane mode (Volume / Pan / Mute /
-            // Click / Tempo / Markers) is selected. The lane data is
+            // even when the Markers lane is selected. The lane data is
             // drawn on top with a semi-transparent backdrop. Paint
             // the waveform here as the substrate; the lane branch
             // below then overlays its content. Skip the substrate when the
             // arrangement was emptied (all clips deleted) so the deleted
             // waveform doesn't linger behind the lane.
-            // The substrate sits on the SAME timeline as the points drawn over
+            // The substrate sits on the SAME timeline as the markers drawn over
             // it (laneTimelineSamples): each clip's file region at its timeline
             // span, like the clip blocks. Stretching the whole file across the
-            // lane drew rides against the wrong audio on any track shorter than
+            // lane drew markers against the wrong audio on any track shorter than
             // the session, or with moved / trimmed / deleted clips.
             if (laneMode != LaneMode::Waveform && ! engine.isTrackArrangementEmpty (index))
             {
@@ -1050,462 +996,50 @@ namespace zynforge
                 }
             }
 
-            // Automation lane modes -- flat horizontal line representing
-            // the current value (overlaid on top of the dimmed waveform
-            // base above). Time-varying automation is reserved for a
-            // later build.
-            if (laneMode != LaneMode::Waveform)
+            // The Markers lane, overlaid on top of the dimmed waveform base above.
+            if (laneMode == LaneMode::Markers)
             {
-                auto& t = engine.getRecorder().getTrack (index);
                 g.setColour (brand::edge);
                 g.drawRect (inner, 1);
 
-                // Centre line for reference (zero / unity).
+                // Centre line for reference.
                 g.setColour (brand::lift (brand::edge, 0.2f).withAlpha (zynforge::brand::alpha::muted));
                 g.drawHorizontalLine (inner.getCentreY(),
                                       (float) inner.getX(), (float) inner.getRight());
 
-                juce::Colour lineCol = waveColour;
-                float yProp = 0.5f;  // 0 = top, 1 = bottom
-                juce::String label;
-
-                // During playback the readout + value indicator follow the
-                // automation curve at the playhead (i.e. what you actually
-                // hear); when stopped they show the live fader value. Without
-                // this the readout sat on the static fader value and looked
-                // dead even while automation was driving the gain.
-                const auto& plyr = engine.getPlayer();
-                const juce::int64 autoPos = plyr.isPlaying() ? plyr.getPositionSamples()
-                                                             : (juce::int64) -1;
-                using AP = AudioEngine::AutomationParam;
-
-                switch (laneMode)
-                {
-                    case LaneMode::Volume:
-                    {
-                        float dB = t.gainDb.load (std::memory_order_relaxed);
-                        if (autoPos >= 0)
-                            dB = engine.automationValueAt (index, AP::Volume, autoPos, dB);
-                        // -60..+12 dB mapped to 1..0 (loud → top)
-                        yProp = 1.0f - juce::jlimit (0.0f, 1.0f,
-                                                     (dB + 60.0f) / 72.0f);
-                        lineCol = brand::accentStatus;
-                        label   = "vol " + juce::String (dB, 1) + " dB";
-                        break;
-                    }
-                    case LaneMode::Pan:
-                    {
-                        float pan = t.pan.load (std::memory_order_relaxed);
-                        if (autoPos >= 0)
-                            pan = engine.automationValueAt (index, AP::Pan, autoPos, pan);
-                        // -1..+1 mapped to 1..0 (left = top, right = bottom)
-                        yProp = (1.0f - pan) * 0.5f;
-                        lineCol = brand::accentSolo;
-                        const int pct = juce::roundToInt (std::abs (pan) * 100.0f);
-                        label = (pct == 0) ? "pan C"
-                                            : (pan < 0 ? "pan L" + juce::String (pct)
-                                                       : "pan R" + juce::String (pct));
-                        break;
-                    }
-                    case LaneMode::Mute:
-                    {
-                        bool muted = t.muted.load (std::memory_order_relaxed);
-                        if (autoPos >= 0)
-                            muted = engine.automationValueAt (index, AP::Mute, autoPos,
-                                                              muted ? 1.0f : 0.0f) > 0.5f;
-                        yProp = muted ? 0.05f : 0.95f;
-                        lineCol = muted ? brand::brandOrange : brand::textMuted;
-                        label   = muted ? "MUTED" : "open";
-                        break;
-                    }
-                    case LaneMode::Click:
-                    {
-                        // Beat grid for the whole lane -- every quarter
-                        // note at the current session tempo. The lane
-                        // adapts its density: if beats would pack closer
-                        // than ~6 px we drop to bar markers, then to
-                        // 4-bar markers, etc., so the lane never moires
-                        // into a solid stripe at long zoom-outs.
-                        const float bpm = engine.getSessionTempoBpm();
-                        const auto& player = engine.getPlayer();
-                        const juce::int64 totalSamples = player.isLoaded()
-                            ? player.getTotalLengthSamples() : 0;
-                        const double sr = player.getSampleRate() > 0.0
-                            ? player.getSampleRate()
-                            : (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-                               ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
-                               : 48000.0);
-                        if (totalSamples > 0 && bpm > 0.0f && sr > 0.0
-                            && inner.getWidth() > 0)
-                        {
-                            const double samplesPerBeat = 60.0 * sr / bpm;
-                            const double pxPerBeat = samplesPerBeat
-                                * (double) inner.getWidth()
-                                / (double) totalSamples;
-
-                            // Pick a stride: 1 beat / 1 bar (4) / 4 bars
-                            // (16) / 16 bars (64). Keeps adjacent ticks
-                            // at least ~6 px apart for visual clarity.
-                            int stride = 1;
-                            while (pxPerBeat * stride < 6.0 && stride < 4096)
-                                stride *= 4;
-
-                            const auto visible = inner.getIntersection (g.getClipBounds());
-                            const double samplesPerTick = samplesPerBeat * stride;
-                            const double samplesPerPixel = (double) totalSamples / inner.getWidth();
-                            const auto firstTick = (juce::int64) juce::jmax (0.0,
-                                std::floor ((visible.getX() - inner.getX()) * samplesPerPixel
-                                            / samplesPerTick) - 1.0);
-                            const auto lastTick = (juce::int64) juce::jmin (
-                                std::ceil ((double) totalSamples / samplesPerTick) - 1.0,
-                                std::ceil ((visible.getRight() - inner.getX()) * samplesPerPixel
-                                           / samplesPerTick) + 1.0);
-                            for (juce::int64 tick = firstTick;
-                                 ! visible.isEmpty() && tick <= lastTick; ++tick)
-                            {
-                                const double s = tick * samplesPerTick;
-                                const double prop = s / (double) totalSamples;
-                                const int x = inner.getX()
-                                            + (int) (prop * inner.getWidth());
-                                const int beatsPerBar = juce::jmax (1, engine.getTimeSignatureNumerator());
-                                const bool downbeat = (tick * stride % beatsPerBar) == 0;
-                                g.setColour (downbeat ? brand::brandOrange
-                                                       : brand::accentStatus.withAlpha (zynforge::brand::alpha::muted));
-                                g.drawVerticalLine (x,
-                                                    (float) inner.getY(),
-                                                    (float) inner.getBottom());
-                            }
-                        }
-                        g.setColour (brand::textTertiary);
-                        g.setFont (brand::type::caption());
-                        g.drawText ("click " + juce::String (bpm, 1) + " BPM",
-                                    inner.reduced (4, 2),
-                                    juce::Justification::topLeft, false);
-                        if (playheadX >= 0 && playheadX < wavePane.getWidth())
-                        {
-                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
-                            g.fillRect (juce::Rectangle<int> (headerW + playheadX,
-                                                              0, 2, getHeight()));
-                        }
-                        return;
-                    }
-                    case LaneMode::Tempo:
-                    {
-                        // Shared tempo curve -- one lane for the whole
-                        // session, drawn identically on every row. Each
-                        // point in engine.getTempoMap() is rendered as
-                        // a handle on a stepped curve (40..240 BPM
-                        // mapped to bottom..top of the lane).
-                        const auto& tempoMap = engine.getTempoMap();
-                        // Shared lane span (5-min notional when empty, at the
-                        // DEVICE rate). The hardcoded 48000*60 here was both a
-                        // different span from the ruler AND wrong at any other
-                        // sample rate -- 30 s of real time at 96 kHz.
-                        const juce::int64 totalSamples = laneTimelineSamples();
-
-                        auto bpmToY = [&] (float bpm) -> int
-                        {
-                            const float clamped = juce::jlimit (40.0f, 240.0f, bpm);
-                            const float yp = 1.0f - (clamped - 40.0f) / 200.0f;
-                            return inner.getY() + juce::roundToInt (yp * inner.getHeight());
-                        };
-                        auto sampleToX = [&] (juce::int64 sp) -> int
-                        { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
-
-                        const float sessionBpm = engine.getSessionTempoBpm();
-                        g.setColour (brand::brandOrange);
-
-                        if (tempoMap.empty())
-                        {
-                            const int y = bpmToY (sessionBpm);
-                            g.drawHorizontalLine (y, (float) inner.getX(), (float) inner.getRight());
-                        }
-                        else
-                        {
-                            juce::Path path;
-                            int prevY = bpmToY (sessionBpm);
-                            path.startNewSubPath ((float) inner.getX(), (float) prevY);
-                            for (const auto& tc : tempoMap)
-                            {
-                                const int x = sampleToX (tc.samplePos);
-                                const int y = bpmToY  (tc.bpm);
-                                path.lineTo ((float) x, (float) prevY);
-                                path.lineTo ((float) x, (float) y);
-                                prevY = y;
-                            }
-                            path.lineTo ((float) inner.getRight(), (float) prevY);
-                            g.strokePath (path, juce::PathStrokeType (1.8f));
-
-                            for (const auto& tc : tempoMap)
-                            {
-                                const int x = sampleToX (tc.samplePos);
-                                const int y = bpmToY  (tc.bpm);
-                                g.fillEllipse ((float) x - 4.0f, (float) y - 4.0f, 8.0f, 8.0f);
-                            }
-                        }
-
-                        g.setColour (brand::textTertiary);
-                        g.setFont (brand::type::caption());
-                        g.drawText ("tempo " + juce::String (sessionBpm, 1) + " BPM",
-                                    inner.reduced (6, 2),
-                                    juce::Justification::topLeft, false);
-                        if (playheadX >= 0 && playheadX < wavePane.getWidth())
-                        {
-                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
-                            g.fillRect (juce::Rectangle<int> (headerW + playheadX,
-                                                              0, 2, getHeight()));
-                        }
-                        return;
-                    }
-                    case LaneMode::Markers:
-                    {
-                        // Real session markers, drawn at their actual sample
-                        // positions (mapped through the same timeline as the
-                        // waveform) with the marker name. Previously this lane
-                        // drew 6 fake evenly-spaced ticks + the literal word
-                        // "markers" -- it ignored the real marker list.
-                        const juce::int64 totalSamples = laneTimelineSamples();
-                        const auto mapper = TimelineMapper::forLane (inner, totalSamples);
-                        const auto& all = engine.getMarkers().getAll();
-                        if (all.empty())
-                        {
-                            g.setColour (brand::textTertiary);
-                            g.setFont (brand::type::caption());
-                            g.drawText ("No markers -- press M to drop one",
-                                        inner.reduced (4, 2), juce::Justification::topLeft, false);
-                        }
-                        for (const auto& mk : all)
-                        {
-                            const int x = mapper.toX (mk.sampleOffset);
-                            if (x < inner.getX() || x > inner.getRight()) continue;
-                            g.setColour (brand::accentStatus);
-                            g.drawVerticalLine (x, (float) inner.getY(), (float) inner.getBottom());
-                            // Flag + name at the top.
-                            g.fillRect (juce::Rectangle<int> (x, inner.getY(), 6, 4));
-                            if (mk.name.isNotEmpty())
-                            {
-                                g.setColour (brand::onSignal (brand::accentStatus));
-                                g.setFont (brand::type::micro());
-                                g.drawText (mk.name,
-                                            juce::Rectangle<int> (x + 4, inner.getY() + 1, 90, 11),
-                                            juce::Justification::topLeft, false);
-                            }
-                        }
-                        // Playhead overlay still applies below.
-                        if (playheadX >= 0 && playheadX < wavePane.getWidth())
-                        {
-                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
-                            g.fillRect (juce::Rectangle<int> (headerW + playheadX,
-                                                              0, 2, getHeight()));
-                        }
-                        return;
-                    }
-                    default: break;
-                }
-
-                // currentLaneParam() is the single source of truth for
-                // which lane this row is editing -- paint, hit-test, and
-                // mouseDrag all read from it so they never disagree.
-                const auto chosenParam = currentLaneParam();
-
-                const auto& points = engine.getAutomation (index, chosenParam);
-
-                // Value-to-y mapping (mirrors laneCoordAt above).
-                auto valueToY = [&] (float v) -> int
-                {
-                    float yp = 0.5f;
-                    switch (chosenParam)
-                    {
-                        case AudioEngine::AutomationParam::Volume:
-                            yp = 1.0f - juce::jlimit (0.0f, 1.0f, (v + 60.0f) / 72.0f);
-                            break;
-                        case AudioEngine::AutomationParam::Pan:
-                            yp = (1.0f - juce::jlimit (-1.0f, 1.0f, v)) * 0.5f;
-                            break;
-                        case AudioEngine::AutomationParam::Mute:
-                            yp = v > 0.5f ? 0.05f : 0.95f;
-                            break;
-                    }
-                    return inner.getY() + juce::roundToInt (yp * inner.getHeight());
-                };
-
+                // Real session markers, drawn at their actual sample
+                // positions (mapped through the same timeline as the
+                // waveform) with the marker name. Previously this lane
+                // drew 6 fake evenly-spaced ticks + the literal word
+                // "markers" -- it ignored the real marker list.
                 const juce::int64 totalSamples = laneTimelineSamples();
-                auto sampleToX = [&] (juce::int64 sp) -> int
-                { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
-
-                if (points.empty())
+                const auto mapper = TimelineMapper::forLane (inner, totalSamples);
+                const auto& all = engine.getMarkers().getAll();
+                if (all.empty())
                 {
-                    // No automation yet -- fall back to the flat reference
-                    // line for the current parameter value, so the lane
-                    // still reads at a glance.
-                    const int y = inner.getY()
-                                + juce::roundToInt (yProp * inner.getHeight());
-                    g.setColour (lineCol);
-                    g.drawHorizontalLine (y, (float) inner.getX(), (float) inner.getRight());
+                    g.setColour (brand::textTertiary);
+                    g.setFont (brand::type::caption());
+                    g.drawText ("No markers -- press M to drop one",
+                                inner.reduced (4, 2), juce::Justification::topLeft, false);
                 }
-                else
+                for (const auto& mk : all)
                 {
-                    // Render the point sequence as a curve-aware
-                    // polyline. Each segment between point i and i+1
-                    // uses the curve type pinned on point i: Hold
-                    // draws a step, Linear honours per-point tension
-                    // for ease-in / ease-out, SCurve uses smoothstep,
-                    // legacy ExpUp / ExpDown use their power curves.
-                    // The renderer mirrors automationValueAt so what
-                    // the engineer sees matches what plays back.
-                    g.setColour (lineCol);
-                    juce::Path path;
-                    const int firstY = valueToY (points.front().value);
-                    path.startNewSubPath ((float) inner.getX(), (float) firstY);
-
-                    auto curveShape = [] (double tNorm, AudioEngine::AutomationCurve c,
-                                          float tension) -> double
+                    const int x = mapper.toX (mk.sampleOffset);
+                    if (x < inner.getX() || x > inner.getRight()) continue;
+                    g.setColour (brand::accentStatus);
+                    g.drawVerticalLine (x, (float) inner.getY(), (float) inner.getBottom());
+                    // Flag + name at the top.
+                    g.fillRect (juce::Rectangle<int> (x, inner.getY(), 6, 4));
+                    if (mk.name.isNotEmpty())
                     {
-                        switch (c)
-                        {
-                            case AudioEngine::AutomationCurve::Hold:    return 0.0;
-                            case AudioEngine::AutomationCurve::Linear:
-                            {
-                                const float tn = juce::jlimit (-1.0f, 1.0f, tension);
-                                if (std::abs (tn) < 1.0e-4f) return tNorm;
-                                const double exp = std::pow (2.0, (double) (-tn) * 4.0);
-                                return std::pow (tNorm, exp);
-                            }
-                            case AudioEngine::AutomationCurve::SCurve:
-                                return tNorm * tNorm * (3.0 - 2.0 * tNorm);
-                            case AudioEngine::AutomationCurve::ExpUp:
-                                return tNorm * tNorm;
-                            case AudioEngine::AutomationCurve::ExpDown:
-                                return 1.0 - (1.0 - tNorm) * (1.0 - tNorm);
-                        }
-                        return tNorm;
-                    };
-
-                    for (size_t i = 0; i < points.size(); ++i)
-                    {
-                        const auto& pt = points[i];
-                        const int x  = sampleToX (pt.samplePos);
-                        const int y  = valueToY  (pt.value);
-                        if (i == 0)
-                        {
-                            path.lineTo ((float) x, (float) y);
-                            continue;
-                        }
-                        const auto& prev = points[i - 1];
-                        const int xPrev = sampleToX (prev.samplePos);
-                        const int yPrev = valueToY  (prev.value);
-                        if (prev.curve == AudioEngine::AutomationCurve::Hold)
-                        {
-                            // Step: hold prev's y across the segment.
-                            path.lineTo ((float) x,    (float) yPrev);
-                            path.lineTo ((float) x,    (float) y);
-                            continue;
-                        }
-                        const int dx = juce::jmax (1, x - xPrev);
-                        // Step roughly every 4 px so curved segments
-                        // read smoothly without flooding the path
-                        // with sub-pixel verts on long segments.
-                        const int steps = juce::jlimit (4, 240, dx / 4);
-                        for (int s = 1; s <= steps; ++s)
-                        {
-                            const double tNorm = (double) s / (double) steps;
-                            const double shaped = curveShape (tNorm, prev.curve, prev.tension);
-                            const double v = (double) prev.value
-                                           + shaped * (double) (pt.value - prev.value);
-                            const int xx = xPrev + (int) std::round (tNorm * (double) (x - xPrev));
-                            const int yy = valueToY ((float) v);
-                            path.lineTo ((float) xx, (float) yy);
-                        }
-                    }
-                    path.lineTo ((float) inner.getRight(),
-                                 (float) valueToY (points.back().value));
-                    g.strokePath (path, juce::PathStrokeType (1.6f));
-
-                    // Tension drag-handles on non-Hold segments.
-                    // Painted as a small hollow circle at the curve's
-                    // actual midpoint Y so dragging it matches what
-                    // the eye sees. Skip segments that are too narrow
-                    // (< 18 px) to host a handle without colliding
-                    // with the endpoints.
-                    const juce::Colour handleCol = brand::lift (lineCol, 0.35f);
-                    for (size_t i = 1; i < points.size(); ++i)
-                    {
-                        const auto& prev = points[i - 1];
-                        if (prev.curve == AudioEngine::AutomationCurve::Hold) continue;
-                        if (chosenParam == AudioEngine::AutomationParam::Mute) continue;
-                        const auto& next = points[i];
-                        if (std::abs (next.value - prev.value) < 1.0e-4f) continue;
-                        const int xPrev = sampleToX (prev.samplePos);
-                        const int xNext = sampleToX (next.samplePos);
-                        if (xNext - xPrev < 18) continue;
-                        const double shapedMid = curveShape (0.5, prev.curve, prev.tension);
-                        const double vMid = (double) prev.value
-                                          + shapedMid * (double) (next.value - prev.value);
-                        const int xMid = (xPrev + xNext) / 2;
-                        const int yMid = valueToY ((float) vMid);
-                        g.setColour (handleCol.withAlpha (zynforge::brand::alpha::prominent));
-                        g.fillEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f);
-                        g.setColour (brand::bgPanel);
-                        g.drawEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f, 1.0f);
-                    }
-
-                    // Keyboard focus ring -- visible only when this row
-                    // is the active row AND a point is focused (set by
-                    // Left/Right arrow navigation in MainComponentKeys).
-                    int focusedIdx = -1;
-                    if (auto* parentPage = findParentComponentOfClass<EditPage>())
-                        if (parentPage->getActiveRowTrackIndex() == index)
-                            focusedIdx = parentPage->getFocusedPointIdx();
-
-                    for (size_t i = 0; i < points.size(); ++i)
-                    {
-                        const auto& pt = points[i];
-                        const int x = sampleToX (pt.samplePos);
-                        const int y = valueToY  (pt.value);
-                        g.setColour (lineCol);
-                        g.fillEllipse ((float) x - 3.5f, (float) y - 3.5f, 7.0f, 7.0f);
-                        g.setColour (brand::shadow::elev3());
-                        g.drawEllipse ((float) x - 3.5f, (float) y - 3.5f, 7.0f, 7.0f, 1.0f);
-                        if ((int) i == focusedIdx)
-                        {
-                            g.setColour (brand::accentPlay);
-                            g.drawEllipse ((float) x - 6.0f, (float) y - 6.0f,
-                                           12.0f, 12.0f, 1.5f);
-                        }
+                        g.setColour (brand::onSignal (brand::accentStatus));
+                        g.setFont (brand::type::micro());
+                        g.drawText (mk.name,
+                                    juce::Rectangle<int> (x + 4, inner.getY() + 1, 90, 11),
+                                    juce::Justification::topLeft, false);
                     }
                 }
-
-                // Value readout (e.g. "vol 0.0 dB") -- always pinned
-                // to the RIGHT EDGE OF THE VISIBLE VIEWPORT, not the
-                // right edge of the (possibly very wide) zoomed-in
-                // lane content. Without this clamp the label sits at
-                // the far right of the full content rect and scrolls
-                // off-screen at any zoom > 1×, leaving the engineer
-                // with no readout to dial automation against.
-                int labelRight = inner.getRight();
-                if (auto* vp = findParentComponentOfClass<juce::Viewport>())
-                {
-                    const int visRightInList = vp->getViewPositionX() + vp->getViewWidth();
-                    const int visRightInRow  = visRightInList - getX();
-                    if (visRightInRow < labelRight)
-                        labelRight = visRightInRow;
-                }
-                const int labelW = 110;
-                const int labelX = juce::jmax (inner.getX(),
-                                               labelRight - labelW);
-                juce::Rectangle<int> labelRect (labelX, inner.getY(),
-                                                 labelRight - labelX, inner.getHeight());
-                // Translucent backing pill so the value stays legible
-                // even when it overlaps automation curve / waveform.
-                g.setColour (brand::bgDeep.withAlpha (zynforge::brand::alpha::strong));
-                g.fillRoundedRectangle (labelRect.reduced (2, 2).toFloat(),
-                                        brand::radius::sm);
-                g.setColour (brand::textPrimary);
-                g.setFont (brand::type::uiLabel());
-                g.drawText (label,
-                            labelRect.reduced (6, 2),
-                            juce::Justification::topRight, false);
-
+                // Playhead overlay still applies below.
                 if (playheadX >= 0 && playheadX < wavePane.getWidth())
                 {
                     g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
@@ -2033,8 +1567,8 @@ namespace zynforge
             // ─── Pinned header, drawn LAST so it floats over the waveform at
             // the scrolled-left edge instead of scrolling off with the row.
             // ALWAYS painted -- never skipped by a lane mode's early return --
-            // so no lane mode can leave the automation line drawn over the
-            // header (name + combos).
+            // so no lane mode can leave its content drawn over the header
+            // (name + combos).
             paintHeader (g, headerOriginX(), headerBg, fillColour);
         }
 
@@ -2148,9 +1682,6 @@ namespace zynforge
             header.removeFromLeft (swatchW);
             header.removeFromLeft (4);
 
-            const bool isClickRow =
-                engine.getRecorder().getTrack (index).referenceMedia.load (std::memory_order_relaxed);
-
             // -------------- LEFT (name + buttons) --------------
             constexpr int leftBlockW = 140;
             auto leftBlock = header.removeFromLeft (leftBlockW).reduced (brand::space::xs, brand::space::xs);
@@ -2160,37 +1691,18 @@ namespace zynforge
             leftBlock.removeFromTop (3);
 
             const int btnH = 22;
-            if (isClickRow)
-            {
-                armButton .setVisible (false); armButton .setBounds ({});
-                monButton .setVisible (false); monButton .setBounds ({});
-                auto row = leftBlock.removeFromTop (btnH);
-                const int half = row.getWidth() / 2;
-                soloButton.setBounds (row.removeFromLeft (half).reduced (1));
-                muteButton.setBounds (row.reduced (1));
-            }
-            else
-            {
-                armButton.setVisible (true);
-                monButton.setVisible (true);
-                // Four buttons across one row, Pro Tools-style:
-                //   [ REC ][  I  ][  S  ][  M  ]
-                auto row = leftBlock.removeFromTop (btnH);
-                const int quarter = row.getWidth() / 4;
-                armButton .setBounds (row.removeFromLeft (quarter).reduced (1));
-                monButton .setBounds (row.removeFromLeft (quarter).reduced (1));
-                soloButton.setBounds (row.removeFromLeft (quarter).reduced (1));
-                muteButton.setBounds (row.reduced (1));
-            }
+            // Four buttons across one row, Pro Tools-style:
+            //   [ REC ][  I  ][  S  ][  M  ]
+            auto row = leftBlock.removeFromTop (btnH);
+            const int quarter = row.getWidth() / 4;
+            armButton .setBounds (row.removeFromLeft (quarter).reduced (1));
+            monButton .setBounds (row.removeFromLeft (quarter).reduced (1));
+            soloButton.setBounds (row.removeFromLeft (quarter).reduced (1));
+            muteButton.setBounds (row.reduced (1));
             leftBlock.removeFromTop (4);
 
             // The VIEW button (lane-mode picker) takes the bottom-left.
-            // On Click rows it's hidden -- metronome lane has no choice.
-            viewButton.setVisible (! isClickRow);
-            if (! isClickRow)
-                viewButton.setBounds (leftBlock.removeFromTop (18));
-            else
-                viewButton.setBounds ({});
+            viewButton.setBounds (leftBlock.removeFromTop (18));
 
             // -------------- MIDDLE (meter) --------------
             // Slim LedMeter -- a clean ~22 px bar (no dB-label gutter). Small
@@ -2232,9 +1744,7 @@ namespace zynforge
 
         // Single source of truth for the lane's sample<->x timeline span.
         // When a session is loaded it's the take length; otherwise a fixed
-        // default. paint(), laneCoordAt(), and every hit-test MUST use this
-        // same value -- a mismatch (e.g. paint at 60 s but hit-test at 300 s)
-        // makes freshly-placed automation points un-clickable.
+        // default. paint() and every hit-test MUST use this same value.
         juce::int64 laneTimelineSamples() const
         {
             const auto& player = engine.getPlayer();
@@ -2254,42 +1764,8 @@ namespace zynforge
                 ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
                 : 48000.0;
             // Shared notional span, matching EditTimeRuler + the edit-cursor
-            // click. This used to be 60 s while the ruler drew 300 s, so on an
-            // empty session (tempo / automation laid down before recording) a
-            // point placed under the ruler's 2:30 mark was stored at 0:30 and
-            // drawn at the far right of the lane -- exactly the paint-vs-
-            // hit-test mismatch the comment above warns about.
+            // click.
             return notionalEmptyLaneSamples (sr);
-        }
-
-        // Map an (x,y) inside the lane area to (samplePos, value) so
-        // mouse interactions can place / move automation points.
-        struct LaneCoord { juce::int64 samplePos; float value; };
-        LaneCoord laneCoordAt (juce::Point<int> p) const
-        {
-            const auto inner = getLocalBounds().withTrimmedLeft (headerW)
-                                                .reduced (brand::space::xs, brand::space::sm);
-            const juce::int64 total = laneTimelineSamples();
-            const double prop = (double) (p.x - inner.getX()) / juce::jmax (1, inner.getWidth());
-            const juce::int64 samplePos = (juce::int64) (juce::jlimit (0.0, 1.0, prop) * (double) total);
-
-            // Y → value depends on the lane this row shows.
-            float value = 0.0f;
-            const float yProp = juce::jlimit (0.0f, 1.0f,
-                                              (float) (p.y - inner.getY()) / juce::jmax (1, inner.getHeight()));
-            switch (currentLaneParam())
-            {
-                case AudioEngine::AutomationParam::Volume:
-                    value = (1.0f - yProp) * 72.0f - 60.0f; // 1..0 → -60..+12
-                    break;
-                case AudioEngine::AutomationParam::Pan:
-                    value = 1.0f - yProp * 2.0f;            // 1..0 → -1..+1 inverted
-                    break;
-                case AudioEngine::AutomationParam::Mute:
-                    value = yProp < 0.5f ? 1.0f : 0.0f;
-                    break;
-            }
-            return { samplePos, value };
         }
 
         void mouseDown (const juce::MouseEvent& e) override
@@ -2399,24 +1875,6 @@ namespace zynforge
                                 }
                             }
                         }
-                    }
-                }
-                // Automation lane right-click priority:
-                //   1. directly on a point handle  -> curve-type picker
-                //   2. with a loop region set      -> range copy / paste / clear
-                //   3. otherwise                   -> row-size menu
-                if (shownAutomationParam().has_value() && inWavePane (e.x))
-                {
-                    const int hitPoint = hitTestAutomationPoint (e.getPosition());
-                    if (hitPoint >= 0)
-                    {
-                        showCurvePickerMenu (hitPoint, e.getScreenPosition());
-                        return;
-                    }
-                    if (engine.getPlayer().hasLoopRegion())
-                    {
-                        showAutomationRangeMenu (e.getScreenPosition());
-                        return;
                     }
                 }
                 showSizeMenu (e.getScreenPosition());
@@ -2544,8 +2002,7 @@ namespace zynforge
                 }
             }
 
-            // Clip drag-edit. Only when we're on the waveform lane (so
-            // automation lanes still own their own drag semantics) and
+            // Clip drag-edit. Only when we're on the waveform lane and
             // the track actually has clips to grab.
             if (laneMode == LaneMode::Waveform && inWavePane (e.x))
             {
@@ -2722,126 +2179,6 @@ namespace zynforge
                                 return;
                             }
                         }
-                    }
-                }
-            }
-
-            // Lane-area interaction -- only when the toolbar is wired, this
-            // row isn't the Click track itself, and the row SHOWS an editable
-            // lane (Volume / Pan / Mute, or the shared Tempo lane). A Waveform,
-            // Markers or Click lane draws no points: a click there (a gap
-            // between clips, past a short take, an empty session) used to fall
-            // through to here and add, delete or grab a HIDDEN point -- or
-            // write the tempo map -- with whatever the toolbar last held.
-            const bool showsEditableLane = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
-                                        || laneMode == LaneMode::Mute   || laneMode == LaneMode::Tempo;
-            if (toolbar != nullptr && index != clickRowIdx && showsEditableLane && inWavePane (e.x))
-            {
-                const auto coord = laneCoordAt (e.getPosition());
-                const auto p     = currentLaneParam();
-
-                // Special case: the Tempo lane edits the engine's shared
-                // tempo map instead of the per-track point store.
-                if (laneMode == LaneMode::Tempo)
-                {
-                    const juce::int64 totalSamples = laneTimelineSamples();
-                    const juce::int64 tol = juce::jmax<juce::int64> (1,
-                        totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
-                    // Y → BPM (40..240 range mirrors the paint mapping).
-                    const auto inner2 = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
-                    const float yProp = juce::jlimit (0.0f, 1.0f,
-                        (float) (e.y - inner2.getY()) / juce::jmax (1, inner2.getHeight()));
-                    const float bpm = juce::jlimit (40.0f, 240.0f,
-                                                    40.0f + (1.0f - yProp) * 200.0f);
-
-                    // Through the host when there is one: undo, and a click
-                    // track rendered from this map follows it.
-                    auto tempoEdit = [this] (const char* label, std::function<void()> fn)
-                    {
-                        auto* page = findParentComponentOfClass<EditPage>();
-                        if (page != nullptr && page->tempoEditWrapper)
-                            page->tempoEditWrapper (label, std::move (fn));
-                        else
-                            fn();
-                    };
-                    switch (toolbar->getTool())
-                    {
-                        case AutomationToolbar::Tool::AddPoint:
-                            tempoEdit ("Add tempo point",
-                                       [this, coord, bpm] { engine.addTempoChange (coord.samplePos, bpm); });
-                            break;
-                        case AutomationToolbar::Tool::DeletePoint:
-                            tempoEdit ("Delete tempo point",
-                                       [this, coord, tol] { engine.removeTempoChangeNear (coord.samplePos, tol); });
-                            break;
-                        case AutomationToolbar::Tool::Select:
-                            // Tempo drag isn't wired yet -- Select on
-                            // the Tempo lane just records nothing.
-                            break;
-                    }
-                    repaint();
-                    return;
-                }
-
-                // Helper: route the engine call through the optional
-                // undo wrapper. Plain direct call when no wrapper is
-                // wired (degraded mode -- still functional, just no
-                // Cmd+Z for this edit).
-                auto editWrapped = [this] (const char* label, std::function<void()> fn)
-                {
-                    if (automationEditWrapper) automationEditWrapper (label, std::move (fn));
-                    else                       fn();
-                };
-
-                switch (toolbar->getTool())
-                {
-                    case AutomationToolbar::Tool::AddPoint:
-                        editWrapped ("Add automation point",
-                                     [this, p, coord]
-                                     { engine.addAutomationPoint (index, p, coord.samplePos, coord.value); });
-                        repaint();
-                        return;
-                    case AutomationToolbar::Tool::DeletePoint:
-                    {
-                        const juce::int64 totalSamples = laneTimelineSamples();
-                        const juce::int64 tol = juce::jmax<juce::int64> (1, totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
-                        editWrapped ("Delete automation point",
-                                     [this, p, coord, tol]
-                                     { engine.removeAutomationPointNear (index, p, coord.samplePos, tol); });
-                        repaint();
-                        return;
-                    }
-                    case AutomationToolbar::Tool::Select:
-                    {
-                        // Tension handle wins over point selection so
-                        // the engineer can bend a segment without
-                        // accidentally re-grabbing one of its endpoints.
-                        const int segIdx = hitTestTensionHandle (e.getPosition());
-                        if (segIdx >= 0)
-                        {
-                            draggingTensionSegIdx = segIdx;
-                            if (automationDragBegin) automationDragBegin();
-                            return;
-                        }
-                        // Try to grab the nearest point -- drag will move
-                        // it if mouseDrag fires after this.
-                        const auto& lane = engine.getAutomation (index, p);
-                        const juce::int64 totalSamples = laneTimelineSamples();
-                        const juce::int64 tol = juce::jmax<juce::int64> (1, totalSamples / juce::jmax (1, getWidth() - headerW) * 6);
-                        draggingPointIdx = -1;
-                        for (size_t i = 0; i < lane.size(); ++i)
-                        {
-                            if (std::abs (lane[i].samplePos - coord.samplePos) < tol)
-                            {
-                                draggingPointIdx = (int) i;
-                                // Open an automation transaction so the
-                                // entire drag becomes one undo step.
-                                // mouseUp closes it via automationDragEnd.
-                                if (automationDragBegin) automationDragBegin();
-                                return;
-                            }
-                        }
-                        return;
                     }
                 }
             }
@@ -3106,76 +2443,6 @@ namespace zynforge
                 }
                 return;
             }
-
-            // Tension-handle drag: translate the cursor's y into a
-            // tension value for the segment starting at draggingTensionSegIdx
-            // and push it through the engine. The segment is forced
-            // to Linear by setAutomationTensionAt (Hold / SCurve
-            // would ignore tension), giving the engineer a
-            // continuous-shape escape hatch from any preset.
-            if (toolbar != nullptr
-                && toolbar->getTool() == AutomationToolbar::Tool::Select
-                && draggingTensionSegIdx >= 0)
-            {
-                const auto p = currentLaneParam();
-                if (p == AudioEngine::AutomationParam::Mute) return;
-                const auto& lane = engine.getAutomation (index, p);
-                if (draggingTensionSegIdx + 1 < (int) lane.size())
-                {
-                    const auto pointSample = lane[(size_t) draggingTensionSegIdx].samplePos;
-                    float t = tensionFromHandleY (draggingTensionSegIdx, e.y);
-                    // Shift snaps to a 0.25 grid so matched curves
-                    // between adjacent segments are easy to dial in.
-                    if (e.mods.isShiftDown())
-                        t = std::round (t * 4.0f) / 4.0f;
-                    engine.setAutomationTensionAt (index, p, pointSample, 0, t);
-                    repaint();
-                }
-                return;
-            }
-
-            // Otherwise: drag a held automation point with the Select tool.
-            if (toolbar != nullptr
-                && toolbar->getTool() == AutomationToolbar::Tool::Select
-                && draggingPointIdx >= 0)
-            {
-                const auto p     = currentLaneParam();
-                const auto coord = laneCoordAt (e.getPosition());
-                // Easiest path: re-add with the new (samplePos, value);
-                // addAutomationPoint replaces inside its tolerance, so
-                // we just delete the old + add new to allow position to
-                // move freely.
-                const auto& lane = engine.getAutomation (index, p);
-                if (draggingPointIdx < (int) lane.size())
-                {
-                    auto moved = lane[(size_t) draggingPointIdx];
-                    engine.removeAutomationPointNear (index, p, moved.samplePos, 1);
-                    // Land on a FREE sample. pasteAutomationRange clears
-                    // [target, target] before inserting, and a neighbour placed
-                    // at this zoom sits on the same pixel grid laneCoordAt
-                    // produces -- so dropping the point onto it erased it.
-                    juce::int64 target = coord.samplePos;
-                    const auto& rest = engine.getAutomation (index, p);
-                    while (std::any_of (rest.begin(), rest.end(),
-                                        [target] (const auto& pt) { return pt.samplePos == target; }))
-                        ++target;
-                    moved.samplePos = 0;
-                    moved.value = coord.value;
-                    engine.pasteAutomationRange (index, p, target, { moved });
-
-                    // RE-RESOLVE the index. The lane is kept sorted by
-                    // samplePos, so the moment the dragged point crosses a
-                    // neighbour its index changes -- and the stale
-                    // draggingPointIdx then referred to a DIFFERENT point, which
-                    // the next drag event deleted and dragged to the cursor.
-                    // Dragging one point across three used to consume all three.
-                    // The point now sits alone at `target`, so match it exactly.
-                    const auto& after = engine.getAutomation (index, p);
-                    for (int i = 0; i < (int) after.size(); ++i)
-                        if (after[(size_t) i].samplePos == target) { draggingPointIdx = i; break; }
-                    repaint();
-                }
-            }
         }
 
         void mouseUp (const juce::MouseEvent& e) override
@@ -3184,13 +2451,6 @@ namespace zynforge
             const auto* lockPage = findParentComponentOfClass<EditPage>();
             const bool timelineLocked = lockPage != nullptr && lockPage->isTimelineReadOnly();
 
-            // Close the automation drag transaction (if one is open).
-            // mouseDown on the Select tool opened it when a point was
-            // grabbed; this closes it on mouseUp regardless of whether
-            // any mouseDrag happened in between (a click-without-drag
-            // produces a no-op undo step, which is acceptable).
-            const bool wasDraggingPoint   = (draggingPointIdx >= 0);
-            const bool wasDraggingTension = (draggingTensionSegIdx >= 0);
             const bool wasDraggingClip    = (draggingClipIdx >= 0 || draggingXfadeAIdx >= 0);
             // A click that armed a clip-body grab but never dragged = a
             // selection click. Capture the clip + whether the mouse moved
@@ -3199,8 +2459,6 @@ namespace zynforge
             const bool wasClick       = (e.getDistanceFromDragStart() < 5);
             dragging         = false;
             resizeAllDrag    = false;
-            draggingPointIdx = -1;
-            draggingTensionSegIdx = -1;
             draggingClipIdx  = -1;
             dragPeers.clear();
             draggingClipMode = ClipDrag::TrimLeft;
@@ -3208,9 +2466,6 @@ namespace zynforge
             draggingXfadeBIdx = -1;
             lastDragSamples  = 0;
             dragTimelineSamples = 0;
-            if ((wasDraggingPoint || wasDraggingTension) && automationDragEnd)
-                automationDragEnd (wasDraggingTension ? "Bend automation curve"
-                                                      : "Move automation point");
             // Commit the clip-edit drag as a single Cmd+Z step (trim /
             // move / fade / crossfade). No-ops if nothing actually moved.
             if (wasDraggingClip)
@@ -3602,26 +2857,6 @@ namespace zynforge
             });
         }
 
-        // Per-row clipboard for the automation range copy. Static so
-        // it survives across rows -- Copy on row N then Paste on row M
-        // moves the points between strips, Pro Tools-style.
-        static std::vector<AudioEngine::AutomationPoint>& sharedClipboard()
-        {
-            static std::vector<AudioEngine::AutomationPoint> clip;
-            return clip;
-        }
-        // What those points mean: a dB value pasted into a Pan lane pins it hard
-        // left or right, so they paste only into the kind of lane they left.
-        static AudioEngine::AutomationParam& sharedClipboardParam()
-        {
-            static AudioEngine::AutomationParam param { AudioEngine::AutomationParam::Volume };
-            return param;
-        }
-
-        // Returns the index of the automation point under the given
-        // (row-local) position, or -1 if none. Hit tolerance is 7 px
-        // around the painted handle (which is 7 px wide), so a sloppy
-        // right-click still lands the menu.
         // Returns the (outgoing, incoming) clip indices of the crossfade
         // whose midpoint handle is under the cursor, or { -1, -1 }. Mirrors
         // the paint code's overlap detection. 6 px tolerance around
@@ -3654,314 +2889,6 @@ namespace zynforge
             return { -1, -1 };
         }
 
-        int hitTestAutomationPoint (juce::Point<int> pos) const
-        {
-            if (! shownAutomationParam().has_value()) return -1;
-            const auto& lane = engine.getAutomation (index, currentLaneParam());
-            if (lane.empty()) return -1;
-
-            // Must match paint()'s span exactly (was sr*300 -> 5x off paint's
-            // 60 s default, which made points un-clickable on a not-yet-loaded
-            // session).
-            const juce::int64 totalSamples = laneTimelineSamples();
-            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
-            auto sampleToX = [&] (juce::int64 sp) -> int
-            { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
-
-            constexpr int kHitR = 7;
-            for (int i = 0; i < (int) lane.size(); ++i)
-            {
-                const int px = sampleToX (lane[(size_t) i].samplePos);
-                if (std::abs (pos.x - px) <= kHitR)
-                    return i;
-            }
-            return -1;
-        }
-
-        // Resolves the lane parameter that's CURRENTLY painted on
-        // this row -- its own VIEW (laneMode). paint, the readout, every
-        // hit-test, the drags and the right-click menus all read it, so
-        // they never disagree. It used to prefer the toolbar's param,
-        // which a VIEW pick on ANOTHER row changes silently: this row then
-        // drew Volume points under a "pan C" readout while its menus
-        // edited Pan. Falls through to Volume for Click / Tempo / unknown.
-        AudioEngine::AutomationParam currentLaneParam() const
-        {
-            switch (laneMode)
-            {
-                case LaneMode::Pan:  return AudioEngine::AutomationParam::Pan;
-                case LaneMode::Mute: return AudioEngine::AutomationParam::Mute;
-                default:             return AudioEngine::AutomationParam::Volume;
-            }
-        }
-
-    public:
-        // The automation lane this row draws points for, if it draws any.
-        // currentLaneParam() falls through to Volume for every other lane, so
-        // anything that edits points must ask here first: a Click or Tempo
-        // lane, a Waveform lane and the click strip show none.
-        std::optional<AudioEngine::AutomationParam> shownAutomationParam() const
-        {
-            const bool showsPoints = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
-                                  || laneMode == LaneMode::Mute;
-            if (! showsPoints || index == clickRowIdx) return {};
-            return currentLaneParam();
-        }
-
-    private:
-        // Returns the index of the SEGMENT (i.e. the prev point in
-        // the lane) whose tension handle is under the cursor, or -1.
-        // Mirrors the paint code: skip Hold + flat segments + ones
-        // narrower than 18 px. Tolerance is 6 px around the handle.
-        int hitTestTensionHandle (juce::Point<int> pos) const
-        {
-            if (! shownAutomationParam().has_value()) return -1;
-            const auto engineParam = currentLaneParam();
-            if (engineParam == AudioEngine::AutomationParam::Mute) return -1;
-            const auto& lane = engine.getAutomation (index, engineParam);
-            if (lane.size() < 2) return -1;
-
-            // Same shared span as paint() / hitTestAutomationPoint (was sr*300).
-            const juce::int64 totalSamples = laneTimelineSamples();
-            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
-            auto sampleToX = [&] (juce::int64 sp) -> int
-            { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
-            auto valueToY = [&] (float v) -> int
-            {
-                float yp = 0.5f;
-                switch (engineParam)
-                {
-                    case AudioEngine::AutomationParam::Volume:
-                        yp = 1.0f - juce::jlimit (0.0f, 1.0f, (v + 60.0f) / 72.0f);
-                        break;
-                    case AudioEngine::AutomationParam::Pan:
-                        yp = (1.0f - juce::jlimit (-1.0f, 1.0f, v)) * 0.5f;
-                        break;
-                    case AudioEngine::AutomationParam::Mute:
-                        yp = v > 0.5f ? 0.05f : 0.95f;
-                        break;
-                }
-                return inner.getY() + juce::roundToInt (yp * inner.getHeight());
-            };
-            auto curveShape = [] (double tNorm, AudioEngine::AutomationCurve c,
-                                  float tension) -> double
-            {
-                switch (c)
-                {
-                    case AudioEngine::AutomationCurve::Hold:    return 0.0;
-                    case AudioEngine::AutomationCurve::Linear:
-                    {
-                        const float tn = juce::jlimit (-1.0f, 1.0f, tension);
-                        if (std::abs (tn) < 1.0e-4f) return tNorm;
-                        const double exp = std::pow (2.0, (double) (-tn) * 4.0);
-                        return std::pow (tNorm, exp);
-                    }
-                    case AudioEngine::AutomationCurve::SCurve:
-                        return tNorm * tNorm * (3.0 - 2.0 * tNorm);
-                    case AudioEngine::AutomationCurve::ExpUp:
-                        return tNorm * tNorm;
-                    case AudioEngine::AutomationCurve::ExpDown:
-                        return 1.0 - (1.0 - tNorm) * (1.0 - tNorm);
-                }
-                return tNorm;
-            };
-
-            constexpr int kHitR = 6;
-            for (size_t i = 1; i < lane.size(); ++i)
-            {
-                const auto& prev = lane[i - 1];
-                if (prev.curve == AudioEngine::AutomationCurve::Hold) continue;
-                const auto& next = lane[i];
-                if (std::abs (next.value - prev.value) < 1.0e-4f) continue;
-                const int xPrev = sampleToX (prev.samplePos);
-                const int xNext = sampleToX (next.samplePos);
-                if (xNext - xPrev < 18) continue;
-                const double shapedMid = curveShape (0.5, prev.curve, prev.tension);
-                const double vMid = (double) prev.value
-                                  + shapedMid * (double) (next.value - prev.value);
-                const int xMid = (xPrev + xNext) / 2;
-                const int yMid = valueToY ((float) vMid);
-                if (std::abs (pos.x - xMid) <= kHitR
-                    && std::abs (pos.y - yMid) <= kHitR)
-                    return (int) (i - 1);
-            }
-            return -1;
-        }
-
-        // Maps a handle's y-position in the lane to the tension that
-        // would put the shaped midpoint at that y. Used by mouseDrag
-        // on a tension handle. Returns +1 / -1 if the handle is
-        // pinned at the endpoints (avoids log(0)).
-        float tensionFromHandleY (int pointIdx, int yPx) const
-        {
-            const auto engineParam = currentLaneParam();
-            const auto& lane = engine.getAutomation (index, engineParam);
-            if (pointIdx < 0 || pointIdx + 1 >= (int) lane.size()) return 0.0f;
-            const auto& prev = lane[(size_t) pointIdx];
-            const auto& next = lane[(size_t) pointIdx + 1];
-            if (std::abs (next.value - prev.value) < 1.0e-4f) return 0.0f;
-
-            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
-            auto yToValue = [&] (int y) -> float
-            {
-                const float yp = juce::jlimit (0.0f, 1.0f,
-                                               (float) (y - inner.getY()) / (float) juce::jmax (1, inner.getHeight()));
-                if (engineParam == AudioEngine::AutomationParam::Pan)
-                    return juce::jlimit (-1.0f, 1.0f, 1.0f - 2.0f * yp);
-                return juce::jlimit (-60.0f, 12.0f, (1.0f - yp) * 72.0f - 60.0f);
-            };
-            const float vMid = yToValue (yPx);
-            float shaped = (vMid - prev.value) / (next.value - prev.value);
-            shaped = juce::jlimit (0.005f, 0.995f, shaped);
-            const double exp = std::log ((double) shaped) / std::log (0.5);
-            const double tension = -std::log2 (exp) / 4.0;
-            return juce::jlimit (-1.0f, 1.0f, (float) tension);
-        }
-
-        void showCurvePickerMenu (int pointIdx, juce::Point<int> screenPos)
-        {
-            const auto engineParam = currentLaneParam();
-            const auto& lane = engine.getAutomation (index, engineParam);
-            if (pointIdx < 0 || pointIdx >= (int) lane.size()) return;
-            const auto current = lane[(size_t) pointIdx].curve;
-            const auto pointSample = lane[(size_t) pointIdx].samplePos;
-
-            juce::PopupMenu m;
-            using C = AudioEngine::AutomationCurve;
-            // Mute points are forced to Hold -- show the menu greyed
-            // for Mute so the engineer sees the limitation explicitly.
-            const bool isMute = (engineParam == AudioEngine::AutomationParam::Mute);
-            auto add = [&] (int id, const juce::String& label, C c)
-            {
-                m.addItem (id, label, ! isMute, c == current);
-            };
-            add (701, "Hold (step)",         C::Hold);
-            add (702, "Linear",              C::Linear);
-            add (703, "S-Curve",             C::SCurve);
-            add (704, "Exponential (ease in)",  C::ExpUp);
-            add (705, "Exponential (ease out)", C::ExpDown);
-            m.addSeparator();
-            // Reset bend = clear the drag-handle tension back to 0
-            // without changing the shape preset. Disabled when the
-            // segment already has no bend (avoids a noop undo step).
-            const float curTension = lane[(size_t) pointIdx].tension;
-            const bool  hasBend    = std::abs (curTension) > 1.0e-3f;
-            m.addItem (706, "Reset bend (handle)", hasBend && ! isMute, false);
-
-            juce::Component::SafePointer<TrackRow> safe (this);
-            m.showMenuAsync (juce::PopupMenu::Options()
-                                 .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
-                [safe, engineParam, pointSample] (int chosen)
-                {
-                    if (safe == nullptr || chosen == 0) return;
-                    if (chosen == 706)
-                    {
-                        auto editFn = [eng = &safe->engine, idx = safe->index,
-                                       engineParam, pointSample]
-                                      { eng->setAutomationTensionAt (idx, engineParam,
-                                                                      pointSample, 0, 0.0f); };
-                        if (safe->automationEditWrapper)
-                            safe->automationEditWrapper ("Reset automation bend",
-                                                          std::move (editFn));
-                        else
-                            editFn();
-                        safe->repaint();
-                        return;
-                    }
-                    C newCurve = C::Linear;
-                    switch (chosen)
-                    {
-                        case 701: newCurve = C::Hold;     break;
-                        case 702: newCurve = C::Linear;   break;
-                        case 703: newCurve = C::SCurve;   break;
-                        case 704: newCurve = C::ExpUp;    break;
-                        case 705: newCurve = C::ExpDown;  break;
-                        default: return;
-                    }
-                    auto editFn = [eng = &safe->engine, idx = safe->index,
-                                   engineParam, pointSample, newCurve]
-                                  { eng->setAutomationCurveAt (idx, engineParam,
-                                                                pointSample, 0, newCurve); };
-                    if (safe->automationEditWrapper)
-                        safe->automationEditWrapper ("Change automation curve",
-                                                      std::move (editFn));
-                    else
-                        editFn();
-                    safe->repaint();
-                });
-        }
-
-        void showAutomationRangeMenu (juce::Point<int> screenPos)
-        {
-            const auto& player = engine.getPlayer();
-            if (! player.hasLoopRegion()) return;
-            const auto inSample  = player.getLoopStart();
-            const auto outSample = player.getLoopEnd();
-
-            const auto engineParam = currentLaneParam();
-
-            juce::PopupMenu m;
-            const auto rangePoints = engine.copyAutomationRange (index, engineParam,
-                                                                  inSample, outSample);
-            m.addItem (601, "Copy automation in range ("
-                            + juce::String ((int) rangePoints.size()) + " points)",
-                       ! rangePoints.empty());
-            m.addItem (602, canPasteAutomation (engineParam) || sharedClipboard().empty()
-                                ? juce::String ("Paste automation at cursor")
-                                : "Paste automation (copied from a different lane)",
-                       canPasteAutomation (engineParam));
-            m.addSeparator();
-            m.addItem (603, "Clear automation in range",
-                       ! rangePoints.empty());
-
-            juce::Component::SafePointer<TrackRow> safe (this);
-            m.showMenuAsync (juce::PopupMenu::Options()
-                                 .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
-                [safe, engineParam, inSample, outSample] (int chosen)
-                {
-                    if (safe != nullptr)
-                        safe->applyAutomationRangeChoice (chosen, engineParam, inSample, outSample);
-                });
-        }
-
-        bool canPasteAutomation (AudioEngine::AutomationParam lane) const
-        {
-            return ! sharedClipboard().empty() && sharedClipboardParam() == lane;
-        }
-
-    public:
-        // Apply one item of the automation range menu (601 copy, 602 paste,
-        // 603 clear). Split out of the menu callback as a test seam.
-        void applyAutomationRangeChoice (int chosen, AudioEngine::AutomationParam engineParam,
-                                         juce::int64 inSample, juce::int64 outSample)
-        {
-            auto& eng = engine;
-            auto edit = [this] (const char* label, std::function<void()> fn)
-            {
-                if (automationEditWrapper) automationEditWrapper (label, std::move (fn));
-                else                       fn();
-                repaint();
-            };
-            if (chosen == 601)
-            {
-                sharedClipboard() = eng.copyAutomationRange (index, engineParam, inSample, outSample);
-                sharedClipboardParam() = engineParam;
-            }
-            else if (chosen == 602)
-            {
-                const auto anchor = eng.getEditCursorSample();
-                if (anchor < 0 || ! canPasteAutomation (engineParam)) return;
-                edit ("Paste automation", [&eng, idx = index, engineParam, anchor]
-                      { eng.pasteAutomationRange (idx, engineParam, anchor, sharedClipboard()); });
-            }
-            else if (chosen == 603)
-            {
-                edit ("Clear automation range", [&eng, idx = index, engineParam, inSample, outSample]
-                      { eng.clearAutomationRange (idx, engineParam, inSample, outSample); });
-            }
-        }
-
-    private:
         void showSizeMenu (juce::Point<int> screenPos)
         {
             if (menuOpen) return;   // re-entrancy guard
@@ -4050,9 +2977,8 @@ namespace zynforge
         }
 
     public:
-        // What this row draws in the lane area (matches the toolbar's
-        // Param, or the row's own VIEW choice when no toolbar is wired).
-        enum class LaneMode { Waveform, Markers, Volume, Mute, Pan, Click, Tempo };
+        // What this row draws in the lane area: its own VIEW choice.
+        enum class LaneMode { Waveform, Markers };
         LaneMode laneMode { LaneMode::Waveform };
 
     private:

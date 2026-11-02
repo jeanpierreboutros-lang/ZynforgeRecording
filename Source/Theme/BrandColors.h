@@ -181,10 +181,9 @@ namespace zynforge::brand
         //   0.75  -- EditPage selection-band edge contrast (selector
         //            tool drag-region). Strong stroke without being
         //            opaque -- still lets the waveform show through
-        //   0.78  -- EditPage automation value-label backing pill. One
-        //            notch below prominent (0.85): opaque enough to keep
-        //            the dB readout legible over a busy automation curve
-        //            / waveform, but still hints at the lane underneath
+        //   0.78  -- one notch below prominent (0.85): opaque enough to
+        //            keep a readout legible over a waveform, but still
+        //            hints at the lane underneath
     }
 
     // ── Elevation / shadow scale ──────────────────────────────────────

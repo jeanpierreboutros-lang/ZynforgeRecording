@@ -180,13 +180,6 @@ void MainComponent::resized()
         ? row1.removeFromLeft (juce::jmin (124, row1.getWidth() / 2)).reduced (0, brand::space::xs)
         : juce::Rectangle<int>());
     if (twinStatusLabel.isVisible()) row1.removeFromLeft (brand::space::sm);
-    const int optionalWidth = juce::jmax (0, row1.getWidth() - 220);
-    int pillWidth = optionalWidth;
-    if (midiStatusLabel.getText().isNotEmpty() && danteLabel.getText().isNotEmpty())
-        pillWidth /= 2;
-    pillWidth = juce::jmin (140, pillWidth);
-    midiStatusLabel.setBounds (midiStatusLabel.getText().isNotEmpty()
-        ? row1.removeFromLeft (pillWidth).reduced (0, 4) : juce::Rectangle<int>());
     danteLabel.setBounds (danteLabel.getText().isNotEmpty()
         ? row1.removeFromLeft (juce::jmin (140, juce::jmax (0, row1.getWidth() - 220))).reduced (0, 4)
         : juce::Rectangle<int>());
@@ -202,8 +195,6 @@ void MainComponent::resized()
 
 
     patchButton    .setBounds (row2.removeFromRight (90).reduced (0, 2));
-    row2.removeFromRight (brand::space::md);
-    vcaToggleButton.setBounds (row2.removeFromRight (68).reduced (0, 2));
     row2.removeFromRight (brand::space::md);
     vscButton      .setBounds (row2.removeFromRight (70).reduced (0, 2));
     row2.removeFromRight (brand::space::md);
@@ -245,8 +236,6 @@ void MainComponent::resized()
     bigClock.setBounds (clockRow);
 
     auto bar = r.removeFromTop (36).reduced (12, 2);
-    tempoBar  .setBounds (bar.removeFromRight (348));   // room for TAP + full CLICK label
-    bar.removeFromRight (brand::space::md);
     nextCueLabel.setBounds (bar.removeFromRight (200).reduced (brand::space::xs, brand::space::xs));
     bar.removeFromRight (brand::space::sm);
     setlistBar.setBounds (bar);
@@ -285,48 +274,23 @@ void MainComponent::resized()
             auto masterArea = viewportArea.removeFromRight (masterW);
             viewportArea.removeFromRight (brand::space::md);
             masterStrip->setBounds (masterArea);
-
-            if (vcaPanel != nullptr && showVcaPanel)
-            {
-                auto vcaArea = viewportArea.removeFromRight (540);
-                viewportArea.removeFromRight (brand::space::md);
-                vcaPanel->setBounds (vcaArea);
-                vcaPanel->setVisible (true);
-            }
-            else if (vcaPanel != nullptr)
-            {
-                vcaPanel->setBounds ({});
-                vcaPanel->setVisible (false);
-            }
         }
         else
         {
             masterStrip->setBounds ({});
-            if (vcaPanel != nullptr) { vcaPanel->setBounds ({}); vcaPanel->setVisible (false); }
         }
     }
 
     auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;
-    if (automationToolbar->isVisible())
+    if (editToolsBar != nullptr && editToolsBar->isVisible())
     {
         auto topRow = viewportArea.removeFromTop (44).reduced (2, 0);
-        if (editToolsBar != nullptr && editToolsBar->isVisible())
-        {
-            const int toolsW = 394;
-            editToolsBar->setBounds (topRow.removeFromRight (toolsW));
-            topRow.removeFromRight (brand::space::sm);
-        }
-        else if (editToolsBar != nullptr)
-        {
-            editToolsBar->setBounds ({});
-        }
-        automationToolbar->setBounds (topRow);
+        editToolsBar->setBounds (topRow.removeFromRight (394));
         viewportArea.removeFromTop (brand::space::xs);
     }
-    else
+    else if (editToolsBar != nullptr)
     {
-        automationToolbar->setBounds ({});
-        if (editToolsBar != nullptr) editToolsBar->setBounds ({});
+        editToolsBar->setBounds ({});
     }
 
     stripsViewport.setBounds (viewportArea);

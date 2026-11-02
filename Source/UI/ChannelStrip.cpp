@@ -354,14 +354,9 @@ namespace zynforge
         if (muteButton.getToggleState() != muted)  { muteButton.setToggleState (muted,  juce::dontSendNotification); dirty = true; }
         if (soloButton.getToggleState() != soloed) { soloButton.setToggleState (soloed, juce::dontSendNotification); dirty = true; }
 
-        // Fader + pan. During playback the display hooks return the
-        // AUTOMATED value at the playhead so the fader / pan track the EDIT
-        // curve (views stay linked); when stopped (or unhooked) they return
-        // the stored manual value.
-        float gainDb = state.gainDb.load (std::memory_order_relaxed);
-        if (displayGainDb) gainDb = displayGainDb (gainDb);
-        float panL = state.pan.load (std::memory_order_relaxed);
-        if (displayPanL) panL = displayPanL (panL);
+        // Fader + pan.
+        const float gainDb = state.gainDb.load (std::memory_order_relaxed);
+        const float panL = state.pan.load (std::memory_order_relaxed);
         if (std::abs ((float) gainFader.getValue() - gainDb) > 0.05f)
         {
             gainFader.setValue (gainDb, juce::dontSendNotification);
@@ -374,8 +369,7 @@ namespace zynforge
         }
         if (pairState != nullptr)
         {
-            float panR = pairState->pan.load (std::memory_order_relaxed);
-            if (displayPanR) panR = displayPanR (panR);
+            const float panR = pairState->pan.load (std::memory_order_relaxed);
             if (std::abs ((float) panSliderR.getValue() - panR) > 0.01f)
             {
                 panSliderR.setValue (panR, juce::dontSendNotification);
@@ -385,7 +379,7 @@ namespace zynforge
 
         // Colour mirror -- only push to LookAndFeel if the resolved
         // colour ARGB actually changed (engineer recoloured the strip,
-        // VCA group was reassigned, etc.). JUCE's setColour calls
+        // etc.). JUCE's setColour calls
         // mark the slider as dirty whether or not the value changed,
         // so guarding here prevents a 10 Hz repaint storm.
         const auto resolved = getResolvedColour();
@@ -403,11 +397,9 @@ namespace zynforge
             dirty = true;
         }
 
-        // If a VCA / edit-group / bus badge just appeared or disappeared,
+        // If an edit-group badge just appeared or disappeared,
         // re-lay-out so the name label reclaims or yields the badge's space.
-        const int badgeNow = (state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                           || state.editGroup.load (std::memory_order_relaxed) >= 0
-                           || state.isBus    .load (std::memory_order_relaxed)) ? 1 : 0;
+        const int badgeNow = state.editGroup.load (std::memory_order_relaxed) >= 0 ? 1 : 0;
         if (badgeNow != lastBadgeShown)
         {
             lastBadgeShown = badgeNow;
@@ -528,21 +520,6 @@ namespace zynforge
         const bool outMuted = state.outputMuted.load (std::memory_order_relaxed);
         menu.addItem (6, outMuted ? "Unmute physical output" : "Mute physical output (FOH only)",
                       true, outMuted);
-        menu.addSeparator();
-        menu.addItem (20, autoSafeOn ? "Automation Safe -- ON (writes blocked)"
-                                      : "Automation Safe -- OFF",
-                      true, autoSafeOn);
-
-        // VCA assignment submenu. Engineer picks a bus index 1..8 or
-        // "None" to detach. Persisted on engine; mute / gain inherited
-        // from the bus.
-        juce::PopupMenu vcaMenu;
-        const int curVca = state.vcaGroup.load (std::memory_order_relaxed);
-        vcaMenu.addItem (700, "None", true, curVca < 0);
-        for (int i = 0; i < 8; ++i)
-            vcaMenu.addItem (701 + i, "VCA " + juce::String (i + 1),
-                             true, curVca == i);
-        menu.addSubMenu (isStereo ? "Assign to VCA (L+R)" : "Assign to VCA", vcaMenu);
 
         // Edit Group submenu. Group ids 1..8 (1-based for menu
         // readability; engine stores raw int). -1 = unlinked.
@@ -556,29 +533,6 @@ namespace zynforge
             egMenu.addItem (901 + i, "Edit Group " + juce::String (i + 1),
                             true, curEg == i);
         menu.addSubMenu (isStereo ? "Assign to Edit Group (L+R)" : "Assign to Edit Group", egMenu);
-
-        // Aux send to a bus track (slot 0 only in the menu -- multi-send
-        // gets its own dialog later). Hidden for bus tracks themselves
-        // since sending a bus into another bus would feedback loop.
-        if (! state.isBus.load (std::memory_order_relaxed))
-        {
-            juce::PopupMenu sendMenu;
-            const int currentTarget = state.sends[0].targetBus.load (std::memory_order_relaxed);
-            sendMenu.addItem (800, "None", true, currentTarget < 0);
-            if (getBusList)
-            {
-                int id = 801;
-                for (const auto& b : getBusList())
-                {
-                    sendMenu.addItem (id++, b.second, true, b.first == currentTarget);
-                }
-            }
-            else
-            {
-                sendMenu.addItem (-1, "(no bus tracks - create one via +CH > Bus)", false);
-            }
-            menu.addSubMenu ("Send to bus", sendMenu);
-        }
 
         menu.showMenuAsync (juce::PopupMenu::Options(),
                             [this, safe = juce::Component::SafePointer<ChannelStrip> (this)] (int chosen)
@@ -622,48 +576,15 @@ namespace zynforge
                          }
                          break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
-                case 20:
-                    {
-                        const bool next = ! autoSafeOn;
-                        // Optimistic local update so the LED flips
-                        // before the host polls back; host will re-
-                        // push via setAutomationLed and that's a
-                        // no-op when the state already matches.
-                        autoSafeOn = next;
-                        repaint();
-                        if (onAutomationSafeChanged) onAutomationSafeChanged (next);
-                    }
-                    break;
                 default:
-                    // VCA assignment: 700 = None, 701..708 = VCA 1..8.
-                    if (chosen == 700 || (chosen >= 701 && chosen <= 708))
-                    {
-                        const int v = (chosen == 700) ? -1 : (chosen - 701);
-                        state.vcaGroup.store (v, std::memory_order_relaxed);
-                        if (pairState)
-                            pairState->vcaGroup.store (v, std::memory_order_relaxed);
-                        if (onVcaGroupChanged) onVcaGroupChanged (v);
-                    }
                     // Edit group assignment: 900 = None, 901..908 = group 0..7.
-                    else if (chosen == 900 || (chosen >= 901 && chosen <= 908))
+                    if (chosen == 900 || (chosen >= 901 && chosen <= 908))
                     {
                         const int g = (chosen == 900) ? -1 : (chosen - 901);
                         state.editGroup.store (g, std::memory_order_relaxed);
                         if (pairState)
                             pairState->editGroup.store (g, std::memory_order_relaxed);
                         if (onEditGroupChanged) onEditGroupChanged (g);
-                    }
-                    // Aux send target: 800 = None, 801..899 = bus index 0..N-1.
-                    else if (chosen == 800 || (chosen >= 801 && chosen < 900))
-                    {
-                        int target = -1;
-                        if (chosen >= 801 && getBusList)
-                        {
-                            const auto list = getBusList();
-                            const int idx = chosen - 801;
-                            if (idx < (int) list.size()) target = list[(size_t) idx].first;
-                        }
-                        if (onSendTargetChanged) onSendTargetChanged (target);
                     }
                     break;
             }
@@ -1026,7 +947,7 @@ namespace zynforge
     void ChannelStrip::paint (juce::Graphics& g)
     {
         // Condemned strip (invalidate() called, TrackState about to be / already
-        // freed) -- paint reads state.armed / vcaGroup / colourARGB etc, so don't
+        // freed) -- paint reads state.armed / colourARGB etc, so don't
         // touch it. detach() only made the meter paint safe; this covers
         // the strip's own paint on an external repaint (hover) in the pre-rebuild
         // window. Just fill the body so it isn't a visual hole.
@@ -1069,10 +990,8 @@ namespace zynforge
             steel::drawSpine       (g, r, armedNow, armPulse); // ① structural orange spine (pulses when armed)
             if (getWidth() >= 78)                               // ② deboss channel number
                 steel::drawDebossNumber (g, { 15, 7, 30, 17 }, stripIndex + 1);
-            // ④ forge-mark top-right, only where no VCA/EG/BUS chip sits
-            const bool badgeHere = state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                                || state.editGroup.load (std::memory_order_relaxed) >= 0
-                                || state.isBus    .load (std::memory_order_relaxed);
+            // ④ forge-mark top-right, only where no EG chip sits
+            const bool badgeHere = state.editGroup.load (std::memory_order_relaxed) >= 0;
             if (! badgeHere)
                 steel::drawForgeMark (g, { r.getRight() - 18.0f, r.getY() + 3.0f, 13.0f, 13.0f }, armedNow);
         }
@@ -1114,46 +1033,16 @@ namespace zynforge
             g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::xl, 2.5f);
         }
 
-        // VCA badge -- small chip in the top-right of the strip so the
-        // engineer can see at a glance which group every strip is on,
-        // without right-clicking each one.
-        const int vca = state.vcaGroup.load (std::memory_order_relaxed);
-        if (vca >= 0 && vca < 8)
-        {
-            const juce::String label = "VCA " + juce::String (vca + 1);
-            // Prominent VCA indicator: a filled bright-teal pill with bold
-            // text PLUS a teal underline along the top edge, so a grouped
-            // strip reads unmistakably at a glance. The old chip used a
-            // dimmed fill + caption font and was easy to miss.
-            const float topY = r.getY() + 1.0f;
-            g.setColour (brand::featureEngaged.withAlpha (zynforge::brand::alpha::bold));
-            g.fillRoundedRectangle (r.getX() + 4.0f, topY, r.getWidth() - 8.0f, 3.0f,
-                                    brand::radius::sm);
-
-            auto badge = juce::Rectangle<float> (r.getRight() - 42.0f, topY + 4.0f, 38.0f, 15.0f);
-            g.setColour (brand::featureEngaged);
-            g.fillRoundedRectangle (badge, brand::radius::sm);
-            g.setColour (brand::lift (brand::featureEngaged, 0.60f));
-            g.drawRoundedRectangle (badge, brand::radius::sm, 1.0f);
-            g.setColour (brand::onSignal (brand::featureEngaged));
-            g.setFont (brand::type::ui (10.5f, true));
-            g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
-        }
-
-        // Edit Group badge -- second chip stacked below the VCA
-        // chip (or in the same slot if no VCA). Pro Tools shows
-        // group names per strip so engineers can see at a glance
+        // Edit Group badge. Pro Tools shows group names per strip
+        // so engineers can see at a glance
         // which strips will move together. "EG N" matches the
         // context-menu labels (Edit Group 1..8).
         const int eg = state.editGroup.load (std::memory_order_relaxed);
         if (eg >= 0 && eg < 8)
         {
             const juce::String label = "EG" + juce::String (eg + 1);
-            // Stack underneath the (now taller) VCA pill when both are
-            // present; share the top slot otherwise.
-            const float yOffset = (vca >= 0 && vca < 8) ? 23.0f : 4.0f;
             auto badge = juce::Rectangle<float> (r.getRight() - 26.0f,
-                                                  r.getY() + yOffset, 22.0f, 12.0f);
+                                                  r.getY() + 4.0f, 22.0f, 12.0f);
             g.setColour (brand::sink (brand::accentVS, 0.30f));
             g.fillRoundedRectangle (badge, brand::radius::sm);
             g.setColour (brand::lift (brand::accentVS, 0.40f));
@@ -1163,45 +1052,6 @@ namespace zynforge
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
-        // BUS badge -- top-right, mirroring the VCA chip position.
-        // Bus strips and VCA-grouped strips are mutually exclusive
-        // (a bus is itself a group target, never a member of one),
-        // so the two chips can share the same coordinates without
-        // colliding. The previous top-left position overlapped the
-        // strip's colour swatch.
-        if (state.isBus.load (std::memory_order_relaxed))
-        {
-            auto badge = juce::Rectangle<float> (r.getRight() - 30.0f, r.getY() + 4.0f, 26.0f, 12.0f);
-            g.setColour (brand::sink (brand::alertAmber, 0.30f));
-            g.fillRoundedRectangle (badge, brand::radius::sm);
-            g.setColour (brand::lift (brand::alertAmber, 0.20f));
-            g.drawRoundedRectangle (badge, brand::radius::sm, 0.75f);
-            g.setColour (brand::onSignal (brand::sink (brand::alertAmber, 0.30f)));
-            g.setFont (brand::type::caption());
-            g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
-        }
-
-        // Automation LED -- 6 px dot just below the colour swatch in
-        // the top-left. Red when WRITE-mode is armed and playback is
-        // rolling, amber when the strip is locked Safe. Both at once
-        // = Safe (Safe always wins because writes are blocked).
-        if (autoWriteArmed || autoSafeOn)
-        {
-            const auto led = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + 20.0f, 6.0f, 6.0f);
-            const auto c   = autoSafeOn ? brand::engagedAmber : brand::accentRecord;
-            g.setColour (c.withAlpha (zynforge::brand::alpha::bold));
-            g.fillEllipse (led);
-            g.setColour (brand::lift (c, 0.45f));
-            g.drawEllipse (led, 0.6f);
-        }
-    }
-
-    void ChannelStrip::setAutomationLed (bool writeArmed, bool safeOn)
-    {
-        if (writeArmed == autoWriteArmed && safeOn == autoSafeOn) return;
-        autoWriteArmed = writeArmed;
-        autoSafeOn     = safeOn;
-        repaint();
     }
 
     void ChannelStrip::mouseEnter (const juce::MouseEvent&)
@@ -1228,9 +1078,7 @@ namespace zynforge
         auto nameRow = r.removeFromTop (22);
         const bool wideHdr  = getWidth() >= 78;
         const bool veryWide = getWidth() >= 150;   // L preset -- name on its OWN row
-        const bool hasBadge = state.vcaGroup .load (std::memory_order_relaxed) >= 0
-                           || state.editGroup.load (std::memory_order_relaxed) >= 0
-                           || state.isBus    .load (std::memory_order_relaxed);
+        const bool hasBadge = state.editGroup.load (std::memory_order_relaxed) >= 0;
         if (veryWide)
         {
             // L view: the NAME sits INSIDE the black steel header plate,
@@ -1312,13 +1160,6 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
 
         // ── 3. Two rows of two buttons each: [ I | R ] / [ S | M ] ──
-        //   ...except on the generated metronome strip, which is playback-
-        //   only -- record-arm and input-monitor make no sense so those two
-        //   pills are hidden, and the SOLO + MUTE row sits alone with no gap
-        //   above it. Known by its flag: a recorded click return may well be
-        //   named "Click", and it needs its R button.
-        const bool isClickStrip = state.referenceMedia.load (std::memory_order_relaxed);
-        const bool isBusStrip   = state.isBus.load (std::memory_order_relaxed);
         const int btnH = 24;
         const int btnGap = 3;
 
@@ -1330,64 +1171,28 @@ namespace zynforge
         // cost of one extra row of height. Engineers running at XS for
         // density still get a usable hit zone.
         const bool stack = getWidth() < 78;
-        const int rowsForButtons = stack ? 4 : 2;
 
-        if (isClickStrip || isBusStrip)
+        if (stack)
         {
-            // Bus / click tracks have no input -- no R / I buttons.
-            // Reserve the missing row(s) as empty space above the
-            // remaining S / M row so the fader + meter below start at
-            // the same Y as a full audio strip's. Without this, the
-            // fader on a bus strip sits ~27 px higher than its
-            // neighbours and meters across the mixer don't line up.
-            armButton.setVisible (false); armButton.setBounds ({});
-            monButton.setVisible (false); monButton.setBounds ({});
-            if (stack)
-            {
-                // Two missing rows (mon + arm).
-                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
-                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
-                soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
-                r.removeFromTop (btnGap);
-                muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
-            }
-            else
-            {
-                // One missing row above (the mon / arm row).
-                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
-                auto row = r.removeFromTop (btnH);
-                const int halfW = row.getWidth() / 2;
-                soloButton.setBounds (row.removeFromLeft (halfW).reduced (2, 0));
-                muteButton.setBounds (row.reduced (2, 0));
-            }
+            monButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
+            r.removeFromTop (btnGap);
+            armButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
+            r.removeFromTop (btnGap);
+            soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
+            r.removeFromTop (btnGap);
+            muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
         }
         else
         {
-            armButton.setVisible (true);
-            monButton.setVisible (true);
-            if (stack)
-            {
-                monButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
-                r.removeFromTop (btnGap);
-                armButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
-                r.removeFromTop (btnGap);
-                soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
-                r.removeFromTop (btnGap);
-                muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
-            }
-            else
-            {
-                auto row1 = r.removeFromTop (btnH);
-                r.removeFromTop (btnGap);
-                auto row2 = r.removeFromTop (btnH);
-                const int halfW = row1.getWidth() / 2;
-                monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
-                armButton.setBounds (row1.reduced (2, 0));
-                soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
-                muteButton.setBounds (row2.reduced (2, 0));
-            }
+            auto row1 = r.removeFromTop (btnH);
+            r.removeFromTop (btnGap);
+            auto row2 = r.removeFromTop (btnH);
+            const int halfW = row1.getWidth() / 2;
+            monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
+            armButton.setBounds (row1.reduced (2, 0));
+            soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
+            muteButton.setBounds (row2.reduced (2, 0));
         }
-        juce::ignoreUnused (rowsForButtons);
         r.removeFromTop (brand::space::sm);
 
         clipLabel.setBounds (r.removeFromTop (12));

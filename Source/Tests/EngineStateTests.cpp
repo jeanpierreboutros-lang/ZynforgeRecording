@@ -112,21 +112,19 @@ namespace zynforge
                 expectWithinAbsoluteError (eng.getRecorder().getTrack (0).gainDb.load(), 0.0f, 0.001f);
             }
 
-            beginTest ("freshly-grown strips don't inherit a previous layout's edit group / VCA");
+            beginTest ("freshly-grown strips don't inherit a previous layout's edit group");
             {
                 AudioEngine eng;
                 eng.setStripCount (2);
                 eng.setTrackEditGroup (0, 1);   // persists strip_editgroup_0
-                eng.setTrackVcaGroup  (1, 3);   // persists strip_vca_1
                 expectEquals (eng.getTrackEditGroup (0), 1);
 
                 // Empty out (as on an empty-on-open relaunch) then add strips
                 // back. The new strips must come up CLEAN -- the old edit
-                // group / VCA assignments must not revive by array position.
+                // group assignments must not revive by array position.
                 eng.setStripCount (0);
                 eng.setStripCount (2);
                 expectEquals (eng.getTrackEditGroup (0), -1);
-                expectEquals (eng.getRecorder().getTrack (1).vcaGroup.load(), -1);
             }
 
             beginTest ("snapSampleToGrid -- Off mode is identity");
@@ -176,29 +174,6 @@ namespace zynforge
                 expectEquals ((int) eng.getStripsInEditGroup (1).size(), 2);
             }
 
-            beginTest ("VCA group assignment + reset");
-            {
-                AudioEngine eng;
-                eng.setStripCount (4);
-                eng.setTrackVcaGroup (0, 3);
-                expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), 3);
-                eng.setTrackVcaGroup (0, -1);
-                expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), -1);
-            }
-
-            beginTest ("Time signature drives the metronome bar length (downbeat accent)");
-            {
-                AudioEngine eng;
-                // The metronome's bar length must track the meter's numerator.
-                eng.setTimeSignature (4, 4);
-                expectEquals (eng.getClickEngine().getBeatsPerBar(), 4);
-                eng.setTimeSignature (3, 4);
-                expectEquals (eng.getClickEngine().getBeatsPerBar(), 3);
-                eng.setTimeSignature (6, 8);
-                expectEquals (eng.getClickEngine().getBeatsPerBar(), 6);
-                eng.setTimeSignature (4, 4);   // restore default (don't pollute appProps)
-            }
-
             beginTest ("Full strip mix state round-trips through the session file (per-session, not global)");
             {
                 auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
@@ -215,17 +190,7 @@ namespace zynforge
                 eng.getRecorder().getTrack (3).soloed.store (true);
                 eng.getRecorder().getTrack (1).outputMuted.store (true);
                 eng.getRecorder().getTrack (2).streamSend.store (true);
-                eng.setTrackVcaGroup (0, 2);
-                eng.setTrackVcaGroup (1, 2);
                 eng.setTrackEditGroup (3, 1);
-                // isBus + aux send -- the two fields that used to leak across
-                // sessions via global appProps. Track 3 becomes a bus; track 0
-                // sends to it. Both must round-trip through session_mix.json.
-                eng.setTrackIsBus (3, true);
-                eng.setTrackSend  (0, /*slot*/ 0, /*bus*/ 3, /*dB*/ -3.0f, /*post*/ true);
-                eng.setSessionTempoBpm (142.0f);
-                eng.setTimeSignature (6, 8);
-                eng.setTempoMap ({ { 0, 120.0f }, { 480000, 140.0f } });
                 eng.claimMixerFor (tmp);
                 eng.saveSessionMixTo (tmp);
 
@@ -236,12 +201,6 @@ namespace zynforge
                 eng.getRecorder().getTrack (2).muted.store (false);
                 eng.getRecorder().getTrack (1).outputMuted.store (false);
                 eng.getRecorder().getTrack (2).streamSend.store (false);
-                eng.setTrackVcaGroup (2, 5);
-                eng.setTrackIsBus (3, false);                 // un-bus it
-                eng.setTrackSend  (0, 0, -1, 0.0f, false);    // clear the send
-                eng.setSessionTempoBpm (90.0f);
-                eng.setTimeSignature (4, 4);
-                eng.setTempoMap ({});
 
                 eng.setStripCount (7); // simulate the previously-open larger session
                 expect (eng.loadSessionMixFrom (tmp));
@@ -254,22 +213,7 @@ namespace zynforge
                 expect (eng.getRecorder().getTrack (3).soloed.load());
                 expect (eng.getRecorder().getTrack (1).outputMuted.load());
                 expect (eng.getRecorder().getTrack (2).streamSend.load());
-                expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), 2);
                 expectEquals (eng.getTrackEditGroup (3), 1);
-                // Strip 2 was ungrouped in the file -> the leaked VCA 5 is overwritten.
-                expectEquals (eng.getRecorder().getTrack (2).vcaGroup.load(), -1);
-                // isBus + aux send round-trip (the appProps-leak fix).
-                expect (eng.getRecorder().getTrack (3).isBus.load());
-                expect (! eng.getRecorder().getTrack (0).isBus.load());
-                expectEquals (eng.getRecorder().getTrack (0).sends[0].targetBus.load(), 3);
-                expectWithinAbsoluteError (
-                    eng.getRecorder().getTrack (0).sends[0].levelDb.load(), -3.0f, 0.01f);
-                expect (eng.getRecorder().getTrack (0).sends[0].postFader.load());
-                // Tempo state round-trips per session.
-                expectWithinAbsoluteError (eng.getSessionTempoBpm(), 142.0f, 0.01f);
-                expectEquals (eng.getTimeSignatureNumerator(),   6);
-                expectEquals (eng.getTimeSignatureDenominator(), 8);
-                expectEquals ((int) eng.getTempoMap().size(), 2);
 
                 eng.clearSessionState();
                 expect (! eng.getRecorder().getTrack (1).outputMuted.load(),

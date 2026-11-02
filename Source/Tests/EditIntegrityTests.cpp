@@ -25,7 +25,6 @@ namespace zynforge
     public:
         EditIntegrityTests() : juce::UnitTest ("EDIT integrity", "zynforge") {}
 
-        using AP   = AudioEngine::AutomationParam;
         using Lane = EditPage::TrackRow::LaneMode;
         using Ref  = EditPage::ClipRef;
 
@@ -396,126 +395,6 @@ namespace zynforge
                 expectEquals (s.engine.getRecorder().getNumTracks(), 2, "a confirmed cut removes the channel");
             }
 
-            beginTest ("An automation point drag and a curve bend are one undo step each");
-            {
-                Show s (2, { 48000, 48000 });
-                s.engine.clearAutomation (AP::Volume);
-                auto rows = rowsOf (s.page());
-                expect (rows.size() == 2, "setup: two rows");
-                if (rows.size() == 2)
-                {
-                    auto& row = *rows[0];
-                    row.laneMode = Lane::Volume;
-                    s.engine.addAutomationPoint (0, AP::Volume, 12000, -30.0f);
-                    s.engine.addAutomationPoint (0, AP::Volume, 36000, 0.0f);
-                    const int laneLeft = row.getHeaderWidth() + 4;
-                    const int laneW = row.getWidth() - row.getHeaderWidth() - 8;
-                    const auto xOf = [&] (juce::int64 sample)
-                    { return laneLeft + juce::roundToInt ((double) sample / 48000.0 * laneW); };
-
-                    s.main.undoManager.clearUndoHistory();
-                    drag (row, { xOf (12000), 40 }, { xOf (20000), 60 });
-                    expect (s.engine.getAutomation (0, AP::Volume).front().samplePos > 12000, "setup: the point moved");
-                    expect (s.main.undoManager.canUndo(), "the drag never reached undo");
-                    s.main.editUndo();
-                    expectEquals (s.engine.getAutomation (0, AP::Volume).front().samplePos, (juce::int64) 12000);
-
-                    // A grab that moves nothing is not a step.
-                    s.main.undoManager.clearUndoHistory();
-                    const auto grab = juce::Point<int> (xOf (12000), 40);
-                    row.mouseDown (mouseAt (row, grab, grab, false));
-                    row.mouseUp (mouseAt (row, grab, grab, false));
-                    expect (! s.main.undoManager.canUndo(), "a click must not fill the undo stack");
-
-                    // The bend handle sits halfway along the segment.
-                    const auto& lane = s.engine.getAutomation (0, AP::Volume);
-                    const int midX = (xOf (lane[0].samplePos) + xOf (lane[1].samplePos)) / 2;
-                    const int inner = row.getHeight() - 2 * brand::space::sm;
-                    const int midY = brand::space::sm + juce::roundToInt ((1.0f - (-15.0f + 60.0f) / 72.0f) * (float) inner);
-                    drag (row, { midX, midY }, { midX, midY + 12 });
-                    expect (std::abs (s.engine.getAutomation (0, AP::Volume).front().tension) > 0.01f, "setup: the curve bent");
-                    expect (s.main.undoManager.canUndo(), "the bend never reached undo");
-                    s.main.editUndo();
-                    expectWithinAbsoluteError (s.engine.getAutomation (0, AP::Volume).front().tension, 0.0f, 0.0001f);
-                }
-                s.engine.clearAutomation (AP::Volume);
-            }
-
-            beginTest ("Clear with the Lane on Click or Tempo erases nothing");
-            {
-                Show s (2, { 48000, 48000 });
-                using Param = AutomationToolbar::Param;
-                s.engine.addAutomationPoint (0, AP::Mute, 12000, 1.0f);
-                s.engine.addAutomationPoint (1, AP::Mute, 24000, 1.0f);
-                for (auto param : { Param::Click, Param::Tempo })
-                {
-                    s.main.automationToolbar->setParamSilently (param);
-                    s.main.automationToolbar->onClearAll();
-                    expectEquals ((int) s.engine.getAutomation (0, AP::Mute).size(), 1, "a hidden Mute lane was erased");
-                    expectEquals ((int) s.engine.getAutomation (1, AP::Mute).size(), 1);
-                }
-                s.main.automationToolbar->setParamSilently (Param::Mute);
-                s.main.automationToolbar->onClearAll();
-                expect (s.engine.getAutomation (0, AP::Mute).empty(), "the real Mute lane still clears");
-            }
-
-            beginTest ("Arrow keys and Delete reach only the lane the active row shows");
-            {
-                Show s (2, { 48000, 48000 });
-                s.main.switchView (MainComponent::View::Edit);
-                expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000),
-                        "setup: the layout save holds the keys until it lands");
-                s.page().setBounds (0, 0, 1400, 500);
-                s.page().refresh();
-                s.engine.clearAutomation (AP::Volume);
-                s.engine.clearAutomation (AP::Pan);
-                s.engine.addAutomationPoint (0, AP::Volume, 12000, -6.0f);
-                auto rows = rowsOf (s.page());
-                expect (rows.size() == 2, "setup: two rows");
-                if (rows.size() == 2)
-                {
-                    using Key = juce::KeyPress;
-                    auto& row = *rows[0];
-                    row.laneMode = Lane::Waveform;
-                    s.page().setActiveRowTrackIndex (0);
-                    s.engine.getPlayer().setPositionSamples (30000);
-
-                    s.main.keyPressed (Key (Key::leftKey), nullptr);
-                    expectEquals (s.page().getFocusedPointIdx(), -1, "Left focused a point the row does not show");
-                    expectEquals (s.engine.getPlayer().getPositionSamples(), (juce::int64) 30000,
-                                  "Left moved the playhead to a hidden point");
-
-                    s.page().setSelectedClip (0, 0);
-                    s.page().setFocusedPointIdx (0);
-                    s.main.keyPressed (Key (Key::deleteKey), nullptr);
-                    expectEquals ((int) s.engine.getAutomation (0, AP::Volume).size(), 1, "Delete took a hidden point");
-                    expectEquals ((int) s.prompts.size(), 1, "Delete must go to the selected clip");
-                    s.prompts.clear();
-                    s.page().clearSelectedClip();
-
-                    // The toolbar still on Volume, the row showing Pan.
-                    s.main.automationToolbar->setParamSilently (AutomationToolbar::Param::Volume);
-                    s.engine.addAutomationPoint (0, AP::Pan, 12000, 0.0f);
-                    row.laneMode = Lane::Pan;
-                    s.page().setFocusedPointIdx (0);
-                    s.main.keyPressed (Key (Key::upKey), nullptr);
-                    expectWithinAbsoluteError (s.engine.getAutomation (0, AP::Volume).front().value, -6.0f, 0.001f,
-                                               "Up changed the toolbar's lane");
-                    expectWithinAbsoluteError (s.engine.getAutomation (0, AP::Pan).front().value, 0.05f, 0.001f,
-                                               "Up must change the lane the row shows");
-
-                    // A Click lane has no points, so neither does its menu or hit-test.
-                    row.laneMode = Lane::Click;
-                    expect (! row.shownAutomationParam().has_value(), "a Click lane reported Volume points");
-                    row.laneMode = Lane::Tempo;
-                    expect (! row.shownAutomationParam().has_value(), "a Tempo lane reported Volume points");
-                    row.laneMode = Lane::Volume;
-                    expect (row.shownAutomationParam() == AP::Volume);
-                }
-                s.engine.clearAutomation (AP::Volume);
-                s.engine.clearAutomation (AP::Pan);
-            }
-
             beginTest ("A selection stays on its clip when the list shifts");
             {
                 Show s (1, { 48000 });
@@ -705,39 +584,6 @@ namespace zynforge
                             "the row never picked up its waveform after the cache loaded");
             }
 
-            beginTest ("Tempo lane edits are undoable and a generated click follows them");
-            {
-                Show s (2, { 48000, 48000 });
-                s.engine.clearTempoMap();
-                auto rows = rowsOf (s.page());
-                expect (rows.size() == 2, "setup: two rows");
-                if (rows.size() == 2)
-                {
-                    auto& row = *rows[0];
-                    row.laneMode = Lane::Tempo;
-                    pressButton (*s.main.automationToolbar, "+ Point");
-                    s.main.clickTrackIndex = 1;
-                    s.main.clickRefreshPending = false;
-                    s.main.undoManager.clearUndoHistory();
-
-                    click (row, { row.getHeaderWidth() + 200, 40 });
-                    expectEquals ((int) s.engine.getTempoMap().size(), 1, "setup: the point landed");
-                    expect (s.main.clickRefreshPending, "the click must follow a lane edit");
-
-                    s.main.clickRefreshPending = false;
-                    s.main.editUndo();
-                    expect (s.engine.getTempoMap().empty(), "the tempo edit never reached undo");
-                    expect (s.main.clickRefreshPending, "the click must follow the undo");
-                    s.main.editRedo();
-                    expectEquals ((int) s.engine.getTempoMap().size(), 1);
-
-                    s.main.clickTrackIndex = -1;
-                    s.main.clickRefreshPending = false;
-                    pressButton (*s.main.automationToolbar, "Select");
-                }
-                s.engine.clearTempoMap();
-            }
-
             beginTest ("A clip action left open cannot change a rolling take's arrangement");
             {
                 Show s (3, { 48000, 48000 });     // strip 3 has no take yet, so it can record
@@ -876,62 +722,6 @@ namespace zynforge
                 other.deleteRecursively();
             }
 
-            beginTest ("A generated click row unlocks with its session and follows its strip");
-            {
-                Show s (3, { 48000, 48000, 48000 });
-                s.main.clickTrackIndex = 2;
-                s.main.rebuildStrips();
-                s.page().refresh();
-                auto rows = rowsOf (s.page());
-                expect (rows.size() == 3 && rows[2]->clickRowIdx == 2, "setup: the click row is known");
-
-                s.main.clickTrackIndex = -1;       // what every session swap does
-                s.main.rebuildStrips();
-                if (rows.size() == 3)
-                    expectEquals (rows[2]->clickRowIdx, -1, "strip 3 stayed locked in the next session");
-
-                s.main.clickTrackIndex = 2;
-                expect (s.engine.reorderTracks ({ 2, 0, 1 }));
-                expectEquals (s.main.clickTrackIndex, 0, "the click index must follow its strip");
-                s.main.clickTrackIndex = -1;
-            }
-
-            beginTest ("Up and Down change a point's value and nothing else");
-            {
-                Show s (1, { 48000 });
-                s.main.switchView (MainComponent::View::Edit);
-                expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000), "setup");
-                s.page().setBounds (0, 0, 1400, 500);
-                s.page().refresh();
-                s.engine.clearAutomation (AP::Volume);
-                using C = AudioEngine::AutomationCurve;
-                s.engine.pasteAutomationRange (0, AP::Volume, 12000,
-                                               { { 0, -6.0f, C::Hold, 0.0f }, { 1000, -12.0f, C::SCurve, 0.0f },
-                                                 { 30000, -3.0f, C::Linear, 0.4f } });
-                auto rows = rowsOf (s.page());
-                if (rows.size() == 1)
-                {
-                    rows[0]->laneMode = Lane::Volume;
-                    s.page().setActiveRowTrackIndex (0);
-                    s.page().setFocusedPointIdx (0);
-                    s.main.keyPressed (juce::KeyPress (juce::KeyPress::upKey), nullptr);
-                    s.page().setFocusedPointIdx (2);
-                    s.main.keyPressed (juce::KeyPress (juce::KeyPress::downKey), nullptr);
-                    const auto& lane = s.engine.getAutomation (0, AP::Volume);
-                    expectEquals ((int) lane.size(), 3, "the nudged point vanished into its neighbour");
-                    if (lane.size() == 3)
-                    {
-                        expectWithinAbsoluteError (lane[0].value, -5.5f, 0.001f);
-                        expect (lane[0].curve == C::Hold, "a Hold point turned Linear");
-                        expectWithinAbsoluteError (lane[1].value, -12.0f, 0.001f, "the neighbour changed");
-                        expect (lane[1].curve == C::SCurve);
-                        expectWithinAbsoluteError (lane[2].value, -3.5f, 0.001f);
-                        expectWithinAbsoluteError (lane[2].tension, 0.4f, 0.001f, "the bend was lost");
-                    }
-                }
-                s.engine.clearAutomation (AP::Volume);
-            }
-
             beginTest ("A Range drag or range key takes over from an older clip selection");
             {
                 Show s (2, { 48000, 48000 });
@@ -1030,25 +820,6 @@ namespace zynforge
                 s.main.editClipboardPaste();
                 expectEquals ((int) s.clips (0).size(), 1, "the paste kept a path into the other session");
                 other.deleteRecursively();
-            }
-
-            beginTest ("Automation pastes only into the kind of lane it was copied from");
-            {
-                Show s (2, { 48000, 48000 });
-                s.engine.clearAutomation (AP::Volume);
-                s.engine.clearAutomation (AP::Pan);
-                s.engine.addAutomationPoint (0, AP::Volume, 12000, -20.0f);
-                auto rows = rowsOf (s.page());
-                if (rows.size() == 2)
-                {
-                    rows[0]->applyAutomationRangeChoice (601, AP::Volume, 0, 24000);
-                    s.engine.setEditCursorSample (30000);
-                    rows[1]->applyAutomationRangeChoice (602, AP::Pan, 0, 24000);
-                    expect (s.engine.getAutomation (1, AP::Pan).empty(), "dB values landed in a Pan lane");
-                    rows[1]->applyAutomationRangeChoice (602, AP::Volume, 0, 24000);
-                    expectEquals ((int) s.engine.getAutomation (1, AP::Volume).size(), 1);
-                }
-                s.engine.clearAutomation (AP::Volume);
             }
 
             beginTest ("A marker is found by identity after the list shifts");

@@ -29,15 +29,9 @@ namespace zynforge::interchange
         juce::String name;
         juce::uint32 colourArgb { 0 };      // 0 = no colour chosen
         bool  stereoLeft { false };         // L half of a pair; the next strip is its R
-        bool  isBus      { false };
         float faderDb    { 0.0f };
         float pan        { 0.0f };
         bool  muted      { false };
-        float vcaDb      { 0.0f };          // 0 = no VCA
-        bool  vcaAssigned { false };
-        bool  vcaMuted   { false };
-        bool  hasSends   { false };
-        int   automationLanes { 0 };        // lanes holding points
         // nullopt: never given a clip list, so it plays its whole file. An
         // empty list is different: the engineer deleted every clip, and the
         // strip stays silent however much media sits on disk.
@@ -51,9 +45,6 @@ namespace zynforge::interchange
         juce::File   sessionDir;
         juce::String sessionName;
         double sampleRate { 48000.0 };
-        double tempoBpm   { 120.0 };
-        int    timeSigNum { 4 }, timeSigDen { 4 };
-        bool   hasTempoMap { false };
         bool   anySolo     { false };
         float  masterDb    { 0.0f };
         bool   masterMuted { false };
@@ -85,7 +76,7 @@ namespace zynforge::interchange
         juce::String name;
         juce::uint32 colourArgb { 0 };
         int    channels { 1 };              // 2 = one stereo track from a pair
-        double gain { 1.0 };                // linear, with the VCA folded in
+        double gain { 1.0 };                // linear
         float  pan { 0.0f };                // mono tracks
         float  panLeft { -1.0f }, panRight { 1.0f };   // stereo tracks, per side
         bool   muted { false };
@@ -96,8 +87,6 @@ namespace zynforge::interchange
     {
         juce::String sessionName;
         double sampleRate { 48000.0 };
-        double tempoBpm { 120.0 };
-        int    timeSigNum { 4 }, timeSigDen { 4 };
         double masterGain { 1.0 };
         bool   masterMuted { false };
         std::vector<Track> tracks;
@@ -336,9 +325,9 @@ namespace zynforge::interchange
             Track track;
             track.name       = cleanText (strip.name);
             track.colourArgb = strip.colourArgb;
-            track.gain  = juce::Decibels::decibelsToGain ((double) mix::stripDb (strip.faderDb, strip.vcaDb), -60.0);
+            track.gain  = juce::Decibels::decibelsToGain ((double) mix::stripDb (strip.faderDb), -60.0);
             track.pan   = strip.pan;
-            track.muted = strip.muted || strip.vcaMuted;
+            track.muted = strip.muted;
             return track;
         }
 
@@ -355,9 +344,6 @@ namespace zynforge::interchange
         auto& project = result.project;
         project.sessionName = cleanText (in.sessionName);
         project.sampleRate  = in.sampleRate;
-        project.tempoBpm    = in.tempoBpm;
-        project.timeSigNum  = in.timeSigNum;
-        project.timeSigDen  = in.timeSigDen;
         project.masterGain  = juce::Decibels::decibelsToGain ((double) in.masterDb, -60.0);
         project.masterMuted = in.masterMuted;
         for (const auto& marker : in.markers)
@@ -368,26 +354,15 @@ namespace zynforge::interchange
         if (! audioDir.isDirectory()) audioDir = in.sessionDir;
 
         MediaCache media;
-        int approximatedFades = 0, automation = 0, splitPairs = 0, sends = 0, vcas = 0;
+        int approximatedFades = 0, splitPairs = 0;
         const int count = (int) in.strips.size();
         for (int index = 0; index < count; ++index)
         {
             if (cancel.load (std::memory_order_relaxed)) { result.error = "Cancelled"; return result; }
             const auto& strip = in.strips[(size_t) index];
-            automation += strip.automationLanes;
-            sends      += strip.hasSends ? 1 : 0;
-            vcas       += strip.vcaAssigned ? 1 : 0;
 
             // A pair's right half travels with its left.
             if (index > 0 && in.strips[(size_t) index - 1].stereoLeft) continue;
-
-            // A bus mixes other strips and plays no media of its own, even with
-            // a stereo take sitting in the slot before it.
-            if (strip.isBus)
-            {
-                project.tracks.push_back (trackFrom (strip));
-                continue;
-            }
 
             std::vector<Item> left;
             if (auto problem = stripItems (in, index, audioDir, media, left, approximatedFades);
@@ -435,23 +410,12 @@ namespace zynforge::interchange
         }
 
         auto& notes = project.notes;
-        if (automation > 0)
-            notes.add ("Automation is not exported (" + plural (automation, "lane")
-                       + "): tracks carry their static fader, pan and mute.");
-        if (sends > 0)
-            notes.add ("Aux sends and bus routing are not exported (" + plural (sends, "strip")
-                       + " with sends): bus tracks arrive empty.");
-        if (vcas > 0)
-            notes.add ("VCA groups are not exported: " + plural (vcas, "strip")
-                       + " carry the VCA level in the track fader.");
         if (approximatedFades > 0)
             notes.add (plural (approximatedFades, "fade") + " cut by a split or a file boundary"
                        " became ordinary fades on the piece that reaches silence.");
         if (splitPairs > 0)
             notes.add (plural (splitPairs, "stereo pair") + " exported as two mono tracks"
                        " (L and R): the sides read different files or were edited apart.");
-        if (in.hasTempoMap)
-            notes.add ("Tempo changes are not exported: the project runs at the session tempo.");
         if (in.anySolo)
             notes.add ("Solo is not exported: every track plays unless it is muted.");
         return result;
