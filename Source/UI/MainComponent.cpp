@@ -555,7 +555,7 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         lastCaptureFinalizationError.clear();
         engine.beginExternalTake (dir, rate);
         engine.claimMixerFor (dir);
-        engine.noteLastCapture (dir);
+        engine.noteLastCapture (dir, {});
         engine.snapshotCaptureInputGains();
         daemonTakeAdopted = true;
         statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"
@@ -571,7 +571,7 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         lastCaptureFinalizationError.clear();
         engine.beginExternalTake (dir, rate);
         engine.claimMixerFor (dir);
-        engine.noteLastCapture (dir);
+        engine.noteLastCapture (dir, {});
         engine.snapshotCaptureInputGains();
         daemonStartUnansweredMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
         showStatus ("Daemon has not answered RECORD yet -- the take may be rolling");
@@ -919,9 +919,10 @@ void MainComponent::endDaemonTake (juce::String error, bool rewind, std::functio
     captureMetadataPending = true;
     sessionIoBusy.store (true);
     const bool accepted = engine.finishExternalTakeAsync (session, recordEnd,
-        [self, error, rewind, completion] (bool loaded)
+        [self, session, error, rewind, completion] (bool loaded)
         {
             if (self == nullptr) return;
+            self->engine.noteLastCaptureId (session);
             if (rewind)
             {
                 self->engine.stopPlayback();

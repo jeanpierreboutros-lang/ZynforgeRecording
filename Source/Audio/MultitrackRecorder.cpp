@@ -929,8 +929,9 @@ namespace zynforge
     {
         const auto idFile = take.sessionDir.getChildFile (".zynforge-capture-id");
         take.sessionId = idFile.loadFileAsString().trim();
-        if (take.sessionId.isNotEmpty()) return true;
+        if (take.sessionId.isNotEmpty()) { captureIdentity = take.sessionId; return true; }
         take.sessionId = juce::Uuid().toString();
+        captureIdentity = take.sessionId;
         return atomicfile::writeText (idFile, take.sessionId);
     }
 

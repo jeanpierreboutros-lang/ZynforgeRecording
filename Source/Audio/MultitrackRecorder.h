@@ -272,6 +272,8 @@ namespace zynforge
         float getDiskBytesPerSec() const noexcept;
         float getRingFillPct()     const noexcept;
         juce::File  getActiveSessionDir()  const          { return activeSessionDir; }
+        // Known once a take has started, with no read from the take's volume.
+        juce::String getCaptureIdentity()  const          { return captureIdentity; }
 
         // Free-space pre-flight + live "minutes remaining" estimate.
         //
@@ -920,6 +922,7 @@ namespace zynforge
         int           preRollSeconds { 0 };  // 0 = disabled
 
         juce::File activeSessionDir;
+        juce::String captureIdentity;
         juce::File backupDir;
         std::atomic<bool> backupActive  { false };
         std::atomic<bool>& backupFailed  { latches->backupFailed };

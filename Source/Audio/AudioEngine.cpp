@@ -293,7 +293,7 @@ namespace zynforge
         // These strips are what this take was recorded with, so from here on
         // they are this folder's mixer, whichever session they came from.
         claimMixerFor (sessionDir);
-        noteLastCapture (sessionDir);
+        noteLastCapture (sessionDir, recorder.getCaptureIdentity());
         invalidateExternalCaptureStatus();
         // A punch take's capture window and splice point are player positions:
         // hold the playhead (and loop) still until the take stops.
@@ -2206,13 +2206,19 @@ namespace zynforge
         return {};
     }
 
-    void AudioEngine::noteLastCapture (const juce::File& dir)
+    void AudioEngine::noteLastCapture (const juce::File& dir, const juce::String& captureId)
     {
-        updateSettings (appProps.get(), [&dir] (juce::PropertiesFile& props)
+        updateSettings (appProps.get(), [&dir, &captureId] (juce::PropertiesFile& props)
         {
             props.setValue ("lastCaptureDir", dir.getFullPathName());
-            props.setValue ("lastCaptureId", dir.getChildFile (".zynforge-capture-id").loadFileAsString().trim());
+            props.setValue ("lastCaptureId", captureId);
         });
+    }
+
+    void AudioEngine::noteLastCaptureId (const juce::File& dir)
+    {
+        if (appProps == nullptr || appProps->getValue ("lastCaptureDir") != dir.getFullPathName()) return;
+        noteLastCapture (dir, dir.getChildFile (".zynforge-capture-id").loadFileAsString().trim());
     }
 
     void AudioEngine::forgetLastCapture()

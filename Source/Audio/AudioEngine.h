@@ -523,7 +523,10 @@ namespace zynforge
         // The folder of the last take that really started, kept with the take's
         // capture identity so a different folder moved to that path is not
         // mistaken for it. Survives a relaunch; verify_take.sh reads it too.
-        void noteLastCapture (const juce::File& dir);
+        // Called as a take rolls, so it touches only the settings file. A
+        // daemon's take has no id here until its files are final.
+        void noteLastCapture (const juce::File& dir, const juce::String& captureId);
+        void noteLastCaptureId (const juce::File& dir);
         void forgetLastCapture();
         juce::File getLastCapture() const;
         bool mixerBelongsTo (const juce::File& dir) const

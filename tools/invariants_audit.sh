@@ -489,6 +489,12 @@ report "the 10 Hz tick reads no take length" \
        "getTrackLengthSamples takes the lock the audio thread only tries, and a miss is a block of silence" \
        "$HITS"
 
+HITS=$(sed -n '/void AudioEngine::noteLastCapture (/,/^    }/p' Source/Audio/AudioEngine.cpp 2>/dev/null \
+       | sed 's,//.*,,' | grep -E "$FS_CALLS|loadFile")
+report "noting a capture reads nothing back from the take's volume" \
+       "it runs as the take rolls, on the thread that is STOP" \
+       "$HITS"
+
 HITS=$(sed -n '/EngineStatus CaptureDaemon::buildStatus/,/^    }/p' Source/Capture/CaptureDaemon.cpp 2>/dev/null \
        | grep -E "$FS_CALLS" | sed 's,^,buildStatus: ,')
 TICK=$(grep -nE "$FS_CALLS" Source/UI/MainComponentTimer.cpp 2>/dev/null \
