@@ -1405,7 +1405,11 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
             else if (loaded > 0) self->engine.claimMixerFor (sessionDir);
             const bool saved = self->saveSessionStateTo (sessionDir);
             self->engine.setSessionTransitionActive (false);
-            if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
+            if (self->editPage != nullptr)
+            {
+                self->editPage->setEnabled (! self->sessionLocked);
+                self->editPage->sessionMediaAdded();
+            }
 
             const int stereoCount = (int) std::count_if (
                 result.tracks.begin(), result.tracks.end(),

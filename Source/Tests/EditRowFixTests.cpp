@@ -12,6 +12,7 @@
 #include "../UI/MainComponent.h"
 #include "../UI/PatchPage.h"
 #include "../UI/RenameLabel.h"
+#include "../UI/WaveCacheFile.h"
 
 #include <cmath>
 #include <functional>
@@ -160,6 +161,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            newMediaKeepsTheCache (main);
             shiftRangeAdds();
             rangeBandSitsOnTheLane();
             liveEnvelopeMeetsThePlayhead();
@@ -580,6 +582,28 @@ namespace zynforge
                     expect (selected == std::set<int> ({ 0, 1 }), "Shift+range no longer adds a track");
                 }
                 page.getEditToolsBar()->setTool (EditToolsBar::Tool::Smart);
+            }
+        }
+
+        void newMediaKeepsTheCache (MainComponent& main)
+        {
+            beginTest ("After a Consolidate the saved waveforms still load on reopen");
+            {
+                Show show (main);
+                const auto dir = show.session ({ "ONE" }, false, false);
+                const auto cache = wavecache::fileIn (dir);
+                expect (pumpUntil ([&] { return cache.existsAsFile() && ! main.sessionIoBusy.load(); }, 10000),
+                        "setup: the session's waveforms were never saved");
+                pumpUntil ([] { return false; }, 50);   // a file written now is newer than the cache
+
+                bool finished = false;
+                const auto before = dir.getChildFile ("Audio Files").getNumberOfChildFiles (juce::File::findFiles);
+                main.consolidateTracks ({ 0 }, 0, 24000);
+                finished = pumpUntil ([&] { return dir.getChildFile ("Audio Files").getNumberOfChildFiles (juce::File::findFiles) > before
+                                                && ! main.sessionIoBusy.load(); }, 10000);
+                expect (finished, "setup: the consolidate never finished");
+                expect (pumpUntil ([&] { return ! waveCachePredatesAudio (cache, dir); }, 10000),
+                        "the saved waveforms predate the new file, so reopening rescans every track");
             }
         }
 

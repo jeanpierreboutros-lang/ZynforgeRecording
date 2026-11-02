@@ -190,6 +190,9 @@ namespace zynforge
         void repaintLanes();        // force every track row to repaint
         void updatePlaceholder();   // show/hide the empty-state overlay by channel count
         void rescanWaveforms();     // drop cached peaks + re-scan every row (e.g. after a strip reorder renamed files)
+        // New audio joined the session, so WaveCache.wfm predates a file and the
+        // next open would throw the whole cache away. Writes a newer one.
+        void sessionMediaAdded() noexcept { waveCacheSaved = false; }
 
         // Strip reorder by swatch drag. While the pointer moves, the dragged
         // row asks for a preview: the list draws a drop line where the strip
