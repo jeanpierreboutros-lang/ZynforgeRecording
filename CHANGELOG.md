@@ -37,7 +37,7 @@ The next seven sections came in on 2026-11-02. None of it has been tried on real
 - **The clock's health rows and the loudness line are larger**, and the status panel keeps one width whether or not a take rolls. The device format moved to its own narrow column, and a hot true peak is marked `!` as well as red.
 - **The Welcome screen shows where the show lands:** the path, a Change button and the free space on that drive.
 - VIEW left the EDIT rows. It now lives on the row's right-click menu. Strip width and GRID show only in MIXER.
-- The type scale is 10, 11, 13, 14, 18, 22, 28 and 48, with nothing below 10 pt, and a gate holds it there. The header's grain and bevel are gone. Messages have real dashes and plurals, and the app says ZynForge wherever it names itself. The bundle stays `Zynforge Recording`, so an install keeps its settings and microphone history.
+- The type scale is 10, 11, 13, 14, 18, 22, 28 and 48, with nothing below 10 pt, and a gate holds it there. The header's grain and bevel are gone. Messages have real dashes and plurals, and the app says ZynForge wherever it names itself, the title bar included. The bundle stays `Zynforge Recording`, so an install keeps its settings, and macOS's own app menu and Finder still show that spelling.
 
 ### Fixed — screens that disagreed
 

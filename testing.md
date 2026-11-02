@@ -1,8 +1,8 @@
 # Testing Strategy — ZynForge Recording
 
-## Design critique fixes — 2026-11-02
+## Current validation — 2026-11-02, design critique fixes
 
-The counts for this round are recorded once the sanitizer runs finish, in *Current validation* below.
+`d4a9a57`: **1236 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports. CI passed Debug and Release on the same commit. Both gates are clean. The built app launched, quit by itself in 87 s and left no crash report. The commit after it changes only the window title and these docs: it passed CI, was not smoke-tested and is not installed.
 
 - *Main window guards* gained: an alarm moves nothing and covers no header button at three window sizes; VSC asks, shows it is on, survives a save and reload, restores, and undoes; a strip added after the soundcheck keeps its output; a new or another session starts with VSC off; the desk's soundcheck chip; a pre-flight problem's button; mixer controls hidden in EDIT; the small clock following a take; every fader level at every strip width.
 - *Edit track row* gained: a strip on the master reads the same as in the MIXER.
@@ -10,7 +10,7 @@ The counts for this round are recorded once the sanitizer runs finish, in *Curre
 - Red check: the test for a new session failed until `clearAllStripOverrides` forgot the saved patch.
 - PATCH's two dots, the meter scale, and the Welcome storage line were checked in rendered images only, not by a test.
 
-## Current validation — 2026-11-02
+## The cut and the design pass — 2026-11-02
 
 Current source, after the cut to recorder and virtual soundcheck and the design pass: **1219 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports and no forced thread stops. `tools/design_audit.sh`, `tools/invariants_audit.sh`, `test_notarize.py` and `test_verify_tools.py` pass. One later fix, which limits the crash notice to the recorder and its helper, brings it to 1220 groups in Release and CI; the sanitizers were not re-run for that string check. Nothing here has run on real hardware. It is installed on the development Mac only; see [INSTALL.md](INSTALL.md).
 

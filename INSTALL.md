@@ -2,9 +2,25 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-## Development Mac update — 2026-11-02
+## Development Mac update — 2026-11-02, design critique fixes
 
-The development Mac (MacBook Pro) now has `fffab44`: the recorder and virtual soundcheck after the cut, every 2026-11-01 fix and the design pass. The Mac mini still has `281c6c0`, described below, and no DMG was made for this build.
+The development Mac (MacBook Pro) now has `d4a9a57`, every fix from the design critique on top of the build below. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `7b00d2c053a1854efca5734de1615a83cbf92fd0d3ff219471871c02aef7d505` |
+| Capture helper | `f9e8c736c94965d5b3e8fcf2aae8cfdb76119204c3e309f670678eee53cd414f` |
+
+- **Tests before install:** 1236 groups / 0 failures in Release, ASan/UBSan and TSan, each launched through `open`, with no sanitizer reports. CI passed Debug and Release on the same commit. The built app launched, quit by itself and left no crash report.
+- **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Both executables are universal.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261102-134207-before-d4a9a57` (`fffab44`).
+- **Signing:** ad-hoc, with hardened runtime and `device.audio-input`. `fffab44` had neither, from the same build steps, and why they differ was not looked into. macOS asked for the microphone again, and it is allowed for this build.
+- **Not in this build:** the title bar's ZynForge spelling came right after it. Nothing else in the app differs.
+- **Seen running:** it opened, sees the audio device at 48 kHz and 512 samples, with no session loaded. No recording was made. Nothing here has run on real hardware.
+
+## Previous development Mac update — 2026-11-02
+
+The development Mac (MacBook Pro) had `fffab44`: the recorder and virtual soundcheck after the cut, every 2026-11-01 fix and the design pass. The Mac mini still has `281c6c0`, described below, and no DMG was made for this build.
 
 | Executable | SHA-256 |
 | --- | --- |

@@ -9,7 +9,7 @@ Every finding of the critique of the design pass is fixed on `main`. See *Change
 
 ## Cut to recorder and virtual soundcheck — 2026-11-02
 
-The owner cut the app to a recorder and virtual soundcheck after a feature census. What went, what stayed and why are in the top ADR of [decisions.md](decisions.md) and under *Removed* in [CHANGELOG.md](CHANGELOG.md). This is merged to `main` and installed on the development Mac (`fffab44`, see [INSTALL.md](INSTALL.md)). The Mac mini still has `281c6c0`, and the cut has not run on real hardware.
+The owner cut the app to a recorder and virtual soundcheck after a feature census. What went, what stayed and why are in the top ADR of [decisions.md](decisions.md) and under *Removed* in [CHANGELOG.md](CHANGELOG.md). This is merged to `main` and installed on the development Mac (see [INSTALL.md](INSTALL.md)). The Mac mini still has `281c6c0`, and the cut has not run on real hardware.
 
 - [x] Removed: AAF, Noise Report, spectral auto-name, cloud upload, Session Mirror, NDI, the companion server, MP3 export, the Session Info text fields, the MIDI surface Device Type, dead buttons and dialog controls, the phase meter and TimelineStrip.
 - [x] Removed: comping and take actions, Strip Silence, Normalize, Tab-to-transient and the Scrub tool. The playlist model stays, so sessions with several takes load, play and save.

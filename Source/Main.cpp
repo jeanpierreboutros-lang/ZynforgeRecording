@@ -145,7 +145,9 @@ public:
         juce::Timer::callAfterDelay (900, [this]
         {
             splash.reset();
-            mainWindow = std::make_unique<MainWindow> (getApplicationName(), pendingDocument);
+            // The brand spelling. getApplicationName stays the bundle's, which
+            // the single-instance check and an install's history depend on.
+            mainWindow = std::make_unique<MainWindow> ("ZynForge Recording", pendingDocument);
         });
 
         // Smoke runs: `--isolated-settings --smoke-quit-after=<seconds>` quits
