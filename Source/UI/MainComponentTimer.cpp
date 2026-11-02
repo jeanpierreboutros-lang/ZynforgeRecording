@@ -247,8 +247,10 @@ void MainComponent::updatePunchPill()
         const auto pos     = manualRecordPosition (rolling, player.getPositionSamples(), cursor);
         if (player.isRangeArmed())
             text = "RECORD PUNCHES RANGE";
-        else if (manualRecordPunches (rolling, cursor, pos, engine.getCaptureLengthSamples(),
-                                      player.getTotalLengthSamples()))
+        // The timeline is never shorter than a take, so no take length is
+        // needed here. Reading one takes the lock the audio thread only tries,
+        // and a miss there is a block of silence on every output.
+        else if (manualRecordPunches (rolling, cursor, pos, 0, player.getTotalLengthSamples()))
             text = rolling ? "RECORD PUNCHES HERE" : "RECORD PUNCHES AT CURSOR";
     }
     if (punchPill.getText() == text) return;

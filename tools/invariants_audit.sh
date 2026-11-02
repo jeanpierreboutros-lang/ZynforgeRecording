@@ -484,6 +484,11 @@ report "session_mix.json is written only through the mixer guard" \
 # atomics. The two lines allowed below are the between-takes free-space read,
 # behind isTakeOnDisk, and the SMART poll's own thread.
 FS_CALLS='isDirectory\(\)|existsAsFile\(\)|\.exists\(\)|getBytesFreeOnVolume|getVolumeTotalSize|estimateMinutesRemaining'
+HITS=$(grep -n "getCaptureLengthSamples" Source/UI/MainComponentTimer.cpp 2>/dev/null | sed 's,//.*,,' | grep "getCaptureLengthSamples")
+report "the 10 Hz tick reads no take length" \
+       "getTrackLengthSamples takes the lock the audio thread only tries, and a miss is a block of silence" \
+       "$HITS"
+
 HITS=$(sed -n '/EngineStatus CaptureDaemon::buildStatus/,/^    }/p' Source/Capture/CaptureDaemon.cpp 2>/dev/null \
        | grep -E "$FS_CALLS" | sed 's,^,buildStatus: ,')
 TICK=$(grep -nE "$FS_CALLS" Source/UI/MainComponentTimer.cpp 2>/dev/null \
