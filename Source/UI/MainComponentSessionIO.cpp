@@ -367,6 +367,9 @@ void MainComponent::adoptDaemonTakeSession (const zynforge::EngineStatus& status
 
 bool MainComponent::openSessionDocument (const juce::File& document, bool confirmBeforeReplacing)
 {
+    // Finder and a second instance come straight here, past the menu's LOCK.
+    if (sessionLocked)
+    { showStatus ("LOCKED -- click UNLOCK to resume control"); return false; }
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before opening another session"); return false; }
     if (sessionIoBusy.load())

@@ -1104,6 +1104,8 @@ void MainComponent::applyLockState()
     if (patchDialog != nullptr) patchDialog->setEnabled (e);
     if (deviceDialog != nullptr) deviceDialog->setEnabled (e);
     if (twinDialog != nullptr) twinDialog->setEnabled (e);
+    // A click on a meter clears its clip evidence, which the report reads.
+    if (metersDialog != nullptr) metersDialog->setEnabled (e);
 
     lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
     lockButton.setToggleState (sessionLocked, juce::dontSendNotification);
@@ -1126,6 +1128,7 @@ void MainComponent::openMetersWindow()
 {
     if (auto* w = metersDialog.getComponent()) { w->toFront (true); return; }
     metersDialog = zynforge::Meterbridge::launch (engine);
+    if (metersDialog != nullptr) metersDialog->setEnabled (! sessionLocked);
 }
 
 void MainComponent::forgetSessionUiState()

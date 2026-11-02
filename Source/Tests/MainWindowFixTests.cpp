@@ -1308,7 +1308,30 @@ namespace zynforge
                         "a pair ran off the last row");
             }
 
+            beginTest ("LOCK stops a Finder open");
+            {
+                Window w;
+                auto other = tempDir ("locked-open");
+                w.dirs.add (other);
+                recordBaseTake (other, 2, 50);
+                w.main.onLockToggled();
+                expect (! w.main.openSessionDocument (other), "a double-click swapped the session under LOCK");
+                expect (w.engine().getActiveSessionDir() == w.session);
+                w.main.onLockToggled();
+            }
 
+            beginTest ("LOCK reaches the Meterbridge");
+            {
+                Window w;
+                w.main.openMetersWindow();
+                expect (w.main.metersDialog != nullptr);
+                w.main.onLockToggled();
+                expect (w.main.metersDialog != nullptr && ! w.main.metersDialog->isEnabled(),
+                        "a click on a meter could clear clip evidence under LOCK");
+                w.main.onLockToggled();
+                expect (w.main.metersDialog->isEnabled());
+                delete w.main.metersDialog.getComponent();
+            }
 
 
 
