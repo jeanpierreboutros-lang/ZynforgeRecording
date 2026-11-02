@@ -205,6 +205,7 @@ namespace zynforge
             stereoFileStaysTogether();
             takeIntoANewFolder();
             undoReachesTheLink();
+            takeLeavesASessionWhoseFolderWent();
         }
 
     private:
@@ -401,6 +402,46 @@ namespace zynforge
             engine.stopRecording();
             engine.setActiveSessionDir (dir);
             engine.claimMixerFor (dir);
+        }
+
+        void takeLeavesASessionWhoseFolderWent()
+        {
+            beginTest ("RECORD after the session's folder went starts clean in a folder of its own");
+            MainComponent main;
+            main.stopTimer();
+            main.setSize (1320, 820);
+            forgetChosenDevice (main.engine);
+            Rig rig;
+            rig.inputs = { { "Rig", 8 } };
+            rig.defaultInput = "Rig";
+            Show show (main, rig, 1);
+            show.on.choose ("Rig");
+            show.patchStraight();
+            show.arm ({ 0 });
+
+            main.onRecordClicked();
+            expect (main.engine.isRecording(), main.statusLabel.getText());
+            feedCallback (main.engine, 8, 80);
+            show.stop();
+            expect (main.engine.splitTrackAtSample (0, 20 * kBlock));
+            for (int i = 0; i < 6; ++i) main.pollMixerUndo();
+            main.engine.setTrackGainDb (0, -6.0f);
+            for (int i = 0; i < 6; ++i) main.pollMixerUndo();
+            expect (main.undoManager.canUndo(), "no undo step to lose");
+
+            show.session.deleteRecursively();
+            main.onRecordClicked();
+            expect (main.engine.isRecording(), main.statusLabel.getText());
+            const auto folder = main.engine.getRecorder().getActiveSessionDir();
+            expect (folder != show.session, "a folder gone from under a session was made again as that session");
+            expect (! main.undoManager.canUndo(), "undo can bring the old session's clips onto this take");
+            feedCallback (main.engine, 8, 40);
+            show.stop();
+
+            expect (main.engine.getActiveSessionDir() == folder, "the take's own folder is not the session");
+            expectEquals ((int) main.engine.clipsFor (0).size(), 1, "the take came in through the old clips");
+            folder.deleteRecursively();
+            forgetChosenDevice (main.engine);
         }
 
         void undoReachesTheLink()
