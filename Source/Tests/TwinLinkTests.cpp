@@ -907,6 +907,35 @@ namespace zynforge
                 expect (settle (pair.both, [&] { return pair.followerHost.stopCalls == 1; }));
             }
 
+            beginTest ("A take found rolling re-links a follower that kept its side, and its STOP reaches it");
+            {
+                Pair pair;
+                if (! bring (pair)) return;
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.followerHost.status.recording; }));
+                pair.leaderHost.status.recording = false;
+                expect (settle (pair.both, [&] { return pair.leaderHost.noticed ("follower keeps recording"); }));
+
+                pair.leaderHost.status.recording = true;
+                pair.leader->noteLocalTakeAdopted();
+                expect (settle (pair.both, [&] { return pair.leaderHost.noticed ("now linked"); }));
+                expectEquals (pair.followerHost.startCalls, 1, "a second take started on the follower");
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (settle (pair.both, [&] { return pair.followerHost.stopCalls == 1; }));
+            }
+
+            beginTest ("A take found rolling never starts one on an idle follower");
+            {
+                Pair pair;
+                if (! bring (pair)) return;
+                pair.leaderHost.status.recording = true;
+                pair.leader->noteLocalTakeAdopted();
+                expect (settle (pair.both, [&] { return pair.leaderHost.noticed ("nothing is rolling"); }));
+                expectEquals (pair.followerHost.startCalls, 0, "reconnecting started a take");
+                expect (! pair.followerHost.status.recording);
+            }
+
             beginTest ("The follower never ends a take the link did not start");
             {
                 Pair pair;

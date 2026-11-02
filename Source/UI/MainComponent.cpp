@@ -830,6 +830,7 @@ void MainComponent::stopDaemonCapture (bool rewind, std::function<void (bool)> c
         self->captureMetadataPending = false;
         if (! result.clean && ! result.stopped)
         {
+            self->twinStopFollowsDaemon = false;
             self->lastCaptureFinalizationError = "Daemon did not confirm STOP; take may still be recording";
             self->showStatus (self->lastCaptureFinalizationError);
             if (completion) completion (false);
@@ -846,6 +847,7 @@ void MainComponent::endDaemonTake (juce::String error, bool rewind, std::functio
 {
     const auto recordEnd = engine.getRecordTimelineSamples();
     engine.setExternalRecording (false);
+    if (std::exchange (twinStopFollowsDaemon, false)) twinLink.noteLocalStopAccepted();
     daemonTakeAdopted = false;
     daemonStartUnansweredMs = 0;
     const auto session = engine.getActiveSessionDir();

@@ -541,6 +541,7 @@ void MainComponent::adoptRollingDaemonTake (const zynforge::EngineStatus& status
 {
     daemonStartUnansweredMs = 0;
     daemonTakeAdopted = true;
+    twinLink.noteLocalTakeAdopted();
     engine.setExternalCaptureStatus (status, receivedAtMs);
     // Before the take is marked as rolling: the session swap refuses under one,
     // which is also what makes a reattach in the same window leave the mixer be.
