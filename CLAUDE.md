@@ -233,9 +233,9 @@ The dated paragraphs these came from are preserved verbatim in [docs/history/CLA
 - **Test engines: call `AudioEngine::setTestModeSkipAudioInit (true)` before the first `AudioEngine` exists.** Setting it after the constructor opened the real device and crashed the callback while strips were resized (found writing *Song export*).
 
 **Signing and distribution (2026-10-31)**
-- **Signing is inside-out and works on a copy.** `tools/notarize.sh` copies the app
-- **Entitlements are exact, per binary, and checked after signing.** The app has
-- **`notarytool submit --wait` can exit 0 on a rejected submission.** Only the
+- **Signing is inside-out and works on a copy.** `tools/notarize.sh` copies the app to a temp folder on the system volume (exFAT AppleDouble files break `codesign`), signs bundled dylibs, then `ZynforgeCapture`, then the bundle, and only then verifies. Signing anything after the bundle breaks its seal. It never touches the build tree and refuses to overwrite a published DMG.
+- **Entitlements are exact, per binary, and checked after signing.** Both binaries have `device.audio-input` only, because neither loads third-party code. Keep them minimal.
+- **`notarytool submit --wait` can exit 0 on a rejected submission.** Only the reported status `Accepted` counts.
 
 ## Critical universal rules
 

@@ -236,19 +236,13 @@ capture mutation until completion. Space may stop existing transport through
 the save busy gate, while LOCK and the ordinary two-tap guard remain intact.
 A pending remote STOP is not a success acknowledgment.
 
-Session Info & Notes edits descriptive fields without replacing newer cues,
-clips or mixer metadata. Deferred import/bounce dialogs recheck capture when
-selection completes. A recorded track named Click is ordinary audio unless its
-explicit reference-media flag establishes generated ownership.
+Session Info is a read-only summary of the open session. Deferred import/bounce
+dialogs recheck capture when selection completes. A strip is ordinary audio
+whatever it is called.
 
-Noise reports distinguish unreadable analysis from clean audio, including in
-the completion summary. Capture/report errors remain latched after a toast
-expires. Invalid mirror replies preserve the current layout rather than showing
-an empty, apparently synchronized session.
+Capture/report errors remain latched after a toast expires.
 
-## Read-only observer and handoff — 2026-09-23
-
-The confidence page is intentionally a separate observer surface: large recording/idle/alarm states first, health figures second, per-track activity last, and no arm, mute, solo or transport buttons. Network loss and stale capture-daemon status are alarms, not a healthy-looking last frame. Audible alerts require an explicit user gesture and remain supplementary to the local recording dashboard.
+## Handoff — 2026-09-23
 
 The post-show handoff is a background, cancellable transfer into a new/empty folder. Its incomplete marker remains until copying, source/copy hashing, sidecars and the manifest all finish. The completion message distinguishes a verified file transfer from a source capture report that still needs review; neither visual state implies that the planned physical rig passed show-readiness acceptance.
 
@@ -410,8 +404,6 @@ Two distinct domains; the audio one is show-critical.
 - **`engine-reattach` (60 ms)** — audio device dialog close → engine
   callback re-attach defer. Lets in-flight Core Audio property
   notifications settle before the audio thread resumes.
-- **`web-broadcast` (200 ms = 5 Hz)** — companion device state push
-  interval. Responsive without saturating the WebSocket pipe.
 
 ## Components
 
@@ -600,7 +592,6 @@ rules:
 | Use `Colors::getX()` getters in every `paint()`             | Inline `juce::Colour(0xff...)` anywhere outside the colour header |
 | Use `Fonts::X()` for every font set                         | Inline `juce::Font(...)` / `juce::FontOptions(...)` outside the fonts header |
 | Use `Spacing::X` constants in `setBounds`                   | Raw 4-int `setBounds(int,int,int,int)` literals                  |
-| Use CSS variables in companion-device HTML                  | Hex literals outside the `:root` block                           |
 | Use semantic neutrals (`textOnAccent`, `overlayLight`, etc) | Bare `juce::Colours::white / black / transparentBlack`           |
 | ASCII-only in tooltip + label text                          | Em-dash `—`, en-dash `–`, arrows, bullets in user-visible strings |
 

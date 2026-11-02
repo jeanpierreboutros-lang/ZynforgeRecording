@@ -25,13 +25,6 @@ The rest of JUCE's dependency list is not in this product: it hosts no plug-ins
 `juce_box2d`. Oboe is Android-only. The AudioUnitSDK and AAX code are for
 plug-in builds. CHOC and QuickJS are not linked.
 
-## Used at run time, never bundled
-
-| Component | What the app does | Notes |
-| --- | --- | --- |
-| NDI runtime | Loads the runtime from its standard install location if the user installed it, for the optional NDI broadcast | NDI® is a registered trademark of Vizrt NDI AB. See https://ndi.video |
-| LAME | Runs the user's own `lame` program for MP3 export, if one is installed | Not distributed with this product |
-
 ## Licence texts
 
 ### JUCE

@@ -84,7 +84,7 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
-| ☐ F.1 | **Scroll-wheel / trackpad over a fader** (channel, master, VCA, bus). | Fader does **not** move; the mixer scrolls instead. Only click+drag on the cap moves it. | Wheel changes the level. |
+| ☐ F.1 | **Scroll-wheel / trackpad over a fader** (channel, master). | Fader does **not** move; the mixer scrolls instead. Only click+drag on the cap moves it. | Wheel changes the level. |
 | ☐ F.2 | Trigger **Delete channel?** (select strip → Track ▸ Delete, or strip menu). | Dialog shows the **ZynForge forge-mark** badge (not a red warning triangle); grey chrome. | Warning triangle / blue chrome. |
 | ☐ F.3 | Dock / Finder **app icon**. | New forge-mark + "RECORDING" icon (may need a Dock relaunch for cache). | Old forged-Z. |
 | ☐ F.4 | Launch **splash**. | New forge-mark glyph (not the old Z). | Old Z. |
@@ -100,7 +100,6 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 | ☐ G.1 | Session ▸ **Show pre-flight checklist…** with the real interface. | Device, sample rate, free space, armed-track count all correct. | Wrong device / missing checks. |
 | ☐ G.2 | Record a 10–15 s armed take; watch the **PerfDashboard**. | Enlarges with a red border; shows `48.0 kHz · <buffer> smp` + live `AUDIO %`. | No grow / no AUDIO row. |
 | ☐ G.3 | Reopen the session; confirm the **bound CoreAudio device**. | Binds to the intended interface (RME HDSPe), not a stray Avid/proxy device. | Silently binds to wrong device (`HALC_ProxyIOContext … overload`). |
-| ☐ G.4 | Session ▸ **Analyse for noise** with recorded audio. | Sortable report (hum/bumps/noise floor) + `noise_report.json`. On an empty session: a clear "nothing to analyse" prompt. | Does nothing silently. |
 
 ---
 
