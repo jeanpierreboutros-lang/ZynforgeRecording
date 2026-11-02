@@ -601,6 +601,7 @@ namespace zynforge
                 expect (sent.empty(), "a second soundcheck read the card returns as the show patch");
                 after.exitSoundcheck();
                 expect (routingWrites (sent) == std::vector<int> ({ 10, 11, 12, 13 }));
+                answerPatchRead (after, 10);
 
                 // Back on STAGE, and known to be, so the next soundcheck reads the desk afresh.
                 ConsoleLink third;
@@ -677,6 +678,7 @@ namespace zynforge
                 link.enterSoundcheck();
                 answerPatchRead (link, 10);
                 link.exitSoundcheck();
+                answerPatchRead (link, 10);
                 link.captureGains (1);
                 link.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/000/gain"), 0.5f));
                 expect (link.isGainCaptureComplete());

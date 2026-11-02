@@ -95,6 +95,11 @@ namespace zynforge
             return;
         }
         const auto marker = markers[(size_t) index];
+        if (const auto why = remotes.deskLocateRefusal (marker.sampleOffset); why.isNotEmpty())
+        {
+            report ("marker jump refused -- " + why);
+            return;
+        }
         remotes.locate (marker.sampleOffset);
         report ("jumped to marker " + juce::String (index + 1) + ": " + marker.name);
     }

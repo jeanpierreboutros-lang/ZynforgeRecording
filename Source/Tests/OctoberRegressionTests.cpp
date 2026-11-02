@@ -376,9 +376,11 @@ public:
                 link.setSendHook ([&] (const auto& m) { sent.push_back (m); });
                 expect (link.loadJson (saved));
                 sent.clear(); link.enterSoundcheck(); expect (sent.empty());
-                main.consoleToggleSoundcheck(); expectEquals ((int) sent.size(), 4);
+                main.consoleToggleSoundcheck(); expectEquals ((int) sent.size(), 8);
                 for (int b = 0; b < (int) sent.size() && b < 4; ++b)
                     expectEquals (sent[(size_t) b][0].getInt32(), 4 + b);
+                for (int b = 0; b < 4; ++b)
+                    link.injectReply (juce::OSCMessage (juce::OSCAddressPattern (addresses[b]), (juce::int32) (4 + b)));
                 expect (link.getPatch() == ConsoleLink::Patch::Stage);
             }
             MainComponent::s_testConstruct = false;

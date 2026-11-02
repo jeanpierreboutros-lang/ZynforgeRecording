@@ -91,7 +91,10 @@ namespace zynforge
 
                 // And the stash is complete, so the show patch can be restored.
                 link.exitSoundcheck();
-                expectEquals ((int) sent.size(), 12, "restore wrote all four blocks");
+                expectEquals ((int) sent.size(), 16, "restore wrote all four blocks and read them back");
+                for (int b = 0; b < 4; ++b)
+                    link.injectReply (juce::OSCMessage (juce::OSCAddressPattern (addr[b]),
+                                                        (juce::int32) (4 + b)));
                 expect (link.getPatch() == ConsoleLink::Patch::Stage);
             }
 
@@ -201,9 +204,10 @@ namespace zynforge
 
                 sent.clear();
                 link.restoreGains();
-                expectEquals ((int) sent.size(), 2);
+                expectEquals ((int) sent.size(), 4, "two writes, then two read-backs");
                 for (const auto& m : sent)
                 {
+                    if (! m.hasArgs()) continue;
                     const float v = m.floatArg();
                     expect (std::isfinite (v) && v >= 0.0f && v <= 1.0f,
                             m.address + " restored an out-of-range gain to the desk");

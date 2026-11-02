@@ -66,13 +66,25 @@ namespace zynforge
             return e.getRemotes().getActiveSurfaceKey() == pi.key;   // MIDI surface is live
         }
 
-        inline void setProtoEnabled (AudioEngine& e, const ProtoInfo& pi, bool on)
+        inline juce::String portTakenText (int port)
+        {
+            return "Could not listen on UDP port " + juce::String (port);
+        }
+
+        // Empty when it did what was asked, otherwise why it didn't.
+        inline juce::String setProtoEnabled (AudioEngine& e, const ProtoInfo& pi, bool on)
         {
             if (pi.osc)
             {
-                if (on) e.getRemotes().startOsc (oscPort (e), pi.dialect);   // switches the single receiver
-                else    e.getRemotes().stopOsc();
-                return;
+                if (! on)
+                {
+                    e.getRemotes().stopOsc();
+                    return {};
+                }
+                // Switches the single receiver.
+                return e.getRemotes().startOsc (oscPort (e), pi.dialect)
+                           ? juce::String()
+                           : portTakenText (oscPort (e)) + ". Another app may hold it: pick another in Protocol Settings.";
             }
             // MIDI surface: open it on the saved MIDI in/out (one surface at a time).
             if (on)
@@ -80,10 +92,12 @@ namespace zynforge
                 auto* p = e.getAppProps();
                 const auto in  = p ? p->getValue (juce::String ("cs_") + pi.key + "_midiin")  : juce::String();
                 const auto out = p ? p->getValue (juce::String ("cs_") + pi.key + "_midiout") : juce::String();
-                e.getRemotes().enableControlSurface (pi.key, in, out);
+                if (! e.getRemotes().enableControlSurface (pi.key, in, out))
+                    return "Could not open that surface's MIDI input. Check it in Protocol Settings.";
             }
             else
                 e.getRemotes().disableControlSurface();
+            return {};
         }
 
         // Live OSC traffic log -- so the engineer can verify the request /
@@ -305,16 +319,30 @@ namespace zynforge
             void rebind()
             {
                 const int port = juce::jlimit (1, 65535, portEd.getText().getIntValue());
+                bool listening = true;
                 if (engine.getRemotes().isOscListening() && engine.getRemotes().getOscDialect() == info.dialect)
-                { engine.getRemotes().stopOsc(); engine.getRemotes().startOsc (port, info.dialect); }
-                connVal.setText ("osc.udp://" + juce::SystemStats::getComputerName() + ".local:"
-                                 + juce::String (port) + "/", juce::dontSendNotification);
+                {
+                    engine.getRemotes().stopOsc();
+                    listening = engine.getRemotes().startOsc (port, info.dialect);
+                }
+                connVal.setText (listening ? "osc.udp://" + juce::SystemStats::getComputerName() + ".local:"
+                                                 + juce::String (port) + "/"
+                                           : portTakenText (port),
+                                 juce::dontSendNotification);
+                connVal.setColour (juce::Label::textColourId, listening ? brand::textPrimary : brand::textDanger);
             }
             void requestNames()
             {
                 persist();
-                if (! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != info.dialect)
-                    engine.getRemotes().startOsc (juce::jlimit (1, 65535, portEd.getText().getIntValue()), info.dialect);   // listen for replies on this dialect
+                // Listen for replies on this dialect. A request nobody can hear is no request.
+                const int port = juce::jlimit (1, 65535, portEd.getText().getIntValue());
+                if ((! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != info.dialect)
+                    && ! engine.getRemotes().startOsc (port, info.dialect))
+                {
+                    statusL.setText (portTakenText (port), juce::dontSendNotification);
+                    statusL.setColour (juce::Label::textColourId, brand::textDanger);
+                    return;
+                }
                 const auto ip = ipEd.getText().trim();
                 const int  rx = juce::jlimit (1, 65535, rxEd.getText().getIntValue());
                 const bool ok = engine.getRemotes().requestConsoleChannelNames (ip, rx, info.dialect);
@@ -424,6 +452,8 @@ namespace zynforge
         // ── Hub list ─────────────────────────────────────────────────────
         class Hub final : public juce::Component, public juce::ListBoxModel, private juce::Timer
         {
+            static constexpr const char* kHintText = "Tick a surface to switch it on. Protocol Settings sets "
+                                                     "its network port or its MIDI in and out.";
         public:
             Hub (AudioEngine& e, std::function<void()> createFromConsole, std::function<bool()> linkUp)
                 : engine (e), onCreateFromConsole (std::move (createFromConsole)), consoleLinkUp (std::move (linkUp))
@@ -438,8 +468,7 @@ namespace zynforge
                 title.setColour (juce::Label::textColourId, brand::textPrimary);
                 addAndMakeVisible (title);
 
-                hint.setText ("Tick a surface to switch it on. Protocol Settings sets its network port "
-                              "or its MIDI in and out.", juce::dontSendNotification);
+                hint.setText (kHintText, juce::dontSendNotification);
                 hint.setFont (brand::type::caption());
                 hint.setColour (juce::Label::textColourId, brand::textTertiary);
                 addAndMakeVisible (hint);
@@ -517,7 +546,9 @@ namespace zynforge
                 const auto& pi = protocols()[(size_t) row];
                 if (e.x < 36)   // checkbox column -> toggle enable
                 {
-                    setProtoEnabled (engine, pi, ! protoEnabled (engine, pi));
+                    const auto refusal = setProtoEnabled (engine, pi, ! protoEnabled (engine, pi));
+                    hint.setText (refusal.isNotEmpty() ? refusal : juce::String (kHintText), juce::dontSendNotification);
+                    hint.setColour (juce::Label::textColourId, refusal.isNotEmpty() ? brand::textDanger : brand::textTertiary);
                     list.repaint();
                 }
             }

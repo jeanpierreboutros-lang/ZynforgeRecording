@@ -85,8 +85,10 @@ void MainComponent::twinNotify (const juce::String& text)
 void MainComponent::noteTwinStopIfEnded()
 {
     // Only a take that has really ended counts: a first tap, or a daemon that
-    // did not confirm, leaves it rolling and the follower with it.
+    // did not confirm, leaves it rolling and the follower with it. A daemon
+    // still closing its files ends the take in endDaemonTake, which says so.
     if (! engine.isRecording()) twinLink.noteLocalStopAccepted();
+    else twinStopFollowsDaemon = captureSupervisor.isStopInFlight();
 }
 
 void MainComponent::showTwinRecorderDialog()

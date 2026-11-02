@@ -30,6 +30,7 @@ namespace zynforge
         friend class OctoberRegressionTests;
         friend class EngineReviewRepairTests;
         friend class NetworkFixTests;
+        friend class NetworkStateTests;
         void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
         void timerCallback() override;   // push fader / name / LED state to the surface
         void send (const juce::MidiMessage&);
@@ -41,7 +42,9 @@ namespace zynforge
 
         static constexpr int kStrips = 8;
         std::atomic<int>  bankOffset   { 0 };       // first engine channel on fader 0
-        std::atomic<bool> forceRefresh { false };   // full re-push after a bank move
+        std::atomic<bool> forceRefresh { false };   // full re-push on connect and after a bank move
+        static constexpr juce::uint32 kMasterSaveAfterMs = 500;
+        std::atomic<juce::uint32> masterMovedAtMs { 0 };   // 0 = nothing to save
         float        lastFaderDb [kStrips];
         bool         lastMute    [kStrips];
         bool         lastSolo    [kStrips];
