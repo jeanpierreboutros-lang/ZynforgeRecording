@@ -159,6 +159,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            rangeBandSitsOnTheLane();
             liveEnvelopeMeetsThePlayhead();
             scanRepaintsOnceMore();
             fadeToolGrabs();
@@ -515,6 +516,35 @@ namespace zynforge
                 }
                 MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
                 dir.deleteRecursively();
+            }
+        }
+
+        void rangeBandSitsOnTheLane()
+        {
+            beginTest ("The range band sits where the clips and the ruler put those samples");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                auto render = [&row]
+                {
+                    juce::Image img (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                    juce::Graphics g (img);
+                    row.paint (g);
+                    return img;
+                };
+                const auto plain = render();
+                s.engine.getPlayer().setLoopRegion (43200, 45600);   // 0.90 to 0.95 of the lane
+                const auto shaded = render();
+                int first = -1, last = -1;
+                for (int x = row.getHeaderWidth(); x < row.getWidth(); ++x)
+                    if (shaded.getPixelAt (x, 2) != plain.getPixelAt (x, 2))
+                    {
+                        if (first < 0) first = x;
+                        last = x;
+                    }
+                expectEquals (first, laneX (row, 0.90), "the band's left edge is off the lane's mapping");
+                expectEquals (last,  laneX (row, 0.95), "the band's right edge is off the lane's mapping");
             }
         }
 

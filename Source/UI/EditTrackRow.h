@@ -862,7 +862,7 @@ namespace zynforge
             // across every lane and snap targets have a visible context.
             {
                 const auto& gp = engine.getPlayer();
-                const juce::int64 gTotal = gp.isLoaded() ? gp.getTotalLengthSamples() : 0;
+                const juce::int64 gTotal = gp.isLoaded() ? laneTimelineSamples() : 0;
                 const double gsr = gp.getSampleRate() > 0.0 ? gp.getSampleRate() : 48000.0;
                 if (gTotal > 0 && inner.getWidth() > 16)
                 {
@@ -1476,17 +1476,11 @@ namespace zynforge
                 const auto& player = engine.getPlayer();
                 if (player.hasLoopRegion() && player.isLoaded())
                 {
-                    const auto total = player.getTotalLengthSamples();
-                    if (total > 0)
+                    if (player.getTotalLengthSamples() > 0)
                     {
-                        const auto sampleToWavX = [&] (juce::int64 sp) -> int
-                        {
-                            const double prop = juce::jlimit (0.0, 1.0,
-                                                              (double) sp / (double) total);
-                            return juce::roundToInt (prop * wavePane.getWidth());
-                        };
-                        const int xA = sampleToWavX (player.getLoopStart());
-                        const int xB = sampleToWavX (player.getLoopEnd());
+                        const auto lane = TimelineMapper::forLane (inner, laneTimelineSamples());
+                        const int xA = lane.toXFloor (player.getLoopStart());
+                        const int xB = lane.toXFloor (player.getLoopEnd());
                         // Only shade the range on the track(s) it applies to:
                         // the selected strips, or EVERY track when nothing is
                         // selected (a global loop set via , / .). The Selector
@@ -1498,8 +1492,7 @@ namespace zynforge
                                     || (pg->isTrackSelected && pg->isTrackSelected (index));
                         if (xB > xA && drawHere)
                         {
-                            const juce::Rectangle<int> band (
-                                headerW + xA, 0, xB - xA, getHeight());
+                            const juce::Rectangle<int> band (xA, 0, xB - xA, getHeight());
                             g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::subtle));
                             g.fillRect (band);
                             g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::strong));
