@@ -3,6 +3,8 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 
+#include <atomic>
+
 namespace zynforge
 {
     enum class ExportFormat
@@ -17,6 +19,8 @@ namespace zynforge
         ExportFormat format        { ExportFormat::Wav24 };
         double       sampleRate    { 48000.0 };
         int          bitsPerSample { 24 };    // 16 / 24 / 32 (32 = IEEE float)
+        // One channel of the source, as a mono file. -1 writes them all.
+        int          onlyChannel   { -1 };
     };
 
     // Reads a source audio file, optionally resamples it, and writes it
@@ -26,10 +30,14 @@ namespace zynforge
     public:
         TrackExporter();
 
+        // `cancel`, when set, stops the export at the next block: a long
+        // conversion must not hold the session while doors open. Nothing is
+        // left behind and outError says so.
         bool exportTrack (const juce::File& source,
                           const juce::File& destWithoutExtension,
                           const ExportOptions&,
-                          juce::String& outError);
+                          juce::String& outError,
+                          const std::atomic<bool>* cancel = nullptr);
 
         // Interleave two mono sources (L + R) into ONE stereo file in the
         // requested format / sample rate. Used for stereo-pair tracks so a
@@ -39,7 +47,12 @@ namespace zynforge
                                const juce::File& sourceR,
                                const juce::File& destWithoutExtension,
                                const ExportOptions&,
-                               juce::String& outError);
+                               juce::String& outError,
+                               const std::atomic<bool>* cancel = nullptr);
+
+        // Files this exporter has written with audio over full scale. An
+        // integer file cannot hold those samples, so they come out flat-topped.
+        int getClippedFiles() const noexcept { return clippedFiles; }
 
         // Maps a format to the file extension that exportTrack will produce.
         static juce::String extensionFor (ExportFormat);
@@ -52,6 +65,7 @@ namespace zynforge
     private:
         friend class StereoExportTests; // deterministic decoder-failure fixture
         juce::AudioFormatManager formatManager;
+        int clippedFiles { 0 };
     };
 
     // Takes a render as it streams out of the engine and leaves one finished
@@ -70,13 +84,15 @@ namespace zynforge
 
         bool isOpen() const noexcept { return writer != nullptr; }
         bool write (const juce::AudioBuffer<float>& block, int numSamples);
-        bool commit (juce::String& error);
+        bool commit (juce::String& error, const std::atomic<bool>* cancel = nullptr);
+        // Audio over full scale went into a format that cannot hold it.
+        bool hasClipped() const noexcept { return clipped; }
 
     private:
         TrackExporter& exporter;
         juce::File destWithoutExt, temporary;
         ExportOptions options;
-        bool convertOnCommit { false };
+        bool convertOnCommit { false }, clipped { false };
         std::shared_ptr<std::atomic<bool>> closeFailed;
         std::unique_ptr<juce::AudioFormatWriter> writer;
 

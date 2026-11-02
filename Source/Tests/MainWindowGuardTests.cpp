@@ -6,7 +6,6 @@
 
 #include "../UI/MainComponent.h"
 #include "../UI/PreflightDialog.h"
-#include "SilentTestDevice.h"
 #include "../Audio/VirtualSoundcheck.h"
 #include "../UI/AudioDeviceDialog.h"
 #include "../UI/ControlSurfacesDialog.h"
@@ -18,6 +17,7 @@
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/QcAnalyzer.h"
 #include "../Audio/SongDetector.h"
+#include "SilentAudioDevice.h"
 
 #include <functional>
 #include <CoreFoundation/CoreFoundation.h>
@@ -28,6 +28,8 @@ namespace zynforge
     {
         constexpr double kRate = 48000.0;
         constexpr int kBlock = 256;
+
+        using testaudio::useSilentDevice;
 
         juce::File tempDir (const juce::String& tag)
         {

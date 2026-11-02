@@ -146,8 +146,8 @@ void MainComponent::servicePunch()
                 engine.clearCaptureWindow();
                 engine.getRecorder().cancelPunchIn();
                 const auto why = engine.getRecorder().getStartError();
-                showStatus ("Punch-in failed -- existing take is untouched"
-                            + (why.isNotEmpty() ? " (" + why + ")" : juce::String()));
+                showRecordRefusal ("Punch-in failed -- existing take is untouched"
+                                   + (why.isNotEmpty() ? " (" + why + ")" : juce::String()));
                 wasInsidePunch = inside;
                 return;
             }
@@ -245,16 +245,12 @@ void MainComponent::runQcAnalysis()
         return;
     }
 
-    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
-                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
-    auto files = audioDir.findChildFiles (juce::File::findFiles, false,
-                                          "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac");
+    const auto files = zynforge::qc::sessionTakes (sessionDir);
     if (files.isEmpty())
     {
         showStatus ("No recorded audio to QC -- record a take first.");
         return;
     }
-    files.sort();
 
     showStatus ("Running post-show QC (peak / LUFS / clipping / noise floor)...");
 
@@ -264,7 +260,7 @@ void MainComponent::runQcAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    analysisJobs.start ([self, sessionDir, audioDir, files, names] (const std::atomic<bool>& cancel)
+    analysisJobs.start ([self, sessionDir, files, names] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
         const auto stopped = [self]
@@ -273,14 +269,8 @@ void MainComponent::runQcAnalysis()
         std::vector<zynforge::qc::TrackQc> results;
         for (const auto& f : files)
         {
-            const auto stem = f.getFileNameWithoutExtension();          // "Track_NN" or "Track_NN_partXX"
-            // Skip continuation parts: analyzeFile scans one file at a time, so
-            // a _part would produce a phantom mislabeled row (getIntValue on the
-            // last "_" segment -> 0 -> track 1) and miss the later audio. Parse
-            // the index from the Track_NN PREFIX, matching song detect.
-            // Also skips punch sidecars and Track_NN_consolidated_K renders.
+            const auto stem = f.getFileNameWithoutExtension();
             const int idx = zynforge::mainTakeTrackNumber (f) - 1;
-            if (idx < 0) continue;
             auto q = zynforge::qc::analyzeFile (f, &cancel);
             if (cancel.load (std::memory_order_relaxed)) return stopped;
             q.trackIndex = idx;
@@ -851,9 +841,16 @@ void MainComponent::detectSongsToMarkers()
     {
         const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
         double sr = 48000.0;
-        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel);
+        bool readFailed = false;
+        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel, &readFailed);
         if (cancel.load (std::memory_order_relaxed))
             return [self] { if (self != nullptr) self->showStatus ("Song detection stopped: a take started"); };
+        if (readFailed)
+            return [self, sessionDir]
+            {
+                if (self != nullptr && self->analysisResultWanted (sessionDir))
+                    self->showStatus ("Song detection failed: a take could not be read. Check the session's drive; no markers were added");
+            };
         const auto found = zynforge::songs::detect (flags, sr, params);
 
         return [self, found, sessionDir, arrangement]

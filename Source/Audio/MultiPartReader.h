@@ -1,8 +1,11 @@
 #pragma once
 
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <functional>
 #include <memory>
 #include <vector>
+
+#include "CheckedAudioReader.h"
 
 namespace zynforge
 {
@@ -93,8 +96,7 @@ namespace zynforge
     // owns the per-part readers and maps a global sample position to the part
     // holding it, reading across boundaries (padding past-end with silence).
     // Read-only; all parts share format/channels/SR (same take), so the public
-    // format fields come from the first part. Used by SessionPlayer (playback)
-    // and the EDIT thumbnail (so the whole take draws, not just part 1).
+    // format fields come from the first part.
     class ConcatReader final : public juce::AudioFormatReader
     {
     public:
@@ -115,45 +117,22 @@ namespace zynforge
         }
 
         // Build a ConcatReader for a take's files via `fm`. Returns nullptr if
-        // none open. Caller owns the result.
+        // none open. Caller owns the result. A read that comes up short returns
+        // false: see CheckedAudioReader.h.
         static std::unique_ptr<juce::AudioFormatReader> create (
             juce::AudioFormatManager& fm, const std::vector<juce::File>& files)
         {
-            std::vector<std::unique_ptr<juce::AudioFormatReader>> rs;
-            int  firstOpened = -1, lastOpened = -1;
-            bool holeBetween = false;
-            for (int i = 0; i < (int) files.size(); ++i)
-            {
-                if (std::unique_ptr<juce::AudioFormatReader> r { fm.createReaderFor (files[(size_t) i]) })
-                {
-                    // A part opened AFTER a hole -> that hole is a MISSING /
-                    // unreadable MIDDLE part; concatenating past it would shift
-                    // this part and every later one earlier in the take.
-                    if (lastOpened >= 0 && i != lastOpened + 1) holeBetween = true;
-                    if (firstOpened < 0) firstOpened = i;
-                    lastOpened = i;
-                    if (! rs.empty() && (r->sampleRate != rs.front()->sampleRate
-                        || r->numChannels != rs.front()->numChannels
-                        || r->bitsPerSample != rs.front()->bitsPerSample
-                        || r->usesFloatingPointData != rs.front()->usesFloatingPointData))
-                        return nullptr;
-                    rs.push_back (std::move (r));
-                }
-            }
-            if (rs.empty()) return nullptr;
+            return join (files, [&fm] (const juce::File& file) { return openCheckedReader (fm, file, true); });
+        }
 
-            // Refuse loudly when a MIDDLE part (a hole between survivors) or a
-            // LEADING part (files before the first that opened) is missing /
-            // unreadable: its length is unknowable, so we cannot insert a
-            // correctly-sized silent gap, and silently dropping it would
-            // time-shift the rest of the take. A missing trailing part is also
-            // rejected: returning a shorter take would silently discard audio
-            // when the caller exports, analyzes, or bounces it.
-            if (holeBetween || firstOpened > 0 || rs.size() != files.size())
-                return nullptr;
-
-            if (rs.size() == 1)  return std::move (rs.front());
-            return std::make_unique<ConcatReader> (std::move (rs));
+        // For playback and drawing only, where a bad block plays or draws as
+        // silence and there is nothing to refuse. Anything that writes a file or
+        // a report from what it reads uses create.
+        static std::unique_ptr<juce::AudioFormatReader> createUnchecked (
+            juce::AudioFormatManager& fm, const std::vector<juce::File>& files)
+        {
+            return join (files, [&fm] (const juce::File& file)
+                         { return std::unique_ptr<juce::AudioFormatReader> (fm.createReaderFor (file)); });
         }
 
         bool readSamples (int* const* dest, int numDest, int destOffset,
@@ -188,6 +167,47 @@ namespace zynforge
         }
 
     private:
+        using Opener = std::function<std::unique_ptr<juce::AudioFormatReader> (const juce::File&)>;
+
+        static std::unique_ptr<juce::AudioFormatReader> join (const std::vector<juce::File>& files, const Opener& openFile)
+        {
+            std::vector<std::unique_ptr<juce::AudioFormatReader>> rs;
+            int  firstOpened = -1, lastOpened = -1;
+            bool holeBetween = false;
+            for (int i = 0; i < (int) files.size(); ++i)
+            {
+                if (auto r = openFile (files[(size_t) i]))
+                {
+                    // A part opened AFTER a hole -> that hole is a MISSING /
+                    // unreadable MIDDLE part; concatenating past it would shift
+                    // this part and every later one earlier in the take.
+                    if (lastOpened >= 0 && i != lastOpened + 1) holeBetween = true;
+                    if (firstOpened < 0) firstOpened = i;
+                    lastOpened = i;
+                    if (! rs.empty() && (r->sampleRate != rs.front()->sampleRate
+                        || r->numChannels != rs.front()->numChannels
+                        || r->bitsPerSample != rs.front()->bitsPerSample
+                        || r->usesFloatingPointData != rs.front()->usesFloatingPointData))
+                        return nullptr;
+                    rs.push_back (std::move (r));
+                }
+            }
+            if (rs.empty()) return nullptr;
+
+            // Refuse loudly when a MIDDLE part (a hole between survivors) or a
+            // LEADING part (files before the first that opened) is missing /
+            // unreadable: its length is unknowable, so we cannot insert a
+            // correctly-sized silent gap, and silently dropping it would
+            // time-shift the rest of the take. A missing trailing part is also
+            // rejected: returning a shorter take would silently discard audio
+            // when the caller exports, analyzes, or bounces it.
+            if (holeBetween || firstOpened > 0 || rs.size() != files.size())
+                return nullptr;
+
+            if (rs.size() == 1)  return std::move (rs.front());
+            return std::make_unique<ConcatReader> (std::move (rs));
+        }
+
         std::vector<std::unique_ptr<juce::AudioFormatReader>> parts;
         std::vector<juce::int64>                              partStart;
     };

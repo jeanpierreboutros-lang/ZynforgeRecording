@@ -78,6 +78,32 @@ namespace zynforge
                 expectEquals (n[2], juce::String ("Hat"));
             }
 
+            beginTest ("Any header over numbered rows leaves channel 1's name alone");
+            {
+                for (const juce::String header : { "Input,Name", "Index,Name", "#,Name", "No,Name", "Track,Name",
+                                                   "Mic,Who" })
+                {
+                    const auto n = parseNames (header + "\n1,Kick\n2,Snare\n");
+                    expectEquals (n.size(), 2, header);
+                    expectEquals (n[0], juce::String ("Kick"), header);
+                    expectEquals (n[1], juce::String ("Snare"), header);
+                }
+            }
+
+            beginTest ("A header over a plain name column is not a channel");
+            {
+                const auto n = parseNames ("Input,Name\nKick\nSnare\n");
+                expectEquals (n.size(), 2);
+                expectEquals (n[0], juce::String ("Kick"));
+            }
+
+            beginTest ("An unnumbered first row among unnumbered rows is still a name");
+            {
+                const auto n = parseNames ("Input\nKick\n");
+                expectEquals (n.size(), 2);
+                expectEquals (n[0], juce::String ("Input"));
+            }
+
             beginTest ("A list with no names at all is empty");
             {
                 expect (parseNames ("1,\n2,\n").isEmpty());

@@ -11,7 +11,7 @@
 #include "../Audio/PreflightProbes.h"
 #include "../Audio/SessionBackup.h"
 #include "../Audio/VirtualSoundcheck.h"
-#include "SilentTestDevice.h"
+#include "SilentAudioDevice.h"
 
 #include <functional>
 #include <CoreFoundation/CoreFoundation.h>
@@ -164,7 +164,7 @@ namespace zynforge
                 AudioEngine::setTestModeSkipAudioInit (false);
             } };
             MainComponent main;
-            useSilentDevice (main.engine);
+            testaudio::useSilentDevice (main.engine);
             main.setSize (1320, 820);
             Window::shared = &main;
 

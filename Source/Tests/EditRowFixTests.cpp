@@ -417,11 +417,13 @@ namespace zynforge
                 Row row (0, false, s.engine, s.formats, s.cache);
                 sizeRow (row);
 
-                const int aEnd = laneX (row, 0.5);
+                // The session now ends where the moved clip ends.
+                const auto total = (double) s.engine.getPlayer().getTotalLengthSamples();
+                const int aEnd = laneX (row, 24000.0 / total);
                 drag (row, { aEnd - 2, bodyY }, { aEnd - 22, bodyY });
                 expect (s.clips (0)[0].fileLengthSamples < 24000, "the outgoing clip's end was out of reach");
 
-                const int bStart = laneX (row, 0.45);
+                const int bStart = laneX (row, 21600.0 / total);
                 drag (row, { bStart + 2, bodyY }, { bStart - 18, bodyY });
                 expect (s.clips (0)[1].timelineStartSamples < 21600, "the incoming clip's start was out of reach");
             }
