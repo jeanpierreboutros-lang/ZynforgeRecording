@@ -1488,7 +1488,7 @@ namespace zynforge
                 expect (! w.engine().performRemoteTransport (Action::StartRecord, error));
                 expect (! w.engine().isRecording(), "a remote RECORD punched");
                 expect (! w.main.manualPunchActive);
-                expect (w.main.statusLabel.getText().containsIgnoreCase ("punch"), w.main.statusLabel.getText());
+                expect (w.main.alarmBanner.getText().containsIgnoreCase ("punch"), w.main.alarmBanner.getText());
                 expect (error.containsIgnoreCase ("punch"), error);
             }
 

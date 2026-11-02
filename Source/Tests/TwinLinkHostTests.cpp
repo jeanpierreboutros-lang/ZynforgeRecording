@@ -266,7 +266,7 @@ namespace zynforge
                     main.runRecordPlan (plan);
                     main.twinStartInFlight = false;
                     expect (! main.engine.isRecording(), "a link start opened a punch");
-                    expect (main.statusLabel.getText().containsIgnoreCase ("punch"), main.statusLabel.getText());
+                    expect (main.alarmBanner.getText().containsIgnoreCase ("punch"), main.alarmBanner.getText());
                     if (main.engine.isRecording())
                     {
                         main.stopActiveCaptureAsync (false);

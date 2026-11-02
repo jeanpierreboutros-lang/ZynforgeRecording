@@ -1170,7 +1170,7 @@ namespace zynforge
                 rig.daemon.getRecorder().getTrack (0).armed.store (true);
                 juce::BigInteger arms; arms.setBit (0);
                 main.requestDaemonTake (juce::File(), 1, arms, 1, true);
-                expect (main.statusLabel.getText().contains ("no sessionDir"), main.statusLabel.getText());
+                expect (main.alarmBanner.getText().contains ("no sessionDir"), main.alarmBanner.getText());
                 expect (! main.engine.isRecording());
             }
 
