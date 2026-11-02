@@ -1641,6 +1641,7 @@ namespace zynforge
 
     bool AudioEngine::reorderTracks (const std::vector<int>& order)
     {
+        reorderRefusal.clear();
         if (isRecording() || isSessionTransitionActive()) return false;
         // Refused before any take file is renamed: the indices below describe
         // the strips in memory, which only match this folder's takes if they
@@ -1656,6 +1657,20 @@ namespace zynforge
             const int old = order[(size_t) i];
             if (old < 0 || old >= n || destination[(size_t) old] >= 0) return false;
             destination[(size_t) old] = i;
+        }
+        // The right half of one stereo file has no file of its own. Every
+        // reader finds it as the strip straight after its left half, so an
+        // unlinked pair can't be parted: the right channel would reach no strip,
+        // or the wrong one, and a mix render fails on it.
+        for (int old = 1; old < n; ++old)
+        {
+            const int left = destination[(size_t) old - 1], right = destination[(size_t) old];
+            if (left < 0 || right < 0 || right == left + 1) continue;
+            int channel = 0;
+            getTrackAudioFile (old, &channel);
+            if (channel != 1) continue;
+            reorderRefusal = "Those two strips share one stereo file, so they have to stay side by side";
+            return false;
         }
         player.stop();
         deviceManager.removeAudioCallback (this);

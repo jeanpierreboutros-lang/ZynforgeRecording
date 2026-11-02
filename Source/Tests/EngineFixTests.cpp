@@ -201,6 +201,7 @@ namespace zynforge
             recordAsksAboutTheDevice();
             deviceThatStopsCallingBack();
             trimFollowHearsThePatch();
+            stereoFileStaysTogether();
         }
 
     private:
@@ -380,6 +381,84 @@ namespace zynforge
                 juce::PropertySet none;
                 save (none, noInput);
                 expect (load (none).saved, "a choice of no input read as never chosen");
+            }
+        }
+
+        // One interleaved Track_01 for a pair, and a mono take on the third strip.
+        void recordPairAndMono (AudioEngine& engine, const juce::File& dir)
+        {
+            engine.clearAllStripOverrides();
+            engine.prepareForTests (kRate, kBlock);
+            engine.setStripCount (3);
+            for (int i = 0; i < 3; ++i) engine.setTrackInputRouting (i, i);
+            engine.setTrackStereo (0, true);
+            for (int i = 0; i < 3; ++i) engine.setTrackArmed (i, true);
+            expect (engine.startRecording (dir));
+            feedCallback (engine, 3, 40);
+            engine.stopRecording();
+            engine.setActiveSessionDir (dir);
+            engine.claimMixerFor (dir);
+        }
+
+        void stereoFileStaysTogether()
+        {
+            beginTest ("The two halves of one stereo file can't be parted by a move");
+            {
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-engine-" + juce::Uuid().toString());
+                AudioEngine engine;
+                recordPairAndMono (engine, dir);
+                engine.setTrackStereo (0, false);
+                int channel = -1;
+                expectEquals (engine.getTrackAudioFile (1, &channel).getFileName(), juce::String ("Track_01.wav"));
+                expectEquals (channel, 1);
+
+                const auto audio = dir.getChildFile ("Audio Files");
+                const auto names = [&audio]
+                {
+                    juce::StringArray list;
+                    for (const auto& f : audio.findChildFiles (juce::File::findFiles, false, "Track_*"))
+                        list.add (f.getFileName());
+                    list.sort (false);
+                    return list.joinIntoString (",");
+                };
+                const auto before = names();
+
+                expect (! engine.reorderTracks ({ 1, 0, 2 }), "the halves were swapped");
+                expect (! engine.reorderTracks ({ 0, 2, 1 }), "a strip went between the halves");
+                expect (! engine.reorderTracks ({ 1, 2, 0 }), "the right half was moved away");
+                expect (engine.getReorderRefusal().contains ("stereo file"), engine.getReorderRefusal());
+                expectEquals (names(), before, "a refused move touched a take file");
+                expect (engine.getRecorder().getNumTracks() == 3);
+
+                expect (engine.reorderTracks ({ 2, 0, 1 }), "a move that keeps them together was refused");
+                expect (engine.getReorderRefusal().isEmpty());
+                expectEquals (engine.getTrackAudioFile (2, &channel).getFileName(), juce::String ("Track_02.wav"));
+                expectEquals (channel, 1, "the right half lost its file");
+
+                engine.clearSessionState();
+                engine.clearAllStripOverrides();
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Two mono takes side by side still move freely");
+            {
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-engine-" + juce::Uuid().toString());
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.prepareForTests (kRate, kBlock);
+                engine.setStripCount (2);
+                for (int i = 0; i < 2; ++i) { engine.setTrackInputRouting (i, i); engine.setTrackArmed (i, true); }
+                expect (engine.startRecording (dir));
+                feedCallback (engine, 2, 40);
+                engine.stopRecording();
+                engine.setActiveSessionDir (dir);
+                engine.claimMixerFor (dir);
+                expect (engine.reorderTracks ({ 1, 0 }));
+                engine.clearSessionState();
+                engine.clearAllStripOverrides();
+                dir.deleteRecursively();
             }
         }
 

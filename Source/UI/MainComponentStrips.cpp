@@ -51,7 +51,11 @@ void MainComponent::moveSelectedStrips (int delta)
         selectionLayoutGen = engine.getRecorder().getTrackGeneration();
         showStatus ("Moved selected strips");
     }
-    else showStatus ("Move failed; check disk permissions and Session File Backups before retrying");
+    else
+    {
+        const auto why = engine.getReorderRefusal();
+        showStatus (why.isNotEmpty() ? why : juce::String ("Move failed; check disk permissions and Session File Backups before retrying"));
+    }
 }
 
 namespace

@@ -422,6 +422,9 @@ namespace zynforge
         // strips don't dangle. Returns true on success.
         bool swapTracks (int a, int b);
         bool reorderTracks (const std::vector<int>& order);
+        // Why the last reorder was refused, when the engineer can do something
+        // about it. Empty for any other failure.
+        juce::String getReorderRefusal() const { return reorderRefusal; }
         std::function<void (const std::vector<int>&)> onTracksReordered;
 
         // Punch in/out -- the player auto-arms enabled punch tracks when
@@ -923,6 +926,7 @@ namespace zynforge
         std::atomic<juce::uint32> callbackCount { 0 };       // bumped first in every callback
         std::atomic<bool>         deviceErrorSeen { false };  // any thread
         CallbackWatchdog          callbackWatchdog;           // under the structure lock
+        juce::String             reorderRefusal;
         devicechoice::Chosen     chosenDevice;
         devicechoice::Answers    deviceAnswers;
         // The ids go with a device list; the list changes far less often than
