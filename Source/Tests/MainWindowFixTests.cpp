@@ -1378,6 +1378,21 @@ namespace zynforge
                 w.engine().setEditCursorSample (-1);
             }
 
+            beginTest ("The header names an open session before it has audio");
+            {
+                Window w;
+                auto fresh = tempDir ("fresh");
+                w.dirs.add (fresh);
+                expect (fresh.createDirectory().wasOk());
+                w.engine().clearSessionState();
+                w.engine().setActiveSessionDir (fresh);
+                expect (! w.player().isLoaded());
+                w.main.updateTransportLabels();
+                expect (w.main.sessionLabel.getText().contains (fresh.getFileName()), w.main.sessionLabel.getText());
+                w.engine().setActiveSessionDir ({});
+                w.main.updateTransportLabels();
+                expectEquals (w.main.sessionLabel.getText(), juce::String ("No session loaded"));
+            }
         }
 
         static void dismissModals()

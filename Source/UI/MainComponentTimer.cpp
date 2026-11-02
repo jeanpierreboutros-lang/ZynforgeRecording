@@ -681,6 +681,15 @@ double MainComponent::takeClockRate (double deviceRate)
 void MainComponent::updateTransportLabels()
 {
     auto& player = engine.getPlayer();
+    // The session, not the player: a new session has no audio until its first
+    // take has stopped.
+    const bool sessionOpen = engine.hasSessionFolder();
+    sessionLabel.setText (sessionOpen || player.isLoaded()
+                              ? "Session: " + (sessionOpen ? engine.getActiveSessionDir().getFileName() : player.getSessionName())
+                                    + " (" + juce::String (engine.getRecorder().getNumTracks()) + " tr)"
+                              : juce::String ("No session loaded"),
+                          juce::dontSendNotification);
+
     // The player stands still through a plain take, so this clock follows the
     // take instead, or it would sit frozen beside the big one.
     if (engine.isRecording())
@@ -692,18 +701,6 @@ void MainComponent::updateTransportLabels()
     const auto pos = samplesToTimecode (player.getPositionSamples(), sr);
     const auto tot = samplesToTimecode (player.getTotalLengthSamples(), sr);
     transportLabel.setText (pos + " / " + tot, juce::dontSendNotification);
-
-    if (player.isLoaded())
-    {
-        const auto name = player.getSessionName();
-        const auto tracks = juce::String (player.getNumTracks());
-        sessionLabel.setText ("Session: " + name + " (" + tracks + " tr)",
-                              juce::dontSendNotification);
-    }
-    else
-    {
-        sessionLabel.setText ("No session loaded", juce::dontSendNotification);
-    }
 }
 
 // Compare the device's live sample rate against the session's intended rate
