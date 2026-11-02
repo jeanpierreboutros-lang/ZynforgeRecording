@@ -85,17 +85,6 @@ namespace zynforge
         // they share one line under the device format.
         if (getHeight() < 72)
         {
-            auto paintValue = [&] (juce::Rectangle<float> cell, const char* label,
-                                   const juce::String& value, juce::Colour colour)
-            {
-                g.setColour (brand::textTertiary);
-                g.setFont (brand::type::ledLabel());
-                g.drawText (label, cell.removeFromLeft (36.0f), juce::Justification::centredLeft, false);
-                g.setColour (colour);
-                g.setFont (brand::type::mono (11.0f, true));
-                g.drawText (value, cell, juce::Justification::centredLeft, false);
-            };
-
             auto top = inner.removeFromTop (inner.getHeight() * 0.5f);
             g.setColour (brand::textSecondary);
             g.setFont (brand::type::mono (10.0f, true));
@@ -109,12 +98,25 @@ namespace zynforge
                 g.drawText ("DROP " + juce::String (missed), top, juce::Justification::centredRight, false);
             }
 
-            const float cellW = inner.getWidth() / 3.0f;
-            paintValue (inner.removeFromLeft (cellW * 0.85f), "AUDIO",
-                        juce::String ((int) std::round (cpu)) + "%", ledColour (cpu));
-            paintValue (inner.removeFromRight (cellW * 0.85f), "BUF",
-                        juce::String ((int) std::round (buf)) + "%", ledColour (buf));
-            paintValue (inner, "DISK", juce::String (disk, 1), ledColour (juce::jmin (100.0f, disk * 2.0f)));
+            // Value widths in em for the longest each can read, so the three
+            // sit evenly and a changing digit can't push its neighbour along.
+            const float valuePt = recording ? 13.0f : 11.0f;
+            const float pctW = valuePt * 2.5f, diskW = valuePt * 6.2f;
+            const float labelsW = 32.0f + 28.0f + 24.0f;
+            const float gap = juce::jmax (4.0f, (inner.getWidth() - labelsW - 2.0f * pctW - diskW) / 2.0f);
+            auto cell = [&] (const char* label, float labelW, const juce::String& value, float valueW, juce::Colour colour)
+            {
+                g.setColour (brand::textTertiary);
+                g.setFont (brand::type::ledLabel());
+                g.drawText (label, inner.removeFromLeft (labelW), juce::Justification::centredLeft, false);
+                g.setColour (colour);
+                g.setFont (brand::type::mono (valuePt, true));
+                g.drawText (value, inner.removeFromLeft (valueW), juce::Justification::centredLeft, false);
+                inner.removeFromLeft (gap);
+            };
+            cell ("AUDIO", 32.0f, juce::String ((int) std::round (cpu)) + "%", pctW, ledColour (cpu));
+            cell ("DISK",  28.0f, juce::String (disk, 1) + " MB/s", diskW, ledColour (juce::jmin (100.0f, disk * 2.0f)));
+            cell ("BUF",   24.0f, juce::String ((int) std::round (buf)) + "%", pctW, ledColour (buf));
             return;
         }
 
