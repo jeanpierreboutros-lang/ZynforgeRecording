@@ -968,6 +968,13 @@ namespace zynforge
                     expectEquals (file.getSize(), whole, "repair changed the file's length");
                     expect (wavrepair::repairStaleHeader (file) == wavrepair::Result::untouched);
                 }
+
+                ageHeader (file, 0);
+                expect (MultitrackRecorder::recoverInterruptedPunches (session.getChildFile ("Audio Files")));
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> reopened (fm.createReaderFor (file));
+                expect (reopened != nullptr);
+                if (reopened != nullptr) expectEquals (reopened->lengthInSamples, kFrames, "reopening did not repair it");
             }
 
             beginTest ("WAV repair stops at the last whole frame and leaves other files alone");
