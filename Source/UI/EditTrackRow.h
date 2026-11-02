@@ -1584,6 +1584,51 @@ namespace zynforge
             return { body.getX() + 2, body.getBottom() - h - 2, w, h };
         }
 
+        // Paint walks a clip list first to last, so the last clip is on top, and
+        // a hit-test has to walk the other way or the mouse grabs what is hidden.
+        // -1 = no clip under x.
+        static int topClipAt (const std::vector<Clip>& clips, const TimelineMapper& lane, int x)
+        {
+            for (int i = (int) clips.size(); --i >= 0;)
+            {
+                const auto& c = clips[(size_t) i];
+                if (x >= lane.toX (c.timelineStartSamples)
+                    && x <= lane.toX (c.timelineStartSamples + c.fileLengthSamples))
+                    return i;
+            }
+            return -1;
+        }
+
+        // The clips a press can mean, best first: those under the pointer top
+        // first, then the rest, whose trim zones reach out over empty lane. With
+        // edgesFirst the nearest edge outranks a body, so at a seam each clip's
+        // edge is taken from its own side and both ends of a crossfade stay
+        // reachable under the clip that covers them.
+        static constexpr int kTrimZonePx = 6;
+        static std::vector<int> clipHitOrder (const std::vector<Clip>& clips, const TimelineMapper& lane,
+                                              int x, bool edgesFirst)
+        {
+            struct Under { int clip, edgeDistance; };
+            std::vector<Under> under;
+            std::vector<int> beside;
+            for (int i = (int) clips.size(); --i >= 0;)
+            {
+                const auto& c = clips[(size_t) i];
+                const int xL = lane.toX (c.timelineStartSamples);
+                const int xR = lane.toX (c.timelineStartSamples + c.fileLengthSamples);
+                if (x < xL || x > xR) { beside.push_back (i); continue; }
+                const int edge = juce::jmin (x - xL, xR - x);
+                under.push_back ({ i, edgesFirst && edge <= kTrimZonePx ? edge : kTrimZonePx + 1 });
+            }
+            std::stable_sort (under.begin(), under.end(), [] (const Under& a, const Under& b)
+                              { return a.edgeDistance < b.edgeDistance; });
+            std::vector<int> order;
+            order.reserve (clips.size());
+            for (const auto& u : under) order.push_back (u.clip);
+            order.insert (order.end(), beside.begin(), beside.end());
+            return order;
+        }
+
         // Draws the swatch column, header panel, divider and selection highlight
         // at x = hx (the horizontal scroll offset). Called at
         // the very end of paint() so it sits on top of the waveform; the
@@ -1841,18 +1886,11 @@ namespace zynforge
                         if (totalSamples > 0)
                         {
                             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
-                            const auto sampleToX = [&] (juce::int64 sp) -> int
-                            { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
-                            for (int i = 0; i < (int) clips->size(); ++i)
+                            const int top = topClipAt (*clips, TimelineMapper::forLane (inner, totalSamples), e.x);
+                            if (top >= 0)
                             {
-                                const auto& c = (*clips)[(size_t) i];
-                                const int xL = sampleToX (c.timelineStartSamples);
-                                const int xR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
-                                if (e.x >= xL && e.x <= xR)
-                                {
-                                    showFadeMenu (i, e.getScreenPosition());
-                                    return;
-                                }
+                                showFadeMenu (top, e.getScreenPosition());
+                                return;
                             }
                         }
                     }
@@ -1906,20 +1944,9 @@ namespace zynforge
 
                     if (activeTool == EditToolsBar::Tool::Fade)
                     {
-                        if (auto* clips = engine.tryClipsFor (index))
-                        {
-                            const auto sx = xToSample (e.x);
-                            for (int i = 0; i < (int) clips->size(); ++i)
-                            {
-                                const auto& c = (*clips)[(size_t) i];
-                                if (sx >= c.timelineStartSamples
-                                    && sx <= c.timelineStartSamples + c.fileLengthSamples)
-                                {
-                                    showFadeMenu (i, e.getScreenPosition());
-                                    return;
-                                }
-                            }
-                        }
+                        if (const auto* clips = engine.tryClipsFor (index))
+                            if (const int top = topClipAt (*clips, TimelineMapper::forLane (inner, totalSamples), e.x); top >= 0)
+                                showFadeMenu (top, e.getScreenPosition());
                         return;
                     }
 
@@ -2001,11 +2028,13 @@ namespace zynforge
                         // Fade handles take priority over both -- they
                         // sit in the top-edge stripe and are visually
                         // distinct dots.
-                        const int hitZone = 6;
+                        const int hitZone = kTrimZonePx;
                         const int fadeHandleZone = 8;
                         const int laneTop = inner.getY();
                         dragTimelineSamples = totalSamples;   // drag scale, fixed at the grab
-                        for (int i = 0; i < (int) clips->size(); ++i)
+                        const bool smartTool = activeTool == EditToolsBar::Tool::Smart
+                                            || activeTool == EditToolsBar::Tool::None;
+                        for (const int i : clipHitOrder (*clips, TimelineMapper::forLane (inner, totalSamples), e.x, smartTool))
                         {
                             const auto& c = (*clips)[(size_t) i];
                             const int xL = sampleToX (c.timelineStartSamples);
@@ -2534,6 +2563,9 @@ namespace zynforge
         int  getTrackIndex()  const noexcept { return index; }
         bool isStereoPair()   const noexcept { return stereo; }
 
+        // Stands in for the clip's popup: a test has no menu to answer.
+        std::function<void (int)> clipMenuForTests;
+
         // ── Test seams ─────────────────────────────────────────────────────
         // Narrow read-only accessors so the suite can assert on this row's
         // visible state. Same idiom as MultitrackRecorder::drainPendingForTests
@@ -2769,6 +2801,7 @@ namespace zynforge
 
         void showFadeMenu (int clipIdx, juce::Point<int> screenPos)
         {
+            if (clipMenuForTests) { clipMenuForTests (clipIdx); return; }
             if (menuOpen) return;
             menuOpen = true;
 

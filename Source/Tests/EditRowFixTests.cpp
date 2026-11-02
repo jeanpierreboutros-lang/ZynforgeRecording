@@ -155,6 +155,7 @@ namespace zynforge
 
             rowsFollowTheSession (main);
             theMasterIsNotAChannel (main);
+            theMouseTakesWhatItCanSee();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -247,6 +248,166 @@ namespace zynforge
                      juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation,
                      juce::MouseInputSource::defaultRotation, juce::MouseInputSource::defaultTiltX,
                      juce::MouseInputSource::defaultTiltY, &c, &c, now, p.toFloat(), now, 1, false };
+        }
+
+        // A session folder with real takes, loaded into a test-mode engine.
+        struct Session
+        {
+            juce::File                dir = tempDir ("lane");
+            AudioEngine               engine;
+            juce::AudioFormatManager  formats;
+            juce::AudioThumbnailCache cache { 8 };
+
+            Session (int strips, std::vector<int> lengths)
+            {
+                formats.registerBasicFormats();
+                engine.clearAllStripOverrides();
+                engine.prepareForTests ((double) kRate, 512);
+                engine.setStripCount (strips);
+                dir.getChildFile ("Audio Files").createDirectory();
+                for (size_t i = 0; i < lengths.size(); ++i)
+                    if (lengths[i] > 0) writeWav (takeIn (dir, (int) i + 1), lengths[i]);
+                engine.setActiveSessionDir (dir);
+                engine.claimMixerFor (dir);
+                engine.loadSession (dir);
+                engine.setStripCount (strips);
+            }
+            ~Session()
+            {
+                engine.clearAllStripOverrides();
+                dir.deleteRecursively();
+            }
+            std::vector<Clip>& clips (int track) { return engine.clipsFor (track); }
+        };
+
+        // A 1000 px inner lane starting 4 px right of the header: 48 samples/px
+        // over a one-second take.
+        static constexpr int kLaneW = 1000;
+        static void sizeRow (Row& row, int height = 100) { row.setSize (row.getHeaderWidth() + kLaneW + 8, height); }
+        static int laneX (const Row& row, double frac) { return row.getHeaderWidth() + 4 + (int) std::lround (frac * kLaneW); }
+
+        static Clip clipAt (juce::int64 start, juce::int64 length)
+        {
+            Clip c;
+            c.timelineStartSamples = start;
+            c.fileLengthSamples    = length;
+            return c;
+        }
+
+        static juce::MouseEvent mouseAt (juce::Component& c, juce::Point<int> p, juce::Point<int> down, bool dragged,
+                                         int buttons = juce::ModifierKeys::leftButtonModifier)
+        {
+            const auto now = juce::Time::getCurrentTime();
+            return { juce::Desktop::getInstance().getMainMouseSource(), p.toFloat(), juce::ModifierKeys (buttons),
+                     juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation,
+                     juce::MouseInputSource::defaultRotation, juce::MouseInputSource::defaultTiltX,
+                     juce::MouseInputSource::defaultTiltY, &c, &c, now, down.toFloat(), now, 1, dragged };
+        }
+
+        static void drag (juce::Component& c, juce::Point<int> from, juce::Point<int> to,
+                          int buttons = juce::ModifierKeys::leftButtonModifier)
+        {
+            c.mouseDown (mouseAt (c, from, from, false, buttons));
+            const int steps = juce::jmax (1, (int) (from.getDistanceFrom (to) / 4));
+            for (int s = 1; s <= steps; ++s)
+                c.mouseDrag (mouseAt (c, from + (to - from) * s / steps, from, true, buttons));
+            c.mouseUp (mouseAt (c, to, from, true, buttons));
+        }
+
+        void theMouseTakesWhatItCanSee()
+        {
+            // The body clear of the gain handle in the bottom-left corner.
+            const auto bodyY = 40;
+
+            beginTest ("A clip pasted inside a long one takes the click, and the long one keeps the rest");
+            {
+                Session s (1, { kRate });
+                s.clips (0).push_back (clipAt (19200, 4800));   // 100 px wide, on top
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+
+                const int inside = laneX (row, 0.45);
+                drag (row, { inside, bodyY }, { inside + 100, bodyY });
+                expectEquals (s.clips (0)[0].timelineStartSamples, (juce::int64) 0, "the clip underneath moved");
+                expect (s.clips (0)[1].timelineStartSamples > 19200, "the clip on top could not be reached");
+
+                const auto shortStart = s.clips (0)[1].timelineStartSamples;
+                drag (row, { laneX (row, 0.9), bodyY }, { laneX (row, 0.9) - 20, bodyY });
+                expectEquals (s.clips (0)[1].timelineStartSamples, shortStart, "a click off it moved the top clip");
+            }
+
+            beginTest ("Right-click and the Fade tool open the clip on top");
+            {
+                Session s (1, { kRate });
+                s.clips (0).push_back (clipAt (19200, 4800));
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                int opened = -1;
+                row.clipMenuForTests = [&opened] (int clip) { opened = clip; };
+
+                const juce::Point<int> inside (laneX (row, 0.45), bodyY);
+                row.mouseDown (mouseAt (row, inside, inside, false, juce::ModifierKeys::popupMenuClickModifier));
+                expectEquals (opened, 1, "right-click opened the clip underneath");
+
+                opened = -1;
+                EditToolsBar tools;
+                tools.setTool (EditToolsBar::Tool::Fade);
+                row.toolsBar = &tools;
+                row.mouseDown (mouseAt (row, inside, inside, false));
+                row.mouseUp   (mouseAt (row, inside, inside, false));
+                expectEquals (opened, 1, "the Fade tool opened the clip underneath");
+                row.toolsBar = nullptr;
+            }
+
+            beginTest ("A split seam gives each clip its own edge");
+            {
+                Session s (1, { kRate });
+                expect (s.engine.splitTrackAtSample (0, 24000));
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const int seam = laneX (row, 0.5);
+
+                drag (row, { seam + 3, bodyY }, { seam + 53, bodyY });
+                expect (s.clips (0)[1].timelineStartSamples > 24000, "the right clip's start could not be reached");
+                expectEquals (s.clips (0)[0].fileLengthSamples, (juce::int64) 24000, "the left clip's end moved");
+
+                const auto rightStart = s.clips (0)[1].timelineStartSamples;
+                drag (row, { seam - 3, bodyY }, { seam - 53, bodyY });
+                expect (s.clips (0)[0].fileLengthSamples < 24000, "the left clip's end could not be reached");
+                expectEquals (s.clips (0)[1].timelineStartSamples, rightStart, "the right clip moved");
+            }
+
+            beginTest ("A short fade-in at a seam can be grabbed");
+            {
+                Session s (1, { kRate });
+                expect (s.engine.splitTrackAtSample (0, 24000));
+                expect (s.engine.setClipFades (0, 1, 240, 0));   // 5 px
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const int handle = laneX (row, 0.5) + 5;
+                const int top = brand::space::sm + 2;
+                drag (row, { handle, top }, { handle + 50, top });
+                expect (s.clips (0)[1].fadeInSamples > 240, "the fade-in at the seam could not be grabbed");
+                expectEquals (s.clips (0)[0].fileLengthSamples, (juce::int64) 24000, "the left clip's end moved");
+            }
+
+            beginTest ("Both ends of a crossfade stay reachable under the clip that covers them");
+            {
+                Session s (1, { kRate });
+                expect (s.engine.splitTrackAtSample (0, 24000));
+                expect (s.engine.editClip (0, 1, AudioEngine::ClipEdit::Move, -2400));   // 50 px overlap
+                expectEquals (s.clips (0)[1].timelineStartSamples, (juce::int64) 21600, "setup: an overlap");
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+
+                const int aEnd = laneX (row, 0.5);
+                drag (row, { aEnd - 2, bodyY }, { aEnd - 22, bodyY });
+                expect (s.clips (0)[0].fileLengthSamples < 24000, "the outgoing clip's end was out of reach");
+
+                const int bStart = laneX (row, 0.45);
+                drag (row, { bStart + 2, bodyY }, { bStart - 18, bodyY });
+                expect (s.clips (0)[1].timelineStartSamples < 21600, "the incoming clip's start was out of reach");
+            }
         }
 
         void theMasterIsNotAChannel (MainComponent& main)
