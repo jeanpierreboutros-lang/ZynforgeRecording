@@ -584,6 +584,69 @@ namespace zynforge
                 expectEquals (b.track (0).outputRouting.load(), 4);
                 expectEquals (b.track (1).outputRouting.load(), 5, "R came back on its old output");
             }
+
+            beginTest ("Timecode chase leaves a locked session alone");
+            {
+                Bench b (main);
+                auto& e = b.engine();
+                auto& player = e.getPlayer();
+                player.setPositionSamples (1000);
+                e.setChaseMode (AudioEngine::ChaseMode::Mtc);
+                e.setChaseStartTimecode ("00:00:00:00");
+                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 12, 25.0f);
+                expect (e.isChaseLive(), "fixture: chase is not live");
+
+                main.onLockToggled();
+                main.serviceTimecodeChase();
+                expect (! e.isPlaying(), "chase started a locked session");
+                expectEquals (player.getPositionSamples(), (juce::int64) 1000, "chase moved a locked session");
+                expect (main.statusLabel.getText().containsIgnoreCase ("locked"), main.statusLabel.getText());
+
+                main.onLockToggled();
+                main.serviceTimecodeChase();
+                expect (e.isPlaying(), "chase did not resume after the lock");
+                e.setChaseMode (AudioEngine::ChaseMode::Off);
+                main.serviceTimecodeChase();
+                e.stopPlayback();
+            }
+
+            beginTest ("LOCK holds chase's stop as well as its start");
+            {
+                Bench b (main);
+                auto& e = b.engine();
+                e.setChaseMode (AudioEngine::ChaseMode::Mtc);
+                e.setChaseStartTimecode ("00:00:00:00");
+                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 12, 25.0f);
+                main.serviceTimecodeChase();
+                expect (e.isPlaying());
+                main.chaseParked = false;
+                main.onLockToggled();
+                // An hour past the session: unlocked, this parks and stops what chase started.
+                e.getTimecodeChase().feedMtcFullFrame (1, 0, 0, 0, 25.0f);
+                main.serviceTimecodeChase();
+                expect (e.isPlaying(), "chase stopped a locked transport");
+                main.onLockToggled();
+                e.setChaseMode (AudioEngine::ChaseMode::Off);
+                main.serviceTimecodeChase();
+                e.stopPlayback();
+            }
+
+            beginTest ("Chase waits for a session job");
+            {
+                Bench b (main);
+                auto& e = b.engine();
+                e.getPlayer().setPositionSamples (1000);
+                e.setChaseMode (AudioEngine::ChaseMode::Mtc);
+                e.setChaseStartTimecode ("00:00:00:00");
+                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 12, 25.0f);
+                main.sessionIoBusy.store (true);
+                main.serviceTimecodeChase();
+                main.sessionIoBusy.store (false);
+                expect (! e.isPlaying());
+                expectEquals (e.getPlayer().getPositionSamples(), (juce::int64) 1000);
+                e.setChaseMode (AudioEngine::ChaseMode::Off);
+                main.serviceTimecodeChase();
+            }
         }
 
         // ── A desk that cannot repatch ─────────────────────────────────────

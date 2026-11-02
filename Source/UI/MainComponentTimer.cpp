@@ -754,6 +754,20 @@ void MainComponent::serviceTimecodeChase()
         return;
     }
 
+    // LOCK holds the transport against every remote, chase included: it neither
+    // starts, locates nor stops anything until the session is unlocked. A
+    // session job owns the player, so chase waits for that a tick at a time.
+    if (engine.areControlsLocked())
+    {
+        if (! chaseParked)
+        {
+            chaseParked = true;
+            showStatus ("Chase is holding: session is locked");
+        }
+        return;
+    }
+    if (sessionIoBusy.load()) return;
+
     const bool live = engine.isChaseLive();
     const auto parkReason = live ? engine.getChaseParkReason() : juce::String();
     if (parkReason.isNotEmpty())
