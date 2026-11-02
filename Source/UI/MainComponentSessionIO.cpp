@@ -153,6 +153,8 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         showStatus (dir.getFileName() + " is already open");
         return engine.getPlayer().getNumTracks();
     }
+    if (! zynforge::sessionrepair::looksLikeSession (dir))
+    { showStatus (dir.getFileName() + " is not a session folder; nothing was opened"); return -1; }
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
     int interruptedPunches = 0, repairedHeaders = 0, unrepairedHeaders = 0;

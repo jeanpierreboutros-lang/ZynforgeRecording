@@ -439,7 +439,8 @@ void MainComponent::openSessionFromWelcome (const juce::File& sessionDir)
     // loadSession -- otherwise the menus (Export / Edit) stayed grey and
     // gains/colours/routing didn't restore.
     const int n = openSessionFolder (sessionDir);
-    showStatus (n < 0 || ! sessionDir.isDirectory() ? "Failed to load " + sessionDir.getFileName()
+    if (n < 0) return;   // it has said why, and "failed to load" would replace that
+    showStatus (! sessionDir.isDirectory() ? "Failed to load " + sessionDir.getFileName()
                       : n > 0 ? "Loaded: " + sessionDir.getFileName()
                               : "Opened empty session: " + sessionDir.getFileName());
 }

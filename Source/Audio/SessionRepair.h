@@ -85,6 +85,20 @@ namespace zynforge::sessionrepair
                             { return ! take.getFileName().containsIgnoreCase (".punchbase"); });
     }
 
+    // Something only a session has. Any one will do, because any of them can be
+    // damaged or missing in a real session. Opening anything else would make it
+    // one: the next autosave would write a session's files into that folder.
+    inline bool looksLikeSession (const juce::File& dir)
+    {
+        return hasTakeAudio (dir)
+            || findSessionProj (dir).existsAsFile()
+            || dir.getChildFile (sessionmix::kFileName).existsAsFile()
+            || dir.getChildFile ("session_settings.json").existsAsFile()
+            || dir.getChildFile ("markers.json").existsAsFile()
+            || dir.getChildFile ("Audio Files").isDirectory()
+            || dir.getChildFile ("Session File Backups").isDirectory();
+    }
+
     // Run before anything in the session loads. `hasTakeAudio` also catches a
     // mix saved with no strips: readable, but it describes no channel of the
     // audio beside it.

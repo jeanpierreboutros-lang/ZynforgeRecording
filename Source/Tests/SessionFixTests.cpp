@@ -591,6 +591,66 @@ public:
         }
     }
 
+    void testOpeningAFolderThatIsNoSession()
+    {
+        beginTest ("File > Open refuses a folder that is no session and touches nothing");
+        {
+            Folder show, plain ("Desktop", false);
+            writeSavedShow (show);
+            const auto notes = plain.dir.getChildFile ("notes.txt");
+            expect (notes.replaceWithText ("mine"));
+            Host host (show);
+
+            host.main.completeOpenFolder (plain.dir);
+            expect (host.status().contains ("not a session folder"), host.status());
+            expect (host.main.engine.getActiveSessionDir() == show.dir, "the open session was replaced");
+            expect (host.main.engine.mixerBelongsTo (show.dir));
+            expectEquals (host.main.engine.getRecorder().getNumTracks(), 2);
+            expectEquals (plain.dir.getNumberOfChildFiles (juce::File::findFilesAndDirectories, "*"), 1,
+                          "something was written into the folder");
+        }
+
+        beginTest ("The Welcome dialog keeps the reason a folder did not open");
+        {
+            Folder plain ("Desktop", false);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.openSessionFromWelcome (plain.dir);
+            expect (host.statusLabel.getText().contains ("not a session folder"), host.statusLabel.getText());
+            forget (host);
+        }
+
+        beginTest ("Everything a real session can look like still opens");
+        {
+            {
+                Folder justProject ("New", false);
+                expect (justProject.project().replaceWithText ("{}"));
+                Host host (justProject);
+                expect (host.main.engine.getActiveSessionDir() == justProject.dir, "a new session with no audio");
+            }
+            {
+                Folder legacy ("Legacy", false);
+                expect (writeAudio (legacy.dir.getChildFile ("Track_01.wav")));
+                Host host (legacy);
+                expect (host.main.engine.getActiveSessionDir() == legacy.dir, "takes in the session root");
+            }
+            {
+                Folder take ("Session_2026", true);
+                expect (writeAudio (take.track (1)));
+                Host host (take);
+                expect (host.main.engine.getActiveSessionDir() == take.dir, "a take that was never saved");
+            }
+            {
+                Folder damaged ("Damaged", false);
+                expect (damaged.dir.getChildFile ("session_mix.json").replaceWithText ("{ damaged"));
+                MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+                host.damagedFilesPromptForTests = [] (const auto&) {};
+                host.openSessionFolder (damaged.dir);
+                expect (host.engine.getActiveSessionDir() == damaged.dir, "a damaged document is still a session");
+                forget (host);
+            }
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -606,6 +666,7 @@ public:
         testCopyChecksTheFile();
         testUnloadedSession();
         testBackupsAreFound();
+        testOpeningAFolderThatIsNoSession();
     }
 };
 
