@@ -938,6 +938,7 @@ namespace zynforge
         };
         ListedIds listedIds[2];
         devicechoice::DeviceList listDevices (bool inputs);
+        bool clipsBelongTo (const juce::File& takeFolder) const;
         juce::String openInputDevice();
         MultitrackRecorder       recorder;
         SessionPlayer            player;

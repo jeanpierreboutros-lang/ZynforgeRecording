@@ -376,6 +376,7 @@ namespace zynforge
         // captured, so the next RECORD continues the take from here instead
         // of looking like it starts over from the beginning.
         const auto recordEnd = recorder.getRecordTimelineSamples();
+        const bool sameSession = clipsBelongTo (sessionDir);
         recorder.stopRecording();
         clearCaptureWindow();
         player.setSeekLocked (false);
@@ -399,7 +400,7 @@ namespace zynforge
             // during soundcheck. A stop after a punch or continue must not
             // wipe edits on OTHER tracks; only the just-captured track's
             // plain default clip is refreshed to the new take length.
-            seedDefaultClips (/*preserveEdits*/ true, /*appendRecordedAudio*/ true);
+            seedDefaultClips (/*preserveEdits*/ sameSession, /*appendRecordedAudio*/ sameSession);
             // loadSession() rewinds the player to 0; park the playhead back
             // at the take's end so the engineer can hit RECORD again and
             // continue seamlessly (or PLAY to review from this point).
@@ -407,6 +408,14 @@ namespace zynforge
                                                      player.getTotalLengthSamples(),
                                                      recordEnd));
         }
+    }
+
+    // The clips in memory are the session the player holds. A take's folder can
+    // be another one: with the session's drive gone, RECORD opens a new folder.
+    bool AudioEngine::clipsBelongTo (const juce::File& takeFolder) const
+    {
+        const auto loaded = player.getSessionDir();
+        return loaded == juce::File() || loaded == takeFolder;
     }
 
     bool AudioEngine::stopRecordingAsync (std::function<void (bool)> completion)
@@ -426,7 +435,8 @@ namespace zynforge
         job->external = externalSession != juce::File();
         job->directory = job->external ? externalSession : recorder.getActiveSessionDir();
         job->recordEnd = job->external ? externalEnd : recorder.getRecordTimelineSamples();
-        job->sameSession = ! job->external || player.getSessionDir() == externalSession;
+        job->sameSession = job->external ? player.getSessionDir() == externalSession
+                                         : clipsBelongTo (job->directory);
         job->playbackRate = deviceSampleRate.load();
         job->playbackBlock = deviceBlockSize.load();
         job->explicitReaders = player.snapshotExplicitReaderRequests();

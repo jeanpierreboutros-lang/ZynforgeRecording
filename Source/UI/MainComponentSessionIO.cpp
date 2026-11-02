@@ -2433,7 +2433,10 @@ juce::File MainComponent::makeNewSessionDir() const
             // A folder pinned but never loaded has its own mixer on disk, and
             // this take must neither join those tracks nor replace that mixer.
             juce::File f (saved);
-            if (engine.mixerBelongsTo (f) && (f.isDirectory() || f.createDirectory().wasOk()))
+            // A folder gone from under a loaded session is not that session
+            // any more, even if its path can be made again.
+            const bool gone = ! f.isDirectory() && engine.getPlayer().isLoaded();
+            if (! gone && engine.mixerBelongsTo (f) && (f.isDirectory() || f.createDirectory().wasOk()))
                 return f;
         }
     }

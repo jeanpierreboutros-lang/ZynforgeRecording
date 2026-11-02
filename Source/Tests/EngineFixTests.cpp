@@ -202,6 +202,7 @@ namespace zynforge
             deviceThatStopsCallingBack();
             trimFollowHearsThePatch();
             stereoFileStaysTogether();
+            takeIntoANewFolder();
         }
 
     private:
@@ -398,6 +399,79 @@ namespace zynforge
             engine.stopRecording();
             engine.setActiveSessionDir (dir);
             engine.claimMixerFor (dir);
+        }
+
+        void takeIntoANewFolder()
+        {
+            const auto plainWholeTake = [this] (AudioEngine& engine)
+            {
+                const auto& clips = engine.clipsFor (0);
+                expectEquals ((int) clips.size(), 1, "the new take came in through the old session's clips");
+                if (! clips.empty())
+                    expectEquals (clips[0].fileLengthSamples, engine.getPlayer().getTrackLengthSamples (0),
+                                  "part of the new take is hidden");
+            };
+
+            for (const bool async : { false, true })
+            {
+                beginTest (juce::String ("A local take into another folder keeps none of the old clips, ")
+                           + (async ? "stopped on the worker" : "stopped in place"));
+                const auto base = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                      .getChildFile ("zf-engine-" + juce::Uuid().toString());
+                const auto oldFolder = base.getChildFile ("old"), newFolder = base.getChildFile ("new");
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.prepareForTests (kRate, kBlock);
+                engine.setStripCount (1);
+                engine.setTrackInputRouting (0, 0);
+                engine.setTrackArmed (0, true);
+                expect (engine.startRecording (oldFolder));
+                feedCallback (engine, 1, 80);
+                engine.stopRecording();
+                expect (engine.splitTrackAtSample (0, 20 * kBlock));
+                expectEquals ((int) engine.clipsFor (0).size(), 2);
+
+                expect (engine.startRecording (newFolder));
+                feedCallback (engine, 1, 40);
+                if (async)
+                {
+                    bool finished = false;
+                    expect (engine.stopRecordingAsync ([&finished] (bool) { finished = true; }));
+                    expect (pumpUntil ([&finished] { return finished; }), "the stop never finished");
+                }
+                else engine.stopRecording();
+                plainWholeTake (engine);
+
+                engine.clearSessionState();
+                engine.clearAllStripOverrides();
+                base.deleteRecursively();
+            }
+
+            beginTest ("A take continued into the same session keeps its edits");
+            {
+                const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                        .getChildFile ("zf-engine-" + juce::Uuid().toString());
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.prepareForTests (kRate, kBlock);
+                engine.setStripCount (1);
+                engine.setTrackInputRouting (0, 0);
+                engine.setTrackArmed (0, true);
+                expect (engine.startRecording (folder));
+                feedCallback (engine, 1, 80);
+                engine.stopRecording();
+                expect (engine.splitTrackAtSample (0, 20 * kBlock));
+
+                engine.armContinue (engine.getCaptureLengthSamples());
+                expect (engine.startRecording (folder));
+                feedCallback (engine, 1, 40);
+                engine.stopRecording();
+                expectGreaterOrEqual ((int) engine.clipsFor (0).size(), 2, "a continued take lost its edits");
+
+                engine.clearSessionState();
+                engine.clearAllStripOverrides();
+                folder.deleteRecursively();
+            }
         }
 
         void stereoFileStaysTogether()

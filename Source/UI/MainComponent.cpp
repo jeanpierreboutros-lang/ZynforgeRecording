@@ -212,11 +212,14 @@ void MainComponent::runRecordPlan (RecordStartPlan& plan)
         return;
     }
     applyRecordAutoRouting (plan);
+    // Steps from the session this take is leaving would land on its clips.
+    const bool leavesLoadedSession = engine.getPlayer().isLoaded() && engine.getPlayer().getSessionDir() != plan.dir;
     if (daemonModeActive()) startDaemonTake (plan);
     else if (! startSelectionPunch (plan)) startLocalTake (plan);
     // A punch edits this Mac's own take, so it is not a take the twin joins.
     // This Mac's capture is already running before the link hears of it.
     if (! punch && engine.isRecording()) twinLink.noteLocalTakeStarted();
+    if (leavesLoadedSession && engine.isRecording()) undoManager.clearUndoHistory();
     if (plan.device.answered && engine.isRecording())
         engine.getDeviceAnswers().move (plan.deviceSession, plan.dir.getFullPathName(), plan.device.device);
 }
