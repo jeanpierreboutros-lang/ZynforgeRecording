@@ -1101,6 +1101,49 @@ namespace zynforge
                 expectEquals (later.outputRouting.load(), 4);
             }
 
+            beginTest ("VSC names the strips this device has no output for");
+            {
+                Window w (4);
+                // The silent device has two outputs.
+                w.engine().setTrackInputRouting (0, 0);
+                w.engine().setTrackInputRouting (1, 1);
+                w.engine().setTrackInputRouting (2, 5);
+                w.engine().setTrackInputRouting (3, -1);
+                expectEquals (vsc::stripsWithNoOutput (w.engine()), 2);
+
+                std::function<void()> pending;
+                w.main.confirmForTests = [&pending] (std::function<void()> go) { pending = std::move (go); };
+                w.main.onVscClicked();
+                if (pending != nullptr) pending();
+                w.main.confirmForTests = nullptr;
+                const auto said = w.main.statusLabel.getText();
+                expect (said.contains ("2 strips reach nothing"), said);
+                expect (! said.contains ("match inputs"), said);
+            }
+
+            beginTest ("VSC says nothing extra when every strip reaches the desk");
+            {
+                Window w (2);
+                w.engine().setTrackInputRouting (0, 0);
+                w.engine().setTrackInputRouting (1, 1);
+                std::function<void()> pending;
+                w.main.confirmForTests = [&pending] (std::function<void()> go) { pending = std::move (go); };
+                w.main.onVscClicked();
+                if (pending != nullptr) pending();
+                w.main.confirmForTests = nullptr;
+                expect (w.main.statusLabel.getText().contains ("outputs now match inputs"), w.main.statusLabel.getText());
+            }
+
+            beginTest ("A stream pair past the device says so");
+            {
+                Window w;
+                expect (w.engine().getBusRoutingNotice().isEmpty());
+                w.engine().setStreamOutputs (6, 7);
+                const auto notice = w.engine().getBusRoutingNotice();
+                expect (notice.containsIgnoreCase ("no output"), notice);
+                w.engine().setStreamOutputs (-1, -1);
+            }
+
             beginTest ("VSC sits with the actions, not the view tabs");
             {
                 Window w;
@@ -1126,6 +1169,11 @@ namespace zynforge
                 w.main.updateSoundcheckState();
                 expect (w.main.soundcheckPill.isVisible(), "the desk's patch is only in a menu");
                 expect (w.main.soundcheckPill.getWidth() > 100, "the chip has no room");
+
+                // A desk on card returns outlives every session, and this window is shared.
+                w.main.consoleLink.setProfile (ConsoleProfile::Kind::GenericOsc);
+                w.main.consoleLink.setProfile (ConsoleProfile::Kind::BehringerX32);
+                w.main.updateSoundcheckState();
             }
 
             beginTest ("A pre-flight problem offers the control that deals with it");

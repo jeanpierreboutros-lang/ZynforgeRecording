@@ -251,6 +251,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/MultiPartPlaybackTests.cpp
     Source/Tests/NetworkAuditTests.cpp
     Source/Tests/NetworkFixTests.cpp
+    Source/Tests/NetworkStateTests.cpp
     Source/Tests/OctoberRegressionTests.cpp
     Source/Tests/OscRemoteTests.cpp
     Source/Tests/PlaceholderViewTests.cpp
@@ -270,6 +271,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ReviewUiFormatRepairTests.cpp
     Source/Tests/SeptemberRegressionTests.cpp
     Source/Tests/SessionBackupTests.cpp
+    Source/Tests/SessionFixTests.cpp
     Source/Tests/SessionJobsTests.cpp
     Source/Tests/SessionRecoverySortTests.cpp
     Source/Tests/SessionSafetyTests.cpp

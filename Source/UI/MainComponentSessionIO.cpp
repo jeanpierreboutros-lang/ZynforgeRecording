@@ -21,6 +21,7 @@
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/PathSafety.h"
 #include "../Audio/ShowHandoff.h"
+#include "../Audio/VirtualSoundcheck.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
@@ -58,9 +59,13 @@ bool copyFileCancellable (const juce::File& source, const juce::File& target,
         if (got == 0) break;
     }
     out->flush();
-    return ! in->getStatus().failed() && ! out->getStatus().failed()
-        && in->getPosition() == expectedSize && out->getPosition() == expectedSize
-        && source.getSize() == expectedSize;
+    const bool streamsClean = ! in->getStatus().failed() && ! out->getStatus().failed()
+        && in->getPosition() == expectedSize && out->getPosition() == expectedSize;
+    out.reset();
+    // The stream buffers a file's tail and flush() drops the result of writing
+    // it, while its position already counts those bytes. Only the file on disk
+    // can show a tail that never landed.
+    return streamsClean && target.getSize() == expectedSize && source.getSize() == expectedSize;
 }
 
 bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
@@ -148,6 +153,8 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         showStatus (dir.getFileName() + " is already open");
         return engine.getPlayer().getNumTracks();
     }
+    if (! zynforge::sessionrepair::looksLikeSession (dir))
+    { showStatus (dir.getFileName() + " is not a session folder; nothing was opened"); return -1; }
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
     int interruptedPunches = 0, repairedHeaders = 0, unrepairedHeaders = 0;
@@ -334,8 +341,9 @@ void MainComponent::adoptDaemonTakeSession (const zynforge::EngineStatus& status
     keepRemovedFeatureData (dir);
 
     // A session opened before the daemon was found still holds unsaved work.
-    if (const auto held = engine.getMixerSession(); held.isDirectory())
-        saveSessionStateTo (held);
+    if (const auto held = engine.getMixerSession(); held.isDirectory() && ! saveSessionStateTo (held))
+        showStatus ("! Unsaved changes in " + held.getFileName() + " could not be saved before the rolling take's"
+                    " session replaced them: " + lastMetadataSaveError);
 
     condemnAllStrips();
     engine.stopPlayback();
@@ -384,7 +392,7 @@ bool MainComponent::openSessionDocument (const juce::File& document, bool confir
         return true;
     }
     const auto current = engine.getActiveSessionDir();
-    if (confirmBeforeReplacing && current.isDirectory() && current != dir)
+    if (confirmBeforeReplacing && current != juce::File() && current != dir)
     {
         juce::Component::SafePointer<MainComponent> self (this);
         confirmSessionReplacement ([self, document]
@@ -407,6 +415,18 @@ void MainComponent::confirmSessionReplacement (std::function<void()> continuatio
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before replacing the session"); return; }
     const auto dir = engine.getActiveSessionDir();
+    if (sessionFolderIsMissing())
+    {
+        juce::Component::SafePointer<MainComponent> self (this);
+        offerLeaveMissingSession ("Continue Without Saving", [self, continuation = std::move (continuation)]
+        {
+            if (self == nullptr) return;
+            if (self->engine.isRecording() || self->sessionIoBusy.load())
+            { self->showStatus ("Session switch cancelled: recording or file operation in progress"); return; }
+            continuation();
+        });
+        return;
+    }
     // Pinned but never loaded means nothing in memory belongs to it.
     if (! dir.isDirectory() || ! engine.mixerBelongsTo (dir)) { continuation(); return; }
 
@@ -451,6 +471,18 @@ void MainComponent::closeSession()
         showStatus ("Stop recording before closing the session");
         return;
     }
+    if (sessionFolderIsMissing())
+    {
+        juce::Component::SafePointer<MainComponent> self (this);
+        offerLeaveMissingSession ("Close Without Saving", [self]
+        {
+            if (self == nullptr) return;
+            if (self->engine.isRecording() || self->sessionIoBusy.load())
+            { self->showStatus ("Close cancelled -- recording or saving is in progress"); return; }
+            self->finishCloseSession (false);
+        });
+        return;
+    }
 
     // Closing loses any UNSAVED mixer / edit / cue changes
     // (recorded audio is always already on disk). Offer Save & Close /
@@ -477,43 +509,68 @@ void MainComponent::closeSession()
 
             if (self->engine.isRecording() || self->sessionIoBusy.load())
             { self->showStatus ("Close cancelled -- recording or saving is in progress"); return; }
-            auto finishClose = [self, result]
-            {
-                if (self == nullptr) return;
-            // Forget the session so showStartupWelcome won't auto-reopen it,
-            // and reset every session-scoped bit of state to the fresh-empty
-            // slate (mirrors a launch with no session).
-            auto& engine = self->engine;
-            engine.clearSessionState();
-            self->forgetSessionUiState();
-            engine.clearAllStripOverrides();
-            self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
-            engine.setStripCount (0);
-
-            self->undoManager.clearUndoHistory();
-            self->lastTrackCount = -1;            // force a strip rebuild (now empty)
-            self->updateTransportLabels();
-            self->showStatus (result == 1 ? "Saved + closed session" : "Session closed");
-
-            // activeSessionDir is empty now -> this shows the Welcome dialog
-            // (New / Open) instead of auto-reopening the last session. A
-            // Finder/command-line open only suppresses the LAUNCH Welcome.
-            self->explicitDocumentOpened = false;
-            self->showStartupWelcome();
-            };
             if (result == 1)
             {
                 self->metadataContinuationReserved = true;
                 self->setEnabled (false);
-                self->enqueueMetadataSave (sessionDir, {}, [self, finishClose] (bool ok)
+                self->enqueueMetadataSave (sessionDir, {}, [self] (bool ok)
                 {
                     if (self == nullptr) return;
                     self->metadataContinuationReserved = false;
                     self->setEnabled (true);
-                    if (ok) finishClose();
+                    if (ok) self->finishCloseSession (true);
                 });
             }
-            else if (result == 2) finishClose();
+            else if (result == 2) self->finishCloseSession (false);
+        }), false);
+}
+
+void MainComponent::finishCloseSession (bool saved)
+{
+    // Forget the session so showStartupWelcome won't auto-reopen it, and reset
+    // every session-scoped bit of state to the fresh-empty slate (mirrors a
+    // launch with no session).
+    engine.clearSessionState();
+    forgetSessionUiState();
+    engine.clearAllStripOverrides();
+    condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
+    engine.setStripCount (0);
+
+    undoManager.clearUndoHistory();
+    lastTrackCount = -1;            // force a strip rebuild (now empty)
+    updateTransportLabels();
+    showStatus (saved ? "Saved + closed session" : "Session closed");
+
+    // activeSessionDir is empty now -> this shows the Welcome dialog (New /
+    // Open) instead of auto-reopening the last session. A Finder/command-line
+    // open only suppresses the LAUNCH Welcome.
+    explicitDocumentOpened = false;
+    showStartupWelcome();
+}
+
+// The session is open and its folder is gone, so what was not saved cannot be
+// saved now. It can be once the drive is back, which the engineer has to be told
+// before choosing, so this answers Return with the way that keeps the work.
+void MainComponent::offerLeaveMissingSession (const juce::String& leaveLabel, std::function<void()> leave)
+{
+    const auto dir = engine.getActiveSessionDir();
+    const auto text = "\"" + dir.getFileName() + "\" is open, but its folder is gone:\n"
+        + dir.getFullPathName() + "\n\nChanges since its last save are only in memory and cannot be saved "
+          "without that folder. To keep them, choose Cancel, reconnect the drive, then save.";
+    if (leaveMissingSessionPromptForTests)
+    {
+        if (leaveMissingSessionPromptForTests (text)) leave();
+        return;
+    }
+    auto* aw = new juce::AlertWindow ("Session folder is missing", text, juce::MessageBoxIconType::WarningIcon, this);
+    aw->setLookAndFeel (&laf);
+    aw->addButton (leaveLabel, 1);
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::returnKey), juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw, leave = std::move (leave)] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result == 1) leave();
         }), false);
 }
 
@@ -700,8 +757,27 @@ void MainComponent::saveCueChanges (const juce::String& success)
 // stays so nothing silently retargets it; saving has to wait for the drive.
 bool MainComponent::sessionFolderIsMissing() const
 {
+    return engine.mixerBelongsTo (engine.getActiveSessionDir()) && ! engine.hasSessionFolder();
+}
+
+// A session open with its drive gone is not "no session", and saying so sends
+// the engineer looking in the wrong place.
+juce::String MainComponent::noFolderText (const juce::String& noSession, const juce::String& before) const
+{
+    return sessionFolderIsMissing()
+        ? "! Session folder is missing: " + engine.getActiveSessionDir().getFullPathName()
+            + "; reconnect its drive before " + before
+        : noSession;
+}
+
+// For what is built from memory rather than copied from the folder: a session
+// pinned but never loaded has none of its own there.
+bool MainComponent::refuseUnloadedSession (const juce::String& before)
+{
     const auto dir = engine.getActiveSessionDir();
-    return dir != juce::File() && ! dir.isDirectory() && engine.mixerBelongsTo (dir);
+    if (engine.mixerBelongsTo (dir)) return false;
+    showStatus (dir.getFileName() + " is not loaded; open it before " + before);
+    return true;
 }
 
 // 15 s, then doubling up to the autosave interval. A dead drive must keep being
@@ -834,7 +910,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 {
     if (engine.isRecording()) { showStatus ("Stop recording before exporting tracks"); return; }
     auto sourceDir = engine.getActiveSessionDir();
-    if (! sourceDir.isDirectory()) { showStatus ("No active session to export"); return; }
+    if (! sourceDir.isDirectory()) { showStatus (noFolderText ("No active session to export", "exporting")); return; }
     if (destDir.createDirectory().failed())
     {
         showStatus ("Export failed: cannot create " + destDir.getFullPathName());
@@ -1035,7 +1111,7 @@ void MainComponent::onBounceStems (std::vector<int> tracks)
     if (sessionIoBusy.load()) { showStatus ("Another session operation is already running"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before bouncing stems"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
-    if (! sessionDir.isDirectory()) { showStatus ("No active session to bounce"); return; }
+    if (! sessionDir.isDirectory()) { showStatus (noFolderText ("No active session to bounce", "bouncing")); return; }
 
     const auto exportDir = sessionDir.getChildFile ("Export Files");
     exportDir.createDirectory();
@@ -1141,7 +1217,7 @@ void MainComponent::onBounceStereoMix()
     if (sessionIoBusy.load()) { showStatus ("Another session operation is already running"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before bouncing a mix"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
-    if (! sessionDir.isDirectory()) { showStatus ("No active session to bounce"); return; }
+    if (! sessionDir.isDirectory()) { showStatus (noFolderText ("No active session to bounce", "bouncing")); return; }
 
     const auto exportDir = sessionDir.getChildFile ("Export Files");
     exportDir.createDirectory();
@@ -1543,7 +1619,7 @@ void MainComponent::completeSaveAs (const juce::File& source, const juce::File& 
         {
             const bool ok = zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
                          && copyDirectoryCancellable (source, dest, cancel);
-            return [self, ok, dest, createdDestination, carryEdits]
+            return [self, ok, source, dest, createdDestination, carryEdits]
             {
                 if (self == nullptr) return;
                 self->engine.setSessionTransitionActive (false);
@@ -1554,9 +1630,11 @@ void MainComponent::completeSaveAs (const juce::File& source, const juce::File& 
                     return;
                 }
                 const bool carried = ! carryEdits || self->carryMixerInto (dest);
-                self->openSessionFolder (dest);
-                self->showStatus (carried ? "Saved As -> " + dest.getFileName()
-                                          : "Saved As -> " + dest.getFileName() + "; unsaved changes could not be carried over");
+                const auto refused = self->openCopiedSession (source, dest, carryEdits);
+                auto status = "Saved As -> " + dest.getFileName();
+                if (! carried) status << "; unsaved changes could not be carried over";
+                if (refused.isNotEmpty()) status = "! " + status + "; the copy did not open: " + refused;
+                self->showStatus (status);
             };
         });
     };
@@ -1582,6 +1660,17 @@ bool MainComponent::carryMixerInto (const juce::File& copy)
 {
     engine.claimMixerFor (copy);
     return saveSessionStateTo (copy);
+}
+
+// Why the new folder of a Save As or a Move would not open; empty when it did.
+// openSessionFolder has just put the reason on the status line. A refusal leaves
+// the old session in memory, and carrying its edits claimed the mixer for the
+// copy, so that claim goes back or nothing would save or protect that memory.
+juce::String MainComponent::openCopiedSession (const juce::File& source, const juce::File& copy, bool carried)
+{
+    if (openSessionFolder (copy) >= 0) return {};
+    if (carried && engine.getActiveSessionDir() == source) engine.claimMixerFor (source);
+    return statusLabel.getText();
 }
 
 void MainComponent::offerContinueFromDisk (const juce::String& action, const juce::String& carried,
@@ -1618,7 +1707,8 @@ static double sessionAudioRateFor (zynforge::AudioEngine& engine)
 void MainComponent::onExportAudio()
 {
     const auto source = engine.getActiveSessionDir();
-    if (! source.isDirectory()) { showStatus ("No active session"); return; }
+    if (! source.isDirectory()) { showStatus (noFolderText ("No active session", "exporting")); return; }
+    if (refuseUnloadedSession ("exporting")) return;
 
     const int n = engine.getRecorder().getNumTracks();
     if (n <= 0) { showStatus ("No tracks to export"); return; }
@@ -1789,7 +1879,8 @@ juce::String MainComponent::buildTimelineCsv()
 void MainComponent::exportTimelineCsv()
 {
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) { showStatus ("No active session to export."); return; }
+    if (! dir.isDirectory()) { showStatus (noFolderText ("No active session to export.", "exporting")); return; }
+    if (refuseUnloadedSession ("exporting")) return;
     const auto csv = buildTimelineCsv();
 
     const auto def = dir.getChildFile ("Export Files")
@@ -1818,9 +1909,10 @@ void MainComponent::exportDawProject (zynforge::projectexport::Format format)
 {
     namespace px = zynforge::projectexport;
     const auto sessionDir = engine.getActiveSessionDir();
-    if (! sessionDir.isDirectory()) { showStatus ("No active session to export"); return; }
+    if (! sessionDir.isDirectory()) { showStatus (noFolderText ("No active session to export", "exporting")); return; }
     if (const auto refusal = engine.exportRefusal(); refusal.isNotEmpty()) { showStatus (refusal); return; }
     if (sessionLocked) { showStatus ("Unlock the session before exporting"); return; }
+    if (refuseUnloadedSession ("exporting")) return;
     if (! sessionJobs.reserve()) { showStatus ("Another session operation is already running"); return; }
 
     const auto exportDir = sessionDir.getChildFile ("Export Files");
@@ -1868,7 +1960,7 @@ void MainComponent::exportDawProject (zynforge::projectexport::Format format)
 
 void MainComponent::exportSongs()
 {
-    if (! engine.getActiveSessionDir().isDirectory()) { showStatus ("No active session to export"); return; }
+    if (! engine.getActiveSessionDir().isDirectory()) { showStatus (noFolderText ("No active session to export", "exporting")); return; }
     if (const auto refusal = engine.exportRefusal(); refusal.isNotEmpty()) { showStatus (refusal); return; }
 
     const auto songs = zynforge::songexport::rangesFromMarkers (engine.getMarkers().getAll(),
@@ -1891,7 +1983,7 @@ void MainComponent::startSongExport (zynforge::songexport::Choice choice)
     namespace sx = zynforge::songexport;
     // The dialog can sit open across a remote RECORD or a session change.
     const auto sessionDir = engine.getActiveSessionDir();
-    if (! sessionDir.isDirectory()) { showStatus ("No active session to export"); return; }
+    if (! sessionDir.isDirectory()) { showStatus (noFolderText ("No active session to export", "exporting")); return; }
     if (const auto refusal = engine.exportRefusal(); refusal.isNotEmpty()) { showStatus (refusal); return; }
     if (sessionLocked) { showStatus ("Unlock the session before exporting"); return; }
     if (! sessionJobs.reserve()) { showStatus ("Another session operation is already running"); return; }
@@ -1933,9 +2025,12 @@ void MainComponent::startSongExport (zynforge::songexport::Choice choice)
 
 void MainComponent::exportShowHandoff()
 {
-    const auto source = engine.getActiveSessionDir();
-    if (! source.isDirectory() || engine.isRecording() || sessionLocked)
+    if (engine.isRecording() || sessionLocked)
     { showStatus ("Stop recording and unlock the session before creating a handoff"); return; }
+    const auto source = engine.getActiveSessionDir();
+    if (! source.isDirectory())
+    { showStatus (noFolderText ("No active session to hand off", "creating a handoff")); return; }
+    if (refuseUnloadedSession ("creating a handoff")) return;
     if (! sessionJobs.reserve())
     { showStatus ("Another session operation is already running"); return; }
 
@@ -1956,6 +2051,11 @@ void MainComponent::exportShowHandoff()
 
 void MainComponent::completeShowHandoff (const juce::File& source, const juce::File& dest)
 {
+    if (refuseUnloadedSession ("creating a handoff"))
+    {
+        sessionJobs.release();
+        return;
+    }
     if (pathsafety::isSameOrDescendant (source, dest) || dest.isSymbolicLink())
     {
         sessionJobs.release();
@@ -1975,7 +2075,7 @@ void MainComponent::completeShowHandoff (const juce::File& source, const juce::F
         showStatus ("Could not create the handoff folder");
         return;
     }
-    if (saveSessionStateTo (source) || ! engine.mixerBelongsTo (source))
+    if (saveSessionStateTo (source))
     {
         startHandoffCopy (source, dest);
         return;
@@ -2049,13 +2149,7 @@ void MainComponent::startHandoffCopy (const juce::File& source, const juce::File
         {
             if (self == nullptr) return;
             self->engine.setSessionTransitionActive (false);
-            if (result.ok)
-                self->showStatus ((result.captureReportWarning
-                    ? "! Handoff copy verified; CAPTURE REPORT NEEDS REVIEW: "
-                    : "Verified handoff ready: ") + dest.getFullPathName());
-            else
-                self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
-                                  + " -- " + result.message);
+            self->showStatus (showhandoff::statusLine (result, dest));
         };
     });
 }
@@ -2077,7 +2171,7 @@ void MainComponent::relocateActiveSession()
     if (! oldDir.isDirectory())
     {
         sessionJobs.release();
-        showStatus ("No active session to move -- record or open one first.");
+        showStatus (noFolderText ("No active session to move -- record or open one first.", "moving it"));
         return;
     }
 
@@ -2095,6 +2189,15 @@ void MainComponent::relocateActiveSession()
             if (! newParent.isDirectory()) { sessionJobs.release(); return; }
             completeRelocate (oldDir, newParent);
         });
+}
+
+juce::String MainComponent::moveStatusLine (const juce::File& oldDir, const juce::File& newDir, bool carried,
+                                            bool oldCopyRemains, const juce::String& refused)
+{
+    auto line = (carried ? "Session moved to " : "Session moved, without its unsaved changes, to ")
+              + newDir.getFullPathName();
+    if (oldCopyRemains) line << "; the old folder could not be fully removed: " << oldDir.getFullPathName();
+    return refused.isEmpty() ? line : "! " + line + "; it did not open: " + refused;
 }
 
 void MainComponent::completeRelocate (const juce::File& oldDir, const juce::File& newParent)
@@ -2161,12 +2264,9 @@ void MainComponent::completeRelocate (const juce::File& oldDir, const juce::File
                     // The default sessions folder stays where it was: moving one
                     // session to an archive drive must not send every New
                     // Session, import and crash-recovery scan there too.
-                    self->openSessionFolder (newDir);   // re-pin paths + reload audio from the new home
-                    self->showStatus (oldCopyRemains
-                        ? "Session moved, but the old folder could not be fully removed: "
-                            + oldDir.getFullPathName()
-                        : (carried ? "Session moved to " : "Session moved, without its unsaved changes, to ")
-                            + newDir.getFullPathName());
+                    // Re-pins paths and reloads audio from the new home.
+                    const auto refused = self->openCopiedSession (oldDir, newDir, carryEdits);
+                    self->showStatus (moveStatusLine (oldDir, newDir, carried, oldCopyRemains, refused));
                 };
         });
     };
@@ -2245,6 +2345,7 @@ juce::File MainComponent::getSessionsRoot() const
 // fresh session.
 juce::File MainComponent::templatesDir() const
 {
+    if (templatesDirForTests != juce::File()) return templatesDirForTests;
     auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
                     .getChildFile ("Zynforge Recording")
                     .getChildFile ("Templates");
@@ -2252,9 +2353,45 @@ juce::File MainComponent::templatesDir() const
     return base;
 }
 
+// Sorted, so the menu holds the same ones in the same place from one build of it
+// to the next: the directory's own order is arbitrary.
 juce::Array<juce::File> MainComponent::listSessionTemplates() const
 {
-    return templatesDir().findChildFiles (juce::File::findFiles, false, "*.zftemplate");
+    auto list = templatesDir().findChildFiles (juce::File::findFiles, false, "*.zftemplate");
+    struct ByName
+    {
+        static int compareElements (const juce::File& a, const juce::File& b)
+        { return a.getFileName().compareNatural (b.getFileName()); }
+    } byName;
+    list.sort (byName);
+    return list;
+}
+
+// A template holds the show's patch. During Virtual Soundcheck the live outputs
+// are the soundcheck's, which a new session would take for its own.
+juce::String MainComponent::sessionTemplateJson (const juce::String& name)
+{
+    juce::DynamicObject::Ptr obj (new juce::DynamicObject());
+    obj->setProperty ("name",       name);
+    obj->setProperty ("createdAt",  juce::Time::getCurrentTime().toISO8601 (true));
+    obj->setProperty ("trackCount", engine.getRecorder().getNumTracks());
+
+    juce::Array<juce::var> strips;
+    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
+    {
+        auto& t = engine.getRecorder().getTrack (i);
+        juce::DynamicObject::Ptr s (new juce::DynamicObject());
+        s->setProperty ("name",    t.name);
+        s->setProperty ("colour",  (juce::int64) t.colourARGB.load (std::memory_order_relaxed));
+        s->setProperty ("inRoute", t.inputRouting .load (std::memory_order_relaxed));
+        s->setProperty ("outRoute",zynforge::vsc::showOutput (t));
+        s->setProperty ("stereo",  t.isStereo.load (std::memory_order_relaxed));
+        s->setProperty ("gainDb",  (double) t.gainDb.load (std::memory_order_relaxed));
+        s->setProperty ("pan",     (double) t.pan   .load (std::memory_order_relaxed));
+        strips.add (juce::var (s.get()));
+    }
+    obj->setProperty ("strips", juce::var (strips));
+    return juce::JSON::toString (juce::var (obj.get()));
 }
 
 void MainComponent::promptSaveSessionTemplate()
@@ -2276,31 +2413,9 @@ void MainComponent::promptSaveSessionTemplate()
         const auto name = aw->getTextEditorContents ("name").trim();
         if (name.isEmpty()) return;
 
-        juce::DynamicObject::Ptr obj (new juce::DynamicObject());
-        obj->setProperty ("name",       name);
-        obj->setProperty ("createdAt",  juce::Time::getCurrentTime().toISO8601 (true));
-        obj->setProperty ("trackCount", self->engine.getRecorder().getNumTracks());
-
-        juce::Array<juce::var> strips;
-        for (int i = 0; i < self->engine.getRecorder().getNumTracks(); ++i)
-        {
-            auto& t = self->engine.getRecorder().getTrack (i);
-            juce::DynamicObject::Ptr s (new juce::DynamicObject());
-            s->setProperty ("name",    t.name);
-            s->setProperty ("colour",  (juce::int64) t.colourARGB.load (std::memory_order_relaxed));
-            s->setProperty ("inRoute", t.inputRouting .load (std::memory_order_relaxed));
-            s->setProperty ("outRoute",t.outputRouting.load (std::memory_order_relaxed));
-            s->setProperty ("stereo",  t.isStereo.load (std::memory_order_relaxed));
-            s->setProperty ("gainDb",  (double) t.gainDb.load (std::memory_order_relaxed));
-            s->setProperty ("pan",     (double) t.pan   .load (std::memory_order_relaxed));
-            strips.add (juce::var (s.get()));
-        }
-        obj->setProperty ("strips", juce::var (strips));
-
         const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
         const auto out = self->templatesDir().getChildFile (safeName + ".zftemplate");
-        self->showStatus (zynforge::atomicfile::writeText (
-                              out, juce::JSON::toString (juce::var (obj.get())))
+        self->showStatus (zynforge::atomicfile::writeText (out, self->sessionTemplateJson (name))
                             ? "Template saved -> " + out.getFileName()
                             : "Template NOT saved -- check permissions / free space");
     }));

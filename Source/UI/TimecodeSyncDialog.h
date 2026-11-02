@@ -108,7 +108,9 @@ namespace zynforge
                     if (engine.setChaseStartFromTake())
                         startEditor.setText (engine.getChaseStartTimecode(), juce::dontSendNotification);
                     else
-                        parkStatus.setText ("No take here carries a time stamp", juce::dontSendNotification);
+                        parkStatus.setText (engine.isTakeOnDisk() ? "Wait until the take has stopped"
+                                                                  : "No take here carries a time stamp",
+                                            juce::dontSendNotification);
                 };
                 addAndMakeVisible (startFromTake);
 
