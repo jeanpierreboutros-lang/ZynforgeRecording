@@ -619,7 +619,8 @@ namespace zynforge
         };
 
         // Noise, so FLAC cannot shrink it to nothing and silence is obvious.
-        static void writeAudio (const juce::File& file, int samples = kSamples, int channels = 1, int seed = 1)
+        static void writeAudio (const juce::File& file, int samples = kSamples, int channels = 1, int seed = 1,
+                                float top = 0.5f)
         {
             file.getParentDirectory().createDirectory();
             std::unique_ptr<juce::AudioFormat> format;
@@ -634,7 +635,7 @@ namespace zynforge
             juce::AudioBuffer<float> audio (channels, samples);
             for (int c = 0; c < channels; ++c)
                 for (int i = 0; i < samples; ++i)
-                    audio.setSample (c, i, 0.1f + 0.4f * random.nextFloat());
+                    audio.setSample (c, i, 0.1f + (top - 0.1f) * random.nextFloat());
             writer->writeFromAudioSampleBuffer (audio, 0, samples);
         }
 
@@ -1298,7 +1299,7 @@ namespace zynforge
                 const auto dir = tempDir ("exact");
                 dir.createDirectory();
                 const auto source = dir.getChildFile ("take.wav");
-                FailedReadTests::writeAudio (source, 48000, 2, 9);   // reaches past -6 dBFS on every sample's way up
+                FailedReadTests::writeAudio (source, 48000, 2, 9, 0.98f);   // the loss is above -6 dBFS
                 const auto stem = dir.getChildFile ("copy");
                 TrackExporter exporter;
                 ExportOptions options;

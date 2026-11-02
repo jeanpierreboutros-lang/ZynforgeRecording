@@ -947,7 +947,9 @@ void MainComponent::consolidateTracks (const std::vector<int>& targets, juce::in
         return [self, run, before, cancelled = cancel.load (std::memory_order_relaxed)]
         {
             if (self == nullptr) return;
-            const auto [n, complete] = self->engine.publishConsolidate (*run);
+            // A stop that came after the last window still means stop.
+            const auto [n, complete] = cancelled ? std::pair<int, bool> { 0, false }
+                                                 : self->engine.publishConsolidate (*run);
             if (self->editPage != nullptr)
             {
                 self->editPage->setReadOnlyWhileRecording (self->engine.isRecording());
