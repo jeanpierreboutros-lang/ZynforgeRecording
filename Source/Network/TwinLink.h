@@ -174,6 +174,7 @@ namespace zynforge::twin
         double            clockOffsetMs { 0.0 }, clockRttMs { 0.0 };
         int               failedAuth { 0 }, rejectedConnections { 0 }, ignoredCommands { 0 };
         juce::StringArray warnings;
+        int               setupWarnings { 0 };   // the first N only compare the two setups; the rest are trouble on the other Mac
         juce::String      lastEvent;        // the latest refusal or notable outcome
         juce::String      compareLine;
         bool              compareMismatch { false };
@@ -319,6 +320,7 @@ namespace zynforge::twin
         std::deque<TakeRecord> records;
         juce::uint64 nextRecordId { 1 };
         juce::StringArray warnings;
+        int          setupWarnings { 0 };
         int          ignoredCommands { 0 };
         bool         draining { false };
         // A host may complete a STOP after this object has gone.

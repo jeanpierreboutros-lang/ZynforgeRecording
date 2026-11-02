@@ -517,8 +517,10 @@ private:
     void updateClockAndDiskCadence (double deviceSR);
     void updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing);
     void updateCaptureWarnings (const zynforge::EngineStatus& status);
-    // The loud row: a standing alarm, or a refused RECORD until it times out.
+    // The loud row: every standing alarm, and a refused RECORD until it times out.
     void refreshAlarmBanner();
+    void collectTwinAlarms (const zynforge::twin::Snapshot&, std::vector<zynforge::AlarmBanner::Alarm>&);
+    bool twinPeerRolling { false };   // as last heard over the link
     void showRecordRefusal (const juce::String& reason);
     // Open a modal warning if the loaded session's SR doesn't match the device.
     void warnIfSampleRateMismatch();
@@ -611,7 +613,7 @@ private:
     juce::uint32 recordRefusalShownMs { 0 };
     juce::Label  nextCueLabel      { {}, "" };
     juce::Label  danteLabel        { {}, "" };
-    juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner
+    juce::String sampleRateWarning;              // the device disagrees with the session; shown in the banner
     juce::Label  twinStatusLabel   { {}, "" };   // link state; empty while the link is off
     juce::Label  punchPill         { {}, "" };   // PUNCH mode, or what the next RECORD will replace
     juce::Label  soundcheckPill    { {}, "DESK ON SOUNDCHECK" };   // the desk is hearing card returns, not the stage

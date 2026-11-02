@@ -166,10 +166,6 @@ void MainComponent::resized()
     titleLabel.setBounds (row1.removeFromLeft (248));
     row1.removeFromLeft (brand::space::md);
 
-    const bool rateWarning = srWarnLabel.getText().isNotEmpty();
-    srWarnLabel.setBounds (rateWarning
-        ? row1.removeFromLeft (juce::jmin (245, row1.getWidth() / 2)).reduced (0, 4)
-        : juce::Rectangle<int>());
     twinStatusLabel.setBounds (twinStatusLabel.getText().isNotEmpty()
         ? row1.removeFromLeft (juce::jmin (124, row1.getWidth() / 2)).reduced (0, brand::space::xs)
         : juce::Rectangle<int>());

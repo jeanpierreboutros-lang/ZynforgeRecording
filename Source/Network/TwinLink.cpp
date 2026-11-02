@@ -1130,6 +1130,7 @@ namespace zynforge::twin
         if (localSession != peer->sessionName)
             warnings.add ("SESSION NAME differs: \"" + localSession + "\" here, \""
                           + peer->sessionName + "\" on " + who);
+        setupWarnings = warnings.size();
 
         if (localRolling != peer->recording
             && juce::Time::getMillisecondCounter() - rollingChangedAtMs > (juce::uint32) kRollingGraceMs)
@@ -1252,6 +1253,7 @@ namespace zynforge::twin
         s.rejectedConnections = rejectedConnections.load();
         s.ignoredCommands = ignoredCommands;
         s.warnings = warnings;
+        s.setupWarnings = setupWarnings;
         s.lastEvent = lastEvent;
         s.compareLine = compareLine;
         s.compareMismatch = compareMismatch;

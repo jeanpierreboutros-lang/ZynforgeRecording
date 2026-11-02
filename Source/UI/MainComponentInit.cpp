@@ -95,10 +95,6 @@ MainComponent::MainComponent()
     // Persistent sample-rate-mismatch banner -- stays lit (record-red) the
     // whole time the device clock disagrees with the session rate, so it
     // can't scroll away like a status message. Empty = hidden.
-    srWarnLabel.setColour (juce::Label::textColourId, brand::accentRecord);
-    srWarnLabel.setJustificationType (juce::Justification::centredLeft);
-    srWarnLabel.setFont (brand::type::channelName());
-    addAndMakeVisible (srWarnLabel);
 
     // Twin Recorder state while the link is on: a flat red block for TWIN LOST.
     twinStatusLabel.setJustificationType (juce::Justification::centred);

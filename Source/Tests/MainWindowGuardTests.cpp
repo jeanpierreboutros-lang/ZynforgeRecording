@@ -1522,7 +1522,7 @@ namespace zynforge
                 w.engine().clearSessionState();
                 w.main.pendingSampleRate = 48000.0;
                 w.main.checkDeviceSampleRate (44100.0);
-                expect (w.main.srWarnLabel.getText().isEmpty(), "a false alarm with no session");
+                expect (w.main.sampleRateWarning.isEmpty(), "a false alarm with no session");
                 expectEquals (modalCount(), 0, "a false modal with no session");
                 expectWithinAbsoluteError (w.main.pendingSampleRate, 44100.0, 0.5);
                 dismissModals();
@@ -1535,10 +1535,10 @@ namespace zynforge
                 Window w;
                 w.main.pendingSampleRate = 48000.0;
                 w.main.checkDeviceSampleRate (44100.0);
-                expect (w.main.srWarnLabel.getText().contains ("MISMATCH"));
+                expect (w.main.sampleRateWarning.contains ("MISMATCH"));
                 dismissModals();
                 w.main.checkDeviceSampleRate (48000.0);
-                expect (w.main.srWarnLabel.getText().isEmpty());
+                expect (w.main.sampleRateWarning.isEmpty());
             }
 
             beginTest ("A session saved before the flag still knows its reference bed");

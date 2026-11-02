@@ -513,19 +513,57 @@ void MainComponent::refreshAlarmBanner()
             || juce::Time::getMillisecondCounter() - recordRefusalShownMs > kRefusalShownMs))
         recordRefusal.clear();
 
-    // What threatens the take outranks a refused press. A failed finalization
-    // stays up after STOP, until the next take or another session.
-    auto text = activeCaptureWarning;
-    if (text.isEmpty()) text = lastCaptureFinalizationError;
-    if (text.isEmpty() && engine.isRecording()) text = srWarnLabel.getText();
-    const bool takeThreatened = text.isNotEmpty()
-                             && ! (activeCaptureWarning.isNotEmpty() && ! activeCaptureWarning.containsChar ('!'));
-    if (text.isEmpty()) text = recordRefusal;
-
     // Red is for a take in trouble, so it still means something when it shows.
     // A refused press and the quiet "no signal yet" notice, which has no '!',
-    // are amber.
-    alarmBanner.show (text, takeThreatened ? AlarmBanner::Level::Danger : AlarmBanner::Level::Notice);
+    // are amber. A failed finalization stays up after STOP, until the next take
+    // or another session. The banner covers everything else in this row, so
+    // whatever would be hidden under it goes in here.
+    using Alarm = AlarmBanner::Alarm;
+    using Level = AlarmBanner::Level;
+    std::vector<Alarm> alarms;
+    for (const auto& alarm : AlarmBanner::splitAlarms (activeCaptureWarning))
+        alarms.push_back ({ alarm, alarm.startsWithChar ('!') ? Level::Danger : Level::Notice });
+    if (lastCaptureFinalizationError.isNotEmpty())
+        alarms.push_back ({ lastCaptureFinalizationError, Level::Danger });
+    // Nothing can roll at the wrong rate from idle: RECORD refuses. A take that
+    // is already rolling is the one in trouble.
+    if (sampleRateWarning.isNotEmpty())
+        alarms.push_back ({ sampleRateWarning, engine.isRecording() ? Level::Danger : Level::Notice });
+    collectTwinAlarms (twinLink.snapshot(), alarms);
+    if (recordRefusal.isNotEmpty()) alarms.push_back ({ recordRefusal, Level::Notice });
+    alarmBanner.show (std::move (alarms), juce::Time::getMillisecondCounter());
+}
+
+// While a take rolls on either Mac, a link in trouble means the second copy may
+// not be there, and that raises the banner on its own. The rest only comes along
+// on a banner already up: the header pill says it well enough until something
+// covers the pill. A link that dropped reports no peer, so the peer's state is
+// the last one heard.
+void MainComponent::collectTwinAlarms (const zynforge::twin::Snapshot& link,
+                                       std::vector<zynforge::AlarmBanner::Alarm>& alarms)
+{
+    using Level = AlarmBanner::Level;
+    if (link.state == zynforge::twin::LinkState::Off) twinPeerRolling = false;
+    else if (link.peer.has_value()) twinPeerRolling = link.peer->recording;
+    const bool rolling = engine.isRecording() || twinPeerRolling;
+
+    juce::StringArray trouble, quiet;
+    if (link.level == 2)
+        trouble.add ("! " + link.headline + (link.detail.isNotEmpty() ? " -- " + link.detail : juce::String()));
+    else if (link.level == 1 && link.warnings.isEmpty())
+        quiet.add (link.headline);
+    for (int i = 0; i < link.warnings.size(); ++i)
+    {
+        if (i < link.setupWarnings) quiet.add ("TWIN: " + link.warnings[i]);
+        else                        trouble.add ("! TWIN: " + link.warnings[i]);
+    }
+
+    if (rolling)
+        for (const auto& alarm : trouble) alarms.push_back ({ alarm, Level::Danger });
+    if (alarms.empty()) return;
+    if (! rolling)
+        for (const auto& alarm : trouble) alarms.push_back ({ alarm, Level::Notice });
+    for (const auto& alarm : quiet) alarms.push_back ({ alarm, Level::Notice });
 }
 
 void MainComponent::showRecordRefusal (const juce::String& reason)
@@ -533,9 +571,10 @@ void MainComponent::showRecordRefusal (const juce::String& reason)
     recordRefusal = reason;
     recordRefusalShownMs = juce::Time::getMillisecondCounter();
     refreshAlarmBanner();
-    // The banner is the one place for this. Only something more urgent holding
-    // it sends the reason to the status line instead: a press never goes unanswered.
-    if (alarmBanner.getText() != reason) showStatus (reason);
+    alarmBanner.showPageHolding (reason, recordRefusalShownMs);
+    // The banner is the one place for this. Only a reason too long for one page
+    // also goes to the status line: a press never goes unanswered.
+    if (! alarmBanner.getShownText().contains (reason)) showStatus (reason);
 }
 
 // Query SMART health for the session + backup volumes on a BACKGROUND thread.
@@ -628,15 +667,7 @@ void MainComponent::updateTransportLabels()
 // the dialog fires while stopped, which is when the engineer can fix it.
 void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
 {
-    auto setWarning = [this] (const juce::String& warning)
-    {
-        if (srWarnLabel.getText() != warning)
-        {
-            srWarnLabel.setText (warning, juce::dontSendNotification);
-            srWarnLabel.setTooltip (warning);
-            resized();
-        }
-    };
+    auto setWarning = [this] (const juce::String& warning) { sampleRateWarning = warning; };
     if (deviceSampleRate <= 0.0) { setWarning ({}); return; }
 
     // With no session there is no rate to disagree with: 48 kHz here is only a
@@ -677,9 +708,9 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
         return;
     }
 
-    // Persistent always-visible banner (record-red) while mismatched.
+    // Stands in the alarm banner while mismatched.
     // ASCII only -- sample-rate mismatch must stay legible in every UI face.
-    // (it rendered as mojibake); the red colour carries the alarm.
+    // (it rendered as mojibake); the banner's colour carries the alarm.
     setWarning ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
                 + "  vs  session " + fmt (sessionSR) + "  - recording blocked");
 
