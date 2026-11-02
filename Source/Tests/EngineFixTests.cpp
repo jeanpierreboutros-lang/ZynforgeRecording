@@ -429,7 +429,10 @@ namespace zynforge
             for (int i = 0; i < 6; ++i) main.pollMixerUndo();
             expect (main.undoManager.canUndo(), "no undo step to lose");
 
-            show.session.deleteRecursively();
+            // The report's hash thread can still be writing into it.
+            expect (pumpUntil ([&show] { show.session.deleteRecursively(); return ! show.session.exists(); }),
+                    "the folder would not go");
+            expect (main.engine.isSessionLoaded(), "nothing is loaded for this take to leave");
             main.onRecordClicked();
             expect (main.engine.isRecording(), main.statusLabel.getText());
             const auto folder = main.engine.getRecorder().getActiveSessionDir();
