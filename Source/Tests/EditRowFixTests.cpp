@@ -610,6 +610,29 @@ namespace zynforge
                 expect (pumpUntil ([&] { return ! waveCachePredatesAudio (cache, dir); }, 10000),
                         "the saved waveforms predate the new file, so reopening rescans every track");
             }
+
+            beginTest ("After an import the saved waveforms still load on reopen");
+            {
+                Show show (main);
+                const auto dir = show.session ({ "ONE" }, false, false);
+                const auto cache = wavecache::fileIn (dir);
+                expect (pumpUntil ([&] { return cache.existsAsFile() && ! main.sessionIoBusy.load(); }, 10000),
+                        "setup: the session's waveforms were never saved");
+                pumpUntil ([] { return false; }, 50);   // a file written now is newer than the cache
+
+                const auto folder = tempDir ("source");
+                show.dirs.add (folder);
+                const auto source = folder.getChildFile ("Guitar.wav");
+                expect (writeWav (source, kRate));
+                juce::Array<juce::File> picks;
+                picks.add (source);
+                main.completeAudioImport (picks);
+                expect (pumpUntil ([&] { return show.engine.getRecorder().getNumTracks() == 2
+                                             && ! main.sessionIoBusy.load(); }, 10000),
+                        "setup: the import never finished");
+                expect (pumpUntil ([&] { return ! waveCachePredatesAudio (cache, dir); }, 10000),
+                        "the saved waveforms predate the imported file, so reopening rescans every track");
+            }
         }
 
         void noFirstLookDuringATake()
