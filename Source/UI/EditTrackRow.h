@@ -94,6 +94,9 @@ namespace zynforge
         // only when s == Size::Custom. Wired by TrackList.
         std::function<void (Size /*s*/, int /*customPx*/)> onApplyToAllRows;
 
+        // A gesture that changed this row's height or lane has ended.
+        std::function<void (TrackRow&)> onViewChanged;
+
         // Tab / Shift+Tab in the name field: ask the TrackList to commit
         // and open the next / previous row's name editor (shiftDown =
         // previous). Wired by TrackList so it can resolve sibling rows.
@@ -108,8 +111,9 @@ namespace zynforge
                 const int rowTop = getY(), rowBot = getBottom();
                 const int viewY  = vp->getViewPositionY();
                 const int visH   = vp->getMaximumVisibleHeight();
-                if (rowTop < viewY)            vp->setViewPosition (0, rowTop);
-                else if (rowBot > viewY + visH) vp->setViewPosition (0, rowBot - visH);
+                const int viewX  = vp->getViewPositionX();
+                if (rowTop < viewY)            vp->setViewPosition (viewX, rowTop);
+                else if (rowBot > viewY + visH) vp->setViewPosition (viewX, rowBot - visH);
             }
             nameLabel.showEditor();
         }
@@ -197,13 +201,15 @@ namespace zynforge
                 meter.setStereoPartner (&engine.getRecorder().getTrack (index + 1));
 
             auto& s = engine.getRecorder().getTrack (index);
+            stripKey = s.stripId;
 
             nameLabel.setText (s.name, juce::dontSendNotification);
             nameLabel.setJustificationType (juce::Justification::centredLeft);
             nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
             nameLabel.setFont (brand::type::channelName());
             nameLabel.setEditable (false, true, false);
-            nameLabel.setTooltip ("Double-click to rename this track. Changes mirror to the MIXER + PATCH views.");
+            nameLabel.setTooltip ("Double-click to rename this track. Changes mirror to the MIXER + PATCH views. "
+                                  "Right-click for what the lane shows, row size and Delete Channel.");
             nameLabel.onTextChange = [this]
             {
                 const auto typed = nameLabel.getText().trim();
@@ -226,6 +232,7 @@ namespace zynforge
             {
                 if (onTabRename) onTabRename (*this, shift);
             };
+            nameLabel.onPopupMenu = [this] (juce::Point<int> screenPos) { showRowMenu (screenPos, true); };
             addAndMakeVisible (nameLabel);
 
             auto styleBtn = [] (juce::ToggleButton& b, juce::Colour onCol)
@@ -290,8 +297,9 @@ namespace zynforge
             styleCombo (inputCombo);
             styleCombo (outputCombo);
 
-            // One patch in three views: either combo sets both sides, as the
-            // MIXER strip and PATCH do, and on both halves of a stereo row.
+            // One patch in three views: a channel picked in either combo sets
+            // both sides, as the MIXER strip and PATCH do, and on both halves of
+            // a stereo row. "-> Master" is not a channel: it moves the output.
             const auto patchFrom = [this] (const juce::ComboBox& combo)
             {
                 const int id = combo.getSelectedId();
@@ -301,7 +309,11 @@ namespace zynforge
                     engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
             };
             inputCombo.onChange  = [this, patchFrom] { patchFrom (inputCombo); };
-            outputCombo.onChange = [this, patchFrom] { patchFrom (outputCombo); };
+            outputCombo.onChange = [this, patchFrom]
+            {
+                if (outputCombo.getSelectedId() <= 1) engine.sendStripToMaster (index, stereo);
+                else                                  patchFrom (outputCombo);
+            };
             addAndMakeVisible (inputCombo);
             addAndMakeVisible (outputCombo);
 
@@ -516,6 +528,11 @@ namespace zynforge
         {
             for (auto& own : ownThumbs)
                 if (own.file == file) return own.thumb.get();
+            // A first look at a file lists its folder and opens it, on the paint
+            // thread, and during a take that may be the drive that stopped
+            // answering. The lane can wait for the take: laneWaveFor's caller
+            // draws nothing for a null thumbnail.
+            if (engine.isTakeOnDisk()) return nullptr;
             auto thumb = std::make_unique<juce::AudioThumbnail> (wavecache::kThumbResolution, formats, thumbCache);
             applyThumbSource (*thumb, file, false);
             ownThumbs.push_back ({ file, std::move (thumb) });
@@ -851,7 +868,7 @@ namespace zynforge
             // across every lane and snap targets have a visible context.
             {
                 const auto& gp = engine.getPlayer();
-                const juce::int64 gTotal = gp.isLoaded() ? gp.getTotalLengthSamples() : 0;
+                const juce::int64 gTotal = gp.isLoaded() ? laneTimelineSamples() : 0;
                 const double gsr = gp.getSampleRate() > 0.0 ? gp.getSampleRate() : 48000.0;
                 if (gTotal > 0 && inner.getWidth() > 16)
                 {
@@ -970,6 +987,29 @@ namespace zynforge
                 }
             }
 
+            // Live-capture placement on the timeline. The envelope covers
+            // [0, recPos], including a silent prefix for continue/punch.
+            // the lane covers [0, total] = max(existing take length, recPos).
+            //   CONTINUE: total == recPos -> liveFrac 1 (envelope fills the lane,
+            //             existing take is the [0, takeEnd) prefix).
+            //   PUNCH:    total == fullTake > recPos -> confine the envelope to
+            //             liveFrac so the drop-in sits AT the punch point instead
+            //             of stretching to the lane's right edge (which looked
+            //             like it recorded at the END), existing take fills [0,W].
+            // The overview retains the actual count of input bins even after
+            // downsampling, so long takes never drift ahead of the recorder.
+            const juce::int64 liveRecSamples = recPeakL.spanSamples();
+            const juce::int64 playerTotalS   = engine.getPlayer().getTotalLengthSamples();
+            const juce::int64 timelineTotalS = engine.isRecording()
+                ? juce::jmax (liveRecSamples, laneTimelineSamples())
+                : juce::jmax (playerTotalS, liveRecSamples);
+            const double liveFrac     = timelineTotalS > 0
+                ? juce::jlimit (0.0, 1.0, (double) liveRecSamples / (double) timelineTotalS) : 1.0;
+            const double existingFrac = timelineTotalS > 0
+                ? juce::jlimit (0.0, 1.0, (double) playerTotalS   / (double) timelineTotalS) : 1.0;
+            auto confineLive = [liveFrac] (juce::Rectangle<int> a)
+            { return a.withWidth (juce::jmax (1, (int) (a.getWidth() * liveFrac))); };
+
             // The Markers lane, overlaid on top of the dimmed waveform base above.
             if (laneMode == LaneMode::Markers)
             {
@@ -980,6 +1020,22 @@ namespace zynforge
                 g.setColour (brand::lift (brand::edge, 0.2f).withAlpha (zynforge::brand::alpha::muted));
                 g.drawHorizontalLine (inner.getCentreY(),
                                       (float) inner.getX(), (float) inner.getRight());
+
+                // A take rolling on this row shows here too, under the markers.
+                if (liveRecording)
+                {
+                    g.setColour (brand::meterHot);
+                    if (stereo)
+                    {
+                        const int laneH = inner.getHeight() / 2;
+                        drawRecEnvelope (g, confineLive (inner.withHeight (laneH)), recPeakL, vz);
+                        drawRecEnvelope (g, confineLive (inner.withTrimmedTop (laneH)), recPeakR, vz);
+                    }
+                    else
+                    {
+                        drawRecEnvelope (g, confineLive (inner), recPeakL, vz);
+                    }
+                }
 
                 // Real session markers, drawn at their actual sample
                 // positions (mapped through the same timeline as the
@@ -1013,6 +1069,13 @@ namespace zynforge
                                     juce::Justification::topLeft, false);
                     }
                 }
+                // Nothing else on the row names this lane, and it refuses every
+                // clip gesture, so say so at the right of what is on screen.
+                g.setColour (brand::textTertiary);
+                g.setFont (brand::type::micro());
+                g.drawText ("MARKERS LANE",
+                            inner.withRight (juce::jmin (inner.getRight(), visibleRightX())).reduced (4, 1),
+                            juce::Justification::topRight, false);
                 // Playhead overlay still applies below.
                 if (playheadX >= 0 && playheadX < wavePane.getWidth())
                 {
@@ -1052,29 +1115,6 @@ namespace zynforge
             // still show the NEW audio building live instead of only the static
             // clips. The clip-block renderer below is suppressed while showLive
             // for the same reason, then takes over on stop once the file scans.
-            // Live-capture placement on the timeline. The envelope covers
-            // [0, recPos], including a silent prefix for continue/punch.
-            // the lane covers [0, total] = max(existing take length, recPos).
-            //   CONTINUE: total == recPos -> liveFrac 1 (envelope fills the lane,
-            //             existing take is the [0, takeEnd) prefix).
-            //   PUNCH:    total == fullTake > recPos -> confine the envelope to
-            //             liveFrac so the drop-in sits AT the punch point instead
-            //             of stretching to the lane's right edge (which looked
-            //             like it recorded at the END), existing take fills [0,W].
-            // The overview retains the actual count of input bins even after
-            // downsampling, so long takes never drift ahead of the recorder.
-            const juce::int64 liveRecSamples = recPeakL.spanSamples();
-            const juce::int64 playerTotalS   = engine.getPlayer().getTotalLengthSamples();
-            const juce::int64 timelineTotalS = engine.isRecording()
-                ? juce::jmax (liveRecSamples, laneTimelineSamples())
-                : juce::jmax (playerTotalS, liveRecSamples);
-            const double liveFrac     = timelineTotalS > 0
-                ? juce::jlimit (0.0, 1.0, (double) liveRecSamples / (double) timelineTotalS) : 1.0;
-            const double existingFrac = timelineTotalS > 0
-                ? juce::jlimit (0.0, 1.0, (double) playerTotalS   / (double) timelineTotalS) : 1.0;
-            auto confineLive = [liveFrac] (juce::Rectangle<int> a)
-            { return a.withWidth (juce::jmax (1, (int) (a.getWidth() * liveFrac))); };
-
             if (! haveClipBlocks || showLive)
             {
             if (stereo)
@@ -1458,17 +1498,11 @@ namespace zynforge
                 const auto& player = engine.getPlayer();
                 if (player.hasLoopRegion() && player.isLoaded())
                 {
-                    const auto total = player.getTotalLengthSamples();
-                    if (total > 0)
+                    if (player.getTotalLengthSamples() > 0)
                     {
-                        const auto sampleToWavX = [&] (juce::int64 sp) -> int
-                        {
-                            const double prop = juce::jlimit (0.0, 1.0,
-                                                              (double) sp / (double) total);
-                            return juce::roundToInt (prop * wavePane.getWidth());
-                        };
-                        const int xA = sampleToWavX (player.getLoopStart());
-                        const int xB = sampleToWavX (player.getLoopEnd());
+                        const auto lane = TimelineMapper::forLane (inner, laneTimelineSamples());
+                        const int xA = lane.toXFloor (player.getLoopStart());
+                        const int xB = lane.toXFloor (player.getLoopEnd());
                         // Only shade the range on the track(s) it applies to:
                         // the selected strips, or EVERY track when nothing is
                         // selected (a global loop set via , / .). The Selector
@@ -1480,8 +1514,7 @@ namespace zynforge
                                     || (pg->isTrackSelected && pg->isTrackSelected (index));
                         if (xB > xA && drawHere)
                         {
-                            const juce::Rectangle<int> band (
-                                headerW + xA, 0, xB - xA, getHeight());
+                            const juce::Rectangle<int> band (xA, 0, xB - xA, getHeight());
                             g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::subtle));
                             g.fillRect (band);
                             g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::strong));
@@ -1560,6 +1593,12 @@ namespace zynforge
         // un-shifted inner rect ([headerW, contentWidth]) because the waveform
         // itself is drawn there -- only the click classification shifts.
         int  waveLeftX()         const noexcept { return headerOriginX() + headerW; }
+        int  visibleRightX()     const noexcept
+        {
+            if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+                return vp->getViewPositionX() + vp->getViewWidth();
+            return getWidth();
+        }
         bool inWavePane (int ex) const noexcept { return ex >= waveLeftX(); }
         bool inSwatch   (int ex) const noexcept
         { const int hx = headerOriginX(); return ex >= hx && ex < hx + swatchW; }
@@ -1577,6 +1616,71 @@ namespace zynforge
             const int h = juce::jmin (30, juce::jmax (16, body.getHeight() - 2));
             const int w = juce::jmin (90, juce::jmax (22, body.getWidth() - 2));
             return { body.getX() + 2, body.getBottom() - h - 2, w, h };
+        }
+
+        // Paint walks a clip list first to last, so the last clip is on top, and
+        // a hit-test has to walk the other way or the mouse grabs what is hidden.
+        // -1 = no clip under x.
+        static int topClipAt (const std::vector<Clip>& clips, const TimelineMapper& lane, int x)
+        {
+            for (int i = (int) clips.size(); --i >= 0;)
+            {
+                const auto& c = clips[(size_t) i];
+                if (x >= lane.toX (c.timelineStartSamples)
+                    && x <= lane.toX (c.timelineStartSamples + c.fileLengthSamples))
+                    return i;
+            }
+            return -1;
+        }
+
+        // The clips a press can mean, best first: those under the pointer top
+        // first, then the rest, whose trim zones reach out over empty lane. With
+        // edgesFirst the nearest edge outranks a body, so at a seam each clip's
+        // edge is taken from its own side and both ends of a crossfade stay
+        // reachable under the clip that covers them.
+        static constexpr int kTrimZonePx = 6;
+        static std::vector<int> clipHitOrder (const std::vector<Clip>& clips, const TimelineMapper& lane,
+                                              int x, bool edgesFirst)
+        {
+            struct Under { int clip, edgeDistance; };
+            std::vector<Under> under;
+            std::vector<int> beside;
+            for (int i = (int) clips.size(); --i >= 0;)
+            {
+                const auto& c = clips[(size_t) i];
+                const int xL = lane.toX (c.timelineStartSamples);
+                const int xR = lane.toX (c.timelineStartSamples + c.fileLengthSamples);
+                if (x < xL || x > xR) { beside.push_back (i); continue; }
+                const int edge = juce::jmin (x - xL, xR - x);
+                under.push_back ({ i, edgesFirst && edge <= kTrimZonePx ? edge : kTrimZonePx + 1 });
+            }
+            std::stable_sort (under.begin(), under.end(), [] (const Under& a, const Under& b)
+                              { return a.edgeDistance < b.edgeDistance; });
+            std::vector<int> order;
+            order.reserve (clips.size());
+            for (const auto& u : under) order.push_back (u.clip);
+            order.insert (order.end(), beside.begin(), beside.end());
+            return order;
+        }
+
+        // The fade grab squares: the top stripe of the lane, at the end of each
+        // fade. An edge with no fade has its square at the clip's edge.
+        static constexpr int kFadeGripZonePx = 8;
+        bool isFadeGripAt (juce::Point<int> p) const
+        {
+            const auto* clips = engine.tryClipsFor (index);
+            const auto& player = engine.getPlayer();
+            const juce::int64 total = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+            if (clips == nullptr || total <= 0) return false;
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
+            if (p.y - inner.getY() >= kFadeGripZonePx) return false;
+            const auto lane = TimelineMapper::forLane (inner, total);
+            return std::any_of (clips->begin(), clips->end(), [&] (const Clip& c)
+            {
+                const auto end = c.timelineStartSamples + c.fileLengthSamples;
+                return std::abs (p.x - lane.toX (c.timelineStartSamples + c.fadeInSamples)) <= kFadeGripZonePx
+                    || std::abs (p.x - lane.toX (end - c.fadeOutSamples)) <= kFadeGripZonePx;
+            });
         }
 
         // Draws the swatch column, header panel, divider and selection highlight
@@ -1736,6 +1840,10 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // JUCE delivers mouse events to a disabled component, and a session
+            // job holds the page disabled until the host's next tick locks it.
+            if (! isEnabled()) return;
+
             // Mark this row as the active row. Reset by clicking on a
             // different row.
             if (auto* page = findParentComponentOfClass<EditPage>())
@@ -1764,7 +1872,7 @@ namespace zynforge
             // EditTimeRuler) so a fresh session lets the engineer place
             // the cursor anywhere and drop markers before recording.
             if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
-                && inWavePane (e.x))
+                && inWavePane (e.x) && ! isInResizeZone (e.getPosition()))
             {
                 const auto& player = engine.getPlayer();
                 const juce::int64 loadedSamples = player.isLoaded()
@@ -1788,43 +1896,16 @@ namespace zynforge
                     engine.getPlayer().setPositionSamples (sx);
             }
 
-            // Right-click on a clip in the waveform lane → fade menu.
-            // Anywhere else on the row → row-size menu.
+            // Right-click on a clip in the waveform lane → clip menu.
+            // Anywhere else on the row → the row's menu. Delete is offered on
+            // the header only, the DAW-standard place to remove a track; the
+            // host confirms before deleting.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
-                // Right-click on the row header (name zone, not the wave
-                // pane) → channel context menu. The DAW-standard place to
-                // remove a track; the host confirms before deleting.
                 if (inNameZone (e.x))
                 {
-                    if (auto* page = findParentComponentOfClass<EditPage>())
-                    {
-                        if (page->onRowDelete)
-                        {
-                            juce::Component::SafePointer<EditPage> safePage (page);
-                            juce::Component::SafePointer<TrackRow> safeRow (this);
-                            const int idx = index;
-                            juce::PopupMenu m;
-                            m.addItem (2, "Lane Shows Waveform", true, laneMode == LaneMode::Waveform);
-                            m.addItem (3, "Lane Shows Markers",  true, laneMode == LaneMode::Markers);
-                            m.addSeparator();
-                            m.addItem (1, "Delete Channel");
-                            m.showMenuAsync (
-                                juce::PopupMenu::Options().withTargetScreenArea (
-                                    { e.getScreenPosition().x, e.getScreenPosition().y, 1, 1 }),
-                                [safePage, safeRow, idx] (int r)
-                                {
-                                    if ((r == 2 || r == 3) && safeRow != nullptr)
-                                    {
-                                        safeRow->laneMode = r == 2 ? LaneMode::Waveform : LaneMode::Markers;
-                                        safeRow->repaint();
-                                    }
-                                    if (r == 1 && safePage != nullptr && safePage->onRowDelete)
-                                        safePage->onRowDelete (idx);
-                                });
-                            return;
-                        }
-                    }
+                    showRowMenu (e.getScreenPosition(), true);
+                    return;
                 }
                 if (laneMode == LaneMode::Waveform && inWavePane (e.x))
                 {
@@ -1836,23 +1917,16 @@ namespace zynforge
                         if (totalSamples > 0)
                         {
                             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
-                            const auto sampleToX = [&] (juce::int64 sp) -> int
-                            { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
-                            for (int i = 0; i < (int) clips->size(); ++i)
+                            const int top = topClipAt (*clips, TimelineMapper::forLane (inner, totalSamples), e.x);
+                            if (top >= 0)
                             {
-                                const auto& c = (*clips)[(size_t) i];
-                                const int xL = sampleToX (c.timelineStartSamples);
-                                const int xR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
-                                if (e.x >= xL && e.x <= xR)
-                                {
-                                    showFadeMenu (i, e.getScreenPosition());
-                                    return;
-                                }
+                                showFadeMenu (top, e.getScreenPosition());
+                                return;
                             }
                         }
                     }
                 }
-                showSizeMenu (e.getScreenPosition());
+                showRowMenu (e.getScreenPosition(), false);
                 return;
             }
             // Left-click in the bottom resize zone → start a drag-resize.
@@ -1886,7 +1960,13 @@ namespace zynforge
                                       ? toolsBar->getTool()
                                       : EditToolsBar::Tool::None;
 
-            if (laneMode == LaneMode::Waveform && inWavePane (e.x)
+            // A press on a painted grab square drags it, below. The tool's click
+            // is for the rest of the clip.
+            const bool onFadeGrip = activeTool == EditToolsBar::Tool::Fade
+                                 && laneMode == LaneMode::Waveform && inWavePane (e.x)
+                                 && isFadeGripAt (e.getPosition());
+
+            if (laneMode == LaneMode::Waveform && inWavePane (e.x) && ! onFadeGrip
                 && (activeTool == EditToolsBar::Tool::Selector
                  || activeTool == EditToolsBar::Tool::Fade))
             {
@@ -1901,20 +1981,9 @@ namespace zynforge
 
                     if (activeTool == EditToolsBar::Tool::Fade)
                     {
-                        if (auto* clips = engine.tryClipsFor (index))
-                        {
-                            const auto sx = xToSample (e.x);
-                            for (int i = 0; i < (int) clips->size(); ++i)
-                            {
-                                const auto& c = (*clips)[(size_t) i];
-                                if (sx >= c.timelineStartSamples
-                                    && sx <= c.timelineStartSamples + c.fileLengthSamples)
-                                {
-                                    showFadeMenu (i, e.getScreenPosition());
-                                    return;
-                                }
-                            }
-                        }
+                        if (const auto* clips = engine.tryClipsFor (index))
+                            if (const int top = topClipAt (*clips, TimelineMapper::forLane (inner, totalSamples), e.x); top >= 0)
+                                showFadeMenu (top, e.getScreenPosition());
                         return;
                     }
 
@@ -1937,7 +2006,10 @@ namespace zynforge
                         {
                             if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();
                         }
-                        else if (pg->onRowSelect)
+                        // Shift adds. It must not toggle a track already in the
+                        // range off: an empty selection means every track.
+                        else if (pg->onRowSelect
+                                 && ! (e.mods.isShiftDown() && pg->isTrackSelected && pg->isTrackSelected (index)))
                             pg->onRowSelect (index, e.mods.isShiftDown());
                     }
                     dragStartX          = e.x;
@@ -1996,11 +2068,13 @@ namespace zynforge
                         // Fade handles take priority over both -- they
                         // sit in the top-edge stripe and are visually
                         // distinct dots.
-                        const int hitZone = 6;
-                        const int fadeHandleZone = 8;
+                        const int hitZone = kTrimZonePx;
+                        const int fadeHandleZone = kFadeGripZonePx;
                         const int laneTop = inner.getY();
                         dragTimelineSamples = totalSamples;   // drag scale, fixed at the grab
-                        for (int i = 0; i < (int) clips->size(); ++i)
+                        const bool smartTool = activeTool == EditToolsBar::Tool::Smart
+                                            || activeTool == EditToolsBar::Tool::None;
+                        for (const int i : clipHitOrder (*clips, TimelineMapper::forLane (inner, totalSamples), e.x, smartTool))
                         {
                             const auto& c = (*clips)[(size_t) i];
                             const int xL = sampleToX (c.timelineStartSamples);
@@ -2046,6 +2120,7 @@ namespace zynforge
                                 dragStartFadeOut    = c.fadeOutSamples;
                                 return;
                             }
+                            if (fadeToolActive) continue;   // this tool grabs nothing else
 
                             // Clip-gain handle grab (Smart / Grabber): the
                             // bottom-left fader corner rides the clip's level.
@@ -2171,7 +2246,7 @@ namespace zynforge
             // a remote / LTC-chase / R-key start. Click-through stops NEW
             // gestures, not one already in flight, so refuse the rest of it.
             if (auto* page = findParentComponentOfClass<EditPage>();
-                page != nullptr && page->isTimelineReadOnly())
+                ! isEnabled() || (page != nullptr && page->isTimelineReadOnly()))
                 return;
 
             // Crossfade midpoint drag. Convert the mouse x to a
@@ -2424,9 +2499,10 @@ namespace zynforge
         {
             // A gesture released after the timeline locked commits nothing.
             const auto* lockPage = findParentComponentOfClass<EditPage>();
-            const bool timelineLocked = lockPage != nullptr && lockPage->isTimelineReadOnly();
+            const bool timelineLocked = ! isEnabled() || (lockPage != nullptr && lockPage->isTimelineReadOnly());
 
             const bool wasDraggingClip    = (draggingClipIdx >= 0 || draggingXfadeAIdx >= 0);
+            const bool wasResizing        = dragging;
             // A click that armed a clip-body grab but never dragged = a
             // selection click. Capture the clip + whether the mouse moved
             // before the resets below wipe draggingClipIdx.
@@ -2446,6 +2522,7 @@ namespace zynforge
             if (wasDraggingClip)
                 if (auto* page = findParentComponentOfClass<EditPage>())
                     page->commitClipEdit ("Edit clip");
+            if (wasResizing && onViewChanged) onViewChanged (*this);
 
             // Reorder finishes here. If the user clicked the swatch
             // but never crossed the 8 px threshold, fall through to
@@ -2477,7 +2554,7 @@ namespace zynforge
             // Duplicate / Nudge can act on it. Shift+click toggles the clip
             // in/out of a multi-selection. A plain click on empty lane area
             // clears the selection.
-            if (wasClick && laneMode == LaneMode::Waveform && inWavePane (e.x))
+            if (wasClick && ! wasResizing && laneMode == LaneMode::Waveform && inWavePane (e.x))
                 if (auto* page = findParentComponentOfClass<EditPage>())
                 {
                     if (clickedClipIdx >= 0)
@@ -2528,6 +2605,11 @@ namespace zynforge
         int  getHeaderWidth() const noexcept { return headerW; }
         int  getTrackIndex()  const noexcept { return index; }
         bool isStereoPair()   const noexcept { return stereo; }
+        // The strip this row was built for: its TrackState::stripId.
+        const juce::String& getStripKey() const noexcept { return stripKey; }
+
+        // Stands in for the clip's popup: a test has no menu to answer.
+        std::function<void (int)> clipMenuForTests;
 
         // ── Test seams ─────────────────────────────────────────────────────
         // Narrow read-only accessors so the suite can assert on this row's
@@ -2539,6 +2621,9 @@ namespace zynforge
         juce::String getInputRoutingTextForTests()  const { return inputCombo.getText(); }
         juce::String getOutputRoutingTextForTests() const { return outputCombo.getText(); }
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
+        bool         isArmShownForTests()    const { return armButton.getToggleState(); }
+        juce::int64  getLiveEnvelopeSamplesForTests() const { return recPeakL.spanSamples(); }
+        int          getOwnThumbnailCountForTests() const noexcept { return (int) ownThumbs.size(); }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
         int          getOverviewBuildsForTests() const noexcept { return overviewBuilds; }
         int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }
@@ -2763,6 +2848,7 @@ namespace zynforge
 
         void showFadeMenu (int clipIdx, juce::Point<int> screenPos)
         {
+            if (clipMenuForTests) { clipMenuForTests (clipIdx); return; }
             if (menuOpen) return;
             menuOpen = true;
 
@@ -2864,11 +2950,40 @@ namespace zynforge
             return { -1, -1 };
         }
 
-        void showSizeMenu (juce::Point<int> screenPos)
+        void showRowMenu (juce::Point<int> screenPos, bool withDelete)
         {
-            if (menuOpen) return;   // re-entrancy guard
+            if (menuOpen || ! isEnabled()) return;   // re-entrancy guard
 
+            auto menu = rowMenu (withDelete);
+
+            // Use a screen-area target (1x1 at the click point) so the menu's
+            // anchor doesn't depend on the row component still being alive
+            // when the callback fires. SafePointer wraps the row body so a
+            // rebuild between open and dismiss can't crash the callback.
+            menuOpen = true;
+            juce::Component::SafePointer<TrackRow> safe (this);
+            menu.showMenuAsync (juce::PopupMenu::Options()
+                                    .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
+                                [safe] (int chosen)
+            {
+                auto* row = safe.getComponent();
+                if (row == nullptr) return;
+                row->menuOpen = false;
+                row->applyRowMenuChoice (chosen);
+            });
+        }
+
+    public:
+        // The row's menu, on its name, its bare header and any lane with no clip
+        // under the pointer. A row left on Markers refuses every clip gesture,
+        // so the way back is offered wherever the engineer ends up clicking.
+        static constexpr int kMenuLaneWaveform = 31, kMenuLaneMarkers = 32, kMenuDeleteChannel = 33;
+        juce::PopupMenu rowMenu (bool withDelete) const
+        {
             juce::PopupMenu menu;
+            menu.addItem (kMenuLaneWaveform, "Lane Shows Waveform", true, laneMode == LaneMode::Waveform);
+            menu.addItem (kMenuLaneMarkers,  "Lane Shows Markers",  true, laneMode == LaneMode::Markers);
+            menu.addSectionHeader ("Row Size");
             auto add = [this, &menu] (int id, const juce::String& name, Size s)
             {
                 menu.addItem (id, name, true /*enabled*/, s == rowSize);
@@ -2896,40 +3011,47 @@ namespace zynforge
             allMenu.addSeparator();
             allMenu.addItem (28, "fit to window");
             menu.addSubMenu ("Set all tracks to", allMenu);
-
-            // Use a screen-area target (1x1 at the click point) so the menu's
-            // anchor doesn't depend on the row component still being alive
-            // when the callback fires. SafePointer wraps the row body so a
-            // rebuild between open and dismiss can't crash the callback.
-            menuOpen = true;
-            juce::Component::SafePointer<TrackRow> safe (this);
-            menu.showMenuAsync (juce::PopupMenu::Options()
-                                    .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
-                                [safe] (int chosen)
+            if (withDelete)
             {
-                auto* row = safe.getComponent();
-                if (row == nullptr) return;
-                row->menuOpen = false;
-
-                static const std::array<Size, 8> sizeMap { Size::Micro, Size::Mini, Size::Small,
-                                                           Size::Medium, Size::Large, Size::Jumbo,
-                                                           Size::Extreme, Size::FitToWindow };
-                if (chosen >= 1 && chosen <= 8)
-                {
-                    const auto next = sizeMap[(std::size_t) (chosen - 1)];
-                    row->rowSize = next;
-                    if (row->onSizeChosen) row->onSizeChosen (*row, next);
-                    return;
-                }
-                // "Set all tracks to ▸" -- 21..28 mirror the size list.
-                if (chosen >= 21 && chosen <= 28)
-                {
-                    const auto next = sizeMap[(std::size_t) (chosen - 21)];
-                    if (row->onApplyToAllRows) row->onApplyToAllRows (next, 0);
-                    return;
-                }
-            });
+                menu.addSeparator();
+                menu.addItem (kMenuDeleteChannel, "Delete Channel");
+            }
+            return menu;
         }
+
+        // Split out of the async callback so the suite can drive it (test seam).
+        void applyRowMenuChoice (int chosen)
+        {
+            static const std::array<Size, 8> sizeMap { Size::Micro, Size::Mini, Size::Small,
+                                                       Size::Medium, Size::Large, Size::Jumbo,
+                                                       Size::Extreme, Size::FitToWindow };
+            if (chosen >= 1 && chosen <= 8)
+            {
+                const auto next = sizeMap[(std::size_t) (chosen - 1)];
+                rowSize = next;
+                if (onSizeChosen) onSizeChosen (*this, next);
+            }
+            // "Set all tracks to ▸" -- 21..28 mirror the size list.
+            else if (chosen >= 21 && chosen <= 28)
+            {
+                if (onApplyToAllRows) onApplyToAllRows (sizeMap[(std::size_t) (chosen - 21)], 0);
+            }
+            else if (chosen == kMenuLaneWaveform || chosen == kMenuLaneMarkers)
+            {
+                laneMode = chosen == kMenuLaneWaveform ? LaneMode::Waveform : LaneMode::Markers;
+                repaint();
+            }
+            else if (chosen == kMenuDeleteChannel)
+            {
+                if (auto* page = findParentComponentOfClass<EditPage>(); page != nullptr && page->onRowDelete)
+                    page->onRowDelete (index);
+                return;
+            }
+            else return;
+            if (onViewChanged) onViewChanged (*this);
+        }
+
+    private:
 
         // One Cmd+Z step around an arrangement edit (no-op edits record none).
         template <typename Op>
@@ -3008,6 +3130,7 @@ namespace zynforge
         static constexpr int meterW  = 12;
 
         int                       index;
+        juce::String              stripKey;
         AudioEngine&              engine;
         juce::AudioFormatManager& formats;       // for building multi-part thumbnail readers
         juce::AudioThumbnailCache& thumbCache;   // shared; used to drop stale thumbs

@@ -11,6 +11,7 @@
 #include "../Audio/TrackOrder.h"
 
 #include <algorithm>
+#include <map>
 
 namespace zynforge
 {
@@ -68,7 +69,65 @@ namespace zynforge
                 r->setRowSize (s);
                 if (s == TrackRow::Size::Custom && customPx > 0)
                     r->setCustomHeight (customPx);
+                noteRowView (*r);
             }
+            resized();
+        }
+
+        // A row's height and lane belong to its strip, not to its position, so
+        // they outlive a rebuild and go where a move takes the strip.
+        std::function<void()> onRowViewChanged;
+
+        void noteRowView (const TrackRow& r)
+        {
+            if (r.getStripKey().isNotEmpty())
+                rowViews[r.getStripKey()] = { r.getRowSize(), r.getCustomHeight(), r.laneMode };
+        }
+
+        void applyRowView (TrackRow& r) const
+        {
+            const auto saved = rowViews.find (r.getStripKey());
+            const auto view = saved != rowViews.end() ? saved->second : RowView {};
+            r.setRowSize (view.size);
+            r.setCustomHeight (view.height);
+            r.laneMode = view.lane;
+        }
+
+        // By the recorder's strips, not the rows: a save can land between a
+        // session swap and the rebuild, and the rows would name the old session.
+        juce::var rowViewsJson() const
+        {
+            juce::Array<juce::var> out;
+            auto& rec = engine.getRecorder();
+            for (int i = 0; i < rec.getNumTracks(); ++i)
+            {
+                const auto saved = rowViews.find (rec.getTrack (i).stripId);
+                if (saved == rowViews.end()
+                    || (saved->second.size == TrackRow::Size::Small && saved->second.lane == TrackRow::LaneMode::Waveform))
+                    continue;
+                juce::DynamicObject::Ptr view (new juce::DynamicObject());
+                view->setProperty ("uid",    saved->first);
+                view->setProperty ("size",   (int) saved->second.size);
+                view->setProperty ("height", saved->second.height);
+                view->setProperty ("lane",   saved->second.lane == TrackRow::LaneMode::Markers ? "markers" : "waveform");
+                out.add (juce::var (view.get()));
+            }
+            return out;
+        }
+
+        // What the session saved wins, over rows a view change may already have
+        // built from the last session's values for the same strip.
+        void restoreRowViews (const juce::var& saved)
+        {
+            rowViews.clear();
+            if (const auto* views = saved.getArray())
+                for (const auto& v : *views)
+                    if (const auto uid = v.getProperty ("uid", {}).toString(); uid.isNotEmpty())
+                        rowViews[uid] = { (TrackRow::Size) juce::jlimit (0, (int) TrackRow::Size::Custom, (int) v.getProperty ("size", 2)),
+                                          juce::jlimit (TrackRow::kMinRowH, TrackRow::kMaxRowH, (int) v.getProperty ("height", 80)),
+                                          v.getProperty ("lane", {}).toString() == "markers" ? TrackRow::LaneMode::Markers
+                                                                                             : TrackRow::LaneMode::Waveform };
+            for (auto& r : rows) applyRowView (*r);
             resized();
         }
 
@@ -109,7 +168,13 @@ namespace zynforge
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
                 r->onTabRename  = [this] (TrackRow& from, bool shift) { tabRename (from, shift); };
                 r->onApplyToAllRows = [this] (TrackRow::Size s, int customPx) { applySizeToAll (s, customPx); };
+                r->onViewChanged = [this] (TrackRow& row)
+                {
+                    noteRowView (row);
+                    if (onRowViewChanged) onRowViewChanged();
+                };
                 r->toolsBar               = sharedToolsBar;
+                applyRowView (*r);
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
                 i += stereo ? 2 : 1;
@@ -126,7 +191,9 @@ namespace zynforge
             // which means the engineer hit empty space. Right-click is left
             // alone for a potential future "Add multiple..." menu.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown()) return;
-            if (engine.getRecorder().isRecording()) return;   // safety
+            if (auto* page = findParentComponentOfClass<EditPage>();
+                ! isEnabled() || engine.isRecording() || (page != nullptr && ! page->canEditTimeline()))
+                return;
             engine.addOneStrip();
         }
 
@@ -309,9 +376,11 @@ namespace zynforge
             // Where the new audio anchors: a CONTINUE seeds the live envelope
             // with the existing take's length (in overview columns) so the
             // capture draws AFTER the take, not from the left edge. Stable for
-            // the whole pass (recordBaseSamples doesn't move mid-take).
+            // the whole pass (recordBaseSamples doesn't move mid-take). Pre-roll
+            // counts on the record head but has no live bins: they start at
+            // go-live.
             const auto base    = daemon ? remote.positionSamples - remote.elapsedSamples
-                                        : rec.getRecordBaseSamples();
+                                        : rec.getRecordBaseSamples() + rec.getPreRollHistorySamples();
             const juce::int64 prefill = base > 0 ? base / TrackState::kLiveBinSamples : 0;
             for (auto& r : rows)
             {
@@ -383,16 +452,18 @@ namespace zynforge
 
         int rowCount() const { return (int) rows.size(); }
 
-        // True when the rows were built for exactly this logical layout. A
-        // count check alone misses a block move that keeps both the track and
-        // row counts ([mono, stereo] -> [stereo, mono]) and would leave rows
-        // drawing the wrong strip as a pair.
+        // True when the rows were built for exactly this logical layout, strip
+        // for strip. A count check alone misses a block move that keeps both the
+        // track and row counts ([mono, stereo] -> [stereo, mono]) and would leave
+        // rows drawing the wrong strip as a pair.
         bool matchesLayout (const trackorder::Blocks& blocks) const
         {
             if (blocks.size() != rows.size()) return false;
+            auto& rec = engine.getRecorder();
             for (size_t k = 0; k < rows.size(); ++k)
                 if (rows[k]->getTrackIndex() != blocks[k].front()
-                    || rows[k]->isStereoPair() != (blocks[k].size() == 2))
+                    || rows[k]->isStereoPair() != (blocks[k].size() == 2)
+                    || rows[k]->getStripKey() != rec.getTrack (blocks[k].front()).stripId)
                     return false;
             return true;
         }
@@ -473,6 +544,13 @@ namespace zynforge
         juce::AudioFormatManager&                 formats;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>>& thumbCaches;
         std::vector<std::unique_ptr<TrackRow>>    rows;
+        struct RowView
+        {
+            TrackRow::Size     size   { TrackRow::Size::Small };
+            int                height { TrackRow::pixelsFor (TrackRow::Size::Small) };
+            TrackRow::LaneMode lane   { TrackRow::LaneMode::Waveform };
+        };
+        std::map<juce::String, RowView>           rowViews;   // by TrackState::stripId
         juce::File waveformSession;   // the folder the rows last resolved against
         int                                       viewportHeight { 480 };
         int                                       reorderLineY { -1 };   // swatch-drag drop line; -1 = none
@@ -502,6 +580,7 @@ namespace zynforge
 
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCaches);
         list->sharedToolsBar = toolsBar.get();
+        list->onRowViewChanged = [this] { if (onRowViewChanged) onRowViewChanged(); };
         viewport.setViewedComponent (list.get(), false);
         // Vertical scrollbar visible; horizontal scrollbar hidden BUT
         // horizontal scrolling still enabled (4th arg = allow horizontal
@@ -627,7 +706,7 @@ namespace zynforge
         // already wrote this session's cache (the common case), rather than
         // paying a cache-sized synchronous write on every quit.
         const auto sessionDir = engine.getActiveSessionDir();
-        if (! waveCacheSaved && ! engine.isRecording() && sessionDir.isDirectory())
+        if (! waveCacheSaved && ! engine.isTakeOnDisk() && sessionDir.isDirectory())
             wavecache::save (sessionDir, thumbnailCaches, [] { return false; });
     }
 
@@ -779,8 +858,9 @@ namespace zynforge
         // count, but a strip moved past a stereo pair changes WHERE the pair
         // sits while keeping both counts.
         const auto layout = trackorder::logicalBlocks (trackorder::stereoFlags (engine.getRecorder()));
-        if (n != lastTrackCount || ! list->matchesLayout (layout))
+        if (rowsCondemned || n != lastTrackCount || ! list->matchesLayout (layout))
         {
+            rowsCondemned = false;
             list->rebuild (n);
             lastTrackCount = n;
             resized();
@@ -872,9 +952,13 @@ namespace zynforge
         repaint();
     }
 
+    juce::var EditPage::captureRowViews() const { return list->rowViewsJson(); }
+    void      EditPage::restoreRowViews (const juce::var& saved) { list->restoreRowViews (saved); }
+
     void EditPage::condemnAllRows()
     {
         if (list != nullptr) list->condemnAllRows();
+        rowsCondemned = true;
     }
 
     int EditPage::updateReorderPreview (juce::Point<int> pointInPage)
@@ -883,8 +967,10 @@ namespace zynforge
         // Scroll the row list when the pointer nears its top/bottom edge, so a
         // strip can travel the whole session in one drag. The row drives this
         // with beginDragAutoRepeat, so it keeps scrolling while held still.
+        // Top and bottom only: the swatch sits in the left border, and at this
+        // pointer's own x a zoomed timeline would slide back to its start.
         const auto inViewport = viewport.getLocalPoint (this, pointInPage);
-        viewport.autoScroll (inViewport.x, inViewport.y, 24, 16);
+        viewport.autoScroll (viewport.getWidth() / 2, inViewport.y, 24, 16);
         return list->updateReorderPreview (list->getLocalPoint (this, pointInPage),
                                            engine.getRecorder().getNumTracks());
     }
@@ -991,7 +1077,10 @@ namespace zynforge
         // Rebuild on a track-count change OR a generation bump. A stereo
         // link/unlink (e.g. from the PATCH page) changes no count but bumps the
         // generation, and EDIT must re-collapse the pair like MIXER + PATCH do.
-        if (n != lastTrackCount || gen != lastTrackGen)
+        // A condemned row never comes back, and nothing else here notices: a
+        // session of the same size changes neither number, and a delete the
+        // engine refused changes nothing at all.
+        if (n != lastTrackCount || gen != lastTrackGen || rowsCondemned)
         {
             lastTrackGen = gen;
             refresh();
@@ -1096,7 +1185,7 @@ namespace zynforge
         if (! waveCacheSaved && ! waveCacheSaving.load() && ! waveCacheLoading
             && ! rec && ! engine.isSessionTransitionActive()
             && list != nullptr && list->rowCount() > 0
-            && engine.getActiveSessionDir().isDirectory()
+            && engine.hasSessionFolder()
             && list->allWaveformsLoaded())
         {
             beginWaveCacheSave (engine.getActiveSessionDir());
@@ -1120,10 +1209,10 @@ namespace zynforge
         // draws in AS it loads. Without this nothing triggers a repaint once
         // recording stops (the playhead is parked, pushRecLevels isn't running),
         // so the lane sat on the held envelope until the engineer moved the
-        // mouse. Bounded: stops the moment every thumbnail is fully loaded.
-        if (! rec && list != nullptr && list->rowCount() > 0
-            && engine.getActiveSessionDir().isDirectory()
-            && ! list->allWaveformsLoaded())
+        // mouse. Bounded: stops one tick after every thumbnail is fully loaded.
+        const bool scanning = ! rec && list != nullptr && list->rowCount() > 0
+                           && engine.hasSessionFolder() && ! list->allWaveformsLoaded();
+        if (scanRepaint.tick (scanning) && list != nullptr)
             list->repaintRows();
 
         // Append this tick's input peaks to the live capture envelope so

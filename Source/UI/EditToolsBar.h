@@ -16,7 +16,7 @@ namespace zynforge
     //  - Selector  → click sets playhead, drag sets the loop range
     //  - Trim      → body clicks trim from the nearer edge
     //  - Grabber   → body clicks always move
-    //  - Fade      → body clicks open the fade preset menu
+    //  - Fade      → grab squares drag, body clicks open the fade preset menu
     //
     // Header-only on purpose -- no extra .cpp in CMakeLists.
     class EditToolsBar final : public juce::Component
@@ -47,8 +47,8 @@ namespace zynforge
                   "(closes the gap), D duplicates, Cmd+C / Cmd+V copy & paste at the playhead, "
                   "Alt+Left/Right or numpad +/- nudge by the N-step." },
                 { Tool::Fade,     "Fade",     "Fade",
-                  "Fade (F) -- click a clip to open its fade menu (fade-in / fade-out / crossfade "
-                  "shapes and lengths)." }
+                  "Fade (F) -- drag a square on a clip's top edge to set a fade, or click the clip "
+                  "to open its fade menu (fade-in / fade-out / crossfade shapes and lengths)." }
             }};
 
             for (auto& it : items)

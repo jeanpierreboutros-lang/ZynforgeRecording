@@ -37,7 +37,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; class EngineFixTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class EditRowFixTests; class SessionSafetyTests; class EngineFixTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -598,6 +598,7 @@ private:
     friend class zynforge::MainWindowGuardTests;
     friend class zynforge::EngineFixTests;
     friend class zynforge::EditIntegrityTests;
+    friend class zynforge::EditRowFixTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.
