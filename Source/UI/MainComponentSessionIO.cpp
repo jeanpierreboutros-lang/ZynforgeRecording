@@ -2044,13 +2044,7 @@ void MainComponent::startHandoffCopy (const juce::File& source, const juce::File
         {
             if (self == nullptr) return;
             self->engine.setSessionTransitionActive (false);
-            if (result.ok)
-                self->showStatus ((result.captureReportWarning
-                    ? "! Handoff copy verified; CAPTURE REPORT NEEDS REVIEW: "
-                    : "Verified handoff ready: ") + dest.getFullPathName());
-            else
-                self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
-                                  + " -- " + result.message);
+            self->showStatus (showhandoff::statusLine (result, dest));
         };
     });
 }
