@@ -43,5 +43,9 @@ SPACING=$(scope 'reduced (' | grep -E 'reduced \([0-9]' | grep -v 'brand::space'
 if [ "$SPACING" -gt "$SPACE_CEIL" ]; then
   echo "✗ raw-int reduced() grew to $SPACING (> $SPACE_CEIL) -- use brand::space:: for new spacing"; FAIL=1
 else echo "✓ spacing ratchet: $SPACING raw reduced() <= $SPACE_CEIL (migrate tail to brand::space::)"; fi
+# 8. Type sizes stay on the scale in BrandTokens.h. A raw size is allowed only if
+# it is a rung; below 10 pt nothing reads at the mix position.
+check "raw type sizes are on the scale (10 11 13 14 18 22 28 48)" \
+  "$(scope 'type::\(mono\|ui\) ([0-9]' | grep -vE 'type::(mono|ui) \((10|11|13|14|18|22|28|48)(\.0)?f')"
 [ $FAIL -eq 0 ] && echo "design audit: CLEAN" || echo "design audit: FAILED"
 exit $FAIL

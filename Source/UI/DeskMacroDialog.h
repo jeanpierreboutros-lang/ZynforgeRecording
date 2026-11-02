@@ -75,7 +75,7 @@ namespace zynforge
                 addressView.setMultiLine (true);
                 addressView.setReadOnly (true);
                 addressView.setCaretVisible (false);
-                addressView.setFont (brand::type::mono (12.0f));
+                addressView.setFont (brand::type::mono (brand::type::h_caption));
                 dialog::styleTextEditor (addressView);
                 addressView.setText (addressList(), false);
                 addressView.setTitle ("Desk macro addresses");

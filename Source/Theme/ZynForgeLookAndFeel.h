@@ -50,6 +50,14 @@ namespace zynforge
         // first-party dialog (AudioDevice, NewSession, Export, ...)
         // uses. Any juce::AlertWindow::showAsync (...) now reads as a
         // first-party ZynForge prompt.
+        // Every message on screen goes through typeset(); see DisplayText.h.
+        void drawLabel (juce::Graphics&, juce::Label&) override;
+        void drawTooltip (juce::Graphics&, const juce::String& text, int width, int height) override;
+        juce::AlertWindow* createAlertWindow (const juce::String& title, const juce::String& message,
+                                              const juce::String& button1, const juce::String& button2,
+                                              const juce::String& button3, juce::MessageBoxIconType iconType,
+                                              int numButtons, juce::Component* associatedComponent) override;
+
         void drawAlertBox (juce::Graphics&, juce::AlertWindow&,
                            const juce::Rectangle<int>& textArea,
                            juce::TextLayout&) override;

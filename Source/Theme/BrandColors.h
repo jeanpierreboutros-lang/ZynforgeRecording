@@ -68,6 +68,12 @@ namespace zynforge::brand
     // the family token source gains it.
     inline const auto selectFill = juce::Colour (0xffb35a3e);
 
+    // An R button that is on. A rig can sit armed for hours, one per channel,
+    // so armed is a deep red well below accentRecord, which stays for RECORD
+    // and for alarms. It lifts while the take rolls. White reads at 4.5:1 on both.
+    inline const auto armFill     = juce::Colour (0xffa32a2a);
+    inline const auto armRollFill = juce::Colour (0xffdd2222);
+
     // The clock plate while a take rolls: a whole plate of it reads from across
     // the room, white digits sit on it at 12:1, and it stays well below the
     // alarm banner's bright red, so an alarm is still the loudest thing on screen.

@@ -31,7 +31,7 @@ namespace zynforge
 
     // No interface has this many output channels.
     static constexpr int kOutputOffId = 100000;
-    static const char* const kOutputTooltip = "Master output device channel(s) -- pair like 'Out 1-2' "
+    static const char* const kOutputTooltip = "Master output device channels -- pair like 'Out 1-2' "
                                               "in stereo mode, single 'Out N' in mono. Off sends the mix "
                                               "to no output, for a rig whose outputs are all console returns.";
 

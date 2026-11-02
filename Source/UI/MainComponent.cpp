@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "../Audio/VirtualSoundcheck.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
@@ -108,7 +109,7 @@ void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
     auto* aw = new juce::AlertWindow (
         "Replace audio?",
         "The EDIT cursor is at " + juce::String (plan.punchAt / sr, 1) + " s, inside the take.\n\n"
-        "Replacing starts there on " + juce::String (plan.armed) + " armed track(s) and runs until you "
+        "Replacing starts there on " + zynforge::counted (plan.armed, "armed track") + " and runs until you "
         "stop. It can't be undone.\n\nRecording after the take leaves everything as it is.",
         juce::MessageBoxIconType::NoIcon, this);
     // Return is the safe answer: a hurried press must never replace audio.
@@ -370,8 +371,7 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
         const juce::int64 freeBytes = volume.getBytesFreeOnVolume();
         if (zynforge::preflight::freeSpaceKnown (freeBytes, volume.getVolumeTotalSize()) && freeBytes < wantBytes)
         {
-            const double freeGB = freeBytes / 1.0e9;
-            showRecordRefusal ("Drive has only " + juce::String (freeGB, 1)
+            showRecordRefusal ("Drive has only " + juce::String (bytesToGB (freeBytes), 1)
                                + " GB free -- < 30 min headroom. Clear space before recording.");
             return false;
         }
@@ -615,20 +615,18 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
                        + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
                  : plan.continueAppend
                  ? juce::String ("Continuing take -- recording a new part on ")
-                       + juce::String (plan.armed) + " track(s)"
+                       + zynforge::counted (plan.armed, "track")
                        + (engine.getPlayer().hasLoopRegion() ? " (select the range again to punch it)" : "")
-                 : juce::String ("Punch-in ") + juce::String (plan.armed)
-                       + " track(s) at " + juce::String (plan.punchAt / sr, 1) + " s";
+                 : juce::String ("Punch-in ") + zynforge::counted (plan.armed, "track") + " at " + juce::String (plan.punchAt / sr, 1) + " s";
         if (plan.autoRouted > 0)
             msg << " (auto-routed " << plan.autoRouted << ")";
         // Free-space pre-flight: warn loudly if the engineer is about to
         // start a take with very little room on either the primary or
         // backup volume. Pre-show beats mid-show discovery every time.
+        // The time left itself lives on the clock, where it stays current.
         const int mins = engine.getEstimatedMinutesRemaining();
         if (mins > 0 && mins < 30)
-            msg << "  --  ! DISK ~" << mins << " min remaining";
-        else if (mins > 0)
-            msg << "  --  ~" << mins << " min remaining";
+            msg << " -- ! DISK " << recordTimeText (mins * 60.0) << " left";
         statusLabel.setText (msg, juce::dontSendNotification);
     }
     else
@@ -1130,26 +1128,62 @@ void MainComponent::onVscClicked()
     if (engine.isRecording() || captureMetadataPending)
     { showStatus ("Virtual Soundcheck waits until the take has stopped"); return; }
 
-    // Virtual Soundcheck: copy each strip's input routing to its output
-    // routing, so playback feeds the same hardware channel the live
-    // input would have used. The desk sees the recorded tracks on the
-    // same snake / network channels it'd see the live mics on.
-    auto& rec = engine.getRecorder();
-    const int n = rec.getNumTracks();
-    int repatched = 0;
-    for (int i = 0; i < n; ++i)
+    if (zynforge::vsc::hasSavedPatch (engine)) { restoreOutputPatch(); return; }
+
+    const int strips = engine.getRecorder().getNumTracks();
+    if (strips <= 0) { showStatus ("No strips to repatch"); return; }
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    const auto repatch = [self]
     {
-        const int inDev = rec.getTrack (i).inputRouting.load (std::memory_order_relaxed);
-        // -2 means 'identity default' -- resolve to i so the output ends
-        // up explicitly set to the strip's identity input.
-        const int target = (inDev == -2) ? i : inDev;
-        engine.setTrackOutputRouting (i, target);
-        ++repatched;
-    }
-    showStatus (repatched > 0
-                ? "Virtual Soundcheck -- " + juce::String (repatched)
-                  + " strip(s) repatched: outputs now match inputs"
-                : juce::String ("No strips to repatch"));
+        if (self == nullptr) return;
+        if (self->engine.isRecording() || self->captureMetadataPending)
+        { self->showStatus ("Virtual Soundcheck waits until the take has stopped"); return; }
+        const auto before = self->beginMixerUndo();
+        const int moved = zynforge::vsc::repatch (self->engine);
+        self->commitMixerUndo ("Virtual Soundcheck", before);
+        self->lastTrackCount = -1;
+        self->showStatus ("Virtual Soundcheck -- " + zynforge::counted (moved, "strip")
+                          + " repatched: outputs now match inputs");
+    };
+    if (confirmForTests) { confirmForTests (repatch); return; }
+    juce::AlertWindow::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::QuestionIcon)
+            .withTitle ("Virtual Soundcheck")
+            .withMessage ("Repatch " + zynforge::counted (strips, "strip")
+                          + " so each output matches its input? Playback then reaches the desk "
+                            "on the live input channels.\n\n"
+                            "The current output patch is kept. Press VSC ON to go back to it.")
+            .withButton ("Repatch")
+            .withButton ("Cancel"),
+        [repatch] (int result) { if (result == 1) repatch(); });
+}
+
+void MainComponent::restoreOutputPatch()
+{
+    juce::Component::SafePointer<MainComponent> self (this);
+    const auto restore = [self]
+    {
+        if (self == nullptr) return;
+        if (self->engine.isRecording() || self->captureMetadataPending)
+        { self->showStatus ("Restoring outputs waits until the take has stopped"); return; }
+        const auto before = self->beginMixerUndo();
+        const int moved = zynforge::vsc::restore (self->engine);
+        self->commitMixerUndo ("Restore Outputs", before);
+        self->lastTrackCount = -1;
+        self->showStatus ("Outputs restored on " + zynforge::counted (moved, "strip"));
+    };
+    if (confirmForTests) { confirmForTests (restore); return; }
+    juce::AlertWindow::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::QuestionIcon)
+            .withTitle ("Restore Outputs")
+            .withMessage ("Put every output back to the patch from before Virtual Soundcheck? "
+                          "Playback stops reaching the desk on the input channels.")
+            .withButton ("Restore")
+            .withButton ("Cancel"),
+        [restore] (int result) { if (result == 1) restore(); });
 }
 
 void MainComponent::onBackupClicked()
@@ -1383,7 +1417,7 @@ void MainComponent::confirmAndQuit()
     if (! hasActiveSession)
     {
         constexpr int kQuit = 1, kCancel = 2;
-        auto* aw = new juce::AlertWindow ("Quit Zynforge Recording?",
+        auto* aw = new juce::AlertWindow ("Quit ZynForge Recording?",
                                           "No active session. Any unsaved app state will be lost.",
                                           juce::MessageBoxIconType::QuestionIcon, this);   // -> forge-mark badge (LAF)
         aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
@@ -1531,14 +1565,18 @@ void MainComponent::showPreflightChecklist()
     const auto sess   = engine.getActiveSessionDir();
     const bool hasSes = sess.isDirectory();
     const auto root   = zynforge::preflight::storageRoot (sess, getSessionsRoot());
-    const double freeGB = (root.exists() ? root.getBytesFreeOnVolume() : 0) / 1.0e9;
+    const double freeGB = bytesToGB (root.exists() ? root.getBytesFreeOnVolume() : 0);
     const auto fmt    = engine.getRecorder().getCaptureFormat();
     const auto fmtStr = checklistFormatName (fmt);
 
     // Headroom at the active configuration, by the rule RECORD refuses on, so
     // this list can never call a disk fine that RECORD then turns away.
     const auto wantBytes = recordHeadroomBytes (sr, juce::jmax (1, armed), fmt);
-    const double minHeadroom = wantBytes > 0 ? (freeGB * 1.0e9 / (double) wantBytes) * 30.0 : 0.0;
+    // The clock's own estimate when there is one, so the two can't disagree.
+    engine.refreshDiskMinutesRemaining();
+    const int estimated = engine.getEstimatedMinutesRemaining();
+    const double headroomMinutes = estimated > 0 ? (double) estimated
+                                 : wantBytes > 0 ? (freeGB * 1.0e9 / (double) wantBytes) * 30.0 : 0.0;
 
     using Row = zynforge::PreflightRow;
     auto chk = [] (bool ok, bool warn = false)
@@ -1559,13 +1597,19 @@ void MainComponent::showPreflightChecklist()
     rows.push_back ({ cues.empty() ? Row::Status::info : Row::Status::ok, "Setlist cues",
                       cues.empty() ? juce::String ("none (optional)") : juce::String ((int) cues.size()) });
     rows.push_back ({ chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0), "Disk free",
-                      juce::String (freeGB, 1) + " GB (" + juce::String (juce::roundToInt (minHeadroom))
-                          + " min headroom at " + fmtStr + ")" });
+                      juce::String (freeGB, 1) + " GB (" + recordTimeText (headroomMinutes * 60.0)
+                          + " at " + fmtStr + ")" });
     rows.push_back ({ chk (! engine.isRecording()), "Status",
                       engine.isRecording() ? juce::String ("RECORDING ROLLING")
                                            : engine.getPlayer().isPlaying() ? juce::String ("Playing back")
                                                                             : juce::String ("Idle") });
     rows.push_back (Row::fromLine (backupChecklistRow()));
+    if (consoleLink.isConnected() || consoleLink.isOnSoundcheckPatch())
+        rows.push_back ({ chk (! consoleLink.isOnSoundcheckPatch(), true), "Desk patch",
+                          consoleLink.isOnSoundcheckPatch() ? juce::String ("on SOUNDCHECK (card returns)")
+                                                            : juce::String ("stage inputs") });
+    if (zynforge::vsc::hasSavedPatch (engine))
+        rows.push_back ({ Row::Status::warning, "Output patch", "on Virtual Soundcheck" });
 
     if (device != nullptr)
     {
@@ -1647,6 +1691,35 @@ void MainComponent::showPreflightChecklist()
             rows.push_back ({ chk (w), item, w ? juce::String ("writable") : juce::String ("NOT writable / missing") });
         }
     }
+
+    // Each problem gets the one control that deals with it.
+    juce::Component::SafePointer<MainComponent> self (this);
+    const auto run = [self] (std::function<void (MainComponent&)> action) -> std::function<void()>
+    {
+        return [self, action] { if (self != nullptr) action (*self.getComponent()); };
+    };
+    const auto offer = [&rows] (const std::function<bool (const juce::String&)>& matches,
+                                const char* label, std::function<void()> action)
+    {
+        for (auto& row : rows)
+            if (row.isProblem() && matches (row.item)) { row.fixLabel = label; row.fix = action; }
+    };
+    const auto named = [] (std::initializer_list<const char*> items)
+    {
+        return [list = juce::StringArray (items.begin(), (int) items.size())] (const juce::String& item)
+        { return list.contains (item); };
+    };
+    offer (named ({ "Audio device", "Sample rate", "Inputs", "Outputs", "Session SR matches device" }), "Device",
+           run ([] (MainComponent& m) { if (m.deviceDialog.getComponent() == nullptr) m.onDeviceClicked(); }));
+    offer (named ({ "Channel strips" }), "Add", run ([] (MainComponent& m) { m.addChannelButton.triggerClick(); }));
+    offer (named ({ "Armed for record" }), "Mixer", run ([] (MainComponent& m) { m.switchView (View::Mix); }));
+    offer (named ({ "Active session" }), "New", run ([] (MainComponent& m) { m.menuItemSelected (5, 0); }));
+    offer (named ({ "Backup" }), "Backup", run ([] (MainComponent& m) { m.onBackupClicked(); }));
+    offer ([] (const juce::String& item) { return item.startsWith ("Mirror "); }, "Backup",
+           run ([] (MainComponent& m) { m.onBackupClicked(); }));
+    offer (named ({ "Signal on armed inputs" }), "Patch", run ([] (MainComponent& m) { m.openPatchWindow(); }));
+    offer (named ({ "Desk patch" }), "To stage", run ([] (MainComponent& m) { m.consoleToggleSoundcheck(); }));
+    offer (named ({ "Output patch" }), "Restore", run ([] (MainComponent& m) { m.restoreOutputPatch(); }));
 
     zynforge::PreflightDialog::launch (std::move (rows));
 }

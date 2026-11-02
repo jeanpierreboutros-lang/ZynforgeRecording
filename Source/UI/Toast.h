@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../Audio/DisplayText.h"
+
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <deque>
 
@@ -79,7 +81,7 @@ namespace zynforge
             // Message text.
             g.setColour (brand::textPrimary);
             g.setFont (brand::type::uiLabel());
-            g.drawText (current.message,
+            g.drawText (typeset (current.message),
                         r.withTrimmedLeft (14).toNearestInt(),
                         juce::Justification::centredLeft, true);
         }

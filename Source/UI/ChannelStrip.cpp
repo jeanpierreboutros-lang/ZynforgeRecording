@@ -643,7 +643,7 @@ namespace zynforge
             if (onAfterArmedToggle) onAfterArmedToggle (stripIndex);
         };
         // R (record arm) → red gradient when armed.
-        armButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
+        armButton.setColour (juce::ToggleButton::tickColourId, brand::armFill);
         addAndMakeVisible (armButton);
 
         monButton.setToggleState (s.monitor.load(), juce::dontSendNotification);
@@ -882,6 +882,7 @@ namespace zynforge
     {
         if (takeRolling == rolling) return;
         takeRolling = rolling;
+        armButton.setColour (juce::ToggleButton::tickColourId, rolling ? brand::armRollFill : brand::armFill);
         repaint();
     }
 
@@ -1040,20 +1041,31 @@ namespace zynforge
 
         // ── 2. Pan section ─────────────────────────────────────────
         // Bigger knobs -- engineers wanted them obvious at a glance.
-        // Mono: one knob (72 px) centred + "pan  ◂ N ▸" readout.
-        // Stereo: two knobs (56 px each) side by side + two compact
-        // "◂ N ▸" readouts under each.
-        const int knobH    = (pairState != nullptr) ? 30 : 40;
+        // Mono: one knob centred + "pan  ◂ N ▸" readout. Stereo: two smaller
+        // knobs + two compact "◂ N ▸" readouts under each. The row is the same
+        // height either way, so every fader on the page lines up and 0 dB sits
+        // at one height across the mixer.
+        const int knobH    = 40;
+        const int stereoKnob = 30;
         const int panLabelH = 16;
         auto panKnobs = r.removeFromTop (knobH);
         auto panText  = r.removeFromTop (panLabelH);
         if (pairState != nullptr)
         {
             const int colW = panKnobs.getWidth() / 2;
-            const int knobSize = juce::jmin (knobH, colW - 4);
-            panSlider .setBounds (panKnobs.removeFromLeft (colW)
-                                          .withSizeKeepingCentre (knobSize, knobSize));
-            panSliderR.setBounds (panKnobs.withSizeKeepingCentre (knobSize, knobSize));
+            // Too narrow for two knobs side by side: one above the other.
+            if (colW - 4 < knobH / 2 + 4)
+            {
+                panSlider .setBounds (panKnobs.removeFromTop (knobH / 2).withSizeKeepingCentre (knobH / 2, knobH / 2));
+                panSliderR.setBounds (panKnobs.withSizeKeepingCentre (knobH / 2, knobH / 2));
+            }
+            else
+            {
+                const int knobSize = juce::jmin (stereoKnob, colW - 4);
+                panSlider .setBounds (panKnobs.removeFromLeft (colW)
+                                              .withSizeKeepingCentre (knobSize, knobSize));
+                panSliderR.setBounds (panKnobs.withSizeKeepingCentre (knobSize, knobSize));
+            }
             panLabel  .setBounds (panText .removeFromLeft (colW));
             panLabelR .setBounds (panText);
         }
@@ -1116,10 +1128,17 @@ namespace zynforge
         // whatever width the strip has, so on a narrow strip it fills it (lots
         // of strips per page) and on a wide one the scales still sit right
         // beside the fader instead of floating at the strip edges.
-        const int meterW   = (pairState != nullptr) ? 26 : 16;
+        // The numbers beside the fader are the fader's, so the meter carries its
+        // own dBFS scale wherever it fits: full scale is the top of the meter,
+        // level with +12 on the ruler, and without this -12 dBFS looks like 0.
+        const int barsW     = (pairState != nullptr) ? 26 : 16;
+        const int scaleW    = 16;
         const int rulerW    = 20;
         const int faderW    = 30;
+        const bool roomForScale = r.getWidth() >= rulerW + 2 + kMinFaderW + 2 + barsW + scaleW;
+        const int meterW    = barsW + (roomForScale ? scaleW : 0);
         const int clusterW  = rulerW + 2 + faderW + 2 + meterW;
+        meter.setShowDbLabels (roomForScale);
 
         auto cluster = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), clusterW),
                                                 r.getHeight());

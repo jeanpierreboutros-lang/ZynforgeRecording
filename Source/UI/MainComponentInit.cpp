@@ -97,21 +97,31 @@ MainComponent::MainComponent()
     // can't scroll away like a status message. Empty = hidden.
     srWarnLabel.setColour (juce::Label::textColourId, brand::accentRecord);
     srWarnLabel.setJustificationType (juce::Justification::centredLeft);
-    srWarnLabel.setFont (brand::type::ui (12.0f, true));
+    srWarnLabel.setFont (brand::type::channelName());
     addAndMakeVisible (srWarnLabel);
 
     // Twin Recorder state while the link is on: a flat red block for TWIN LOST.
     twinStatusLabel.setJustificationType (juce::Justification::centred);
-    twinStatusLabel.setFont (brand::type::ui (12.0f, true));
+    twinStatusLabel.setFont (brand::type::channelName());
     twinStatusLabel.setMinimumHorizontalScale (0.8f);
     addChildComponent (twinStatusLabel);
 
     addChildComponent (alarmBanner);
 
     punchPill.setJustificationType (juce::Justification::centred);
-    punchPill.setFont (brand::type::ui (12.0f, true));
+    punchPill.setFont (brand::type::channelName());
     punchPill.setMinimumHorizontalScale (0.8f);
     addChildComponent (punchPill);
+
+    // Held for as long as the desk listens to the card, so a soundcheck can't
+    // run into the show unnoticed.
+    soundcheckPill.setJustificationType (juce::Justification::centred);
+    soundcheckPill.setFont (brand::type::channelName());
+    soundcheckPill.setMinimumHorizontalScale (0.8f);
+    soundcheckPill.setColour (juce::Label::backgroundColourId, brand::accentVS);
+    soundcheckPill.setColour (juce::Label::textColourId, brand::onSignal (brand::accentVS));
+    soundcheckPill.setTooltip ("The desk's inputs are on card returns. Session > Console takes it back to the STAGE patch.");
+    addChildComponent (soundcheckPill);
 
     sessionLabel.setFont (brand::type::caption());
     sessionLabel.setColour (juce::Label::textColourId, brand::textTertiary);
@@ -155,11 +165,16 @@ MainComponent::MainComponent()
         openPatchWindow();
     };
 
-    // VSC is a one-shot repatch, never a held state, so it stays neutral.
-    vscButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
-    vscButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
+    // An action that leaves a state behind, so it sits with the header's other
+    // actions, not with the view tabs. Neutral at rest, lit while the outputs
+    // are on the soundcheck patch, and the way back is the same button.
+    vscButton.setColour (juce::TextButton::buttonColourId,   brand::bgElevated);
+    vscButton.setColour (juce::TextButton::textColourOffId,  brand::textSecondary);
+    vscButton.setColour (juce::TextButton::buttonOnColourId, brand::accentVS);
+    vscButton.setColour (juce::TextButton::textColourOnId,   brand::onSignal (brand::accentVS));
     vscButton.setTooltip ("Virtual Soundcheck -- repatch every strip's OUTPUT to match its INPUT, "
-                          "so playback feeds the desk via the same channels the live mics did.");
+                          "so playback reaches the desk on the live input channels. "
+                          "Asks first, and keeps the patch it replaces.");
     vscButton.onClick = [this] { onVscClicked(); };
     addAndMakeVisible (vscButton);
     addAndMakeVisible (patchButton);
@@ -291,7 +306,7 @@ MainComponent::MainComponent()
                 }
             }
             lastTrackCount = -1;   // force rebuild for stereo collapse
-            showStatus ("Added " + juce::String (cursor - firstNew) + " track(s)"
+            showStatus ("Added " + zynforge::counted (cursor - firstNew, "track")
                         + (totalStereo > 0 ? " (" + juce::String (totalStereo) + " stereo)"
                                             : juce::String()));
         });
@@ -329,7 +344,7 @@ MainComponent::MainComponent()
     lockButton   .setTooltip ("System Lock: disables every other control so a stray click can't kill a take.");
     backupButton .setTooltip ("Backup & Mirror Drives -- pick the drives every track is copied to as you record, and their formats.");
     patchButton  .setTooltip ("Open the patch matrix: route hardware inputs / outputs to channel strips.");
-    titleLabel   .setTooltip ("Zynforge Recording -- JUCE 8 multitrack recorder + virtual soundcheck.");
+    titleLabel   .setTooltip ("ZynForge Recording -- JUCE 8 multitrack recorder + virtual soundcheck.");
 
     addAndMakeVisible (bigClock);
     addAndMakeVisible (perfDashboard);
@@ -879,7 +894,7 @@ void MainComponent::rebuildStrips()
             }
             for (size_t k = 0; k < strips.size(); ++k)
                 strips[k]->setSelected (selectedLogical.count ((int) k) > 0);
-            showStatus (juce::String ((int) selectedLogical.size()) + " strip(s) selected");
+            showStatus (zynforge::counted ((int) selectedLogical.size(), "strip") + " selected");
         };
         s->setSelected (selectedLogical.count (logicalIdx) > 0);
 

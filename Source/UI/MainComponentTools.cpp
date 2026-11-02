@@ -451,8 +451,7 @@ void MainComponent::consoleToggleSoundcheck()
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
     const auto sess = engine.getActiveSessionDir();
     consoleLink.setSessionDir (sess);
-    if (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
-        || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
+    if (consoleLink.isOnSoundcheckPatch())
         consoleLink.exitSoundcheck();
     else if (! sess.isDirectory())
         showStatus ("Open a session first -- the show patch is saved with it before the console moves");

@@ -197,7 +197,7 @@ namespace zynforge
         // starving the bar (the compact mixer strips), drop the labels and
         // give the bar the full width. This also prevents a NEGATIVE-width
         // barArea, which asserted/crashed in paintBar.
-        const bool  roomForLabels = showLabels && bounds.getWidth() > 30.0f;
+        const bool  roomForLabels = showLabels && bounds.getWidth() >= 26.0f;
         const float labelW = roomForLabels ? 14.0f : 0.0f;
         const float gap    = roomForLabels ? 2.0f  : 0.0f;
         auto labelCol = bounds.withWidth (labelW);
@@ -216,9 +216,18 @@ namespace zynforge
             paintBar (g, barArea, displayPeak, displayRms);
         }
 
-        // dB scale -- labels live in their own column, ticks bridge the gap.
-        // Skipped entirely when there's no room (compact strips / EDIT meter).
-        const float dBLabels[] = { 0.0f, -3.0f, -6.0f, -10.0f, -16.0f, -22.0f, -32.0f, -60.0f };
+        // dBFS scale -- labels live in their own column, ticks bridge the gap.
+        // These are full-scale marks, not the fader's: the top of the meter is
+        // clipping. With no room for numbers the same marks stay as ticks on
+        // the bar, unless the meter is too short for them to mean anything.
+        const float dBLabels[] = { 0.0f, -6.0f, -12.0f, -18.0f, -30.0f, -60.0f };
+        if (! roomForLabels && bounds.getHeight() >= 160.0f)
+        {
+            g.setColour (brand::textSecondary);
+            for (float dB : dBLabels)
+                g.drawHorizontalLine ((int) (bounds.getBottom() - bounds.getHeight() * (dB - kMinDb) / (kMaxDb - kMinDb)),
+                                      barArea.getX(), barArea.getX() + 3.0f);
+        }
         g.setFont (brand::type::label());
         if (roomForLabels) for (float dB : dBLabels)
         {

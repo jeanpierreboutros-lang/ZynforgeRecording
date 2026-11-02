@@ -341,7 +341,7 @@ void MainComponent::selectAllStrips()
     // Cmd+A from the EDIT view: repaint the rows so their headers show selected
     // immediately, not only after the mouse moves over a channel.
     if (editPage != nullptr) editPage->repaintLanes();
-    showStatus (juce::String ((int) strips.size()) + " strip(s) selected");
+    showStatus (zynforge::counted ((int) strips.size(), "strip") + " selected");
 }
 
 void MainComponent::condemnAllStrips()
@@ -429,7 +429,7 @@ void MainComponent::colourSelectedStrips()
                               getScreenBounds().getCentreY(), 1, 1 },
         nullptr);
 
-    showStatus ("Picking colour for " + juce::String ((int) selectedLogical.size()) + " strip(s)...");
+    showStatus ("Picking colour for " + zynforge::counted ((int) selectedLogical.size(), "strip") + "...");
 }
 
 // Stereo logical<->physical mapping now lives on AudioEngine (it's a pure
@@ -547,7 +547,7 @@ void MainComponent::importChannelNamesFromCsv()
                 if (names[i].isNotEmpty())   // an unnamed channel keeps its name
                 { self->engine.setTrackName (i, names[i]); ++applied; }
             self->lastTrackCount = -1;
-            self->showStatus ("Imported " + juce::String (applied) + " channel name(s) from "
+            self->showStatus ("Imported " + zynforge::counted (applied, "channel name") + " from "
                         + f.getFileName()
                         + (names.size() > n ? "  (" + juce::String (names.size() - n)
                                               + " extra ignored)" : juce::String()));
@@ -721,13 +721,13 @@ void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& 
     loadUILayoutFromActiveSession();
     saveSessionStateTo (dir);
 
-    auto status = "Session created from console: " + juce::String ((int) names.size()) + " named channel(s)";
+    auto status = "Session created from console: " + zynforge::counted ((int) names.size(), "named channel");
     if (stereoPairsAsked == 0)
         status << " -- this desk reports no stereo data, so link stereo pairs by hand";
     else if ((int) stereoLinks.size() < stereoPairsAsked)
-        status << ", " << pairsLinked << " stereo pair(s) linked -- only " << (int) stereoLinks.size()
+        status << ", " << zynforge::counted (pairsLinked, "stereo pair") << " linked -- only " << (int) stereoLinks.size()
                << " of " << stereoPairsAsked << " link states arrived, so check the rest by hand";
     else
-        status << ", " << pairsLinked << " stereo pair(s) linked";
+        status << ", " << zynforge::counted (pairsLinked, "stereo pair") << " linked";
     showStatus (status);
 }

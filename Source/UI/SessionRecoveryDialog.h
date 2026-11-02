@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "../Audio/DisplayText.h"
 #include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -105,8 +106,7 @@ namespace zynforge
             };
             addAndMakeVisible (dismissButton);
 
-            help.setText (juce::String (rows.size())
-                              + " session(s) didn't shut down cleanly. The audio is on disk -- "
+            help.setText (zynforge::counted (rows.size(), "session") + " didn't shut down cleanly. The audio is on disk -- "
                                 "Recover loads the session, Delete removes it, Skip closes this "
                                 "dialog and leaves them for next launch.",
                           juce::dontSendNotification);
@@ -166,11 +166,11 @@ namespace zynforge
 
         static juce::String formatBytes (juce::int64 bytes)
         {
-            const double gb = (double) bytes / (1024.0 * 1024.0 * 1024.0);
+            const double gb = bytesToGB (bytes);
             if (gb >= 1.0) return juce::String (gb, 2) + " GB";
-            const double mb = (double) bytes / (1024.0 * 1024.0);
+            const double mb = bytesToMB ((double) bytes);
             if (mb >= 1.0) return juce::String (mb, 1) + " MB";
-            const double kb = (double) bytes / 1024.0;
+            const double kb = (double) bytes / 1000.0;
             return juce::String (kb, 1) + " KB";
         }
 

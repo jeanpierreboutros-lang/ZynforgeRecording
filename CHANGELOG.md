@@ -23,7 +23,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-The next five sections came in on 2026-11-02. None of it has been tried on real hardware.
+The next seven sections came in on 2026-11-02. None of it has been tried on real hardware.
+
+### Changed — after the design critique
+
+- **VSC moved out of the view tabs** to the header's actions. It now asks first, keeps the output patch it replaces with the session, reads **VSC ON** while it is in force, and pressing it again restores. Each direction is one named undo step.
+- **DESK ON SOUNDCHECK** shows beside the small clock and in pre-flight while a console-linked desk is on card returns.
+- **The alarm banner moved to the top of the window.** It no longer pushes the mixer down, so no fader moves under the mouse when a drive fails. It lies over the wordmark and status line, covers no button, and lists the most serious trouble first.
+- **A refused press is amber.** Red now always means a take is in trouble.
+- **Pre-flight problems have a button** that opens the control that deals with them.
+- **Armed R buttons are a deep red** and lift while the take rolls, so they no longer share the alarm's exact colour. EDIT's buttons now run I R S M, as the MIXER's do.
+- **Strip meters carry a dBFS scale**, or ticks where there is no room. The master's scale uses the same marks: 0, 6, 12, 18, 30, 60.
+- **The clock's health rows and the loudness line are larger**, and the status panel keeps one width whether or not a take rolls. The device format moved to its own narrow column, and a hot true peak is marked `!` as well as red.
+- **The Welcome screen shows where the show lands:** the path, a Change button and the free space on that drive.
+- VIEW left the EDIT rows. It now lives on the row's right-click menu. Strip width and GRID show only in MIXER.
+- The type scale is 10, 11, 13, 14, 18, 22, 28 and 48, with nothing below 10 pt, and a gate holds it there. The header's grain and bevel are gone. Messages have real dashes and plurals, and the app says ZynForge wherever it names itself. The bundle stays `Zynforge Recording`, so an install keeps its settings and microphone history.
+
+### Fixed — screens that disagreed
+
+- EDIT said `(unrouted)` for a strip the MIXER showed going to the master.
+- PATCH showed one dot for a stereo strip, so its second channel looked free.
+- The same drive read 23.3 GB on the clock and 25.0 GB in pre-flight. Sizes and speeds are decimal everywhere now, as Finder counts them.
+- Time left is one figure in one format.
+- Stereo strips sat 8 px off mono strips, so 0 dB wasn't level across the page.
+- The small clock sat still through a take. It follows the take now.
+- At XS a stereo strip's pan knobs were dots. They stack now, at a usable size.
 
 ### Changed — look
 

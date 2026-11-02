@@ -1,4 +1,5 @@
 #include "BigClockPanel.h"
+#include "../Audio/DisplayText.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -104,15 +105,6 @@ namespace zynforge
         repaint();
     }
 
-    static juce::String formatRemaining (double seconds)
-    {
-        if (seconds <= 0 || std::isinf (seconds)) return "--";
-        const auto h = (int) (seconds / 3600.0);
-        const auto m = ((int) (seconds / 60.0)) % 60;
-        if (h > 99) return ">99h";
-        return juce::String::formatted ("%dh%02dm", h, m);
-    }
-
     void BigClockPanel::paint (juce::Graphics& g)
     {
         // Opaque base: cover every pixel with the body background (the 2px
@@ -167,7 +159,7 @@ namespace zynforge
 
         // Centre: the timer. Tabular numerals -- the string can't shift width
         // as seconds tick. It keeps its room; the health column gives way.
-        const float timerPt = juce::jmin (inner.getHeight() * 0.95f, brand::type::h_hero + 4.0f);
+        const float timerPt = juce::jmin (inner.getHeight() * 0.95f, brand::type::h_hero);
         const auto  timerFont = brand::type::mono (timerPt, true);
         const float timerW = juce::GlyphArrangement::getStringWidth (timerFont, elapsedText) + (float) brand::space::xl;
 
@@ -186,31 +178,32 @@ namespace zynforge
         {
             // With a copy's drive not answering the time left is the primary's
             // alone, so the label says that instead of implying the whole rig.
-            auto block = right.removeFromLeft (juce::jmin (124.0f, right.getWidth()));
+            auto block = right.removeFromLeft (juce::jmin (tall ? 124.0f : 112.0f, right.getWidth()));
             g.setColour (copyStale ? brand::alertAmber : labelCol);
             g.setFont (brand::type::caption());
             g.drawText (freeIsBig ? "DISK FREE" : copyStale ? "PRIMARY TIME LEFT" : "RECORD TIME LEFT",
                         block.removeFromTop (14.0f), juce::Justification::centredLeft, false);
             g.setColour (valueCol);
             g.setFont (brand::type::mono (tall ? brand::type::h_subhead : brand::type::h_headline, true));
-            g.drawText (freeIsBig ? freeText : primaryStale ? juce::String ("STALE") : formatRemaining (remainingSeconds),
+            g.drawText (freeIsBig ? freeText : primaryStale ? juce::String ("STALE") : recordTimeText (remainingSeconds),
                         block, juce::Justification::centredLeft, false);
         }
 
         // Each row is [label left, value right]. Label uses the UI font; value
-        // uses tabular mono so the digits don't dance. A row that doesn't fit
-        // isn't drawn: the order below is the order they give way.
-        const float rowH = 13.0f;
+        // uses tabular mono so the digits don't dance. These rows are the proof
+        // the take is safe, so they are body size, not fine print. A row that
+        // doesn't fit isn't drawn: the order below is the order they give way.
+        const float rowH = 16.0f;
         auto drawRow = [&] (const char* label, const juce::String& value,
                             juce::Colour rowLabelCol, juce::Colour rowValueCol = brand::textPrimary)
         {
-            if (right.getHeight() < rowH || right.getWidth() < 120.0f) return;
+            if (right.getHeight() < rowH || right.getWidth() < 136.0f) return;
             auto line = right.removeFromTop (rowH);
             g.setColour (rowLabelCol);
-            g.setFont (brand::type::caption());
+            g.setFont (brand::type::channelName());
             g.drawText (label, line, juce::Justification::centredLeft, false);
             g.setColour (rowValueCol);
-            g.setFont (zynforge::brand::type::monoStamp());
+            g.setFont (brand::type::mono (brand::type::h_body, true));
             g.drawText (value, line, juce::Justification::centredRight, false);
         };
 

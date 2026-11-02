@@ -28,27 +28,6 @@ void MainComponent::paint (juce::Graphics& g)
     g.setGradientFill (brand::verticalGradient (brand::bgPanel, header, 0.08f, 0.18f));
     g.fillRect (header);
 
-    // Brushed-steel grain on the header plate -- faint, irregular vertical
-    // striations + a top bevel sheen, so the top bar reads as machined steel
-    // (the "cold steel" half of the forge identity) rather than flat paint.
-    // Fixed RNG seed -> a stable grain that never flickers between repaints,
-    // and alphas kept to ~0.02-0.05 so it never competes with the controls.
-    {
-        juce::Random rng (0x57EE15);
-        const int   x0 = (int) header.getX(), x1 = (int) header.getRight();
-        const float top = header.getY(), bot = header.getBottom() - 1.0f;
-        for (int x = x0; x < x1; x += 2)
-        {
-            const float a = 0.018f + 0.03f * rng.nextFloat();
-            g.setColour (rng.nextBool() ? brand::gloss (a)
-                                        : brand::shadow::elev1().withAlpha (a));
-            g.drawVerticalLine (x, top, bot);
-        }
-        // Top bevel: a bright machined sheen along the very top edge.
-        g.setColour (brand::gloss (0.16f));
-        g.drawHorizontalLine ((int) top, header.getX(), header.getRight());
-    }
-
     g.setColour (brand::edge);
     g.drawHorizontalLine ((int) header.getBottom() - 1,
                           header.getX(), header.getRight());
@@ -163,6 +142,8 @@ void MainComponent::resized()
     // status labels clear of it.
     deviceButton .setBounds (row1.removeFromRight (110).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
+    vscButton    .setBounds (row1.removeFromRight (84).reduced (0, 2));
+    row1.removeFromRight (brand::space::sm);
     addChannelButton.setBounds (row1.removeFromRight (70).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
     // An empty setlist takes no row: its + Cue waits in the header with + CH.
@@ -178,6 +159,10 @@ void MainComponent::resized()
     row1.removeFromRight (brand::space::sm);
     metersButton .setBounds (row1.removeFromRight (92).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
+    // Over the wordmark and the status line, which is all that is left of this
+    // row. An alarm moves nothing, so no fader or strip shifts under the mouse
+    // at the moment a drive fails, and every header button stays reachable.
+    alarmBanner.setBounds (row1.expanded (0, brand::space::xs));
     titleLabel.setBounds (row1.removeFromLeft (248));
     row1.removeFromLeft (brand::space::md);
 
@@ -205,46 +190,49 @@ void MainComponent::resized()
 
     patchButton    .setBounds (row2.removeFromRight (90).reduced (0, 2));
     row2.removeFromRight (brand::space::md);
-    vscButton      .setBounds (row2.removeFromRight (70).reduced (0, 2));
-    row2.removeFromRight (brand::space::md);
     editViewButton .setBounds (row2.removeFromRight (60).reduced (0, 2));
     row2.removeFromRight (brand::space::xs);
     mixViewButton  .setBounds (row2.removeFromRight (70).reduced (0, 2));
     row2.removeFromRight (brand::space::xl);
 
-    stripLButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
-    stripMButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
-    stripSButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
-    stripXsButton.setBounds (row2.removeFromRight (32).reduced (0, 2));
-    row2.removeFromRight (brand::space::sm);
-    gridButton   .setBounds (row2.removeFromRight (50).reduced (0, 2));
+    // Strip width and GRID shape the MIXER and nothing else.
+    const bool mixerOnly = currentView == View::Mix;
+    for (auto* b : { &stripLButton, &stripMButton, &stripSButton, &stripXsButton, &gridButton })
+        b->setVisible (mixerOnly);
+    if (mixerOnly)
+    {
+        stripLButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
+        stripMButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
+        stripSButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
+        stripXsButton.setBounds (row2.removeFromRight (32).reduced (0, 2));
+        row2.removeFromRight (brand::space::sm);
+        gridButton   .setBounds (row2.removeFromRight (50).reduced (0, 2));
+        row2.removeFromRight (brand::space::lg);
+    }
 
     stripXsButton.setToggleState (stripWidthPreset == StripWidth::XS, juce::dontSendNotification);
     stripSButton .setToggleState (stripWidthPreset == StripWidth::S,  juce::dontSendNotification);
     stripMButton .setToggleState (stripWidthPreset == StripWidth::M,  juce::dontSendNotification);
     stripLButton .setToggleState (stripWidthPreset == StripWidth::L,  juce::dontSendNotification);
     gridButton   .setToggleState (mixerGridView, juce::dontSendNotification);
-    row2.removeFromRight (brand::space::lg);
     transportLabel.setBounds (row2.removeFromLeft (140));
     punchPill.setBounds (punchPill.isVisible()
         ? row2.removeFromLeft (juce::jmin (176, row2.getWidth())).reduced (0, brand::space::sm)
         : juce::Rectangle<int>());
     if (punchPill.isVisible()) row2.removeFromLeft (brand::space::sm);
-    sessionLabel  .setBounds (row2);
-
-
-    alarmBanner.setBounds (alarmBanner.isVisible()
-        ? r.removeFromTop (60).reduced (brand::space::lg, brand::space::xs)
+    soundcheckPill.setBounds (soundcheckPill.isVisible()
+        ? row2.removeFromLeft (juce::jmin (176, row2.getWidth())).reduced (0, brand::space::sm)
         : juce::Rectangle<int>());
+    if (soundcheckPill.isVisible()) row2.removeFromLeft (brand::space::sm);
+    sessionLabel  .setBounds (row2);
 
     // Tracks are what a laptop screen is for, so this row stays short, more so
     // in EDIT, which also puts its tools here instead of on a row of their own.
     const int clockRowH = currentView == View::Edit ? 56 : 72;
     auto clockRow = r.removeFromTop (clockRowH).reduced (brand::space::lg, brand::space::xs);
-    // Wide enough for the loudness line at every window size; more room while
-    // recording so audio load / buffer / disk read at a glance during a take.
-    const int dashW = engine.isRecording() ? 320 : 272;
-    perfDashboard.setBounds (clockRow.removeFromRight (dashW));
+    // Wide enough for the loudness line at every window size, and the same
+    // width rolling or not, so RECORD doesn't move the clock.
+    perfDashboard.setBounds (clockRow.removeFromRight (332));
     clockRow.removeFromRight (brand::space::sm);
     auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;
     if (editToolsBar != nullptr)

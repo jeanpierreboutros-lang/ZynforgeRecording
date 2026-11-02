@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <algorithm>
+#include <functional>
 #include <vector>
 
 #include "../Theme/BrandColors.h"
@@ -20,6 +21,11 @@ namespace zynforge
 
         Status       status { Status::info };
         juce::String item, value;
+
+        // The control that deals with this problem. Empty for a problem with
+        // nothing to press, such as a slow drive.
+        juce::String          fixLabel {};
+        std::function<void()> fix {};
 
         bool isProblem() const noexcept { return status == Status::failed || status == Status::warning; }
 
@@ -61,6 +67,21 @@ namespace zynforge
                     window->exitModalState (0);
             };
             addAndMakeVisible (okButton);
+
+            for (const auto& row : rows)
+                if (hasFix (row))
+                {
+                    auto* button = fixButtons.add (new juce::TextButton (row.fixLabel));
+                    dialog::styleSecondary (*button);
+                    button->setTitle (row.fixLabel + ": " + row.item);
+                    button->onClick = [this, fix = row.fix]
+                    {
+                        if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
+                            window->exitModalState (0);
+                        juce::MessageManager::callAsync (fix);
+                    };
+                    addAndMakeVisible (button);
+                }
 
             int height = dialog::titleH + kSummaryH + dialog::footerH + brand::space::md;
             for (const auto& row : rows) height += rowHeight (row);
@@ -110,11 +131,26 @@ namespace zynforge
         {
             auto footer = dialog::footerBounds (*this).reduced (0, brand::space::xs);
             okButton.setBounds (footer.removeFromRight (dialog::btnPrimary));
+
+            auto area = dialog::bodyBounds (*this).reduced (kPad, 0);
+            area.removeFromTop (kSummaryH);
+            int next = 0;
+            for (const auto& row : rows)
+            {
+                auto line = area.removeFromTop (rowHeight (row));
+                if (hasFix (row))
+                    fixButtons[next++]->setBounds (line.removeFromRight (kFixW).removeFromTop (kRowH).reduced (0, 1));
+            }
         }
+
+        int getNumFixes() const noexcept { return fixButtons.size(); }
+        juce::TextButton* getFixButton (int index) const noexcept { return fixButtons[index]; }
 
     private:
         static constexpr int kWidth = 620, kPad = brand::space::xl, kRowH = 24, kSummaryH = 40,
-                             kMarkW = 28, kItemW = 196, kGroupGap = 13;
+                             kMarkW = 28, kItemW = 196, kGroupGap = 13, kFixW = 76;
+
+        static bool hasFix (const PreflightRow& row) { return row.isProblem() && row.fix != nullptr; }
 
         static int rank (const PreflightRow& row) noexcept
         {
@@ -122,13 +158,16 @@ namespace zynforge
                  : row.status == PreflightRow::Status::warning ? 1 : 2;
         }
 
-        static int valueWidth() noexcept { return kWidth - 2 * kPad - kMarkW - kItemW; }
+        static int valueWidth (const PreflightRow& row) noexcept
+        {
+            return kWidth - 2 * kPad - kMarkW - kItemW - (hasFix (row) ? kFixW + brand::space::sm : 0);
+        }
 
         // A value too long for its column, such as a drive path, takes two lines:
         // what is wrong with a path comes after the path.
         static int rowHeight (const PreflightRow& row)
         {
-            return juce::GlyphArrangement::getStringWidth (brand::type::uiBody(), row.value) > (float) valueWidth()
+            return juce::GlyphArrangement::getStringWidth (brand::type::uiBody(), row.value) > (float) valueWidth (row)
                        ? kRowH + 16 : kRowH;
         }
 
@@ -206,12 +245,14 @@ namespace zynforge
             g.setFont (brand::type::uiBody());
             g.setColour (row.status == PreflightRow::Status::failed ? brand::textDanger
                          : problem ? statusColour (row) : brand::textPrimary);
-            g.drawFittedText (row.value, r.withTrimmedTop (brand::space::xs + 1), juce::Justification::topLeft, 2, 1.0f);
+            g.drawFittedText (row.value, r.withWidth (valueWidth (row)).withTrimmedTop (brand::space::xs + 1),
+                              juce::Justification::topLeft, 2, 1.0f);
         }
 
         std::vector<PreflightRow> rows;
         int failed { 0 }, warnings { 0 };
         juce::TextButton okButton;
+        juce::OwnedArray<juce::TextButton> fixButtons;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PreflightDialog)
     };

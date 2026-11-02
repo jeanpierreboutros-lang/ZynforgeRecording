@@ -86,9 +86,10 @@ namespace zynforge::brand
 
     namespace type
     {
-        // Sized scale. Seven discrete heights. Anything outside this
-        // list should be considered a bug -- the system should be tight.
-        inline constexpr float h_micro    = forge::type_micro;   // sub-label EDIT-lane density (clip badges, gain pips)
+        // Sized scale. Eight discrete heights. Anything outside this list is
+        // a bug, and tools/design_audit.sh fails on a raw size that isn't one.
+        // Below 10 pt nothing reads at the mix position, so micro is label.
+        inline constexpr float h_micro    = forge::type_label;   // sub-label EDIT-lane density (clip badges, gain pips)
         inline constexpr float h_label    = forge::type_label;   // tiny captions / dB ruler ticks
         inline constexpr float h_caption  = forge::type_caption;   // small labels, chips
         inline constexpr float h_body     = forge::type_body;   // standard body
@@ -96,7 +97,7 @@ namespace zynforge::brand
         inline constexpr float h_headline = forge::type_headline;   // big-ish accents
         inline constexpr float h_subhead  = forge::type_subhead;   // cue countdown, next-up labels
         inline constexpr float h_display  = forge::type_display;   // section hero numbers
-        inline constexpr float h_hero     = forge::type_hero;   // BigClock timer
+        inline constexpr float h_hero     = 48.0f;   // BigClock timer. Recording-local until tokens.json takes it.
 
         // Small (height, bold) -> Font cache. JUCE 8 routes
         // juce::Font(FontOptions) through a CoreText typeface lookup
@@ -161,9 +162,9 @@ namespace zynforge::brand
         // clearFontCache()) keeps the perf win without the teardown bomb.
         inline juce::Font micro()        { return ui   (h_micro);          }
         inline juce::Font label()        { return ui   (h_label);          }
-        inline juce::Font ledLabel()     { return mono (9.0f, true);       }
-        inline juce::Font monoStamp()    { return mono (11.0f, true);      }  // column numbers, small bold mono stamps
-        inline juce::Font monoCounter()  { return mono (15.0f);            }  // mid mono readouts / counters
+        inline juce::Font ledLabel()     { return mono (h_label, true);    }
+        inline juce::Font monoStamp()    { return mono (h_caption, true);  }  // column numbers, small bold mono stamps
+        inline juce::Font monoCounter()  { return mono (h_title);          }  // mid mono readouts / counters
         inline juce::Font hint()         { return ui   (h_label);          }
         inline juce::Font statusBar()    { return ui   (h_caption);        }
         inline juce::Font uiLabel()      { return ui   (h_caption, true);  }

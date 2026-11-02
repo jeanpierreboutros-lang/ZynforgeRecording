@@ -94,7 +94,7 @@ namespace zynforge
             explicit OscLogContent (AudioEngine& e) : engine (e)
             {
                 view.setMultiLine (true); view.setReadOnly (true); view.setCaretVisible (false);
-                view.setFont (brand::type::mono (12.0f));
+                view.setFont (brand::type::mono (brand::type::h_caption));
                 view.setColour (juce::TextEditor::backgroundColourId, brand::bgDeep);
                 view.setColour (juce::TextEditor::textColourId, brand::textPrimary);
                 addAndMakeVisible (view);
@@ -434,7 +434,7 @@ namespace zynforge
                 addAndMakeVisible (list);
 
                 title.setText ("Control Surfaces", juce::dontSendNotification);
-                title.setFont (brand::type::ui (15.0f, true));
+                title.setFont (brand::type::ui (brand::type::h_title, true));
                 title.setColour (juce::Label::textColourId, brand::textPrimary);
                 addAndMakeVisible (title);
 

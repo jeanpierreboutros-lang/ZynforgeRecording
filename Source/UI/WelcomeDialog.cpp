@@ -1,4 +1,5 @@
 #include "WelcomeDialog.h"
+#include "../Audio/DisplayText.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
@@ -22,7 +23,7 @@ namespace zynforge
             // Only abbreviate to "~" when the path is ACTUALLY under home. The
             // "~" used to be prepended unconditionally, so an external drive
             // read as "~/Volumes/RECORD/Sessions/" -- and this string is the
-            // Local Storage button, i.e. the control that tells the engineer
+            // Local Storage line, i.e. what tells the engineer
             // which drive the take lands on.
             const bool underHome = home.isNotEmpty() && p.startsWith (home);
             if (underHome) p = "~" + p.substring (home.length());
@@ -120,7 +121,7 @@ namespace zynforge
 
                 // Label
                 g.setColour (selected ? brand::textPrimary : brand::textSecondary);
-                g.setFont (brand::type::ui (15.0f, selected));
+                g.setFont (brand::type::ui (brand::type::h_title, selected));
                 g.drawText (label,
                             r.withTrimmedLeft (glyphX + glyphSize + 14.0f).toNearestInt(),
                             juce::Justification::centredLeft, true);
@@ -151,7 +152,7 @@ namespace zynforge
                 addAndMakeVisible (nameEditor);
                 dialog::styleTextEditor (nameEditor);
                 nameEditor.setText ("Untitled", juce::dontSendNotification);
-                nameEditor.setFont (brand::type::ui (16.0f, false));
+                nameEditor.setFont (brand::type::ui (brand::type::h_title, false));
                 nameEditor.setSelectAllWhenFocused (true);
                 // Defer the focus grab -- grabbing in the ctor (before the
                 // component is on screen) is a no-op, so the Name field came up
@@ -164,11 +165,23 @@ namespace zynforge
                 storageLabel.setText ("Local Storage:", juce::dontSendNotification);
                 styleFieldLabel (storageLabel);
 
-                addAndMakeVisible (pathButton);
-                pathButton.setColour (juce::TextButton::buttonColourId, brand::controlOff);
-                pathButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
-                pathButton.setButtonText (compactPath (storageDir));
-                pathButton.onClick = [this] { pickFolder(); };
+                addAndMakeVisible (pathValue);
+                pathValue.setFont (brand::type::channelName());
+                pathValue.setColour (juce::Label::textColourId, brand::textPrimary);
+                pathValue.setJustificationType (juce::Justification::centredLeft);
+                pathValue.setMinimumHorizontalScale (0.7f);
+
+                addAndMakeVisible (freeValue);
+                freeValue.setFont (brand::type::caption());
+                freeValue.setColour (juce::Label::textColourId, brand::textSecondary);
+                freeValue.setJustificationType (juce::Justification::centredLeft);
+
+                addAndMakeVisible (changeButton);
+                changeButton.setColour (juce::TextButton::buttonColourId, brand::controlOff);
+                changeButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+                changeButton.setTitle ("Change the storage folder");
+                changeButton.onClick = [this] { pickFolder(); };
+                showStorage();
 
                 addAndMakeVisible (sectionHeader);
                 sectionHeader.setText ("Session Configuration", juce::dontSendNotification);
@@ -268,10 +281,13 @@ namespace zynforge
                 b.removeFromTop (brand::space::btnH);
 
                 auto local = b.removeFromTop (28);
-                storageLabel.setBounds (local.removeFromLeft (150));
+                storageLabel.setBounds (local.removeFromLeft (120));
                 local.removeFromLeft (brand::space::sm);
-                pathButton.setBounds (local.removeFromLeft (juce::jmin (local.getWidth(), 360)));
-                b.removeFromTop (28);
+                changeButton.setBounds (local.removeFromRight (96));
+                local.removeFromRight (brand::space::sm);
+                pathValue.setBounds (local);
+                freeValue.setBounds (b.removeFromTop (16).withTrimmedLeft (120 + brand::space::sm));
+                b.removeFromTop (12);
 
                 sectionHeader.setBounds (b.removeFromTop (brand::space::ctrlH));
                 b.removeFromTop (brand::space::md);
@@ -322,6 +338,17 @@ namespace zynforge
                 l.setColour (juce::Label::textColourId, brand::textSecondary);
             }
 
+            // The path, and whether that drive can hold a show.
+            void showStorage()
+            {
+                pathValue.setText (compactPath (storageDir), juce::dontSendNotification);
+                pathValue.setTooltip (storageDir.getFullPathName());
+                const auto freeBytes = storageDir.getBytesFreeOnVolume();
+                freeValue.setText (freeBytes > 0 ? juce::String (bytesToGB (freeBytes), 1) + " GB free on this drive"
+                                                 : juce::String(),
+                                   juce::dontSendNotification);
+            }
+
             void pickFolder()
             {
                 folderChooser = std::make_unique<juce::FileChooser>
@@ -337,7 +364,7 @@ namespace zynforge
                         if (chosen.isDirectory())
                         {
                             self->storageDir = chosen;
-                            self->pathButton.setButtonText (compactPath (self->storageDir));
+                            self->showStorage();
                         }
                     });
             }
@@ -346,7 +373,8 @@ namespace zynforge
             juce::Label        nameLabel;
             juce::TextEditor   nameEditor;
             juce::Label        storageLabel;
-            juce::TextButton   pathButton;
+            juce::Label        pathValue, freeValue;
+            juce::TextButton   changeButton { "Change..." };
             juce::Label        sectionHeader;
             juce::Label        fileTypeLabel;
             juce::ComboBox     fileTypeCombo;
@@ -372,7 +400,7 @@ namespace zynforge
             {
                 addAndMakeVisible (header);
                 header.setText ("Open Session", juce::dontSendNotification);
-                header.setFont (brand::type::ui (16.0f, true));
+                header.setFont (brand::type::ui (brand::type::h_title, true));
                 header.setColour (juce::Label::textColourId, brand::textPrimary);
 
                 addAndMakeVisible (hint);
@@ -487,15 +515,15 @@ namespace zynforge
 
                 // Title label in the side rail.
                 addAndMakeVisible (railTitle);
-                railTitle.setText ("Zynforge Recording", juce::dontSendNotification);
-                railTitle.setFont (brand::type::ui (16.0f, true));
+                railTitle.setText ("ZynForge Recording", juce::dontSendNotification);
+                railTitle.setFont (brand::type::ui (brand::type::h_title, true));
                 railTitle.setColour (juce::Label::textColourId, brand::textPrimary);
 
                 // Tab strip at the top of the content pane (Session only,
                 // per the brief -- no Sketch).
                 addAndMakeVisible (tabLabel);
                 tabLabel.setText ("Session", juce::dontSendNotification);
-                tabLabel.setFont (brand::type::ui (16.0f, true));
+                tabLabel.setFont (brand::type::ui (brand::type::h_title, true));
                 tabLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 tabLabel.setJustificationType (juce::Justification::centred);
 

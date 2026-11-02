@@ -4,6 +4,7 @@
 // scrolling past 5000 lines of menu / layout / setup code.
 
 #include "MainComponent.h"
+#include "../Audio/VirtualSoundcheck.h"
 #include "RecordPosition.h"
 
 using namespace zynforge;
@@ -38,6 +39,7 @@ void MainComponent::timerCallback()
     rebuildStripsIfLayoutChanged();
     updateStatusPills();
     updatePunchPill();
+    updateSoundcheckState();
     updateNextCueCountdown();
 
     if (uiLayoutSavePending && ! sessionIoBusy.load()) requestUILayoutSave();
@@ -212,6 +214,25 @@ void MainComponent::updatePunchPill()
     resized();
 }
 
+// Both states are read every tick rather than set where they change: a session
+// open, an undo and a console reply can each change them.
+void MainComponent::updateSoundcheckState()
+{
+    const bool outputsMoved = zynforge::vsc::hasSavedPatch (engine);
+    if (vscButton.getToggleState() != outputsMoved)
+    {
+        vscButton.setToggleState (outputsMoved, juce::dontSendNotification);
+        vscButton.setButtonText (outputsMoved ? "VSC ON" : "VSC");
+    }
+
+    const bool deskOnCard = consoleLink.isOnSoundcheckPatch();
+    if (soundcheckPill.isVisible() != deskOnCard)
+    {
+        soundcheckPill.setVisible (deskOnCard);
+        resized();
+    }
+}
+
 void MainComponent::updateNextCueCountdown()
 {
     // LCD countdown to next cue -- only when a setlist exists AND the
@@ -283,14 +304,9 @@ void MainComponent::updateClockAndDiskCadence (double deviceSR)
         m = BigClockPanel::Mode::Recording;
         // Timeline position (continues from the take end on a continue), not the
         // new file's raw length, so the clock carries on instead of restarting.
-        elapsed = punchSessionActive && player.isPlaying()
-            ? player.getPositionSamples() : engine.getRecordTimelineSamples();
-        if (useCaptureDaemon && captureSupervisor.isDaemonRecording())
-        {
-            const auto remote = engine.captureStatus();
-            if (remote.source == "daemon" && remote.sampleRate > 0.0)
-                timerSR = remote.sampleRate;
-        }
+        elapsed = takeClockSamples();
+        timerSR = takeClockRate (deviceSR);
+        shownTakeRate = timerSR;
 
         // Refresh the idle minutes-remaining estimate every 48 ticks (4.8 s at
         // the 10 Hz timer). A take reads its own volume probes instead.
@@ -365,8 +381,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     // directory changes.
     if (engine.isTakeOnDisk())
     {
-        cachedFreeGB = status.primaryFreeBytes >= 0
-                           ? (double) status.primaryFreeBytes / (1024.0 * 1024.0 * 1024.0) : -1.0;
+        cachedFreeGB = status.primaryFreeBytes >= 0 ? bytesToGB (status.primaryFreeBytes) : -1.0;
         lastDiskQueryMs = 0;
     }
     else
@@ -380,7 +395,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
             const auto sessRoot = active.isDirectory() ? active : getSessionsRoot();
             const auto bytesFree = sessRoot.exists() ? sessRoot.getBytesFreeOnVolume()
                                                       : juce::File ("/").getBytesFreeOnVolume();
-            cachedFreeGB = (double) bytesFree / (1024.0 * 1024.0 * 1024.0);
+            cachedFreeGB = bytesToGB (bytesFree);
         }
     }
     const double freeGB = cachedFreeGB;
@@ -450,12 +465,16 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
             || ! status.copyProblems.isEmpty())
         {
+            // Most serious first: the banner shares its row with the header
+            // buttons, and a long list can run out of room at the far end.
             juce::String warn;
             if (status.captureDeviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
+            if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
+            if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";
+            if (samplesMissed) warn << "! " << status.missedSamples << " SAMPLES MISSED -- the take has gaps  ";
             warn << inputAlarms;
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
-            if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (backupFail)  warn << "! BACKUP WRITE FAILED -- primary recording continues  ";
             if (mirrorFail)  warn << "! MIRROR WRITE FAILED -- check mirror drive  ";
             if (recoveryFail) warn << "! CRASH-RECOVERY MARKER NOT WRITING -- protect power  ";
@@ -464,9 +483,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                 warn << "! " << mirrorsSkipped << " MIRROR"
                      << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
                                                             "or folder unusable  ";
-            if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";
             if (status.copyDiskStale) warn << "! A COPY'S DRIVE IS NOT ANSWERING -- its free space is unknown  ";
-            if (samplesMissed) warn << "! " << status.missedSamples << " SAMPLES MISSED -- the take has gaps  ";
             for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
             activeCaptureWarning = warn.trim();
@@ -501,12 +518,14 @@ void MainComponent::refreshAlarmBanner()
     auto text = activeCaptureWarning;
     if (text.isEmpty()) text = lastCaptureFinalizationError;
     if (text.isEmpty() && engine.isRecording()) text = srWarnLabel.getText();
+    const bool takeThreatened = text.isNotEmpty()
+                             && ! (activeCaptureWarning.isNotEmpty() && ! activeCaptureWarning.containsChar ('!'));
     if (text.isEmpty()) text = recordRefusal;
 
-    // Everything is danger but the quiet "no signal yet" notice, which has no '!'.
-    const auto level = activeCaptureWarning.isNotEmpty() && ! activeCaptureWarning.containsChar ('!')
-                           ? AlarmBanner::Level::Notice : AlarmBanner::Level::Danger;
-    if (alarmBanner.show (text, level)) resized();
+    // Red is for a take in trouble, so it still means something when it shows.
+    // A refused press and the quiet "no signal yet" notice, which has no '!',
+    // are amber.
+    alarmBanner.show (text, takeThreatened ? AlarmBanner::Level::Danger : AlarmBanner::Level::Notice);
 }
 
 void MainComponent::showRecordRefusal (const juce::String& reason)
@@ -553,9 +572,36 @@ void MainComponent::pollSmartStatusAsync()
     });
 }
 
+// Timeline position (continues from the take end on a continue), not the new
+// file's raw length, so the clock carries on instead of restarting.
+juce::int64 MainComponent::takeClockSamples()
+{
+    auto& player = engine.getPlayer();
+    return punchSessionActive && player.isPlaying() ? player.getPositionSamples()
+                                                    : engine.getRecordTimelineSamples();
+}
+
+double MainComponent::takeClockRate (double deviceRate)
+{
+    if (useCaptureDaemon && captureSupervisor.isDaemonRecording())
+    {
+        const auto remote = engine.captureStatus();
+        if (remote.source == "daemon" && remote.sampleRate > 0.0)
+            return remote.sampleRate;
+    }
+    return deviceRate;
+}
+
 void MainComponent::updateTransportLabels()
 {
     auto& player = engine.getPlayer();
+    // The player stands still through a plain take, so this clock follows the
+    // take instead, or it would sit frozen beside the big one.
+    if (engine.isRecording())
+    {
+        transportLabel.setText (samplesToTimecode (takeClockSamples(), shownTakeRate), juce::dontSendNotification);
+        return;
+    }
     const auto sr  = player.getSampleRate();
     const auto pos = samplesToTimecode (player.getPositionSamples(), sr);
     const auto tot = samplesToTimecode (player.getTotalLengthSamples(), sr);

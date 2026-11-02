@@ -179,6 +179,15 @@ namespace zynforge
                 expectEquals (row.getInputRoutingTextForTests(), juce::String ("(unrouted)"));
             }
 
+            beginTest ("A strip on the master reads the same in EDIT as in the MIXER");
+            {
+                Host h (2);
+                h.engine.setTrackOutputRouting (0, -1);
+                EditPage::TrackRow row (0, false, h.engine, h.formats, h.cache);
+                row.refreshRoutingSelection();
+                expectEquals (row.getOutputRoutingTextForTests(), juce::String::fromUTF8 ("\xe2\x86\x92 Master"));
+            }
+
             // ── EDIT patches as the MIXER and PATCH do ───────────────────────
             // One setTrackLinkedRouting per side. A combo that moved only its
             // own side left this row saying what the other two views did not.

@@ -1,5 +1,12 @@
 # Project Tasks
 
+## Design critique fixes — 2026-11-02
+
+Every finding of the critique of the design pass is fixed on `main`. See *Changed — after the design critique* in [CHANGELOG.md](CHANGELOG.md).
+
+- [ ] Owner: run D.6 to D.10 in [FIELD-TEST.md](FIELD-TEST.md). A banner at the top of the window is the one to judge first: the old one sat directly above the strips and was larger.
+- [ ] Decide: long alarm lists have less room now, and the end of a very long one can be cut off, the most serious trouble first. Nothing has shown this yet.
+
 ## Cut to recorder and virtual soundcheck — 2026-11-02
 
 The owner cut the app to a recorder and virtual soundcheck after a feature census. What went, what stayed and why are in the top ADR of [decisions.md](decisions.md) and under *Removed* in [CHANGELOG.md](CHANGELOG.md). This is merged to `main` and installed on the development Mac (`fffab44`, see [INSTALL.md](INSTALL.md)). The Mac mini still has `281c6c0`, and the cut has not run on real hardware.

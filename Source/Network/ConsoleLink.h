@@ -60,6 +60,10 @@ namespace zynforge
         // Patch state machine. Idle -> (query+stash) -> Soundcheck.
         enum class Patch { Unknown, Stage, Soundcheck };
         Patch getPatch() const noexcept { return patch; }
+        // A reconnect can't tell where the desk is, so a saved stage patch that
+        // was never restored still counts as being on soundcheck.
+        bool isOnSoundcheckPatch() const noexcept
+        { return patch == Patch::Soundcheck || (patch == Patch::Unknown && hasStagePatch()); }
         bool hasStagePatch() const noexcept { return (int) stagePatch.size() == profile.numInBlocks; }
 
         void enterSoundcheck();   // stash current routing, set CARD blocks

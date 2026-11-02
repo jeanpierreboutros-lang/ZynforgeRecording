@@ -504,6 +504,11 @@ private:
     void rebuildStripsIfLayoutChanged();
     void updateStatusPills();
     void updatePunchPill();
+    void updateSoundcheckState();
+    juce::int64 takeClockSamples();
+    double      takeClockRate (double deviceRate);
+    double      shownTakeRate { 48000.0 };   // asked once a tick, by the big clock; a daemon take asks the helper
+    void restoreOutputPatch();
     void updateNextCueCountdown();
     void syncStripsWithEngine();
     void surfaceAsyncReportFailure();
@@ -606,6 +611,7 @@ private:
     juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner
     juce::Label  twinStatusLabel   { {}, "" };   // link state; empty while the link is off
     juce::Label  punchPill         { {}, "" };   // PUNCH mode, or what the next RECORD will replace
+    juce::Label  soundcheckPill    { {}, "DESK ON SOUNDCHECK" };   // the desk is hearing card returns, not the stage
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome -- IconButton paints a glyph next to each label so

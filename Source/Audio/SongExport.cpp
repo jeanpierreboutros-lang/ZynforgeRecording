@@ -1,4 +1,5 @@
 #include "SongExport.h"
+#include "DisplayText.h"
 #include "AtomicFile.h"
 #include "AudioEngine.h"
 
@@ -230,7 +231,7 @@ namespace zynforge::songexport
     juce::String statusLine (const Outcome& outcome, const juce::String& destName)
     {
         if (outcome.cancelled)
-            return "Song export cancelled: " + juce::String (outcome.written) + " file(s) finished";
+            return "Song export cancelled: " + zynforge::counted (outcome.written, "file") + " finished";
         const auto why = outcome.firstError.isNotEmpty() ? " (" + outcome.firstError + ")" : juce::String();
         if (outcome.attempted == 0)
             return "Export failed: no songs to write";
@@ -239,7 +240,7 @@ namespace zynforge::songexport
         if (outcome.written < outcome.attempted)
             return "Export INCOMPLETE: " + juce::String (outcome.attempted - outcome.written)
                  + " of " + juce::String (outcome.attempted) + " failed or missing" + why;
-        const auto done = "Exported " + juce::String (outcome.written) + " file(s) -> " + destName;
+        const auto done = "Exported " + zynforge::counted (outcome.written, "file") + " -> " + destName;
         if (outcome.silentMixes > 0)
             return done + " -- WARNING: " + juce::String (outcome.silentMixes) + " of them: "
                  + mixRenderWarning (true, outcome.soloActive);

@@ -1087,7 +1087,7 @@ namespace zynforge
                 expectWithinAbsoluteError (rec.getTrack (1).pan.load(),  1.0f, 0.001f);
                 expectEquals (rec.getTrack (0).getNameThreadSafe(), juce::String ("OH L"));
                 expectEquals (rec.getTrack (1).getNameThreadSafe(), juce::String ("OH R"));
-                expect (main.statusLabel.getText().contains ("2 stereo pair(s) linked"), main.statusLabel.getText());
+                expect (main.statusLabel.getText().contains ("2 stereo pairs linked"), main.statusLabel.getText());
 
                 beginTest ("Linked pairs round-trip through the session file");
                 const auto session = main.engine.getActiveSessionDir();
@@ -1134,7 +1134,7 @@ namespace zynforge
                     expect (juce::Time::getMillisecondCounterHiRes() - started < 5000.0);
                     expectEquals (main.engine.getRecorder().getNumTracks(), 3);
                     expect (main.engine.getRecorder().getTrack (0).isStereo.load());
-                    expect (main.statusLabel.getText().contains ("1 stereo pair(s) linked"), main.statusLabel.getText());
+                    expect (main.statusLabel.getText().contains ("1 stereo pair linked"), main.statusLabel.getText());
                     main.consoleLink.setMessageHook (nullptr);
                 }
 

@@ -83,6 +83,7 @@ namespace zynforge
             t.gainDb.store (0.0f); t.pan.store (0.0f);
             t.rampTargetGainDb.store (0.0f);
             t.inputRouting.store (i); t.outputRouting.store (-1);
+            t.outputBeforeVsc.store (TrackState::kNoSavedOutput);
             t.setNameThreadSafe (juce::String (i + 1));
             t.colourARGB.store (0, std::memory_order_relaxed);
             t.armed   .store (false, std::memory_order_relaxed);
@@ -1130,6 +1131,8 @@ namespace zynforge
             o->setProperty ("armed",     t.armed  .load (std::memory_order_relaxed));
             o->setProperty ("inRoute",   t.inputRouting .load (std::memory_order_relaxed));
             o->setProperty ("outRoute",  t.outputRouting.load (std::memory_order_relaxed));
+            if (t.outputBeforeVsc.load (std::memory_order_relaxed) != TrackState::kNoSavedOutput)
+                o->setProperty ("outputBeforeVsc", t.outputBeforeVsc.load (std::memory_order_relaxed));
             o->setProperty ("outputMuted", t.outputMuted.load (std::memory_order_relaxed));
             o->setProperty ("streamSend",  t.streamSend .load (std::memory_order_relaxed));
             o->setProperty ("stereo",    t.isStereo .load (std::memory_order_relaxed));
@@ -1212,6 +1215,9 @@ namespace zynforge
                     if (o->hasProperty ("pan"))      setTrackPan           (idx, (float) (double) o->getProperty ("pan"));
                     if (o->hasProperty ("inRoute"))  setTrackInputRouting  (idx, (int) o->getProperty ("inRoute"));
                     if (o->hasProperty ("outRoute")) setTrackOutputRouting (idx, (int) o->getProperty ("outRoute"));
+                    t.outputBeforeVsc.store (o->hasProperty ("outputBeforeVsc") ? (int) o->getProperty ("outputBeforeVsc")
+                                                                                : TrackState::kNoSavedOutput,
+                                             std::memory_order_relaxed);
                     if (o->hasProperty ("stereo"))   setTrackStereo        (idx, (bool) o->getProperty ("stereo"));
                     t.referenceMedia.store (o->hasProperty ("referenceMedia")
                         ? (bool) o->getProperty ("referenceMedia")
@@ -1324,6 +1330,9 @@ namespace zynforge
         // strip UUIDs. Called on new-session creation so the engineer
         // starts from a clean slate rather than inheriting (e.g.) a
         // hard-pan they set up for last weekend's gig.
+        // That goes for the way back from a soundcheck too.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+            recorder.getTrack (i).outputBeforeVsc.store (TrackState::kNoSavedOutput, std::memory_order_relaxed);
         // Each module replaces its cache from the latest shared file, clears
         // its whole domain, then saves once. Per-field clears parsed/rewrote
         // the same XML 1,536 times even when most strip keys were absent.

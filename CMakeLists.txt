@@ -219,6 +219,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ChannelAlarmTests.cpp
     Source/Tests/ChannelCsvTests.cpp
     Source/Tests/ChannelStripAccessibilityTests.cpp
+    Source/Tests/DisplayTextTests.cpp
     Source/Tests/ConcurrencyAuditTests.cpp
     Source/Tests/ConsoleLinkTests.cpp
     Source/Tests/ConsoleTransportTests.cpp

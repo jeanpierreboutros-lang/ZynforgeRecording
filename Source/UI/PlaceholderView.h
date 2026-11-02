@@ -124,7 +124,7 @@ namespace zynforge
             if (title.isNotEmpty())
             {
                 g.setColour (brand::textPrimary);
-                g.setFont (brand::type::ui (16.0f, true));
+                g.setFont (brand::type::ui (brand::type::h_headline, true));
                 g.drawFittedText (title, L.title, juce::Justification::centred, 2);
             }
 

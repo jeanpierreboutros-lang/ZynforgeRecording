@@ -252,8 +252,10 @@ namespace zynforge
                             const auto cell = juce::Rectangle<int> (x, y, L.colW, L.rowH);
                             const auto dot  = cell.withSizeKeepingCentre (22, 22).toFloat();
 
-                            const int trackIdx = logical[(std::size_t) c].trackIndex;
-                            const bool active  = (currentRoutingForTrack (trackIdx) == row);
+                            const auto& ls     = logical[(std::size_t) c];
+                            const int trackIdx = ls.trackIndex;
+                            const int routed   = currentRoutingForTrack (trackIdx);
+                            const bool active  = holdsRow (ls, routed, row);
                             if (active)
                             {
                                 auto& t = engine.getRecorder().getTrack (trackIdx);
@@ -261,6 +263,9 @@ namespace zynforge
                                                       ? juce::Colour ((juce::uint32) t.colourARGB.load())
                                                       : brand::stripColour (trackIdx);
                                 g.setColour (stripCol);
+                                // A pair's two dots are joined: one strip, two channels.
+                                if (ls.stereo && row == routed && row + 1 < numHw)
+                                    g.fillRect (dot.getCentreX() - 4.0f, dot.getCentreY(), 8.0f, (float) L.rowH);
                                 g.fillEllipse (dot);
                                 g.setColour (brand::onSignal (stripCol));
                                 g.drawEllipse (dot, 2.0f);
@@ -398,7 +403,7 @@ namespace zynforge
 
                 const auto& ls = logical[(std::size_t) col];
                 const int current = currentRoutingForTrack (ls.trackIndex);
-                const int newVal  = (current == row) ? -1 : row;
+                const int newVal  = holdsRow (ls, current, row) ? -1 : row;
                 setRoutingLogical (ls, newVal);
 
                 dragActive   = (newVal >= 0);
@@ -444,11 +449,9 @@ namespace zynforge
 
             bool isRowRoutedToAnyStrip (int row, const std::vector<LogicalStrip>& logical) const
             {
-                // Only the L position of a stereo strip activates a row
-                // label -- R is implicit, so leaving its row dim keeps the
-                // visual in sync with the dot-rendering rule.
+                // A stereo strip lights both of its rows, as it does its dots.
                 for (auto& ls : logical)
-                    if (currentRoutingForTrack (ls.trackIndex) == row) return true;
+                    if (holdsRow (ls, currentRoutingForTrack (ls.trackIndex), row)) return true;
                 return false;
             }
 
@@ -481,6 +484,13 @@ namespace zynforge
                 hscroll.setRangeLimits (0.0, (double) juce::jmax (contentW, viewW));
                 hscroll.setCurrentRange ((double) scrollX, (double) viewW);
                 hscroll.setVisible (contentW > viewW);
+            }
+
+            // Whether a strip routed to `routed` occupies this row. Both channels
+            // of a pair do: the second is as taken as the first.
+            static bool holdsRow (const LogicalStrip& ls, int routed, int row) noexcept
+            {
+                return routed >= 0 && (routed == row || (ls.stereo && routed + 1 == row));
             }
 
             int currentRoutingForTrack (int trackIndex) const

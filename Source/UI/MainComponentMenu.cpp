@@ -9,6 +9,7 @@
 // on the same `this`.
 
 #include "MainComponent.h"
+#include "../Audio/VirtualSoundcheck.h"
 #include "../Theme/DialogChrome.h"
 #include "PatchPage.h"
 #include "Meterbridge.h"
@@ -127,7 +128,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         menu.addItem (61, "Backup & Mirror Drives...", ! engine.isRecording());
         menu.addSeparator();
-        menu.addItem (99, "Quit Zynforge Recording...");
+        menu.addItem (99, "Quit ZynForge Recording...");
     }
     else if (topLevelIndex == 1)  // Edit -- clip / audio / timeline editing
     {
@@ -168,8 +169,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         const int  selCount      = (int) selectedLogical.size();
         const int  stripCount    = (int) strips.size();
 
-        menu.addItem (302, "Cut Selected Strip(s)\tCmd+X",  hasSelection);
-        menu.addItem (303, "Copy Selected Strip(s)\tCmd+C", hasSelection);
+        menu.addItem (302, "Cut Selected Strips\tCmd+X",  hasSelection);
+        menu.addItem (303, "Copy Selected Strips\tCmd+C", hasSelection);
         menu.addItem (304, "Paste Strip Settings\tCmd+V",   hasClipboard && hasSelection);
         menu.addItem (305, "Delete Selected Strips",        hasSelection);
         menu.addSeparator();
@@ -202,7 +203,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (54, "Show pre-flight checklist...");
         menu.addSeparator();
         menu.addItem (50, "Patch...");
-        menu.addItem (52, "Virtual Soundcheck -- repatch outputs to match inputs");
+        menu.addItem (52, zynforge::vsc::hasSavedPatch (engine)
+                              ? "Restore Outputs From Before Virtual Soundcheck..."
+                              : "Virtual Soundcheck -- repatch outputs to match inputs...");
         menu.addItem (51, "Meterbridge...");
         menu.addSeparator();
         menu.addItem (56, "Add Marker...\tM",
@@ -274,8 +277,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch
                                      && ! engine.isRecording() && ! captureMetadataPending;
             const bool consoleGains   = consoleWritable && consoleLink.getProfile().canCaptureGains;
-            m.addItem (955, (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
-                            || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
+            m.addItem (955, consoleLink.isOnSoundcheckPatch()
                                ? "Console: back to STAGE patch"
                                : "Console: SOUNDCHECK patch (card returns)",
                        consoleRepatch);
@@ -312,8 +314,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (903, "User Guide (panel tips)...");
         menu.addItem (901, "Quick Start (replay tutorial)");
         menu.addSeparator();
-        menu.addItem (902, "About Zynforge Recording");
+        menu.addItem (902, "About ZynForge Recording");
     }
+
+    // macOS draws the menu bar itself, so the look-and-feel never sees these.
+    for (juce::PopupMenu::MenuItemIterator item (menu, true); item.next();)
+        item.getItem().text = zynforge::typeset (item.getItem().text);
 
     return menu;
 }
@@ -341,6 +347,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) snapToMarkers
         << '|' << (int) cues.empty()
         << '|' << (int) stripClipboard.isObject()
+        << '|' << (int) zynforge::vsc::hasSavedPatch (engine)
         << '|' << (int) engine.isTrimFollowEnabled()
         << '|' << engine.getStreamOutputL()
         << '|' << (int) engine.getMixMayShareStripOutputs()

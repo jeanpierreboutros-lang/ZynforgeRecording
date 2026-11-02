@@ -33,7 +33,7 @@ namespace zynforge
             ZF_COPY_FIELD(gainDb) ZF_COPY_FIELD(pan) ZF_COPY_FIELD(liveInputGainDb) ZF_COPY_FIELD(captureInputGainDb)
             ZF_COPY_FIELD(liveInputGainKnown) ZF_COPY_FIELD(captureInputGainKnown)
             ZF_COPY_FIELD(outputMuted) ZF_COPY_FIELD(editGroup)
-            ZF_COPY_FIELD(inputRouting) ZF_COPY_FIELD(outputRouting) ZF_COPY_FIELD(streamSend)
+            ZF_COPY_FIELD(inputRouting) ZF_COPY_FIELD(outputRouting) ZF_COPY_FIELD(outputBeforeVsc) ZF_COPY_FIELD(streamSend)
             ZF_COPY_FIELD(isStereo) ZF_COPY_FIELD(colourARGB)
             ZF_COPY_FIELD(referenceMedia)
             #undef ZF_COPY_FIELD
@@ -97,6 +97,11 @@ namespace zynforge
         // What a strip hears on the current device is effectiveInputRouting().
         std::atomic<int> inputRouting  { -2 };
         std::atomic<int> outputRouting { -2 };
+
+        // The output this strip had before Virtual Soundcheck moved it, kept
+        // until the engineer restores it. See VirtualSoundcheck.h.
+        static constexpr int kNoSavedOutput = -100;
+        std::atomic<int> outputBeforeVsc { kNoSavedOutput };
 
         // Stream bus send (post-fader, post-mute). Solo never reaches it:
         // see mix::streamAudible.

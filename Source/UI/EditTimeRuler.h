@@ -327,7 +327,7 @@ namespace zynforge
             // culls x < headerW / breaks past the right edge.)
             const int firstTick = juce::jmax (0,
                 (int) ((double) scrollOffsetX / juce::jmax (1.0, minorSec * pxPerSec)) - 2);
-            g.setFont (brand::type::mono (10.5f, true));
+            g.setFont (brand::type::mono (brand::type::h_caption, true));
             for (int k = firstTick; k <= lastTick; ++k)
             {
                 const double tSec = (double) k * minorSec;
@@ -388,7 +388,7 @@ namespace zynforge
 
                     const auto label = formatTime ((double) headSample / sr,
                                                    pxPerSec > 120.0 ? 1 : 0);
-                    g.setFont (brand::type::mono (10.5f, true));
+                    g.setFont (brand::type::mono (brand::type::h_caption, true));
                     const int bw = juce::jmax (38, g.getCurrentFont().getStringWidth (label) + 10);
                     const int bh = juce::jmin (14, rulerH - 2);
                     int bx = px + 2;
@@ -408,7 +408,7 @@ namespace zynforge
             // right, flag tip aligned to the exact marker x so it
             // lines up with the time scale tick.
             const auto& list = engine.getMarkers().getAll();
-            g.setFont (brand::type::mono (10.5f, true));
+            g.setFont (brand::type::mono (brand::type::h_caption, true));
             for (const auto& m : list)
             {
                 const double tSec = (double) m.sampleOffset / sr;

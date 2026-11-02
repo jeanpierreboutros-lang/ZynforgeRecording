@@ -196,7 +196,7 @@ namespace zynforge
 
         // A reconnect cannot tell whether the desk still has card returns.
         // Keep the saved show routing until it has explicitly been restored.
-        if (patch == Patch::Soundcheck || (patch == Patch::Unknown && hasStagePatch()))
+        if (isOnSoundcheckPatch())
         {
             if (onStatus) onStatus ("Saved stage patch retained -- restore STAGE before entering soundcheck again.");
             return;

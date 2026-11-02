@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include "ClipModel.h"
+#include "DisplayText.h"
 #include "EngineStatus.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
@@ -1071,7 +1072,7 @@ namespace zynforge
         // Clock source of the input device, for pre-flight. Waits at most
         // timeoutMs for the driver.
         clocksource::Reading readClockSource (int timeoutMs);
-        float  getDiskMBPerSec() const noexcept { return recorder.getDiskBytesPerSec() / (1024.0f * 1024.0f); }
+        float  getDiskMBPerSec() const noexcept { return (float) bytesToMB (recorder.getDiskBytesPerSec()); }
         float  getRingFillPct()  const noexcept { return recorder.getRingFillPct(); }
         // Live device format -- the actual buffer (block) size in samples and
         // sample rate negotiated with CoreAudio, captured in

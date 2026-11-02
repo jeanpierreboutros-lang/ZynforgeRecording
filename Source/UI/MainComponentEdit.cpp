@@ -455,7 +455,7 @@ void MainComponent::editCutSelected (bool cut)
     stripClipboard = juce::var (obj);
     if (! cut)
     {
-        showStatus ("Copied " + juce::String (arr.size()) + " strip setting(s)");
+        showStatus ("Copied " + zynforge::counted (arr.size(), "strip setting"));
         return;
     }
     // Removing a channel takes its audio out of the session and clears undo,
@@ -485,8 +485,7 @@ void MainComponent::editPasteSelected()
     }
     commitMixerUndo ("Paste strip settings", before);
     lastTrackCount = -1;
-    showStatus ("Pasted strip settings onto " + juce::String ((int) selectedLogical.size())
-                + " strip(s)");
+    showStatus ("Pasted strip settings onto " + zynforge::counted ((int) selectedLogical.size(), "strip"));
 }
 
 // ─── The rest of the Edit menu ───────────────────────────────────────
@@ -532,7 +531,7 @@ void MainComponent::editSoloSelection()
             }
         }
         commitMixerUndo ("Solo selection", before);
-        showStatus ("Soloed " + juce::String ((int) selectedLogical.size()) + " strip(s)");
+        showStatus ("Soloed " + zynforge::counted ((int) selectedLogical.size(), "strip"));
         return;
     }
 
@@ -605,7 +604,7 @@ void MainComponent::armSelection()
     commitMixerUndo (arm ? "Arm selection" : "Disarm selection", before);
 
     showStatus ((arm ? "Armed " : "Disarmed ")
-                + juce::String ((int) selectedLogical.size()) + " selected strip(s)");
+                + zynforge::counted ((int) selectedLogical.size(), "selected strip"));
 }
 
 void MainComponent::editCropToLoopRange()
@@ -655,8 +654,7 @@ void MainComponent::editCropToLoopRange()
             self->commitTimelineCut ("Crop to loop range", before, cut, tracks);
             self->engine.getPlayer().clearLoopRegion();
             if (self->editPage != nullptr) self->editPage->repaint();
-            self->showStatus ("Cropped to loop region (" + juce::String (kept)
-                        + " track(s) with audio) -- non-destructive");
+            self->showStatus ("Cropped to loop region (" + zynforge::counted (kept, "track") + " with audio) -- non-destructive");
         }),
         false);
 }
@@ -843,7 +841,7 @@ void MainComponent::editSplitAtPlayhead()
 
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     showStatus ((splits > 0
-                    ? "Split " + juce::String (splits) + " track(s) and dropped marker"
+                    ? "Split " + zynforge::counted (splits, "track") + " and dropped marker"
                     : juce::String ("Split marker dropped"))
                 + " at "
                 + juce::String ((double) pos
@@ -874,7 +872,7 @@ void MainComponent::editSeparateAtSelection()
     }
     if (n > 0) pushClipUndo ("Separate selection", before);
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
-    showStatus (n > 0 ? "Separated selection on " + juce::String (n) + " track(s)"
+    showStatus (n > 0 ? "Separated selection on " + zynforge::counted (n, "track")
                       : juce::String ("Nothing to separate in the selection"));
 }
 
@@ -898,7 +896,7 @@ void MainComponent::editHealSeparation()
     }
     if (n > 0) pushClipUndo ("Heal separation", before);
     if (editPage != nullptr) editPage->repaint();
-    showStatus (n > 0 ? "Healed " + juce::String (n) + " separation(s)"
+    showStatus (n > 0 ? "Healed " + zynforge::counted (n, "separation")
                       : juce::String ("No healable split here (clips were moved or trimmed apart)"));
 }
 
@@ -950,7 +948,7 @@ void MainComponent::consolidateTracks (const std::vector<int>& targets, juce::in
         self->showStatus (! complete
             ? (n > 0 ? "Consolidation completed only part of the selection"
                      : "Consolidation failed; the arrangement was not changed")
-            : "Consolidated " + juce::String (n) + " track(s)");
+            : "Consolidated " + zynforge::counted (n, "track"));
     });
 }
 
@@ -974,7 +972,7 @@ void MainComponent::editClearRange()
         if (engine.clearTrackRange (phys, a, b)) ++n;
     if (n > 0) pushClipUndo ("Clear selection", before);
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
-    showStatus (n > 0 ? "Cleared selection on " + juce::String (n) + " track(s)"
+    showStatus (n > 0 ? "Cleared selection on " + zynforge::counted (n, "track")
                       : juce::String ("Nothing inside the selection to clear"));
 }
 
@@ -1002,10 +1000,10 @@ void MainComponent::editDeleteSelectedClip()
     int deleted = 0;
     for (auto& [track, idx] : sel)
         if (engine.deleteClip (track, idx)) ++deleted;
-    if (deleted > 0) pushClipUndo ("Delete clip(s)", before);
+    if (deleted > 0) pushClipUndo ("Delete clips", before);
     editPage->clearSelectedClip();
     editPage->repaint();
-    showStatus ("Deleted " + juce::String (deleted) + " clip(s)");
+    showStatus ("Deleted " + zynforge::counted (deleted, "clip"));
 }
 
 void MainComponent::editDuplicateSelectedClip()
@@ -1044,7 +1042,7 @@ void MainComponent::editDuplicateSelectedClip()
     }
     editPage->setSelectedClips (copies, primary);
     editPage->repaint();
-    showStatus ("Duplicated " + juce::String ((int) copies.size()) + " clip(s)");
+    showStatus ("Duplicated " + zynforge::counted ((int) copies.size(), "clip"));
 }
 
 void MainComponent::editNudgeSelectedClip (int dir)
@@ -1067,9 +1065,9 @@ void MainComponent::editNudgeSelectedClip (int dir)
         if (engine.editClip (track, idx, AudioEngine::ClipEdit::Move, step)) ++n;
     if (n > 0)
     {
-        pushClipUndo ("Nudge clip(s)", before);
+        pushClipUndo ("Nudge clips", before);
         editPage->repaint();
-        showStatus ("Nudged " + juce::String (n) + " clip(s) " + (dir > 0 ? "right" : "left")
+        showStatus ("Nudged " + zynforge::counted (n, "clip") + " " + (dir > 0 ? "right" : "left")
                     + " " + juce::String ((double) std::abs (step) * 1000.0 / sr, 0) + " ms");
     }
 }
@@ -1241,7 +1239,7 @@ void MainComponent::editRippleDelete()
                                   player.getLoopStart(), player.getLoopEnd());
     if (n < 0) return;   // refused, and rippleTimeline said why
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
-    showStatus (n > 0 ? "Ripple-deleted selection on " + juce::String (n) + " track(s) -- gap closed"
+    showStatus (n > 0 ? "Ripple-deleted selection on " + zynforge::counted (n, "track") + " -- gap closed"
                       : juce::String ("Nothing to ripple-delete"));
 }
 

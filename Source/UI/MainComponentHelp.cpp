@@ -139,7 +139,7 @@ namespace
 
                         // Left column -- shortcut, mono, light grey.
                         g.setColour (brand::textPrimary);
-                        g.setFont (brand::type::mono (12.0f, true));
+                        g.setFont (brand::type::mono (brand::type::h_caption, true));
                         g.drawText (r.shortcut,
                                     row.withTrimmedLeft (kHPad).withWidth (kColSplit - kHPad),
                                     juce::Justification::centredLeft, false);
@@ -207,7 +207,7 @@ void MainComponent::showFirstRunTutorial (std::function<void()> onFinished)
     // tutorial keeps working even if the layout shifts later.
     struct Step { juce::String title; juce::String body; };
     static const std::vector<Step> steps = {
-        { "Welcome to Zynforge Recording",
+        { "Welcome to ZynForge Recording",
           "Live multitrack recording + virtual soundcheck.\n\n"
           "This 5-step tour shows you how to capture your first session. "
           "You can replay this any time from Help > Quick Start." },
@@ -326,7 +326,7 @@ void MainComponent::showUserGuide()
         "strips to its channels via PATCH. ZynForge auto-detects DVS "
         "and shows a 'DANTE' badge in the status bar.");
 
-    auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
+    auto* aw = new juce::AlertWindow ("ZynForge user guide", body,
                                       juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -342,7 +342,7 @@ void MainComponent::showAboutDialog()
     // multi-byte UTF-8 as Latin-1 and shows mojibake ("Â©").
     juce::AlertWindow::showMessageBoxAsync (
         juce::MessageBoxIconType::InfoIcon,
-        "Zynforge Recording",
+        "ZynForge Recording",
         juce::String::fromUTF8 (
             "Live multitrack recording + virtual soundcheck.\n\n"
             "JUCE 8 \xC2\xB7 C++20 \xC2\xB7 macOS Universal\n"

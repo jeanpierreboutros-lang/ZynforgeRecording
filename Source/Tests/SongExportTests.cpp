@@ -500,7 +500,7 @@ namespace zynforge
                 expect (sx::statusLine (none, "Songs").startsWith ("Export failed"));
                 sx::Outcome good;
                 good.attempted = good.written = 3;
-                expect (sx::statusLine (good, "Songs").startsWith ("Exported 3 file(s)"));
+                expect (sx::statusLine (good, "Songs").startsWith ("Exported 3 files"));
                 e.clearAllStripOverrides();
             }
 

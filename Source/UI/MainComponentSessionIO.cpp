@@ -198,14 +198,13 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         warnIfSampleRateMismatch();
     }
     if (unrepairedHeaders > 0)
-        toast.show (juce::String (unrepairedHeaders) + " AIFF take file(s) from a crash could not be repaired;"
+        toast.show (zynforge::counted (unrepairedHeaders, "AIFF take file") + " from a crash could not be repaired;"
                     " they read short until the drive is writable", Toast::Kind::Warning);
     else if (repairedHeaders > 0)
-        toast.show ("Repaired " + juce::String (repairedHeaders) + " AIFF take file(s) a crash left unfinished",
+        toast.show ("Repaired " + zynforge::counted (repairedHeaders, "AIFF take file") + " a crash left unfinished",
                     Toast::Kind::Warning);
     if (interruptedPunches > 0)
-        toast.show ("Recovered " + juce::String (interruptedPunches)
-                    + " interrupted punch file(s); partial audio is in Session File Backups",
+        toast.show ("Recovered " + zynforge::counted (interruptedPunches, "interrupted punch file") + "; partial audio is in Session File Backups",
                     Toast::Kind::Warning);
     if (! damaged.empty()) reportDamagedFiles (dir, damaged);
     return n;
@@ -970,7 +969,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     if (jobs.empty())
     {
         showStatus (missingSources > 0
-            ? "Export failed: " + juce::String (missingSources) + " selected source file(s) missing"
+            ? "Export failed: " + zynforge::counted (missingSources, "selected source file") + " missing"
             : "Export failed: no matching take files");
         return;
     }
@@ -983,7 +982,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
         showStatus ("Another session file operation is already running");
         return;
     }
-    showStatus ("Exporting " + juce::String ((int) jobs.size()) + " track(s)...");
+    showStatus ("Exporting " + zynforge::counted ((int) jobs.size(), "track") + "...");
 
     juce::Component::SafePointer<MainComponent> self (this);
     const auto destName = destDir.getFileName();
@@ -1025,8 +1024,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
                                   + " of " + juce::String (attempted + missingSources) + " failed or missing"
                                   + (firstError.isNotEmpty() ? " (" + firstError + ")" : ""));
             else
-                self->showStatus ("Exported " + juce::String (succeeded)
-                                  + " track(s) -> " + destName);
+                self->showStatus ("Exported " + zynforge::counted (succeeded, "track") + " -> " + destName);
         };
     });
 }
@@ -1115,7 +1113,7 @@ void MainComponent::completeBounceStems (juce::File dest, const std::vector<int>
             ++attempted;
             if (okBounce) ++written;
         }
-        // A quit cancels us; don't post a stale "Bounced 0 stem(s)".
+        // A quit cancels us; don't post a stale "Bounced 0 stems".
         const bool cancelled = cancel.load (std::memory_order_relaxed);
         return [self, written, attempted, cancelled, dest]
         {
@@ -1127,12 +1125,11 @@ void MainComponent::completeBounceStems (juce::File dest, const std::vector<int>
                 if (attempted == 0)
                     self->showStatus ("Bounce failed: no eligible stems");
                 else if (written == attempted)
-                    self->showStatus ("Bounced " + juce::String (written)
-                                      + " edited stem(s) -> " + dest.getFileName());
+                    self->showStatus ("Bounced " + zynforge::counted (written, "edited stem") + " -> " + dest.getFileName());
                 else
                     self->showStatus ((written == 0 ? "Bounce failed: " : "Bounce INCOMPLETE: ")
                                       + juce::String (attempted - written) + " of "
-                                      + juce::String (attempted) + " stem(s) failed");
+                                      + zynforge::counted (attempted, "stem") + " failed");
             }
         };
     });
@@ -1344,7 +1341,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     }
     engine.setSessionTransitionActive (true);
     if (editPage != nullptr) editPage->setEnabled (false);
-    showStatus ("Importing " + juce::String (picks.size()) + " audio file(s)...");
+    showStatus ("Importing " + zynforge::counted (picks.size(), "audio file") + "...");
 
     sessionJobs.launch ([self, picks, sessionDir, originalSession,
                          newSession, deleteOnCancel, audioFilesDir, firstTrack, targetSr]
@@ -1412,9 +1409,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
             const int stereoCount = (int) std::count_if (
                 result.tracks.begin(), result.tracks.end(),
                 [] (const auto& record) { return record.stereo; });
-            self->showStatus ("Imported " + juce::String (result.importedFiles)
-                + " file(s) as " + juce::String ((int) result.tracks.size())
-                + " track(s), " + juce::String (stereoCount) + " stereo, "
+            self->showStatus ("Imported " + zynforge::counted (result.importedFiles, "file") + " as " + zynforge::counted ((int) result.tracks.size(), "track") + ", " + juce::String (stereoCount) + " stereo, "
                 + juce::String ((int) result.tracks.size() - stereoCount) + " mono"
                 + (result.converted > 0
                     ? " (" + juce::String (result.converted) + " resampled to "
@@ -1857,7 +1852,7 @@ void MainComponent::exportDawProject (zynforge::projectexport::Format format)
             }
             self->showStatus ("Exported " + result.file.getFileName()
                               + (result.notes.isEmpty() ? juce::String()
-                                                        : " -- " + juce::String (result.notes.size()) + " note(s)"));
+                                                        : " -- " + zynforge::counted (result.notes.size(), "note")));
             if (! result.notes.isEmpty())
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon,
                                                         "Exported " + result.file.getFileName(),
@@ -1901,7 +1896,7 @@ void MainComponent::startSongExport (zynforge::songexport::Choice choice)
     engine.setSessionTransitionActive (true);
     if (editPage != nullptr) editPage->setEnabled (false);
     songExportRunning = true;
-    showStatus ("Exporting songs: " + juce::String (plan.totalFiles()) + " file(s)...");
+    showStatus ("Exporting songs: " + zynforge::counted (plan.totalFiles(), "file") + "...");
 
     juce::Component::SafePointer<MainComponent> self (this);
     sessionJobs.launch ([self, &eng = engine, plan] (const std::atomic<bool>& cancel)

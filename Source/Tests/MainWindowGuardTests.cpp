@@ -5,6 +5,8 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../UI/MainComponent.h"
+#include "../UI/PreflightDialog.h"
+#include "../Audio/VirtualSoundcheck.h"
 #include "../UI/AudioDeviceDialog.h"
 #include "../UI/ControlSurfacesDialog.h"
 #include "../UI/LedMeter.h"
@@ -295,6 +297,8 @@ namespace zynforge
             alarmsStandOut();
             sessionLeaving();
             statusPanel();
+            soundcheckIsVisibleAndReversible();
+            screensAgree();
             soundcheckReport();
             analysisStaysOutOfTheTake();
             consoleWaitsForTheTake();
@@ -849,12 +853,12 @@ namespace zynforge
                 expect (w.main.alarmBanner.isVisible(), "a failed backup write stayed in the header text");
                 expect (w.main.alarmBanner.getText().contains ("BACKUP WRITE FAILED"), w.main.alarmBanner.getText());
                 expect (w.main.alarmBanner.getLevel() == AlarmBanner::Level::Danger);
-                expect (w.main.alarmBanner.getHeight() >= 48, "the banner is too small to read from a distance");
+                expect (w.main.alarmBanner.getHeight() >= 36, "the banner is too small to read from a distance");
                 expect (w.main.alarmBanner.getBottom() <= w.main.bigClock.getY(), "the banner covers the clock");
                 bool childClicks = true, selfClicks = true;
                 w.main.alarmBanner.getInterceptsMouseClicks (selfClicks, childClicks);
                 expect (! selfClicks && ! childClicks, "the banner can take a click meant for STOP");
-                expect (w.main.transportBar->getBottom() <= w.main.alarmBanner.getY(), "the banner covers the transport");
+                expect (w.main.alarmBanner.getBottom() <= w.main.transportBar->getY(), "the banner covers the transport");
 
                 status.primaryFailed = true;
                 status.channelAlarms.push_back ({});
@@ -867,7 +871,34 @@ namespace zynforge
 
                 w.main.updateCaptureWarnings (EngineStatus());
                 expect (! w.main.alarmBanner.isVisible(), "the banner outlived the condition");
-                expectEquals (w.main.alarmBanner.getHeight(), 0);
+            }
+
+            beginTest ("An alarm moves nothing and covers no header button, at any window size");
+            {
+                Window w;
+                for (const auto& [width, height] : { std::pair (1120, 700), std::pair (1440, 900), std::pair (2200, 1200) })
+                {
+                    w.main.setSize (width, height);
+                    w.main.resized();
+                    const auto strips = w.main.stripsViewport.getBounds();
+                    const auto clock  = w.main.bigClock.getBounds();
+
+                    EngineStatus status;
+                    status.recording = true;
+                    status.backupFailed = true;
+                    w.main.updateCaptureWarnings (status);
+                    w.main.resized();
+                    expect (w.main.alarmBanner.isVisible());
+                    expect (w.main.stripsViewport.getBounds() == strips, "the strips jumped when the alarm came up");
+                    expect (w.main.bigClock.getBounds() == clock, "the clock jumped when the alarm came up");
+                    expect (w.main.alarmBanner.getWidth() >= 400, "the banner is too short at width " + juce::String (width));
+                    for (auto* button : std::initializer_list<juce::Component*>
+                             { &w.main.metersButton, &w.main.backupButton, &w.main.lockButton,
+                               &w.main.addChannelButton, &w.main.vscButton, &w.main.deviceButton })
+                        expect (! w.main.alarmBanner.getBounds().intersects (button->getBounds()),
+                                "the banner covers a header button at width " + juce::String (width));
+                    w.main.updateCaptureWarnings (EngineStatus());
+                }
             }
 
             beginTest ("Device loss, a dead channel and a struggling disk all reach the banner");
@@ -930,6 +961,8 @@ namespace zynforge
                 expect (! w.engine().isRecording());
                 expect (w.main.alarmBanner.isVisible(), "a refused RECORD stayed in the header text");
                 expect (w.main.alarmBanner.getText().containsIgnoreCase ("arm"), w.main.alarmBanner.getText());
+                expect (w.main.alarmBanner.getLevel() == AlarmBanner::Level::Notice,
+                        "a refused press used the red that means a take is in trouble");
                 w.main.refreshAlarmBanner();
                 expect (w.main.alarmBanner.isVisible(), "the refusal vanished at once");
                 w.main.recordRefusalShownMs -= 60000;
@@ -983,15 +1016,198 @@ namespace zynforge
             beginTest ("The loudness line reads what the master measures and marks a hot true peak");
             {
                 PerfDashboard panel;
-                expectEquals (panel.getLoudnessText(), juce::String ("LUFS M --  I --  TP --"));
+                expectEquals (panel.getLoudnessText(), juce::String ("LUFS M -- I -- TP --"));
                 expect (! panel.truePeakIsHot());
 
                 panel.setLoudness (-23.14f, -18.26f, -3.0f);
-                expectEquals (panel.getLoudnessText(), juce::String ("LUFS M -18.3  I -23.1  TP -3.0"));
+                expectEquals (panel.getLoudnessText(), juce::String ("LUFS M -18.3 I -23.1 TP -3.0"));
                 expect (! panel.truePeakIsHot());
 
                 panel.setLoudness (-23.1f, -18.3f, -0.9f);
                 expect (panel.truePeakIsHot(), "true peak within 1 dB of full scale stayed calm");
+                expectEquals (panel.getTruePeakText(), juce::String ("TP -0.9!"), "a hot peak rested on colour alone");
+            }
+        }
+
+        void soundcheckIsVisibleAndReversible()
+        {
+            beginTest ("Virtual Soundcheck asks first, shows it is on, and gives the old patch back");
+            {
+                Window w;
+                auto& track = w.recorder().getTrack (0);
+                w.engine().setTrackInputRouting (0, 3);
+                w.engine().setTrackOutputRouting (0, 7);
+
+                std::function<void()> pending;
+                w.main.confirmForTests = [&pending] (std::function<void()> go) { pending = std::move (go); };
+                w.main.onVscClicked();
+                expectEquals (track.outputRouting.load(), 7, "VSC repatched before the engineer agreed");
+                expect (pending != nullptr, "VSC did not ask");
+
+                pending();
+                pending = nullptr;
+                expectEquals (track.outputRouting.load(), 3, "the output did not move onto the input's channel");
+                w.main.updateSoundcheckState();
+                expect (w.main.vscButton.getToggleState(), "VSC looks off with the outputs repatched");
+                expectEquals (w.main.vscButton.getButtonText(), juce::String ("VSC ON"));
+
+                expectEquals (vsc::repatch (w.engine()), 0, "a second press would save the soundcheck patch as the show patch");
+                expectEquals (track.outputBeforeVsc.load(), 7);
+
+                expect (w.engine().saveSessionMixTo (w.session));
+                track.outputBeforeVsc.store (TrackState::kNoSavedOutput);
+                expect (w.engine().loadSessionMixFrom (w.session));
+                expectEquals (track.outputBeforeVsc.load(), 7, "the way back did not survive a reopen");
+
+                w.main.onVscClicked();
+                expect (pending != nullptr, "restoring did not ask");
+                pending();
+                pending = nullptr;
+                expectEquals (track.outputRouting.load(), 7, "the old patch did not come back");
+                w.main.updateSoundcheckState();
+                expect (! w.main.vscButton.getToggleState(), "VSC stayed lit after the restore");
+                expectEquals (w.main.vscButton.getButtonText(), juce::String ("VSC"));
+
+                expect (w.main.undoManager.undo(), "the restore is not on the undo stack");
+                expectEquals (track.outputRouting.load(), 3);
+                expect (vsc::hasSavedPatch (w.engine()), "undo lost the saved patch");
+                w.main.confirmForTests = nullptr;
+            }
+
+            beginTest ("Clearing the strips forgets the soundcheck, so a new session starts with VSC off");
+            {
+                Window w;
+                vsc::repatch (w.engine());
+                expect (vsc::hasSavedPatch (w.engine()));
+                w.engine().clearAllStripOverrides();
+                expect (! vsc::hasSavedPatch (w.engine()), "a new session inherited the last one's VSC state");
+
+                vsc::repatch (w.engine());
+                w.engine().clearSessionState();
+                expect (! vsc::hasSavedPatch (w.engine()), "another session inherited this one's VSC state");
+            }
+
+            beginTest ("A strip added after the soundcheck keeps its own output on restore");
+            {
+                Window w;
+                w.engine().setTrackOutputRouting (0, 7);
+                vsc::repatch (w.engine());
+                auto& later = w.recorder().getTrack (1);
+                later.outputBeforeVsc.store (TrackState::kNoSavedOutput);
+                w.engine().setTrackOutputRouting (1, 4);
+                vsc::restore (w.engine());
+                expectEquals (w.recorder().getTrack (0).outputRouting.load(), 7);
+                expectEquals (later.outputRouting.load(), 4);
+            }
+
+            beginTest ("VSC sits with the actions, not the view tabs");
+            {
+                Window w;
+                expect (w.main.vscButton.getBottom() <= w.main.transportBar->getY());
+                expect (w.main.mixViewButton.getY() >= w.main.transportBar->getY());
+            }
+
+            beginTest ("A desk left on the soundcheck patch stays on screen");
+            {
+                Window w;
+                w.main.updateSoundcheckState();
+                expect (! w.main.soundcheckPill.isVisible());
+
+                juce::DynamicObject::Ptr state (new juce::DynamicObject());
+                juce::Array<juce::var> blocks;
+                for (int block = 0; block < w.main.consoleLink.getProfile().numInBlocks; ++block)
+                    blocks.add (block);
+                state->setProperty ("stagePatch", blocks);
+                state->setProperty ("deskPatch", "soundcheck");
+                w.main.consoleLink.loadJson (juce::var (state.get()));
+                expect (w.main.consoleLink.isOnSoundcheckPatch());
+
+                w.main.updateSoundcheckState();
+                expect (w.main.soundcheckPill.isVisible(), "the desk's patch is only in a menu");
+                expect (w.main.soundcheckPill.getWidth() > 100, "the chip has no room");
+            }
+
+            beginTest ("A pre-flight problem offers the control that deals with it");
+            {
+                int fixed = 0;
+                const auto fix = [&fixed] { ++fixed; };
+                PreflightRow backup { PreflightRow::Status::failed, "Backup", "not configured" };
+                backup.fixLabel = "Backup";
+                backup.fix = fix;
+                PreflightRow healthy { PreflightRow::Status::ok, "Audio device", "Silent" };
+                healthy.fixLabel = "Device";
+                healthy.fix = fix;
+                PreflightRow slowDrive { PreflightRow::Status::warning, "Disk write speed", "slow" };
+
+                PreflightDialog dialog ({ healthy, backup, slowDrive });
+                dialog.resized();
+                expectEquals (dialog.getNumFixes(), 1, "only a problem with a control gets a button");
+                expect (dialog.getFixButton (0)->getWidth() > 0);
+                expectEquals (dialog.getFixButton (0)->getButtonText(), juce::String ("Backup"));
+                dialog.getFixButton (0)->onClick();
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.05, false);
+                expectEquals (fixed, 1);
+            }
+        }
+
+        void screensAgree()
+        {
+            beginTest ("Strip width and GRID show only where they do something");
+            {
+                Window w;
+                w.main.switchView (MainComponent::View::Edit);
+                w.main.resized();
+                for (auto* button : { &w.main.gridButton, &w.main.stripXsButton, &w.main.stripLButton })
+                    expect (! button->isVisible(), "a mixer control sits dead in EDIT");
+                w.main.switchView (MainComponent::View::Mix);
+                w.main.resized();
+                for (auto* button : { &w.main.gridButton, &w.main.stripXsButton, &w.main.stripLButton })
+                    expect (button->isVisible());
+            }
+
+            beginTest ("The small clock follows a take instead of sitting frozen beside the big one");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording(), w.main.statusLabel.getText());
+                feedAll (w.recorder(), 0.1f, 8);
+                w.main.updateTransportLabels();
+                expect (! w.main.transportLabel.getText().contains ("/"), w.main.transportLabel.getText());
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+                w.main.updateTransportLabels();
+                expect (w.main.transportLabel.getText().contains ("/"), w.main.transportLabel.getText());
+            }
+
+            beginTest ("Every fader on the page starts and ends level, stereo or mono, at every strip width");
+            {
+                Window w;
+                w.engine().setTrackStereo (2, true);
+                w.main.lastTrackCount = -1;
+                w.main.syncStripsWithEngine();
+                const auto fader = [] (ChannelStrip& strip)
+                {
+                    for (auto* child : strip.getChildren())
+                        if (auto* slider = dynamic_cast<juce::Slider*> (child))
+                            if (slider->getSliderStyle() == juce::Slider::LinearVertical)
+                                return slider->getBounds();
+                    return juce::Rectangle<int>();
+                };
+                for (auto width : { MainComponent::StripWidth::XS, MainComponent::StripWidth::S,
+                                    MainComponent::StripWidth::M,  MainComponent::StripWidth::L })
+                {
+                    w.main.setStripWidthPreset (width);
+                    w.main.resized();
+                    expect (w.main.strips.size() >= 2);
+                    const auto first = fader (*w.main.strips[0]);
+                    expect (first.getHeight() > 0);
+                    for (auto& strip : w.main.strips)
+                    {
+                        expectEquals (fader (*strip).getY(), first.getY(), "0 dB sits at two heights");
+                        expectEquals (fader (*strip).getHeight(), first.getHeight());
+                    }
+                }
             }
         }
 

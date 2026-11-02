@@ -239,7 +239,7 @@ namespace zynforge
             soloButton.setToggleState (s.soloed .load(), juce::dontSendNotification);
             // Per-button gradient colours match the mixer:
             //   I → green, R → red, M → orange, S → yellow.
-            styleBtn (armButton,  brand::accentRecord);
+            styleBtn (armButton,  brand::armFill);
             styleBtn (monButton,  brand::accentPlay);
             styleBtn (muteButton, brand::brandOrange);
             styleBtn (soloButton, brand::accentSolo);
@@ -279,35 +279,6 @@ namespace zynforge
             // Per-track 'VIEW' picker -- clicking pops the lane-content
             // menu matching the screenshot (blocks/playlists/analysis/
             // warp are reserved for future builds and stay disabled).
-            viewButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
-            viewButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
-            viewButton.setTooltip ("Pick what this row's lane draws -- waveform or markers");
-            viewButton.onClick = [this]
-            {
-                // Lane-content picker. Reserved Pro Tools-style items
-                // (blocks / playlists / analysis / warp / transcript)
-                // are dropped from the menu -- they were never wired and
-                // the greyed entries were just clutter.
-                juce::PopupMenu m;
-                m.addItem (22, "waveform",    true, laneMode == LaneMode::Waveform);
-                m.addItem (20, "markers",     true, laneMode == LaneMode::Markers);
-
-                juce::Component::SafePointer<TrackRow> self (this);
-                m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&viewButton),
-                                 [self] (int chosen)
-                {
-                    if (self == nullptr || chosen == 0) return;
-                    switch (chosen)
-                    {
-                        case 20: self->laneMode = LaneMode::Markers;    break;
-                        case 22: self->laneMode = LaneMode::Waveform;   break;
-                        default: return;
-                    }
-                    self->repaint();
-                });
-            };
-            addAndMakeVisible (viewButton);
-
             // Input + output routing combos -- same wiring as the mixer.
             auto styleCombo = [] (juce::ComboBox& c)
             {
@@ -359,6 +330,7 @@ namespace zynforge
             if (! rowValid || index >= engine.getRecorder().getNumTracks()) return;
             auto& s = engine.getRecorder().getTrack (index);
             if (armButton .getToggleState() != s.armed .load()) armButton .setToggleState (s.armed .load(), juce::dontSendNotification);
+            armButton.setColour (juce::ToggleButton::tickColourId, engine.isRecording() ? brand::armRollFill : brand::armFill);
             if (muteButton.getToggleState() != s.muted .load()) muteButton.setToggleState (s.muted .load(), juce::dontSendNotification);
             if (soloButton.getToggleState() != s.soloed.load()) soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
             if (monButton .getToggleState() != s.monitor.load()) monButton .setToggleState (s.monitor.load(), juce::dontSendNotification);  // input-monitor changed in MIXER must reflect here
@@ -406,7 +378,8 @@ namespace zynforge
             }
 
             outputCombo.clear (juce::dontSendNotification);
-            outputCombo.addItem ("(unrouted)", 1);
+            // MIXER's words for the same state. It is not unrouted: it goes to the master.
+            outputCombo.addItem (juce::String::fromUTF8 ("\xe2\x86\x92 Master"), 1);
             for (int i = 0; i < visibleOut; i += step)
             {
                 const bool live = stereo ? (i + 1 < numOuts) : (i < numOuts);
@@ -1633,7 +1606,7 @@ namespace zynforge
             {
                 const auto num = juce::String (index + 1).paddedLeft ('0', 2);
                 auto numBox = juce::Rectangle<int> (hx + swatchW + 7, 3, 24, 18);
-                g.setFont (brand::type::mono (15.0f, true));
+                g.setFont (brand::type::mono (brand::type::h_title, true));
                 g.setColour (brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));            // engraved shadow
                 g.drawText (num, numBox.translated (0, 1), juce::Justification::centredLeft, false);
                 g.setColour (brand::debossFace);                             // raised steel face
@@ -1688,18 +1661,14 @@ namespace zynforge
             leftBlock.removeFromTop (3);
 
             const int btnH = 22;
-            // Four buttons across one row, Pro Tools-style:
-            //   [ REC ][  I  ][  S  ][  M  ]
+            // Four buttons across one row, in the MIXER's order, so the hand
+            // finds R in the same place in both views: [ I ][ R ][ S ][ M ]
             auto row = leftBlock.removeFromTop (btnH);
             const int quarter = row.getWidth() / 4;
-            armButton .setBounds (row.removeFromLeft (quarter).reduced (1));
             monButton .setBounds (row.removeFromLeft (quarter).reduced (1));
+            armButton .setBounds (row.removeFromLeft (quarter).reduced (1));
             soloButton.setBounds (row.removeFromLeft (quarter).reduced (1));
             muteButton.setBounds (row.reduced (1));
-            leftBlock.removeFromTop (4);
-
-            // The VIEW button (lane-mode picker) takes the bottom-left.
-            viewButton.setBounds (leftBlock.removeFromTop (18));
 
             // -------------- MIDDLE (meter) --------------
             // Slim LedMeter -- a clean ~22 px bar (no dB-label gutter). Small
@@ -1833,14 +1802,23 @@ namespace zynforge
                         if (page->onRowDelete)
                         {
                             juce::Component::SafePointer<EditPage> safePage (page);
+                            juce::Component::SafePointer<TrackRow> safeRow (this);
                             const int idx = index;
                             juce::PopupMenu m;
+                            m.addItem (2, "Lane Shows Waveform", true, laneMode == LaneMode::Waveform);
+                            m.addItem (3, "Lane Shows Markers",  true, laneMode == LaneMode::Markers);
+                            m.addSeparator();
                             m.addItem (1, "Delete Channel");
                             m.showMenuAsync (
                                 juce::PopupMenu::Options().withTargetScreenArea (
                                     { e.getScreenPosition().x, e.getScreenPosition().y, 1, 1 }),
-                                [safePage, idx] (int r)
+                                [safePage, safeRow, idx] (int r)
                                 {
+                                    if ((r == 2 || r == 3) && safeRow != nullptr)
+                                    {
+                                        safeRow->laneMode = r == 2 ? LaneMode::Waveform : LaneMode::Markers;
+                                        safeRow->repaint();
+                                    }
                                     if (r == 1 && safePage != nullptr && safePage->onRowDelete)
                                         safePage->onRowDelete (idx);
                                 });
@@ -3080,7 +3058,6 @@ namespace zynforge
         juce::ToggleButton        soloButton { "S" };
         juce::ComboBox            inputCombo;
         juce::ComboBox            outputCombo;
-        juce::TextButton          viewButton { "VIEW" };
         LedMeter                  meter;
 
         int                       playheadX             { -1 };

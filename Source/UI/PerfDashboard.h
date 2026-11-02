@@ -37,6 +37,7 @@ namespace zynforge
 
         // The loudness line as drawn; a figure below the gate reads "--".
         juce::String getLoudnessText() const;
+        juce::String getTruePeakText() const;
         // True peak within 1 dB of full scale turns red.
         bool truePeakIsHot() const noexcept;
         // Whether the row holds the device format and the loudness line at their

@@ -84,6 +84,7 @@ namespace zynforge
                     { "pan",     [&] { t.pan.store (0.25f); } },
                     { "in",      [&] { t.inputRouting.store (5); } },
                     { "out",     [&] { t.outputRouting.store (6); } },
+                    { "vscOut",  [&] { t.outputBeforeVsc.store (2); } },
                     { "outMute", [&] { t.outputMuted.store (! t.outputMuted.load()); } },
                     { "stream",  [&] { t.streamSend.store (! t.streamSend.load()); } },
                     { "mute",    [&] { t.muted.store (! t.muted.load()); } },

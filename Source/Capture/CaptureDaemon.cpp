@@ -1,4 +1,5 @@
 #include "CaptureDaemon.h"
+#include "../Audio/DisplayText.h"
 
 namespace zynforge::capture
 {
@@ -384,7 +385,7 @@ namespace zynforge::capture
         s.blockSize      = currentBlockSize.load();
         s.audioLoadPct    = audioLoadPct.load();
         s.captureDeviceLost = captureDeviceLost.load();
-        s.diskMBPerSec   = recorder.getDiskBytesPerSec() / (1024.0 * 1024.0);
+        s.diskMBPerSec   = bytesToMB (recorder.getDiskBytesPerSec());
         s.ringFillPct    = recorder.getRingFillPct();
         s.lastWriteMs    = recorder.getLastWriteMs();
         s.missedSamples  = recorder.getMissedSamples();

@@ -335,8 +335,9 @@ proportional type.
 
 The proportional face deliberately follows the platform. The files formerly named `Inter-Regular.ttf` / `Inter-Bold.ttf` were GitHub HTML error responses rather than valid fonts and were removed; restoring them would make CoreText parse non-font data. Fixed-width roles remain deterministic through the valid bundled JetBrains Mono assets.
 
-Sizes follow a deliberately tight scale (8.5 / 9 / 10.5 / 11 / 13 /
-15 / 28). LED labels use uppercase + 4% letter-spacing (`led-label`
+Sizes follow a deliberately tight scale (10 / 11 / 13 / 14 / 18 / 22 /
+28 / 48). Nothing is below 10 pt, and `tools/design_audit.sh` fails on
+a raw size off the list. LED labels use uppercase + 4% letter-spacing (`led-label`
 token) so they read as labels, not words.
 
 ## Layout
@@ -503,7 +504,7 @@ ComboBox) or the component's own `paint()` (ChannelStrip, Toast, Meter).
 | Quiet (default) | `control-bg` (flat solid) | Most actions — the app stays calm |
 | Record / danger | `accent-record` translucent | Arm, delete, destructive |
 | Transport-active | `accent-play` translucent | Play / rolling |
-| Virtual-soundcheck | `accent-vs` translucent | VSC macro engaged |
+| Virtual-soundcheck | `accent-vs` solid | VSC ON, while the outputs are on the soundcheck patch, and the DESK ON SOUNDCHECK chip |
 | Feature-engaged | `feature-engaged` translucent | Stream / send / tool-on toggle |
 
 | State | Visual | Notes |
@@ -568,7 +569,7 @@ Prompts prime their editor via `dialog::primeNameEditor` (focus + select-all
 
 
 ### TrackRow (EditPage.cpp — the EDIT lane)
-The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / R-I-S-M / VIEW / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
+The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / I-R-S-M in the MIXER's order / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
 
 **Live navigation:** the EDIT viewport follows a rolling playhead by default. A manual horizontal pan (trackpad, Shift+wheel, minimap) or timeline zoom switches to browse mode and must not be undone by the next UI timer tick. The small FOLLOW control restores live tracking; the next play/record pass starts following. During recording, row and ruler edits are locked while zoom, scrolling, minimap and FOLLOW remain usable. A fresh take starts with five minutes across the viewport; as it grows, the timeline widens at that same time scale so the waveform can keep scrolling. Vertical track scrolling and amplitude zoom never change horizontal follow. The ruler, pinned row headers and minimap all track the same viewport offset. The macOS window has a 1120 × 700 minimum so fixed recording controls remain accessible when resized.
 
@@ -576,10 +577,10 @@ The most complex component in the app: one timeline lane per logical strip (ster
 Path-drawn icon buttons (no glyph fonts): play/pause, stop, record, loop, return-to-zero, marker-drop. **States:** idle (cold control chrome, 3-step hover) · play active (accentPlay) · record active (accentRecord + the app-wide REC treatment) · loop engaged (engagedAmber). Record is shape-distinct from play (field rule: readable across a dark stage). All six expose spoken accessibility names (headless-tested).
 
 ### BigClockPanel
-The hero timecode plate. **Modes:** Idle (cold, lamp reads IDLE) · ArmedReady (amber lamp, reads ARMED) · Playing (active tint) · Recording (whole plate `takePlate` red with a 1 Hz `motion::pulseHz` breathe, white type, reads REC). Carries the time, record time left (free disk while nothing rolls) and the disk-health rows (free GB, missed samples, last write, markers). Those rows give way first when the row is short, in the order they are drawn. Fed by MainComponent's timer.
+The hero timecode plate. **Modes:** Idle (cold, lamp reads IDLE) · ArmedReady (amber lamp, reads ARMED) · Playing (active tint) · Recording (whole plate `takePlate` red with a 1 Hz `motion::pulseHz` breathe, white type, reads REC). Carries the time, record time left (free disk while nothing rolls) and the disk-health rows (free GB, missed samples, last write, markers) at body size, since they are the proof the take is safe. Those rows give way first when the row is short, in the order they are drawn. Fed by MainComponent's timer.
 
 ### PerfDashboard
-The status panel beside the clock, in both views at every window size. Top row: device format, then master loudness (LUFS momentary and integrated, true peak, red within 1 dB of full scale); a dropped sample takes the loudness side over. Second row: AUDIO, DISK and BUF, each green / yellow / red. One thin bar along the bottom shows disk load, full at 50 MB/s. Red ring while recording.
+The status panel beside the clock, in both views at every window size, one width rolling or not. Device format stands in its own narrow column. Beside it, top row: master loudness at body size (LUFS momentary and integrated, true peak, red and marked `!` within 1 dB of full scale); a dropped sample takes that row over. Second row: AUDIO, DISK and BUF, each green / yellow / red. One thin bar along the bottom shows disk load, full at 50 MB/s. Red ring while recording.
 
 ## Do's and Don'ts
 

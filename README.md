@@ -115,6 +115,8 @@ These describe `main`, which the mini's `281c6c0` does not have: see *Status*.
 - If the capture daemon dies or its link drops mid-take, the app reconnects by itself. Session ▸ Recording & Sync ▸ Reconnect Capture Daemon does it on request, and Quit and turning the daemon off keep working. Daemon STOP does not freeze the window. After a crash during a daemon take, relaunching restores the take's strips, names, routing and cues
 
 ### Playback / virtual soundcheck
+- **VSC** sits with the header's actions. It asks first, moves every output onto its input's channel and reads **VSC ON** until you press it again, which puts the old patch back. The old patch is saved with the session, so the way back survives a quit and a reopen, and each direction is one undo step.
+- With a console link, a desk left on card returns shows **DESK ON SOUNDCHECK** beside the small clock and in pre-flight, until it is back on the stage patch.
 - Each `Track_NN.wav` plays through the matching hardware output during soundcheck (a stereo file's two channels route to the L + R outputs)
 - Clip-aware playback: per-clip mute / lock / gain / fade (linear **or equal-power**), all applied on the audio thread
 - Cross-track clips read from a file-keyed reader cache, so a clip pasted onto another track plays the copied audio
@@ -125,7 +127,7 @@ These describe `main`, which the mini's `281c6c0` does not have: see *Status*.
 - Playback refuses while either the local engine or capture daemon owns a live take, including remote, MCU, and timecode entry points
 
 ### Mixer / EDIT / PATCH (linked views)
-- **Compact, console-style strips** — the dB ruler + fader + meter hug each other (no wasted gutter). Width presets **XS / S / M / L** (M ≈ 12 per page, L = 8 with the **full channel name on its own row**), plus a **GRID** view: 12 strips per row × 2 rows = **24 faders on one page** (scrolls vertically). Channels default to neutral grey and recolour from a hue×shade **gradient** swatch picker
+- **Compact, console-style strips** — the dB ruler + fader + meter hug each other (no wasted gutter), with every fader on the page level whether the strip is mono or stereo. The meter carries its own dBFS scale where it fits, because the numbers beside the fader are the fader's. Width presets **XS / S / M / L** (M ≈ 12 per page, L = 8 with the **full channel name on its own row**), plus a **GRID** view: 12 strips per row × 2 rows = **24 faders on one page** (scrolls vertically). Channels default to neutral grey and recolour from a hue×shade **gradient** swatch picker
 - Per-strip fader (−60..+12 dB) — **click-drag only** (the cap snaps to the pointer; the scroll wheel scrolls the mixer, never the level), constant-power pan, REC / MON / MUTE / SOLO toggles
 - Adaptive LED meter — a 20-segment LED ladder at full size; tiny meters fall back to a **solid colour-by-level** bar (flat, no gradient)
 - Stereo pairs collapse into one logical strip / row / column in **all three views**, and every per-strip change that belongs to the pair — mute / solo / arm / gain / routing / **colour / name** — mirrors onto both halves from whichever view you make it in
@@ -158,7 +160,7 @@ These describe `main`, which the mini's `281c6c0` does not have: see *Status*.
 ### Metering
 - Adaptive LED meters per strip + master; sticky clip latch
 - The meterbridge stays open when you click elsewhere, so it can live on a second display
-- **Master loudness (ITU-R BS.1770)** — momentary and integrated (gated) LUFS + a 4×-oversampled true-peak (dBTP) on the post-fader master, shown on the status panel beside the clock in both views at every window size (true-peak goes red within 1 dB of full scale)
+- **Master loudness (ITU-R BS.1770)** — momentary and integrated (gated) LUFS + a 4×-oversampled true-peak (dBTP) on the post-fader master, shown on the status panel beside the clock in both views at every window size (true-peak goes red and takes a `!` within 1 dB of full scale)
 
 ### Cues + setlist
 - Drop cues at any transport position; each holds a snapshot of every strip's state
@@ -186,7 +188,7 @@ Bidirectional **Mackie Control / FaderPort (MCU)** surface: motor **faders ↔ c
 - A console dropping its network link — desk power-cycle, switch reboot — is handled as an ordinary disconnect. It used to abort the app on the next connect or quit
 - **Measured pre-flight check** — one menu action before doors: device / SR / clock config, **measured** disk write speed vs. what the armed channel count demands, free-space headroom, every mirror drive verified mounted *and writable*, live CPU callback load, session-vs-device sample-rate mismatch, and signal presence on each armed input. The write-speed probe is skipped while a take is rolling (it would write 16 MB to the take's own volume); the SMART drive-health poll runs off the UI thread so a slow or unresponsive drive can't stall the app mid-show
 - **LOCK** button disables every other control so a stray click can't kill a take. LOCK also covers right-click menus on strips and the setlist bar, the patch matrix and EDIT rows, and survives a strip rebuild. Cmd+Q and the window's close box refuse under LOCK
-- Anything that threatens a take shows in a red banner under the transport, large enough to read from the mix position, and stays up until it clears. A refused RECORD uses the same banner and clears itself
+- Anything that threatens a take shows in a red banner along the top of the window and stays up until it clears. It lies over the wordmark and status line, so raising it moves no fader or strip, and every header button stays reachable. A refused RECORD uses the same place in amber and clears itself
 - **Device settings lock while a take is rolling** — the DEVICE panel is a floating window you can leave open, and changing the interface, sample rate or buffer size restarts the audio device, which ends the recording. Once RECORD is pressed those combos grey out and say why, and closing the panel won't revert anything either. Nothing you can click in it can stop a take
 - **Backup and mirror destinations are validated, not trusted** — File ▸ Backup & Mirror Drives, or the BACKUP button, is one dialog: backup in the first row with its own format, then the mirrors. A mirror writes the same folder layout the session itself uses, so a root pointing at (or inside) your sessions folder would have landed on the take's own files. The picker refuses a root that holds the session, sits inside it, duplicates another mirror, or is already the backup destination, and says which row is the problem. The same check runs again at record start, because a mirror you configured last week is still there when you open a session somewhere new. If a mirror can't be written at all — drive not mounted — the recording banner tells you *during* the take that you have fewer copies than you configured
 - Redundant-write to a second drive in parallel, plus N-way mirrors, each in its own format — all of which count toward the "minutes remaining" estimate and the DISK STRUGGLING warning. The free-space readout tracks the volume the take actually lands on, including a custom Local Storage location

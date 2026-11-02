@@ -19,6 +19,11 @@ Tests and rendered images can't judge these. They need the real app on a real di
 | ☐ D.3 | With a take rolling, pull the session drive or force another alarm. | The banner is the first thing you see, clearly louder than the plate. | Banner and plate blur together. |
 | ☐ D.4 | Play a session through the master. Read the status panel. | LUFS M and I and TP move, and TP turns red within 1 dB of full scale. Readable from your normal seat. | Figures stay at `--`, or are too small to use. |
 | ☐ D.5 | Look at EDIT in the dark for a minute. | Clips sit back, waveforms read, nothing glares. | A clip or a control is the brightest thing on screen for no reason. |
+| ☐ D.6 | Arm every channel, then roll. | Idle, the deep red R buttons sit back. They lift when the take rolls. | The armed column shouts, or armed and off look alike from your seat. |
+| ☐ D.7 | Force an alarm with a take rolling, with the mouse on a fader. | The banner rises along the top, loud enough from your seat, and nothing moves. | You miss it because it is at the top of the window, or a long alarm is cut off. |
+| ☐ D.8 | Press VSC on a session you can check. Say Repatch, then press VSC ON and Restore. Quit and reopen in between once. | It asks both ways, reads VSC ON between, and the old output patch comes back. | The outputs differ from before, or VSC ON is gone after the reopen. |
+| ☐ D.9 | With a console link on a disposable show file, go to the SOUNDCHECK patch. | DESK ON SOUNDCHECK shows beside the small clock and in pre-flight, and clears on the way back to STAGE. | Either place stays wrong after the desk moves. |
+| ☐ D.10 | Read the strip meters against the desk's meters with tone at -18 and -6 dBFS. | The meter's own scale agrees with the desk. | The scale is off, or its numbers are too small to use. |
 
 ## 2026-11-02 cut to recorder and virtual soundcheck — not yet performed
 
@@ -56,7 +61,7 @@ None of this has been tried on real hardware, and these fixes are not in the ins
 ### Main window
 
 - [ ] With LOCK on, right-click a strip and the setlist bar; click GRID and try a fader; try to edit in EDIT. Nothing may change.
-- [ ] Pull the backup drive during a disposable take. The red banner must appear under the transport, readable from the mix position, and STOP must still work with it up.
+- [ ] Pull the backup drive during a disposable take. The red banner must appear along the top of the window, readable from the mix position, and STOP must still work with it up.
 - [ ] Press RECORD with nothing armed. The banner shows why, then clears itself.
 - [ ] Start a QC scan on a long session, then press RECORD. The take starts at once, the status says the scan stopped, and no report opens over the take.
 - [ ] Open Session Settings, set pre-roll to 5 s, record a fresh take, and confirm the audio before RECORD is there.

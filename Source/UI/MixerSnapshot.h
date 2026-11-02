@@ -27,15 +27,16 @@ namespace zynforge::mixersnapshot
 
     // Names go through getNameThreadSafe(): network surfaces (console link,
     // OSC) rename strips from other threads, so a raw `name` read can tear.
-    inline const std::array<Field, 12>& fields()
+    inline const std::array<Field, 13>& fields()
     {
-        static const std::array<Field, 12> table {{
+        static const std::array<Field, 13> table {{
             { "name",    [] (const TrackState& t) { return juce::var (t.getNameThreadSafe()); } },
             { "colour",  [] (const TrackState& t) { return juce::var ((int) t.colourARGB.load (std::memory_order_relaxed)); } },
             { "gainDb",  [] (const TrackState& t) { return juce::var ((double) t.gainDb.load (std::memory_order_relaxed)); } },
             { "pan",     [] (const TrackState& t) { return juce::var ((double) t.pan.load (std::memory_order_relaxed)); } },
             { "in",      [] (const TrackState& t) { return juce::var (t.inputRouting.load (std::memory_order_relaxed)); } },
             { "out",     [] (const TrackState& t) { return juce::var (t.outputRouting.load (std::memory_order_relaxed)); } },
+            { "vscOut",  [] (const TrackState& t) { return juce::var (t.outputBeforeVsc.load (std::memory_order_relaxed)); } },
             { "outMute", [] (const TrackState& t) { return juce::var (t.outputMuted.load (std::memory_order_relaxed)); } },
             { "stream",  [] (const TrackState& t) { return juce::var (t.streamSend.load (std::memory_order_relaxed)); } },
             { "mute",    [] (const TrackState& t) { return juce::var (t.muted.load (std::memory_order_relaxed)); } },
@@ -76,6 +77,9 @@ namespace zynforge::mixersnapshot
         eng.setTrackPan   (physical, (float) (double) obj->getProperty ("pan"));
         eng.setTrackInputRouting  (physical, (int) obj->getProperty ("in"));
         eng.setTrackOutputRouting (physical, (int) obj->getProperty ("out"));
+        t.outputBeforeVsc.store (obj->hasProperty ("vscOut") ? (int) obj->getProperty ("vscOut")
+                                                             : TrackState::kNoSavedOutput,
+                                 std::memory_order_relaxed);
         t.outputMuted.store ((bool) obj->getProperty ("outMute"), std::memory_order_relaxed);
         t.streamSend .store ((bool) obj->getProperty ("stream"),  std::memory_order_relaxed);
         t.muted      .store ((bool) obj->getProperty ("mute"),    std::memory_order_relaxed);

@@ -1,4 +1,5 @@
 #include "ZynForgeLookAndFeel.h"
+#include "../Audio/DisplayText.h"
 #include "BrandColors.h"
 #include "BrandTokens.h"
 #include "DialogChrome.h"
@@ -242,8 +243,49 @@ namespace zynforge
         g.setColour (txt);
         // Heavier, slightly larger glyph than the default uiLabel so
         // the single-letter chips read at a glance.
-        g.setFont (brand::type::ui (13.5f, true));
+        g.setFont (brand::type::ui (brand::type::h_body, true));
         g.drawText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
+    }
+
+    void ZynForgeLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
+    {
+        g.fillAll (label.findColour (juce::Label::backgroundColourId));
+
+        if (! label.isBeingEdited())
+        {
+            const auto alpha = label.isEnabled() ? 1.0f : 0.5f;
+            const juce::Font font (getLabelFont (label));
+
+            g.setColour (label.findColour (juce::Label::textColourId).withMultipliedAlpha (alpha));
+            g.setFont (font);
+
+            const auto textArea = getLabelBorderSize (label).subtractedFrom (label.getLocalBounds());
+            g.drawFittedText (typeset (label.getText()), textArea, label.getJustificationType(),
+                              juce::jmax (1, (int) ((float) textArea.getHeight() / font.getHeight())),
+                              label.getMinimumHorizontalScale());
+
+            g.setColour (label.findColour (juce::Label::outlineColourId).withMultipliedAlpha (alpha));
+        }
+        else if (label.isEnabled())
+        {
+            g.setColour (label.findColour (juce::Label::outlineColourId));
+        }
+
+        g.drawRect (label.getLocalBounds());
+    }
+
+    void ZynForgeLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& text, int width, int height)
+    {
+        juce::LookAndFeel_V4::drawTooltip (g, typeset (text), width, height);
+    }
+
+    juce::AlertWindow* ZynForgeLookAndFeel::createAlertWindow (const juce::String& title, const juce::String& message,
+                                                               const juce::String& button1, const juce::String& button2,
+                                                               const juce::String& button3, juce::MessageBoxIconType iconType,
+                                                               int numButtons, juce::Component* associatedComponent)
+    {
+        return juce::LookAndFeel_V4::createAlertWindow (typeset (title), typeset (message), button1, button2, button3,
+                                                        iconType, numButtons, associatedComponent);
     }
 
     void ZynForgeLookAndFeel::drawAlertBox (juce::Graphics& g, juce::AlertWindow& alert,
@@ -451,7 +493,9 @@ namespace zynforge
                                                 float pos, float startA, float endA,
                                                 juce::Slider& s)
     {
-        const auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat().reduced (4.0f);
+        // The inset scales down with the knob, or an XS strip's knob is a dot.
+        const auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat()
+                                .reduced (juce::jlimit (1.0f, 4.0f, (float) juce::jmin (w, h) * 0.1f));
         const float d      = juce::jmin (bounds.getWidth(), bounds.getHeight());
         const auto  centre = bounds.getCentre();
         const float radius = d * 0.5f;
