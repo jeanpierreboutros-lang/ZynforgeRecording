@@ -59,6 +59,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // Both header rows keep their status and warnings readable down to here.
+    static constexpr int kMinWidth = 1210, kMinHeight = 700;
+
     bool keyPressed (const juce::KeyPress&, juce::Component*) override;
 
     // MenuBarModel -- populates the macOS system menu bar.

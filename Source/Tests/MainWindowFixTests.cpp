@@ -177,6 +177,7 @@ namespace zynforge
             pairsTakeTwoChannels();
             questionsKeepTheirSession();
             gridKeepsItsFaders();
+            headerKeepsItsWarnings();
         }
 
     private:
@@ -1057,7 +1058,8 @@ namespace zynforge
                 const auto gridWas = w.main.mixerGridView;
                 w.main.mixerGridView = true;
                 w.main.rebuildStrips();
-                for (const auto& [width, height] : { std::pair (1120, 700), std::pair (1320, 820) })
+                for (const auto& [width, height] : { std::pair (MainComponent::kMinWidth, MainComponent::kMinHeight),
+                                                     std::pair (1320, 820), std::pair (1120, 700) })
                 {
                     w.main.setSize (width, height);
                     w.main.resized();
@@ -1076,6 +1078,46 @@ namespace zynforge
                             "the last row can't be scrolled to");
                 }
                 w.main.mixerGridView = gridWas;
+                w.main.setSize (1320, 820);
+                w.main.resized();
+            }
+        }
+
+        void headerKeepsItsWarnings()
+        {
+            beginTest ("Both pills keep their text at the smallest window");
+            {
+                Window w;
+                w.main.setSize (MainComponent::kMinWidth, MainComponent::kMinHeight);
+                w.main.punchPill.setText ("RECORD PUNCHES AT CURSOR", juce::dontSendNotification);
+                w.main.punchPill.setVisible (true);
+                w.main.soundcheckPill.setVisible (true);
+                w.main.resized();
+                const auto punch = w.main.punchPill.getBounds();
+                const auto desk  = w.main.soundcheckPill.getBounds();
+                expectGreaterOrEqual (punch.getWidth(), 170);
+                expectGreaterOrEqual (desk.getWidth(), 170, "the soundcheck pill was squeezed out");
+                expectGreaterOrEqual (desk.getHeight(), 18);
+                expect (! punch.intersects (desk), "the pills overlap");
+                expect (punch.getBottom() <= w.main.bigClock.getY() && desk.getBottom() <= w.main.bigClock.getY());
+                expect (! desk.intersects (w.main.sessionLabel.getBounds()));
+
+                w.main.punchPill.setVisible (false);
+                w.main.resized();
+                expectGreaterOrEqual (w.main.soundcheckPill.getHeight(), 24, "a pill alone shrank");
+                w.main.soundcheckPill.setVisible (false);
+                w.main.punchPill.setText ({}, juce::dontSendNotification);
+                w.main.setSize (1320, 820);
+                w.main.resized();
+            }
+
+            beginTest ("The status line keeps room for a sentence at the smallest window");
+            {
+                Window w;
+                w.main.setSize (MainComponent::kMinWidth, MainComponent::kMinHeight);
+                w.main.resized();
+                expectGreaterOrEqual (w.main.statusLabel.getWidth(), 280);
+                expectGreaterOrEqual (w.main.alarmBanner.getWidth(), 500);
                 w.main.setSize (1320, 820);
                 w.main.resized();
             }
