@@ -956,7 +956,11 @@ void MainComponent::consolidateTracks (const std::vector<int>& targets, juce::in
                 self->editPage->setEnabled (! self->sessionLocked);
                 self->editPage->repaint();
             }
-            if (n > 0) self->pushClipUndo ("Consolidate", *before);
+            if (n > 0)
+            {
+                self->pushClipUndo ("Consolidate", *before);
+                if (self->editPage != nullptr) self->editPage->sessionMediaAdded();
+            }
             self->showStatus (cancelled ? juce::String ("Consolidate cancelled; the arrangement was not changed")
                             : ! complete
                                 ? (n > 0 ? "Consolidation completed only part of the selection"

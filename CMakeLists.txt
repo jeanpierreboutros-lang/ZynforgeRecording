@@ -228,6 +228,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/DialogAuditTests.cpp
     Source/Tests/EditIntegrityTests.cpp
     Source/Tests/EditPageAccessibilityTests.cpp
+    Source/Tests/EditRowFixTests.cpp
     Source/Tests/EditRulerScrollTests.cpp
     Source/Tests/EditToolsBarAccessibilityTests.cpp
     Source/Tests/EditTrackRowTests.cpp
@@ -268,6 +269,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ReviewUiFormatRepairTests.cpp
     Source/Tests/SeptemberRegressionTests.cpp
     Source/Tests/SessionBackupTests.cpp
+    Source/Tests/SessionFixTests.cpp
     Source/Tests/SessionJobsTests.cpp
     Source/Tests/SessionRecoverySortTests.cpp
     Source/Tests/SessionSafetyTests.cpp

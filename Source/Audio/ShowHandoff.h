@@ -19,7 +19,24 @@ namespace zynforge::showhandoff
         int fileCount { 0 };
         juce::int64 bytes { 0 };
         bool captureReportWarning { false };
+        // Extra files that could not be written. The copy is still good; this
+        // says what it does not hold.
+        juce::String generatedWarning;
     };
+
+    // "Verified handoff ready" promises everything a handoff is meant to hold,
+    // so it is said only when all of it is there.
+    inline juce::String statusLine (const Result& result, const juce::File& dest)
+    {
+        const auto path = dest.getFullPathName();
+        if (! result.ok) return "Handoff incomplete at " + path + " -- " + result.message;
+        if (! result.captureReportWarning && result.generatedWarning.isEmpty())
+            return "Verified handoff ready: " + path;
+        juce::String line ("! Handoff copy verified");
+        if (result.captureReportWarning) line << "; CAPTURE REPORT NEEDS REVIEW";
+        if (result.generatedWarning.isNotEmpty()) line << "; " << result.generatedWarning;
+        return line + ": " + path;
+    }
 
     // macOS writes these by itself, and Finder can do so into a destination
     // that is open while the copy runs. They are no part of the session.
@@ -63,7 +80,9 @@ namespace zynforge::showhandoff
         {
             const auto& strip = (*strips)[i];
             const int input = (int) strip.getProperty ("inRoute", -1);
-            const int output = (int) strip.getProperty ("outRoute", -1);
+            // Present only while Virtual Soundcheck holds the show patch: outRoute
+            // is then the soundcheck's, and this map is read to patch the show.
+            const int output = (int) strip.getProperty ("outputBeforeVsc", strip.getProperty ("outRoute", -1));
             csv << (i + 1) << ','
                 << timelineexport::csvField (strip.getProperty ("name", "").toString()) << ','
                 << (input >= 0 ? juce::String (input + 1) : juce::String()) << ','
@@ -206,6 +225,7 @@ namespace zynforge::showhandoff
                 if (! addGenerated (file)) return { false, "Could not hash handoff sidecar" };
                 ++generatedCount;
             }
+        if (cancel.load (std::memory_order_relaxed)) return { false, "Handoff cancelled" };
 
         const auto reportFile = dest.getChildFile ("session.report.json");
         const auto report = reportFile.existsAsFile() ? juce::JSON::parse (reportFile) : juce::var();
@@ -268,12 +288,13 @@ namespace zynforge::showhandoff
         manifest->setProperty ("transferVerified", true);
         manifest->setProperty ("scope", "Source session vs portable handoff copy; not a show-readiness certificate");
         manifest->setProperty ("captureReport", juce::var (capture.get()));
+        if (generatedWarning.isNotEmpty()) manifest->setProperty ("generatedFilesWarning", generatedWarning);
         manifest->setProperty ("files", juce::var (fileEntries));
         if (! atomicfile::writeText (dest.getChildFile (kManifestName),
                                      juce::JSON::toString (juce::var (manifest.get()), true)))
             return { false, "Could not publish handoff manifest" };
         return { true, (captureWarning ? "Copy verified; capture report needs review" : "Copy verified")
                            + (generatedWarning.isNotEmpty() ? "; " + generatedWarning : juce::String()),
-                 (int) originals.size() + 2 + generatedCount, totalBytes, captureWarning };
+                 (int) originals.size() + 2 + generatedCount, totalBytes, captureWarning, generatedWarning };
     }
 }

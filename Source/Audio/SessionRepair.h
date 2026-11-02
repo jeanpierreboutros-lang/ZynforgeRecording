@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AtomicFile.h"
+#include "SessionBackup.h"
 #include "SessionMixFile.h"
 #include "../UI/SessionProjPath.h"
 #include <algorithm>
@@ -54,18 +55,23 @@ namespace zynforge::sessionrepair
             : holdsObject (file);
     }
 
-    // Newest first, so the first good copy is the one to offer. Snapshot names
-    // sort chronologically by construction; see sessionbackup::writeSnapshot.
+    // Newest first, so the first good copy is the one to offer. Every snapshot in
+    // the folder counts, whatever session name it carries, and they are ordered
+    // by the time in that name: a name of its own can't be sorted across a Save
+    // As, and used as a wildcard it can't hold a comma or a semicolon.
     inline juce::File newestBackupOf (const juce::File& sessionDir, const juce::String& fileName)
     {
-        auto folders = sessionDir.getChildFile ("Session File Backups")
-                                 .findChildFiles (juce::File::findDirectories, false,
-                                                  sessionDir.getFileName() + "_*");
-        folders.sort();
-        for (int i = folders.size(); --i >= 0;)
-            if (const auto copy = folders.getReference (i).getChildFile (fileName); copy.existsAsFile()
-                && goodBackupCopy (copy))
-                return folders.getReference (i);
+        std::vector<std::pair<sessionbackup::SnapshotName, juce::File>> snapshots;
+        for (const auto& folder : sessionDir.getChildFile ("Session File Backups")
+                                            .findChildFiles (juce::File::findDirectories, false))
+            if (const auto name = sessionbackup::parseSnapshotName (folder.getFileName());
+                name.has_value() && ! folder.isSymbolicLink())
+                snapshots.emplace_back (*name, folder);
+        std::sort (snapshots.begin(), snapshots.end(), [] (const auto& a, const auto& b)
+                   { return b.first < a.first; });
+        for (const auto& [name, folder] : snapshots)
+            if (const auto copy = folder.getChildFile (fileName); copy.existsAsFile() && goodBackupCopy (copy))
+                return folder;
         return {};
     }
 
@@ -77,6 +83,20 @@ namespace zynforge::sessionrepair
                              "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff");
         return std::any_of (takes.begin(), takes.end(), [] (const juce::File& take)
                             { return ! take.getFileName().containsIgnoreCase (".punchbase"); });
+    }
+
+    // Something only a session has. Any one will do, because any of them can be
+    // damaged or missing in a real session. Opening anything else would make it
+    // one: the next autosave would write a session's files into that folder.
+    inline bool looksLikeSession (const juce::File& dir)
+    {
+        return hasTakeAudio (dir)
+            || findSessionProj (dir).existsAsFile()
+            || dir.getChildFile (sessionmix::kFileName).existsAsFile()
+            || dir.getChildFile ("session_settings.json").existsAsFile()
+            || dir.getChildFile ("markers.json").existsAsFile()
+            || dir.getChildFile ("Audio Files").isDirectory()
+            || dir.getChildFile ("Session File Backups").isDirectory();
     }
 
     // Run before anything in the session loads. `hasTakeAudio` also catches a
