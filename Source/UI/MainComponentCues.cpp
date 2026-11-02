@@ -318,7 +318,10 @@ void MainComponent::addCueAtTransport()
     // A modal stands between the engineer and STOP, so during a take the cue
     // keeps its suggested name until there is time to change it.
     if (engine.isRecording()) { addCue (suggested); return; }
-    promptCueName ("Add Cue", suggested, addCue);
+    promptCueName ("Add Cue", suggested, [this, addCue, scope = questionScope()] (const juce::String& name)
+    {
+        if (stillInScope (scope)) addCue (name);
+    });
 }
 
 // What currentPlayheadSamples counts in. A first take has no player rate yet.
@@ -342,9 +345,9 @@ void MainComponent::renameCurrentCue()
     const auto idx     = currentCueIndex;
     const auto current = cues[(size_t) idx].name;
 
-    promptCueName ("Rename Cue", current, [this, idx] (const juce::String& name)
+    promptCueName ("Rename Cue", current, [this, idx, scope = questionScope()] (const juce::String& name)
     {
-        if (name.isEmpty()) return;
+        if (name.isEmpty() || ! stillInScope (scope)) return;
         if (idx < 0 || idx >= (int) cues.size()) return;
         cues[(size_t) idx].name = name;
         setlistBar.setCues (cues, currentCueIndex);

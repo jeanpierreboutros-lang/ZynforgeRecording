@@ -125,6 +125,7 @@ void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     cursorPunchQuestion = aw;
+    cursorPunchScope = questionScope();
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int answer)
     {
@@ -135,7 +136,7 @@ void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
 
 void MainComponent::answerCursorPunch (int answer)
 {
-    if (answer == 0) return;
+    if (answer == 0 || ! stillInScope (cursorPunchScope)) return;
     // This is a fresh press through every refusal, because anything can have
     // moved while the question was open. A take or playback started since
     // would give the press another meaning, so it stops here.
@@ -1152,9 +1153,9 @@ void MainComponent::onVscClicked()
     if (strips <= 0) { showStatus ("No strips to repatch"); return; }
 
     juce::Component::SafePointer<MainComponent> self (this);
-    const auto repatch = [self]
+    const auto repatch = [self, scope = questionScope()]
     {
-        if (self == nullptr) return;
+        if (self == nullptr || ! self->stillInScope (scope)) return;
         if (self->engine.isRecording() || self->captureMetadataPending)
         { self->showStatus ("Virtual Soundcheck waits until the take has stopped"); return; }
         const auto before = self->beginMixerUndo();
@@ -1181,9 +1182,9 @@ void MainComponent::onVscClicked()
 void MainComponent::restoreOutputPatch()
 {
     juce::Component::SafePointer<MainComponent> self (this);
-    const auto restore = [self]
+    const auto restore = [self, scope = questionScope()]
     {
-        if (self == nullptr) return;
+        if (self == nullptr || ! self->stillInScope (scope)) return;
         if (self->engine.isRecording() || self->captureMetadataPending)
         { self->showStatus ("Restoring outputs waits until the take has stopped"); return; }
         const auto before = self->beginMixerUndo();

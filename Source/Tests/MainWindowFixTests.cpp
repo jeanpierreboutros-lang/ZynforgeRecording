@@ -8,6 +8,7 @@
 #include "../UI/SessionProjPath.h"
 #include "../Audio/ChannelAlarm.h"
 #include "../Audio/SessionBackup.h"
+#include "../Audio/VirtualSoundcheck.h"
 #include "SilentTestDevice.h"
 
 #include <functional>
@@ -174,6 +175,7 @@ namespace zynforge
             stripDeleteAsks();
             combosFollowTheDevice();
             pairsTakeTwoChannels();
+            questionsKeepTheirSession();
         }
 
     private:
@@ -901,6 +903,132 @@ namespace zynforge
                 gate->release.signal();
                 expect (w.stopped());
                 w.recorder().beforeFinalizationForTests = {};
+            }
+        }
+
+        void nameStrips (Window& w, const juce::String& prefix)
+        {
+            for (int t = 0; t < w.recorder().getNumTracks(); ++t)
+                w.engine().setTrackName (t, prefix + juce::String (t + 1));
+        }
+
+        // Opens another session with the question still up, as the menu bar and
+        // a Finder open can.
+        juce::File swapSession (Window& w, int tracks)
+        {
+            auto other = tempDir ("other");
+            w.dirs.add (other);
+            recordBaseTake (other, tracks, 50);
+            w.main.openSessionFolder (other);
+            w.main.engine.prepareForTests (kRate, kBlock);
+            return other;
+        }
+
+        void questionsKeepTheirSession()
+        {
+            beginTest ("A soundcheck question answered in another session repatches nothing");
+            {
+                Window w (2);
+                std::function<void()> answer;
+                w.main.confirmForTests = [&answer] (std::function<void()> yes) { answer = std::move (yes); };
+                w.main.onVscClicked();
+                w.main.confirmForTests = {};
+                expect ((bool) answer);
+                swapSession (w, 2);
+                answer();
+                expect (! vsc::hasSavedPatch (w.engine()), "the new session's strips were repatched");
+                expect (w.main.statusLabel.getText().contains ("session changed"), w.main.statusLabel.getText());
+            }
+
+            beginTest ("Replace From Cursor answered in another session starts nothing");
+            {
+                Window w (2);
+                w.arm ({ 0 });
+                MainComponent::RecordStartPlan plan;
+                plan.punchAt = 4800;
+                plan.armed = 1;
+                w.main.askBeforeCursorPunch (plan);
+                swapSession (w, 2);
+                w.arm ({ 0 });
+                w.main.answerCursorPunch (2);
+                expect (! w.engine().isRecording(), "the answer punched the new session");
+                dismissModals();
+            }
+
+            beginTest ("Batch Rename answered in another session writes no names");
+            {
+                Window w (2);
+                nameStrips (w, "Old ");
+                w.main.showBatchRenameDialog();
+                expectEquals (modalCount(), 1);
+                swapSession (w, 2);
+                nameStrips (w, "New ");
+                if (auto* modal = juce::Component::getCurrentlyModalComponent()) modal->exitModalState (1);
+                pumpUntil ([] { return modalCount() == 0; }, 2000);
+                expectEquals (w.recorder().getTrack (0).name, juce::String ("New 1"),
+                              "the old session's names landed on the new strips");
+            }
+
+            beginTest ("Batch Colour stands down once its strips are gone");
+            {
+                Window w (6);
+                const auto keep = juce::Colour (0xff336699);
+                w.main.showBatchColourDialog();
+                expectEquals (modalCount(), 1);
+                auto* dialog = juce::Component::getCurrentlyModalComponent();
+                swapSession (w, 2);
+                w.engine().setTrackColour (0, keep);
+
+                // The last row's swatch, for a strip this session doesn't have.
+                juce::Button* last = nullptr;
+                std::function<void (juce::Component&)> findLast = [&] (juce::Component& c)
+                {
+                    for (auto* child : c.getChildren())
+                    {
+                        if (auto* button = dynamic_cast<juce::TextButton*> (child))
+                            if (button->getButtonText().isEmpty()) last = button;
+                        findLast (*child);
+                    }
+                };
+                findLast (*dialog);
+                expect (last != nullptr);
+                if (last != nullptr) last->onClick();
+                expectEquals (modalCount(), 1, "a picker opened for a strip that is gone");
+
+                dialog->exitModalState (0);
+                pumpUntil ([] { return modalCount() == 0; }, 2000);
+                expect (w.recorder().getTrack (0).colourARGB.load() == keep.getARGB(),
+                        "Cancel painted the old session's colours over this one");
+            }
+
+            beginTest ("Add Tracks refuses by name when the moment has passed");
+            {
+                Window w (2);
+                const auto stale = w.main.questionScope();
+                AddTracksDialog::Entry entry;
+                entry.count = 2;
+                swapSession (w, 2);
+                w.main.addTracks ({ entry }, stale);
+                expectEquals (w.recorder().getNumTracks(), 2, "tracks landed in the new session");
+
+                w.arm ({ 0 });
+                const auto scope = w.main.questionScope();
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording());
+                w.main.addTracks ({ entry }, scope);
+                expectEquals (w.recorder().getNumTracks(), 2);
+                expect (w.main.statusLabel.getText().contains ("No tracks were added"), w.main.statusLabel.getText());
+                expect (! w.main.statusLabel.getText().startsWith ("Added"));
+                stopTake (w);
+            }
+
+            beginTest ("The empty mixer's Add tracks obeys LOCK");
+            {
+                Window w (2);
+                w.main.onLockToggled();
+                w.main.addChannelButton.onClick();
+                expectEquals (modalCount(), 0, "Add tracks opened under LOCK");
+                w.main.onLockToggled();
             }
         }
 

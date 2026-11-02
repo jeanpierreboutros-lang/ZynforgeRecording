@@ -11,6 +11,7 @@
 #include "../Network/ConsoleLink.h"
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
+#include "AddTracksDialog.h"
 #include "AlarmBanner.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
@@ -77,6 +78,12 @@ private:
     void rebuildStrips();
     void updateMixerPlaceholder();   // show/hide the MIXER empty-state overlay
     void onRecordClicked();
+    // What an open question was raised about. By the time it is answered the
+    // menu bar, a Finder open or a remote can have changed either.
+    struct QuestionScope { juce::File session; int layout { -1 }; };
+    QuestionScope questionScope();
+    bool stillInScope (const QuestionScope&);
+    void addTracks (const std::vector<zynforge::AddTracksDialog::Entry>&, const QuestionScope&);
     // onRecordClicked's stages, in order. A press during a take is consumed
     // first; prepareRecordStart runs EVERY refusal before anything changes;
     // then the take starts through exactly one path.
@@ -676,6 +683,7 @@ private:
     bool manualPunchActive { false };
     bool cursorPunchAnswered { false };   // true only around the press that "Replace From Cursor" makes
     juce::Component::SafePointer<juce::AlertWindow> cursorPunchQuestion;
+    QuestionScope cursorPunchScope;
 
     // Per-session cue list -- populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.
@@ -684,11 +692,6 @@ private:
 
     void loadSetlistFromActiveSession();
     bool saveSetlistToActiveSession (bool writeBackup = true) const;
-    // What an open question was raised about. By the time it is answered the
-    // menu bar, a Finder open or a remote can have changed either.
-    struct QuestionScope { juce::File session; int layout { -1 }; };
-    QuestionScope questionScope();
-    bool stillInScope (const QuestionScope&);
     void jumpToCue (int index);
     void addCueAtTransport();
     double timelineRate();

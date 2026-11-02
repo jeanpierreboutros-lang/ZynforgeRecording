@@ -244,6 +244,12 @@ MainComponent::MainComponent()
     addChannelButton.setTooltip ("Set the number of recording channels -- opens a prompt where you type the count (1-256).");
     addChannelButton.onClick = [this]
     {
+        // The empty mixer's Add tracks button lands here past the disabled one.
+        if (sessionLocked)
+        {
+            showStatus ("LOCKED -- click UNLOCK to resume control");
+            return;
+        }
         if (sessionIoBusy.load())
         {
             showStatus ("Wait for the session operation to finish");
@@ -257,54 +263,9 @@ MainComponent::MainComponent()
 
         juce::Component::SafePointer<MainComponent> self (this);
         zynforge::AddTracksDialog::launch (
-            [self, this] (const std::vector<zynforge::AddTracksDialog::Entry>& entries)
+            [self, scope = questionScope()] (const std::vector<zynforge::AddTracksDialog::Entry>& entries)
         {
-            if (self == nullptr || entries.empty()) return;
-
-            const int existing = engine.getRecorder().getNumTracks();
-            int firstNew = existing;
-            int newTracks = 0;
-            for (const auto& e : entries)
-                newTracks += e.count * (e.stereo ? 2 : 1);
-            const int target = juce::jlimit (0, 256, existing + newTracks);
-            engine.setStripCount (target);
-
-            // Apply per-row naming + stereo flags to the just-added strips.
-            int cursor = firstNew;
-            int totalStereo = 0;
-            for (const auto& e : entries)
-            {
-                for (int i = 0; i < e.count && cursor < target; ++i)
-                {
-                    const int suffix = e.count > 1 ? i + 1 : 0;
-                    const auto base  = e.baseName.isNotEmpty() ? e.baseName : juce::String (cursor + 1);
-                    if (e.stereo && cursor + 1 < target)
-                    {
-                        const auto label = suffix > 0 ? base + " " + juce::String (suffix) : base;
-                        engine.setTrackName  (cursor,     label);
-                        engine.setTrackName  (cursor + 1, label + " R");
-                        engine.setTrackStereo (cursor,     true);
-                        engine.setTrackStereo (cursor + 1, false);
-                        // Hard-pan the new pair L/R so it reproduces its full
-                        // stereo image from the start. Matches import.
-                        engine.setTrackPan (cursor,     -1.0f);
-                        engine.setTrackPan (cursor + 1,  1.0f);
-                        cursor += 2;
-                        ++totalStereo;
-                    }
-                    else
-                    {
-                        engine.setTrackName  (cursor, suffix > 0 ? base + " " + juce::String (suffix)
-                                                                  : base);
-                        engine.setTrackStereo (cursor, false);
-                        ++cursor;
-                    }
-                }
-            }
-            lastTrackCount = -1;   // force rebuild for stereo collapse
-            showStatus ("Added " + zynforge::counted (cursor - firstNew, "track")
-                        + (totalStereo > 0 ? " (" + juce::String (totalStereo) + " stereo)"
-                                            : juce::String()));
+            if (self != nullptr) self->addTracks (entries, scope);
         });
     };
     addAndMakeVisible (addChannelButton);
