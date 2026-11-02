@@ -74,6 +74,64 @@ namespace zynforge::flacrepair
             else if (rateCode == 13 || rateCode == 14) at += 2;
             return at < available && crc8 (p, at) == p[at];
         }
+
+        // Where the last frame whose CRC-16 holds ends, in samples, from the
+        // bytes after `in`'s STREAMINFO. 0 when no whole frame can be found.
+        inline juce::int64 lastWholeFrameEnd (juce::FileInputStream& in, int blockSize)
+        {
+            constexpr juce::int64 kTailBytes = 1 << 20;
+            const auto start = juce::jmax ((juce::int64) 42, in.getTotalLength() - kTailBytes);
+            std::vector<juce::uint8> tail ((size_t) (in.getTotalLength() - start));
+            if (! in.setPosition (start)
+                || in.read (tail.data(), (int) tail.size()) != (int) tail.size())
+                return 0;
+
+            std::vector<Frame> frames;
+            for (size_t i = 0; i + 1 < tail.size(); ++i)
+            {
+                juce::int64 number = 0;
+                int samples = 0;
+                if (parseFrame (tail.data() + i, tail.size() - i, number, samples))
+                    frames.push_back ({ i, number, samples });
+            }
+
+            const auto whole = [&tail] (size_t from, size_t to)
+            {
+                if (to < from + 8) return false;
+                const auto stored16 = (juce::uint16) ((tail[to - 2] << 8) | tail[to - 1]);
+                return crc16 (tail.data() + from, to - from - 2) == stored16;
+            };
+            for (auto it = frames.rbegin(); it != frames.rend(); ++it)
+            {
+                bool ends = whole (it->offset, tail.size());
+                for (auto next = frames.rbegin(); ! ends && next != it; ++next)
+                    ends = next->number == it->number + 1 && whole (it->offset, next->offset);
+                if (ends) return it->number * blockSize + it->samples;
+            }
+            return 0;
+        }
+
+        // STREAMINFO's maximum block size, or 0 for anything but FLAC.
+        inline int streamInfoBlockSize (const juce::uint8* head) noexcept
+        {
+            if (std::memcmp (head, "fLaC", 4) != 0 || (head[4] & 0x7f) != 0) return 0;
+            return (head[10] << 8) | head[11];
+        }
+    }
+
+    // How many samples the file's frames really hold. A file cut short after it
+    // was finished keeps STREAMINFO's full length, and the decoder fills what it
+    // cannot find with zeros and says nothing. -1 when it cannot be told.
+    inline juce::int64 wholeFramesEnd (const juce::File& file)
+    {
+        juce::FileInputStream in (file);
+        if (in.failedToOpen() || in.getTotalLength() < 42) return -1;
+        juce::uint8 head[42];
+        if (in.read (head, 42) != 42) return -1;
+        const int blockSize = detail::streamInfoBlockSize (head);
+        if (blockSize <= 0) return -1;
+        const auto end = detail::lastWholeFrameEnd (in, blockSize);
+        return end > 0 ? end : -1;
     }
 
     // A FLAC encoder writes STREAMINFO's total length when it finishes, so a
@@ -91,44 +149,14 @@ namespace zynforge::flacrepair
             if (in.failedToOpen() || in.getTotalLength() < 42) return Result::untouched;
             juce::uint8 head[42];
             if (in.read (head, 42) != 42) return Result::untouched;
-            if (std::memcmp (head, "fLaC", 4) != 0 || (head[4] & 0x7f) != 0) return Result::untouched;
+            const int blockSize = detail::streamInfoBlockSize (head);   // STREAMINFO's maximum
+            if (blockSize <= 0) return Result::untouched;
             const auto stored = ((juce::int64) (head[21] & 0x0f) << 32)
                               | ((juce::int64) head[22] << 24) | ((juce::int64) head[23] << 16)
                               | ((juce::int64) head[24] << 8)  |  (juce::int64) head[25];
             if (stored != 0) return Result::untouched;
             lengthByte = head[21];
-            const int blockSize = (head[10] << 8) | head[11];   // STREAMINFO's maximum
-            if (blockSize <= 0) return Result::untouched;
-
-            constexpr juce::int64 kTailBytes = 1 << 20;
-            const auto start = juce::jmax ((juce::int64) 42, in.getTotalLength() - kTailBytes);
-            std::vector<juce::uint8> tail ((size_t) (in.getTotalLength() - start));
-            if (! in.setPosition (start)
-                || in.read (tail.data(), (int) tail.size()) != (int) tail.size())
-                return Result::untouched;
-
-            std::vector<detail::Frame> frames;
-            for (size_t i = 0; i + 1 < tail.size(); ++i)
-            {
-                juce::int64 number = 0;
-                int samples = 0;
-                if (detail::parseFrame (tail.data() + i, tail.size() - i, number, samples))
-                    frames.push_back ({ i, number, samples });
-            }
-
-            const auto whole = [&tail] (size_t from, size_t to)
-            {
-                if (to < from + 8) return false;
-                const auto stored16 = (juce::uint16) ((tail[to - 2] << 8) | tail[to - 1]);
-                return detail::crc16 (tail.data() + from, to - from - 2) == stored16;
-            };
-            for (auto it = frames.rbegin(); it != frames.rend() && total == 0; ++it)
-            {
-                bool ends = whole (it->offset, tail.size());
-                for (auto next = frames.rbegin(); ! ends && next != it; ++next)
-                    ends = next->number == it->number + 1 && whole (it->offset, next->offset);
-                if (ends) total = it->number * blockSize + it->samples;
-            }
+            total = detail::lastWholeFrameEnd (in, blockSize);
         }
         if (total <= 0) return Result::untouched;
 

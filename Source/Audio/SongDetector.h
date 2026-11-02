@@ -49,9 +49,12 @@ namespace zynforge::songs
 
     // Per-file peak-envelope flags: flags[w] = 1 when window w's peak is
     // above threshold. Streams the file; never holds more than one block.
+    // A read that fails sets `readFailed`, because a scan that stopped early
+    // looks exactly like a take that went quiet.
     inline std::vector<char> envelopeFlags (const juce::File& f, float thresholdDb,
                                             double windowSec, double& srOut,
-                                            const std::atomic<bool>* cancel = nullptr)
+                                            const std::atomic<bool>* cancel = nullptr,
+                                            bool* readFailed = nullptr)
     {
         std::vector<char> flags;
         juce::AudioFormatManager fm;
@@ -70,7 +73,11 @@ namespace zynforge::songs
             if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
             const int n = (int) juce::jmin ((juce::int64) win, reader->lengthInSamples - p);
             buf.clear();
-            if (! reader->read (&buf, 0, n, p, true, false)) break;
+            if (! reader->read (&buf, 0, n, p, true, false))
+            {
+                if (readFailed != nullptr) *readFailed = true;
+                return {};
+            }
             flags.push_back (buf.getMagnitude (0, 0, n) >= thresh ? 1 : 0);
         }
         return flags;
@@ -103,9 +110,10 @@ namespace zynforge::songs
     }
 
     // Every voice's envelope on the timeline. Each file is read once however
-    // many clips use it. Empty when cancelled.
+    // many clips use it. Empty when cancelled or when a take could not be read.
     inline std::vector<std::vector<char>> scanVoices (const std::vector<Voice>& voices, const Params& params,
-                                                      double& srOut, const std::atomic<bool>* cancel = nullptr)
+                                                      double& srOut, const std::atomic<bool>* cancel = nullptr,
+                                                      bool* readFailed = nullptr)
     {
         std::vector<std::vector<char>> tracks;
         std::map<juce::String, std::vector<char>> perFile;
@@ -119,15 +127,17 @@ namespace zynforge::songs
                 if (known == perFile.end())
                 {
                     double fileRate = 0.0;
-                    known = perFile.emplace (key, envelopeFlags (file, params.thresholdDb,
-                                                                 params.windowSec, fileRate, cancel)).first;
+                    known = perFile.emplace (key, envelopeFlags (file, params.thresholdDb, params.windowSec,
+                                                                 fileRate, cancel, readFailed)).first;
                     if (fileRate > 0.0) srOut = fileRate;
                 }
                 return &known->second;
             };
             // A first read may set the rate the windows are counted in.
             for (const auto& clip : voice.clips) flagsFor (clip);
-            if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
+            if ((cancel != nullptr && cancel->load (std::memory_order_relaxed))
+                || (readFailed != nullptr && *readFailed))
+                return {};
             const int win = juce::jmax (64, (int) (srOut * params.windowSec));
             auto flags = timelineFlags (voice.clips, win, flagsFor);
             if (! flags.empty()) tracks.push_back (std::move (flags));

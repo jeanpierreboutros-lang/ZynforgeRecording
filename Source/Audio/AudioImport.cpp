@@ -1,4 +1,5 @@
 #include "AudioImport.h"
+#include "CheckedAudioReader.h"
 #include "CheckedFileStream.h"
 #include "CheckedReaderSource.h"
 #include "SincResampler.h"
@@ -137,7 +138,7 @@ namespace zynforge::audioimport
                 break;
             }
 
-            std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (source));
+            const auto reader = openCheckedReader (formats, source);
             if (reader == nullptr)
             {
                 ++result.failed;

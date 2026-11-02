@@ -494,7 +494,7 @@ namespace zynforge
             // without colliding with the single-file entry.
             const juce::int64 h = main.hashCode() ^ ((juce::int64) parts.size() << 48) ^ 0x5bd1e995LL;
             if (force) thumbCache.removeThumb (h);
-            if (auto r = ConcatReader::create (formats, parts))
+            if (auto r = ConcatReader::createUnchecked (formats, parts))
                 thumb.setReader (r.release(), h);
             else
                 thumb.setSource (new juce::FileInputSource (main));

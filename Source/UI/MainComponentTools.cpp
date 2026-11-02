@@ -834,9 +834,16 @@ void MainComponent::detectSongsToMarkers()
     {
         const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
         double sr = 48000.0;
-        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel);
+        bool readFailed = false;
+        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel, &readFailed);
         if (cancel.load (std::memory_order_relaxed))
             return [self] { if (self != nullptr) self->showStatus ("Song detection stopped: a take started"); };
+        if (readFailed)
+            return [self, sessionDir]
+            {
+                if (self != nullptr && self->analysisResultWanted (sessionDir))
+                    self->showStatus ("Song detection failed: a take could not be read. Check the session's drive; no markers were added");
+            };
         const auto found = zynforge::songs::detect (flags, sr, params);
 
         return [self, found, sessionDir, arrangement]

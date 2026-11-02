@@ -4,7 +4,15 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/AudioEngine.h"
+#include "../Audio/AudioImport.h"
+#include "../Audio/CheckedAudioReader.h"
+#include "../Audio/FlacRepair.h"
 #include "../Audio/MultiPartReader.h"
+#include "../Audio/PunchSplice.h"
+#include "../Audio/QcAnalyzer.h"
+#include "../Audio/SongDetector.h"
+#include "../Audio/SongExport.h"
+#include "../Audio/TrackExporter.h"
 #include "../Capture/CaptureDaemon.h"
 #include "../UI/MainComponent.h"
 #include "../UI/RecordPosition.h"
@@ -12,6 +20,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <functional>
+#include <unistd.h>
 
 namespace zynforge
 {
@@ -578,4 +587,419 @@ namespace zynforge
     };
 
     static PunchRuleTests punchRuleTests;
+
+    // Every test here fails through a real read(2) on a real file: the drive is
+    // played by cutting the file short with truncate(2), so the bytes genuinely
+    // are not there. A reader that merely returned false would prove nothing,
+    // because the readers JUCE ships never do.
+    class FailedReadTests final : public juce::UnitTest
+    {
+    public:
+        FailedReadTests() : juce::UnitTest ("A failed read is a failure", "zynforge") {}
+
+        static constexpr int kSamples = 1 << 18;   // about 5.5 s
+
+        struct Folder
+        {
+            juce::File dir = tempDir ("read");
+            Folder() { dir.getChildFile ("Audio Files").createDirectory(); }
+            ~Folder() { dir.deleteRecursively(); }
+            juce::File audio (const juce::String& name) const
+            { return dir.getChildFile ("Audio Files").getChildFile (name); }
+        };
+
+        // Noise, so FLAC cannot shrink it to nothing and silence is obvious.
+        static void writeAudio (const juce::File& file, int samples = kSamples, int channels = 1, int seed = 1)
+        {
+            std::unique_ptr<juce::AudioFormat> format;
+            const auto extension = file.getFileExtension().toLowerCase();
+            if      (extension == ".flac") format = std::make_unique<juce::FlacAudioFormat>();
+            else if (extension == ".aif")  format = std::make_unique<juce::AiffAudioFormat>();
+            else                           format = std::make_unique<juce::WavAudioFormat>();
+            file.deleteFile();
+            std::unique_ptr<juce::AudioFormatWriter> writer (format->createWriterFor (
+                file.createOutputStream().release(), kRate, (unsigned int) channels, 24, {}, 0));
+            juce::Random random (seed);
+            juce::AudioBuffer<float> audio (channels, samples);
+            for (int c = 0; c < channels; ++c)
+                for (int i = 0; i < samples; ++i)
+                    audio.setSample (c, i, 0.1f + 0.4f * random.nextFloat());
+            writer->writeFromAudioSampleBuffer (audio, 0, samples);
+        }
+
+        // Keeps `fraction` of the file: a drive that stopped answering part way.
+        void cutShort (const juce::File& file, double fraction = 0.5)
+        {
+            const auto keep = (off_t) ((double) file.getSize() * fraction);
+            expectEquals (::truncate (file.getFullPathName().toRawUTF8(), keep), 0, "the fixture did not cut the file");
+            expectEquals (file.getSize(), (juce::int64) keep);
+        }
+
+        static juce::AudioFormatManager& formats()
+        {
+            static juce::AudioFormatManager manager;
+            if (manager.getNumKnownFormats() == 0) manager.registerBasicFormats();
+            return manager;
+        }
+
+        static int partials (const juce::File& dir)
+        {
+            return dir.findChildFiles (juce::File::findFiles, true, "*.partial*").size();
+        }
+
+        void readers (Folder& f)
+        {
+            for (const juce::String extension : { ".wav", ".aif", ".flac" })
+            {
+                beginTest ("A healthy " + extension + " reads the same through the checked reader, to its last sample");
+                {
+                    const auto file = f.audio ("healthy" + extension);
+                    writeAudio (file);
+                    auto checked = ConcatReader::create (formats(), { file });
+                    std::unique_ptr<juce::AudioFormatReader> plain (formats().createReaderFor (file));
+                    expect (checked != nullptr && plain != nullptr);
+                    if (checked == nullptr || plain == nullptr) continue;
+                    expectEquals (checked->lengthInSamples, plain->lengthInSamples);
+                    expectEquals ((int) checked->bitsPerSample, (int) plain->bitsPerSample);
+                    juce::AudioBuffer<float> a (1, kSamples), b (1, kSamples);
+                    expect (checked->read (&a, 0, kSamples, 0, true, false));
+                    expect (plain->read (&b, 0, kSamples, 0, true, false));
+                    bool same = true;
+                    for (int i = 0; i < kSamples; ++i) same = same && a.getSample (0, i) == b.getSample (0, i);
+                    expect (same, "the checked reader changed the audio");
+                    expect (checked->read (&a, 0, 4096, 2048, true, false), "a read back into the file failed");
+                }
+
+                beginTest ("A " + extension + " cut short while it is open fails, and stays failed");
+                {
+                    const auto file = f.audio ("cut" + extension);
+                    writeAudio (file);
+                    auto reader = ConcatReader::create (formats(), { file });
+                    expect (reader != nullptr);
+                    if (reader == nullptr) continue;
+                    juce::AudioBuffer<float> audio (1, 4096);
+                    expect (reader->read (&audio, 0, 4096, 0, true, false), "the head should read");
+                    cutShort (file);
+                    bool failed = false;
+                    for (juce::int64 at = 4096; at + 4096 <= reader->lengthInSamples && ! failed; at += 4096)
+                        failed = ! reader->read (&audio, 0, 4096, at, true, false);
+                    expect (failed, "reading past a missing part of the file reported success");
+                    expect (audio.getMagnitude (0, 4096) == 0.0f, "a failed read handed back something");
+                    expect (! reader->read (&audio, 0, 4096, 0, true, false), "a failed reader recovered");
+                }
+            }
+
+            for (const juce::String extension : { ".wav", ".aif" })
+            {
+                beginTest ("A " + extension + " whose header promises more than the file holds fails at that point");
+                {
+                    const auto file = f.audio ("promise" + extension);
+                    writeAudio (file);
+                    cutShort (file);
+                    auto reader = ConcatReader::create (formats(), { file });
+                    expect (reader != nullptr);
+                    if (reader == nullptr) continue;
+                    expectEquals (reader->lengthInSamples, (juce::int64) kSamples);
+                    juce::AudioBuffer<float> audio (1, 4096);
+                    expect (reader->read (&audio, 0, 4096, 0, true, false), "the part that exists should read");
+                    expect (! reader->read (&audio, 0, 4096, kSamples - 8192, true, false),
+                            "bytes that are not there read as silence");
+                }
+            }
+
+            beginTest ("A .flac cut short before it was opened fails where its frames run out");
+            {
+                const auto file = f.audio ("promise.flac");
+                writeAudio (file);
+                cutShort (file);
+                const auto frames = flacrepair::wholeFramesEnd (file);
+                expect (frames > 0 && frames < kSamples, "the frames were not counted");
+                auto reader = ConcatReader::create (formats(), { file });
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    juce::AudioBuffer<float> audio (1, 4096);
+                    expect (reader->read (&audio, 0, 4096, 0, true, false), "the frames that exist should read");
+                    expect (! reader->read (&audio, 0, 4096, kSamples - 8192, true, false),
+                            "a decoder that ran dry read as silence");
+                }
+            }
+
+            beginTest ("A second part cut short fails a multi-part take");
+            {
+                const auto main = f.audio ("Track_09.wav"), part = f.audio ("Track_09_part02.wav");
+                writeAudio (main, 8192);
+                writeAudio (part);
+                cutShort (part);
+                auto reader = ConcatReader::create (formats(), findTakeParts (main));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    juce::AudioBuffer<float> audio (1, 4096);
+                    expect (reader->read (&audio, 0, 4096, 0, true, false));
+                    expect (! reader->read (&audio, 0, 4096, reader->lengthInSamples - 4096, true, false));
+                }
+            }
+
+            beginTest ("An error from the operating system fails the read too");
+            {
+                // read(2) on a directory fails with EISDIR, the nearest thing to
+                // EIO that needs no drive to be pulled.
+                auto stream = CheckedInputStream::open (f.dir);
+                expect (stream != nullptr);
+                if (stream != nullptr)
+                {
+                    stream->watchAudio (false);
+                    char bytes[16] {};
+                    expectEquals (stream->read (bytes, sizeof (bytes)), 0);
+                    expect (stream->hasFailed(), "a read error went unnoticed");
+                    expect (stream->isExhausted(), "a stream that failed must end, or a decoder spins on it");
+                }
+            }
+
+            beginTest ("Before the audio starts a short read is the format reader's own business");
+            {
+                const auto file = f.audio ("header.wav");
+                expect (file.replaceWithText ("xx"));
+                expect (openCheckedReader (formats(), file) == nullptr);
+            }
+
+            beginTest ("Playback and drawing still get silence rather than a stop");
+            {
+                const auto file = f.audio ("playback.wav");
+                writeAudio (file);
+                cutShort (file);
+                auto reader = ConcatReader::createUnchecked (formats(), { file });
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    juce::AudioBuffer<float> audio (1, 4096);
+                    expect (reader->read (&audio, 0, 4096, kSamples - 8192, true, false));
+                }
+            }
+        }
+
+        void exports (Folder& f)
+        {
+            for (bool pair : { false, true })
+                for (double rate : { 48000.0, 44100.0 })
+                {
+                    beginTest (juce::String (pair ? "Stereo pair" : "Track") + " export to " + juce::String (rate, 0)
+                               + " fails on a cut source and leaves nothing behind");
+                    const auto left = f.audio ("exportL.wav"), right = f.audio ("exportR.wav");
+                    writeAudio (left);
+                    writeAudio (right, kSamples, 1, 2);
+                    cutShort (pair ? right : left);
+                    const auto out = f.dir.getChildFile ("Exports");
+                    out.createDirectory();
+                    const auto stem = out.getChildFile ("result");
+                    TrackExporter exporter;
+                    ExportOptions options;
+                    options.sampleRate = rate;
+                    juce::String error;
+                    const bool ok = pair ? exporter.exportStereoPair (left, right, stem, options, error)
+                                         : exporter.exportTrack (left, stem, options, error);
+                    expect (! ok, "an export of a damaged take reported success");
+                    expect (error.isNotEmpty());
+                    expect (! stem.withFileExtension (".wav").existsAsFile(), "a damaged export was installed");
+                    expectEquals (partials (out), 0);
+                }
+
+            beginTest ("Export of a healthy take still succeeds and is the whole take");
+            {
+                const auto source = f.audio ("exportOk.wav");
+                writeAudio (source);
+                const auto stem = f.dir.getChildFile ("Exports").getChildFile ("ok");
+                TrackExporter exporter;
+                ExportOptions options;
+                juce::String error;
+                expect (exporter.exportTrack (source, stem, options, error), error);
+                std::unique_ptr<juce::AudioFormatReader> reader (formats().createReaderFor (stem.withFileExtension (".wav")));
+                expect (reader != nullptr && reader->lengthInSamples == kSamples);
+            }
+        }
+
+        void renders()
+        {
+            const auto session = [this] (AudioEngine& engine, Folder& f, int tracks)
+            {
+                for (int t = 0; t < tracks; ++t)
+                    writeAudio (f.audio (juce::String::formatted ("Track_%02d.wav", t + 1)), kSamples, 1, t + 1);
+                engine.clearAllStripOverrides();
+                engine.setStripCount (tracks);
+                engine.prepareForTests (kRate, kBlock);
+                engine.loadSession (f.dir);
+            };
+
+            beginTest ("Bounce, stereo mix and pair bounce fail on a cut take and install nothing");
+            {
+                Folder f;
+                AudioEngine engine;
+                session (engine, f, 2);
+                const auto stem = f.dir.getChildFile ("stem.wav");
+                const auto mix  = f.dir.getChildFile ("mix.wav");
+                const auto pair = f.dir.getChildFile ("pair.wav");
+                expect (engine.bounceStereoMixToWav (mix, kSamples, kRate), "the healthy mix should bounce");
+                mix.deleteFile();
+                cutShort (f.audio ("Track_01.wav"));
+                expect (! engine.bounceTrackArrangementToWav (0, stem, kSamples, kRate, nullptr), "stem");
+                expect (! engine.bounceStereoMixToWav (mix, kSamples, kRate), "stereo mix");
+                expect (! engine.bounceStereoPairToWav (0, pair, kSamples, kRate, nullptr), "pair");
+                expect (! stem.existsAsFile() && ! mix.existsAsFile() && ! pair.existsAsFile());
+                expectEquals (partials (f.dir), 0);
+            }
+
+            beginTest ("Song export counts a cut take as failed, and no song file claims to be complete");
+            {
+                Folder f;
+                AudioEngine engine;
+                session (engine, f, 1);
+                cutShort (f.audio ("Track_01.wav"));
+                songexport::Choice choice;
+                choice.songs = { { 0, kSamples, "Song" } };
+                choice.numbers = { 1 };
+                choice.format.sampleRate = kRate;
+                const std::atomic<bool> cancel { false };
+                const auto exports = f.dir.getChildFile ("Export Files");
+                const auto outcome = songexport::run (engine, songexport::buildPlan (engine, choice, exports), cancel, nullptr);
+                expectEquals (outcome.written, 0, "a damaged song was written");
+                expect (outcome.firstError.isNotEmpty());
+                expect (! outcome.complete());
+                expectEquals (exports.findChildFiles (juce::File::findFiles, true, "*.wav").size(), 0);
+            }
+
+            beginTest ("Consolidate of a cut take changes nothing and leaves no render");
+            {
+                Folder f;
+                AudioEngine engine;
+                session (engine, f, 1);
+                const auto before = juce::JSON::toString (engine.playlistsToJson());
+                cutShort (f.audio ("Track_01.wav"));
+                expect (! engine.consolidateRange (0, 1024, kSamples - 1024), "a hole was consolidated");
+                expect (juce::JSON::toString (engine.playlistsToJson()) == before, "the clips moved anyway");
+                expectEquals (f.dir.findChildFiles (juce::File::findFiles, true, "*consolidat*").size(), 0);
+            }
+        }
+
+        void analysis()
+        {
+            beginTest ("QC says it could not read a cut take, and never calls it clean");
+            {
+                Folder f;
+                const auto take = f.audio ("Track_01.wav");
+                writeAudio (take);
+                cutShort (take);
+                const auto result = qc::analyzeFile (take);
+                expect (result.error.isNotEmpty(), "QC read a hole as quiet audio");
+                expect (qc::statusSummary ({ result }, 0).contains ("COULD NOT BE READ"));
+                expect (qc::reportText ("Show", { result }).contains ("QC INCOMPLETE"));
+            }
+
+            beginTest ("Detect Songs reports a cut take instead of finding no songs");
+            {
+                Folder f;
+                const auto take = f.audio ("Track_01.wav");
+                writeAudio (take);
+                cutShort (take);
+                songs::Voice voice;
+                voice.ownFile = take;
+                Clip whole;
+                whole.fileLengthSamples = kSamples;
+                voice.clips.push_back (whole);
+                double rate = kRate;
+                bool failed = false;
+                const songs::Params params;
+                const auto flags = songs::scanVoices ({ voice }, params, rate, nullptr, &failed);
+                expect (failed, "a failed read looked like a quiet take");
+                expect (flags.empty());
+            }
+
+            beginTest ("Import of a cut file fails and leaves no track");
+            {
+                Folder f;
+                const auto source = f.dir.getChildFile ("source.wav");
+                writeAudio (source);
+                cutShort (source);
+                const auto dir = f.dir.getChildFile ("Audio Files");
+                const auto result = audioimport::importFiles ({ source }, dir, 0, kRate, nullptr);
+                expectEquals (result.failed, 1, "a damaged import was accepted");
+                expect (result.tracks.empty());
+                expect (! dir.getChildFile ("Track_01.wav").existsAsFile());
+                expectEquals (partials (dir), 0);
+
+                const auto converted = audioimport::importFiles ({ source }, dir, 0, 44100.0, nullptr);
+                expectEquals (converted.failed, 1, "a converted import hid the failure");
+                expectEquals (partials (dir), 0);
+            }
+        }
+
+        void punches()
+        {
+            beginTest ("A splice refuses a base or an insert it cannot read in full");
+            {
+                Folder f;
+                const auto base = f.audio ("base.wav"), insert = f.audio ("insert.wav"), out = f.audio ("out.wav");
+                writeAudio (base);
+                writeAudio (insert, 8192);
+                expect (splicePunchFile (formats(), base, insert, 4096, out), "the healthy splice should work");
+                out.deleteFile();
+
+                cutShort (base);
+                expect (! splicePunchFile (formats(), base, insert, 4096, out), "a splice wrote a hole into a take");
+                expect (! out.existsAsFile(), "a failed splice left its output");
+
+                writeAudio (base);
+                cutShort (insert);
+                expect (! splicePunchFile (formats(), base, insert, 4096, out), "a splice wrote a hole from the punch");
+                expect (! out.existsAsFile());
+            }
+
+            beginTest ("A punch keeps its original when the base cannot be read in full");
+            {
+                const auto dir = tempDir ("punchbase");
+                recordTake (dir, 1, 200);
+                const auto take = trackFile (dir, 0);
+
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.armPunchIn (4 * kBlock);
+                expect (rec.startRecording (dir), rec.getStartError());
+
+                // The drive drops under the sidecar while the punch is rolling.
+                const auto sidecar = take.getSiblingFile ("Track_01.punchbase.wav");
+                expect (sidecar.existsAsFile(), "the base was not stashed");
+                cutShort (sidecar);
+                const auto damaged = juce::MD5 (sidecar).toHexString();
+
+                feedAll (rec, -0.3f, 10, 4 * kBlock);
+                rec.stopRecording();
+
+                expect (rec.hasPunchSpliceFailed(), "a splice over an unreadable base reported success");
+                expect (take.existsAsFile());
+                expect (juce::MD5 (take).toHexString() == damaged, "the original was not put back as it was");
+                expect (! sidecar.existsAsFile(), "the sidecar was left behind");
+                expectEquals (dir.getChildFile ("Session File Backups")
+                                 .findChildFiles (juce::File::findFiles, true, "Track_01*.wav").size(), 1,
+                              "the punch audio was not kept");
+                dir.deleteRecursively();
+            }
+        }
+
+        void runTest() override
+        {
+            AudioEngine::setTestModeSkipAudioInit (true);
+            const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
+            {
+                Folder f;
+                readers (f);
+                exports (f);
+            }
+            renders();
+            analysis();
+            punches();
+        }
+    };
+
+    static FailedReadTests failedReadTests;
 }

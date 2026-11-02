@@ -121,8 +121,7 @@ namespace zynforge
         // A take can be split across continuation parts (Track_NN_partXX from
         // continue-recording or auto-split). Stitch them so the export contains
         // the WHOLE take, not just part 1 -- the raw export used to silently
-        // drop everything after the first stop. Falls back to the single file
-        // if the parts have a hole (create refuses) so we still export part 1.
+        // drop everything after the first stop.
         const auto parts = findTakeParts (source);
         std::unique_ptr<juce::AudioFormatReader> reader (
             ConcatReader::create (formatManager, parts));
@@ -135,7 +134,6 @@ namespace zynforge
             outError = "Take has a missing/unreadable part -- export would be truncated";
             return false;
         }
-        if (reader == nullptr) reader.reset (formatManager.createReaderFor (source));
         if (reader == nullptr) { outError = "Cannot read source"; return false; }
 
         const auto channels  = (int) reader->numChannels;

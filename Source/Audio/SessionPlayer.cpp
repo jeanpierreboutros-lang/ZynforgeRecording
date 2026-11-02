@@ -194,7 +194,7 @@ namespace zynforge
                 if (! f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
                 { mainFile = f; break; }
             if (! mainFile.existsAsFile()) continue;
-            auto reader = ConcatReader::create (formatManager, findTakeParts (mainFile));
+            auto reader = ConcatReader::createUnchecked (formatManager, findTakeParts (mainFile));
             if (reader == nullptr) { prepared->complete = false; continue; }
             const double fileSR = reader->sampleRate;
             const bool stereo = reader->numChannels >= 2;
@@ -244,7 +244,7 @@ namespace zynforge
         {
             const auto key = clip.audioFile.getFullPathName();
             if (prepared->explicitReaders.count (key) != 0) continue;
-            auto raw = ConcatReader::create (formatManager, findTakeParts (clip.audioFile));
+            auto raw = ConcatReader::createUnchecked (formatManager, findTakeParts (clip.audioFile));
             if (! raw)
             {
                 prepared->complete = false;
@@ -461,7 +461,7 @@ namespace zynforge
                 const juce::ScopedLock sl (clipsLock);
                 if (extraReaders.find (key) != extraReaders.end()) continue;
             }
-            if (auto raw = ConcatReader::create (formatManager, findTakeParts (c.audioFile)))
+            if (auto raw = ConcatReader::createUnchecked (formatManager, findTakeParts (c.audioFile)))
             {
                 const auto bufSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
                 auto br = std::make_unique<PlaybackReader> (raw.release(), readerThread, bufSamples);
