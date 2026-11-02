@@ -214,7 +214,7 @@ namespace zynforge
         play      = make ("Play",         IconButton::Icon::Play,      brand::accentPlay);
         stop      = make ("Stop",         IconButton::Icon::Stop,      brand::textSecondary);
         record    = make ("Record",       IconButton::Icon::Record,    brand::accentRecord);
-        loop      = make ("Loop region",  IconButton::Icon::Loop,      brand::brandOrange);
+        loop      = make ("Loop region",  IconButton::Icon::Loop,      brand::textSecondary);
 
         gotoStart->setTooltip ("Go to session start (rewind playback to 0).");
         gotoEnd  ->setTooltip ("Go to session end.");
@@ -352,7 +352,12 @@ namespace zynforge
         if (rec         != lastRecording) { record->setRecording (rec);  lastRecording = rec; }
         if (recordArmed != lastArmed)     { record->setArmed (recordArmed); lastArmed = recordArmed; }
         if (pl          != lastPlaying)   { play  ->setActive (pl);       lastPlaying   = pl;  }
-        if (lp          != lastLooping)   { loop  ->setActive (lp);       lastLooping   = lp;  }
+        if (lp          != lastLooping)
+        {
+            loop->setBaseColour (lp ? brand::selectFill : brand::textSecondary);   // neutral at rest
+            loop->setActive (lp);
+            lastLooping = lp;
+        }
 
         if (stopped && stop != nullptr) stop->triggerFlash();
 

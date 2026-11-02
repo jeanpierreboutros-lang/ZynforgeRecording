@@ -1089,6 +1089,7 @@ void MainComponent::applyLockState()
     if (twinDialog != nullptr) twinDialog->setEnabled (e);
 
     lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
+    lockButton.setToggleState (sessionLocked, juce::dontSendNotification);
     showStatus (sessionLocked ? "LOCKED -- click UNLOCK to resume control"
                               : engine.isRecording()  ? "Recording"
                               : engine.isPlaying()    ? "Playing"
