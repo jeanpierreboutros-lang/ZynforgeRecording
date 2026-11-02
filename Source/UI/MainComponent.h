@@ -157,6 +157,9 @@ private:
     bool offerSessionRecovery (std::function<void()> onClosed = {});
     juce::Array<juce::File> sessionsToRecover (const juce::File& sessionsRoot) const;
     juce::String removeRecoveredSession (const juce::File& dir);
+    struct SessionPins { juce::File session, mixer, lastCapture, markers; double markerRate { 0.0 }; };
+    SessionPins beforeUnansweredStart;
+    void giveUpOnUnansweredStart();
     bool helperHoldsSession (const juce::File& dir) const;
     bool unprovenHelperAlive() const;
     void showStartupWelcome();

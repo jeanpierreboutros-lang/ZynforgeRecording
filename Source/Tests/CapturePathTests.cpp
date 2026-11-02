@@ -1315,6 +1315,39 @@ namespace zynforge
                 expect (status.tracks[1].stereoLeft, "a pair came back as two mono strips");
             }
 
+            beginTest ("A daemon START that never rolled leaves the window where it was");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                const auto before = rig.root.getChildFile ("before");
+                before.createDirectory();
+                main.engine.setActiveSessionDir (before);
+                main.engine.claimMixerFor (before);
+                main.engine.noteLastCapture (before);
+                main.engine.getMarkers().setContext (before, kRate);
+
+                std::atomic<bool> releaseStart { false };
+                rig.daemon.beforeStartForTests = [&] { while (! releaseStart.load()) juce::Thread::sleep (5); };
+                main.captureSupervisor.startReplyTimeoutMs = 50;
+                main.requestDaemonTake (rig.session, 1, {}, 0, true);
+                expect (main.daemonStartUnansweredMs != 0);
+                expect (main.engine.isExternalRecording());
+                releaseStart.store (true);      // nothing is armed, so the daemon refuses
+                expect (pumpUntil ([&] { return main.captureSupervisor.lastStatusAtMs() != 0; }, 3000));
+
+                main.daemonStartUnansweredMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter() - 20000);
+                expect (pumpUntil ([&]
+                {
+                    main.serviceCaptureDaemonLink();
+                    return ! main.engine.isExternalRecording();
+                }, 3000));
+                expectEquals (main.engine.getActiveSessionDir().getFullPathName(), before.getFullPathName());
+                expectEquals (main.engine.getMixerSession().getFullPathName(), before.getFullPathName());
+                expectEquals (main.engine.getLastCapture().getFullPathName(), before.getFullPathName());
+                expectEquals (main.engine.getMarkers().getSessionDir().getFullPathName(), before.getFullPathName());
+            }
+
             beginTest ("A take file that closes short is a failed write, not a clean STOP");
             {
                 const auto root = tempDir ("short-close");

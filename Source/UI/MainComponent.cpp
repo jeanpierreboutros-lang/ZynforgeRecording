@@ -497,6 +497,8 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
     auto& markers = engine.getMarkers();
     const auto markerSession = markers.getSessionDir();
     const auto markerRate    = markers.getSampleRate();
+    const SessionPins pinsBefore { engine.getActiveSessionDir(), engine.getMixerSession(), engine.getLastCapture(),
+                                   markerSession, markerRate };
     markers.setContext (dir, rate);
     if (captureSupervisor.startRecording (dir, numTracks, (int) engine.getRecorder().getCaptureFormat(), arms,
                                           engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var(),
@@ -522,6 +524,7 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         // Not a refusal. The window must not call this failed and move on while
         // the daemon rolls into a session it does not know about.
         lastCaptureFinalizationError.clear();
+        beforeUnansweredStart = pinsBefore;
         engine.beginExternalTake (dir, rate);
         engine.claimMixerFor (dir);
         engine.noteLastCapture (dir);
@@ -535,6 +538,21 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         showRecordRefusal (refusal.isNotEmpty() ? "Daemon refused RECORD: " + refusal
                                                 : juce::String ("Daemon record failed -- check Session > Capture daemon."));
     }
+}
+
+// Ten seconds of silence said no take rolled. The new folder stays on disk; it
+// holds a mixer and no audio, and nothing here deletes a session folder.
+void MainComponent::giveUpOnUnansweredStart()
+{
+    daemonStartUnansweredMs = 0;
+    engine.setExternalRecording (false);
+    const auto& before = beforeUnansweredStart;
+    engine.setActiveSessionDir (before.session);
+    engine.claimMixerFor (before.mixer);
+    if (before.lastCapture != juce::File()) engine.noteLastCapture (before.lastCapture);
+    else                                    engine.forgetLastCapture();
+    engine.getMarkers().setContext (before.markers, before.markerRate);
+    showStatus ("Daemon did not start the take");
 }
 
 bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)

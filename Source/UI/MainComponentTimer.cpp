@@ -115,11 +115,7 @@ void MainComponent::serviceCaptureDaemonLink()
                     // A status from before the daemon reached the START proves
                     // nothing, so only time settles this one.
                     if (juce::Time::getMillisecondCounter() - daemonStartUnansweredMs >= 10000)
-                    {
-                        daemonStartUnansweredMs = 0;
-                        engine.setExternalRecording (false);
-                        showStatus ("Daemon did not start the take");
-                    }
+                        giveUpOnUnansweredStart();
                 }
                 else if (engine.isExternalRecording() && ! captureMetadataPending)
                     // It ended without a STOP from here. Nothing else would load it.
