@@ -18,7 +18,8 @@ namespace zynforge::audioimport
                              double targetRate,
                              int outputChannels,
                              int monoSourceChannel,
-                             const std::atomic<bool>* cancel)
+                             const std::atomic<bool>* cancel,
+                             bool* clipped)
         {
             if (cancelled (cancel)) return false;
             // Import appends tracks. A stale/unexpected destination is user
@@ -53,6 +54,7 @@ namespace zynforge::audioimport
             juce::AudioBuffer<float> buffer (sourceChannels, chunk);
             auto writeBlock = [&] (int count)
             {
+                if (clipped != nullptr && buffer.getMagnitude (0, count) > 1.0f) *clipped = true;
                 if (outputChannels == 2)
                 {
                     const int sourceRight = juce::jmin (1, sourceChannels - 1);
@@ -162,14 +164,14 @@ namespace zynforge::audioimport
             std::vector<juce::File> created;
             std::vector<ImportedTrack> staged;
             const int outputTracks = sourceChannels > 2 ? sourceChannels : 1;
-            bool failedSource = false;
+            bool failedSource = false, clipped = false;
             for (int channel = 0; channel < outputTracks; ++channel)
             {
                 const int index = nextTrack + channel;
                 const auto destination = audioFilesDir.getChildFile (
                     "Track_" + juce::String (index + 1).paddedLeft ('0', 2) + ".wav");
                 if (! writeConverted (*reader, destination, targetSampleRate,
-                                      stereo ? 2 : 1, channel, cancel))
+                                      stereo ? 2 : 1, channel, cancel, &clipped))
                 {
                     failedSource = true;
                     break;
@@ -194,6 +196,7 @@ namespace zynforge::audioimport
             result.tracks.insert (result.tracks.end(), staged.begin(), staged.end());
             ++result.importedFiles;
             if (converted) ++result.converted;
+            if (clipped) ++result.clipped;
             nextTrack += sourceChannels > 2 ? sourceChannels : (stereo ? 2 : 1);
         }
         return result;

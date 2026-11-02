@@ -86,6 +86,7 @@ namespace zynforge
         {
             int attempted { 0 }, written { 0 };
             int silentMixes { 0 };     // finished, and nothing in them
+            int clippedFiles { 0 };    // finished, and flat-topped over full scale
             bool soloActive { false };
             bool cancelled { false };
             juce::String firstError;
@@ -100,8 +101,9 @@ namespace zynforge
         Outcome run (AudioEngine&, const Plan&, const std::atomic<bool>& cancel, const Progress&);
 
         // What a finished mix render must add to "done": a silent file is not a
-        // success, and a solo left on shaped what is in it. Empty when neither.
-        juce::String mixRenderWarning (bool silent, bool soloActive);
+        // success, a mix over full scale came out flat-topped, and a solo left
+        // on shaped what is in it. Empty when none of them.
+        juce::String mixRenderWarning (bool silent, bool soloActive, bool clipped = false);
 
         // The line the status bar shows, in the wording of a track export.
         juce::String statusLine (const Outcome&, const juce::String& destName);

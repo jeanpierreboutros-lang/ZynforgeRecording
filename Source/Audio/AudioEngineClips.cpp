@@ -978,17 +978,32 @@ namespace zynforge
             return true;
         }
 
-        std::unique_ptr<juce::AudioFormatWriter> createWav24Writer (const juce::File& f, double sr, int channels,
-                                                                    const CheckedFileStream::Failed& closeFailed)
+        std::unique_ptr<juce::AudioFormatWriter> createWavWriter (const juce::File& f, double sr, int channels, int bits,
+                                                                  const CheckedFileStream::Failed& closeFailed)
         {
             f.deleteFile();
             juce::WavAudioFormat wav;
             auto os = CheckedFileStream::open (f, closeFailed);
             if (os == nullptr) return nullptr;
             std::unique_ptr<juce::AudioFormatWriter> w (
-                wav.createWriterFor (os.get(), sr, (unsigned int) channels, 24, {}, 0));
+                wav.createWriterFor (os.get(), sr, (unsigned int) channels, bits, {}, 0));
             if (w != nullptr) os.release();
             return w;
+        }
+
+        std::unique_ptr<juce::AudioFormatWriter> createWav24Writer (const juce::File& f, double sr, int channels,
+                                                                    const CheckedFileStream::Failed& closeFailed)
+        {
+            return createWavWriter (f, sr, channels, 24, closeFailed);
+        }
+
+        // A consolidate replaces clips that play clean, and clip gain can take
+        // them past full scale while the fader sits low. In float the render
+        // holds every sample of that; in 24-bit it would play back distorted.
+        std::unique_ptr<juce::AudioFormatWriter> createConsolidateWriter (const juce::File& f, double sr,
+                                                                          const CheckedFileStream::Failed& closeFailed)
+        {
+            return createWavWriter (f, sr, 1, 32, closeFailed);
         }
 
         juce::File bounceTemporary (const juce::File& destination)
@@ -1056,16 +1071,22 @@ namespace zynforge
 
     bool AudioEngine::bounceTrackArrangementToWav (int track, const juce::File& dest,
                                                    juce::int64 totalSamples, double sampleRate,
-                                                   const std::atomic<bool>* cancel)
+                                                   const std::atomic<bool>* cancel, float* peak)
     {
         const auto temporary = bounceTemporary (dest);
         const auto closeFailed = CheckedFileStream::makeFailedFlag();
         auto writer = createWav24Writer (temporary, sampleRate, 1, closeFailed);
         if (writer == nullptr) { temporary.deleteFile(); return false; }
+        if (peak != nullptr) *peak = 0.0f;
         const bool ok = forEachArrangementWindow (track, 0, totalSamples,
             [&] (const float* data, juce::int64, int winLen)
             {
                 if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return false;
+                if (peak != nullptr)
+                {
+                    const auto range = juce::FloatVectorOperations::findMinAndMax (data, winLen);
+                    *peak = juce::jmax (*peak, -range.getStart(), range.getEnd());
+                }
                 const float* chans[1] = { data };
                 return writer->writeFromFloatArrays (chans, 1, winLen);
             });
@@ -1271,16 +1292,18 @@ namespace zynforge
 
     bool AudioEngine::bounceStereoPairToWav (int trackL, const juce::File& dest,
                                              juce::int64 totalSamples, double sampleRate,
-                                             const std::atomic<bool>* cancel)
+                                             const std::atomic<bool>* cancel, float* peak)
     {
         const auto temporary = bounceTemporary (dest);
         const auto closeFailed = CheckedFileStream::makeFailedFlag();
         auto writer = createWav24Writer (temporary, sampleRate, 2, closeFailed);
         if (writer == nullptr) { temporary.deleteFile(); return false; }
+        if (peak != nullptr) *peak = 0.0f;
         const bool ok = forEachStereoPairWindow (trackL, 0, totalSamples,
             [&] (const juce::AudioBuffer<float>& stereo, juce::int64, int winLen)
             {
                 if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return false;
+                if (peak != nullptr) *peak = juce::jmax (*peak, stereo.getMagnitude (0, winLen));
                 return writer->writeFromAudioSampleBuffer (stereo, 0, winLen);
             });
         writer.reset();
@@ -1503,7 +1526,7 @@ namespace zynforge
         const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
         {
             const auto closeFailed = CheckedFileStream::makeFailedFlag();
-            auto w = createWav24Writer (dst, sr, 1, closeFailed);
+            auto w = createConsolidateWriter (dst, sr, closeFailed);
             if (w == nullptr) return false;
             // Stream the edited arrangement for just [a, b) straight to the
             // writer -- no whole-track buffer.

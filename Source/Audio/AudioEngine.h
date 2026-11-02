@@ -602,9 +602,12 @@ namespace zynforge
         // `cancel` (optional) is polled per render window so a quit / a new
         // bounce can abort a multi-hour render promptly instead of hanging the
         // join. On cancel the partial file is deleted and false is returned.
+        // `peak`, when given, receives the render's sample peak: over 1.0 the
+        // 24-bit file came out flat-topped.
         bool bounceTrackArrangementToWav (int track, const juce::File& dest,
                                           juce::int64 totalSamples, double sampleRate,
-                                          const std::atomic<bool>* cancel = nullptr);
+                                          const std::atomic<bool>* cancel = nullptr,
+                                          float* peak = nullptr);
         // `peak`, when given, receives the render's sample peak.
         bool bounceStereoMixToWav (const juce::File& dest,
                                    juce::int64 totalSamples, double sampleRate,
@@ -618,7 +621,8 @@ namespace zynforge
         // Streamed window-by-window like the other bounces.
         bool bounceStereoPairToWav (int trackL, const juce::File& dest,
                                     juce::int64 totalSamples, double sampleRate,
-                                    const std::atomic<bool>* cancel = nullptr);
+                                    const std::atomic<bool>* cancel = nullptr,
+                                    float* peak = nullptr);
 
         // ── DAW interchange and song export ───────────────────────
         // Why a session export cannot run now, or empty when it can. Local

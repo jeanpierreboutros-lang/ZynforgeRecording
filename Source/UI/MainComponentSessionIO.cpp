@@ -873,6 +873,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
         juce::File srcL, srcR;     // srcR set only for the LEGACY two-mono-file pair
         juce::File destStem;
         bool       stereoPair { false };   // true => interleave srcL + srcR
+        int        onlyChannel { -1 };     // one channel of srcL, as a mono file
     };
     std::vector<ExportJob> jobs;
     jobs.reserve (channelIndices.size());
@@ -945,9 +946,17 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
             // After unlinking a native pair, the right strip's audio is the
             // second channel of the left's file, which this export writes.
             int fileChannel = 0;
-            if (i > 0 && std::find (channelIndices.begin(), channelIndices.end(), i - 1) != channelIndices.end()
-                && engine.getTrackAudioFile (i, &fileChannel).existsAsFile() && fileChannel == 1)
+            const auto sharedFile = engine.getTrackAudioFile (i, &fileChannel);
+            if (sharedFile.existsAsFile() && fileChannel == 1)
+            {
+                if (i > 0 && std::find (channelIndices.begin(), channelIndices.end(), i - 1) != channelIndices.end())
+                    continue;
+                // Ticked alone, it is that one channel of the file.
+                job.srcL = sharedFile;
+                job.onlyChannel = 1;
+                jobs.push_back (std::move (job));
                 continue;
+            }
 
             // Empty, never-recorded strips are expected in Export All. A
             // selected strip, a previously loaded source, or a dangling
@@ -995,23 +1004,29 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 
         for (const auto& j : jobs)
         {
-            // Returning without a completion is safe: the runner releases the
-            // reservation on every path. (This early return used to skip the
-            // only release, leaving the session busy after a cancelled export.)
-            if (cancel.load (std::memory_order_relaxed)) return {};
+            if (cancel.load (std::memory_order_relaxed)) break;
             juce::String err;
+            auto options = opts;
+            options.onlyChannel = j.onlyChannel;
             const bool ok = j.stereoPair
-                ? exporter.exportStereoPair (j.srcL, j.srcR, j.destStem, opts, err)
-                : exporter.exportTrack      (j.srcL,         j.destStem, opts, err);
+                ? exporter.exportStereoPair (j.srcL, j.srcR, j.destStem, options, err, &cancel)
+                : exporter.exportTrack      (j.srcL,         j.destStem, options, err, &cancel);
+            if (cancel.load (std::memory_order_relaxed)) break;
             ++attempted;
             if (ok) ++succeeded;
             else if (firstError.isEmpty() && err.isNotEmpty()) firstError = err;
         }
 
         const bool cancelled = cancel.load (std::memory_order_relaxed);
-        return [self, succeeded, attempted, firstError, destName, cancelled, missingSources]
+        return [self, succeeded, attempted, firstError, destName, cancelled, missingSources,
+                clipped = exporter.getClippedFiles()]
         {
-            if (self == nullptr || cancelled) return;
+            if (self == nullptr) return;
+            if (cancelled)
+            {
+                self->showStatus ("Export cancelled: " + zynforge::counted (succeeded, "track") + " finished");
+                return;
+            }
             // Surface PARTIAL failures too -- e.g. the destination runs out of
             // space mid-batch. A run that wrote 10 of 32 files must not read as
             // success and ship an incomplete deliverable.
@@ -1024,7 +1039,9 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
                                   + " of " + juce::String (attempted + missingSources) + " failed or missing"
                                   + (firstError.isNotEmpty() ? " (" + firstError + ")" : ""));
             else
-                self->showStatus ("Exported " + zynforge::counted (succeeded, "track") + " -> " + destName);
+                self->showStatus ("Exported " + zynforge::counted (succeeded, "track") + " -> " + destName
+                                  + (clipped > 0 ? " -- WARNING: " + juce::String (clipped) + " went over full scale and CLIPPED"
+                                                 : juce::String()));
         };
     });
 }
@@ -1101,21 +1118,23 @@ void MainComponent::completeBounceStems (juce::File dest, const std::vector<int>
     sessionJobs.launch ([self, &eng = engine, stems, dest, arrLen, sr] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
-        int written = 0, attempted = 0;
+        int written = 0, attempted = 0, clipped = 0;
         for (const auto& stem : stems)
         {
             if (cancel.load (std::memory_order_relaxed)) break;
             // Streams the edited arrangement window-by-window straight to
             // disk, so a multi-hour stem never needs a whole-track buffer.
+            float peak = 0.0f;
             const bool okBounce = stem.stereo
-                ? eng.bounceStereoPairToWav (stem.track, stem.file, arrLen, sr, &cancel)
-                : eng.bounceTrackArrangementToWav (stem.track, stem.file, arrLen, sr, &cancel);
+                ? eng.bounceStereoPairToWav (stem.track, stem.file, arrLen, sr, &cancel, &peak)
+                : eng.bounceTrackArrangementToWav (stem.track, stem.file, arrLen, sr, &cancel, &peak);
             ++attempted;
             if (okBounce) ++written;
+            if (okBounce && peak > 1.0f) ++clipped;
         }
         // A quit cancels us; don't post a stale "Bounced 0 stems".
         const bool cancelled = cancel.load (std::memory_order_relaxed);
-        return [self, written, attempted, cancelled, dest]
+        return [self, written, attempted, clipped, cancelled, dest]
         {
             if (self == nullptr) return;
             self->engine.setSessionTransitionActive (false);
@@ -1125,7 +1144,9 @@ void MainComponent::completeBounceStems (juce::File dest, const std::vector<int>
                 if (attempted == 0)
                     self->showStatus ("Bounce failed: no eligible stems");
                 else if (written == attempted)
-                    self->showStatus ("Bounced " + zynforge::counted (written, "edited stem") + " -> " + dest.getFileName());
+                    self->showStatus ("Bounced " + zynforge::counted (written, "edited stem") + " -> " + dest.getFileName()
+                                      + (clipped > 0 ? " -- WARNING: " + juce::String (clipped) + " went over full scale and CLIPPED"
+                                                     : juce::String()));
                 else
                     self->showStatus ((written == 0 ? "Bounce failed: " : "Bounce INCOMPLETE: ")
                                       + juce::String (attempted - written) + " of "
@@ -1196,7 +1217,7 @@ void MainComponent::completeBounceStereoMix (juce::File dest)
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
             if (cancelled) return;
             if (! ok) { self->showStatus ("Stereo mix bounce failed"); return; }
-            const auto warning = zynforge::songexport::mixRenderWarning (peak <= 0.0f, soloActive);
+            const auto warning = zynforge::songexport::mixRenderWarning (peak <= 0.0f, soloActive, peak > 1.0f);
             self->showStatus ("Bounced stereo mix -> " + dest.getFileName()
                               + (warning.isNotEmpty() ? " -- " + warning : juce::String()));
         };
@@ -1417,6 +1438,9 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
                     : juce::String())
                 + (result.failed > 0
                     ? " (skipped " + juce::String (result.failed) + ")"
+                    : juce::String())
+                + (result.clipped > 0
+                    ? " -- WARNING: " + juce::String (result.clipped) + " went over full scale and CLIPPED"
                     : juce::String())
                 + " -- loaded " + juce::String (loaded) + " for playback"
                 + (saved ? juce::String() : juce::String ("; WARNING: session state was not saved")));

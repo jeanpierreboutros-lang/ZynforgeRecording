@@ -1263,6 +1263,174 @@ namespace zynforge
             }
         }
 
+        void exactExports()
+        {
+            const auto samples = [] (const juce::File& file, int channel, int count)
+            {
+                std::unique_ptr<juce::AudioFormatReader> reader (FailedReadTests::formats().createReaderFor (file));
+                std::vector<int> values ((size_t) count);
+                std::vector<int*> planes ((size_t) reader->numChannels, nullptr);
+                planes[(size_t) channel] = values.data();
+                reader->read (planes.data(), (int) planes.size(), 0, count, false);
+                return values;
+            };
+
+            beginTest ("A raw stereo pair at the session rate is the takes, sample for sample");
+            {
+                const auto dir = tempDir ("exact");
+                dir.createDirectory();
+                const auto left = dir.getChildFile ("L.wav"), right = dir.getChildFile ("R.wav");
+                FailedReadTests::writeAudio (left, 48000, 1, 7);
+                FailedReadTests::writeAudio (right, 40000, 1, 8);
+                const auto stem = dir.getChildFile ("pair");
+                TrackExporter exporter;
+                ExportOptions options;
+                juce::String error;
+                expect (exporter.exportStereoPair (left, right, stem, options, error), error);
+                const auto out = stem.withFileExtension (".wav");
+                expect (samples (out, 0, 48000) == samples (left, 0, 48000), "the left take was filtered");
+                expect (samples (out, 1, 40000) == samples (right, 0, 40000), "the right take was filtered");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A same-rate 24-bit export is bit-exact, high levels included");
+            {
+                const auto dir = tempDir ("exact");
+                dir.createDirectory();
+                const auto source = dir.getChildFile ("take.wav");
+                FailedReadTests::writeAudio (source, 48000, 2, 9);   // reaches past -6 dBFS on every sample's way up
+                const auto stem = dir.getChildFile ("copy");
+                TrackExporter exporter;
+                ExportOptions options;
+                juce::String error;
+                expect (exporter.exportTrack (source, stem, options, error), error);
+                const auto out = stem.withFileExtension (".wav");
+                expect (samples (out, 0, 48000) == samples (source, 0, 48000), "a 24-bit copy moved samples");
+                expect (samples (out, 1, 48000) == samples (source, 1, 48000), "a 24-bit copy moved samples");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("One channel of a shared file exports as that channel alone");
+            {
+                const auto dir = tempDir ("exact");
+                dir.createDirectory();
+                const auto source = dir.getChildFile ("take.wav");
+                FailedReadTests::writeAudio (source, 48000, 2, 10);
+                for (double rate : { 48000.0, 44100.0 })
+                {
+                    const auto stem = dir.getChildFile ("right" + juce::String ((int) rate));
+                    TrackExporter exporter;
+                    ExportOptions options;
+                    options.onlyChannel = 1;
+                    options.sampleRate = rate;
+                    juce::String error;
+                    expect (exporter.exportTrack (source, stem, options, error), error);
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        FailedReadTests::formats().createReaderFor (stem.withFileExtension (".wav")));
+                    expect (reader != nullptr);
+                    if (reader != nullptr) expectEquals ((int) reader->numChannels, 1);
+                    if (reader != nullptr && rate == 48000.0)
+                        expect (samples (stem.withFileExtension (".wav"), 0, 48000) == samples (source, 1, 48000));
+                }
+                dir.deleteRecursively();
+            }
+        }
+
+        // Float audio over full scale, as a hot take with clip gain would be.
+        static void writeHot (const juce::File& file, int samples, float level)
+        {
+            file.getParentDirectory().createDirectory();
+            juce::WavAudioFormat format;
+            std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                file.createOutputStream().release(), kRate, 1, 32, {}, 0));
+            juce::AudioBuffer<float> audio (1, samples);
+            juce::FloatVectorOperations::fill (audio.getWritePointer (0), level, samples);
+            writer->writeFromAudioSampleBuffer (audio, 0, samples);
+        }
+
+        void overs()
+        {
+            beginTest ("A render over full scale says so, and Consolidate keeps every sample");
+            {
+                const auto dir = tempDir ("hot");
+                writeHot (dir.getChildFile ("Audio Files/Track_01.wav"), 48000, 0.5f);
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.setStripCount (1);
+                engine.prepareForTests (kRate, kBlock);
+                engine.loadSession (dir);
+                expect (engine.setClipGainDb (0, 0, 12.0f));
+
+                float peak = 0.0f;
+                const auto stem = dir.getChildFile ("stem.wav");
+                expect (engine.bounceTrackArrangementToWav (0, stem, 48000, kRate, nullptr, &peak));
+                expect (peak > 1.0f, "a stem over full scale measured clean");
+                expect (songexport::mixRenderWarning (false, false, true).contains ("CLIPPED"));
+
+                expect (engine.consolidateRange (0, 0, 48000));
+                const auto render = dir.getChildFile ("Audio Files/Track_01_consolidated_1.wav");
+                std::unique_ptr<juce::AudioFormatReader> reader (FailedReadTests::formats().createReaderFor (render));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    expect (reader->usesFloatingPointData, "a consolidate render cannot hold what it replaces");
+                    juce::AudioBuffer<float> audio (1, 4096);
+                    reader->read (&audio, 0, 4096, 1000, true, false);
+                    expect (audio.getMagnitude (0, 4096) > 1.0f, "Consolidate clipped audio that played clean");
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Song export and raw export count files that clipped");
+            {
+                const auto dir = tempDir ("hot");
+                const auto take = dir.getChildFile ("Audio Files/Track_01.wav");
+                writeHot (take, 48000, 1.5f);
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                engine.setStripCount (1);
+                engine.prepareForTests (kRate, kBlock);
+                engine.loadSession (dir);
+
+                songexport::Choice choice;
+                choice.songs = { { 0, 48000, "Song" } };
+                choice.numbers = { 1 };
+                choice.mix = false;
+                choice.stems = true;
+                choice.format.sampleRate = kRate;
+                const std::atomic<bool> cancel { false };
+                const auto outcome = songexport::run (engine, songexport::buildPlan (engine, choice, dir.getChildFile ("Export Files")),
+                                                      cancel, nullptr);
+                expectEquals (outcome.written, 1);
+                expectEquals (outcome.clippedFiles, 1, "a flat-topped song counted as clean");
+                expect (songexport::statusLine (outcome, "Songs").contains ("CLIPPED"));
+
+                TrackExporter exporter;
+                ExportOptions options;
+                juce::String error;
+                expect (exporter.exportTrack (take, dir.getChildFile ("raw"), options, error), error);
+                expectEquals (exporter.getClippedFiles(), 1, "a float take flattened to 24-bit counted as clean");
+
+                options.bitsPerSample = 32;
+                expect (exporter.exportTrack (take, dir.getChildFile ("rawFloat"), options, error), error);
+                expectEquals (exporter.getClippedFiles(), 1, "a float export cannot clip");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("An import that clips says so");
+            {
+                const auto dir = tempDir ("hot");
+                const auto source = dir.getChildFile ("hot.wav");
+                writeHot (source, 4800, 1.5f);
+                const auto audio = dir.getChildFile ("Audio Files");
+                audio.createDirectory();
+                const auto result = audioimport::importFiles ({ source }, audio, 0, kRate, nullptr);
+                expectEquals (result.importedFiles, 1);
+                expectEquals (result.clipped, 1, "an import flattened overs in silence");
+                dir.deleteRecursively();
+            }
+        }
+
         void analysis()
         {
             beginTest ("Detect Songs finds a song in a session with one voice");
@@ -1324,6 +1492,8 @@ namespace zynforge
             stripPaste();
             continues();
             sessionLength();
+            exactExports();
+            overs();
             analysis();
             timelineCsv();
         }

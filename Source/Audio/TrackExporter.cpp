@@ -5,7 +5,9 @@
 #include "MultiPartReader.h"
 #include "SincResampler.h"
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace zynforge
 {
@@ -30,6 +32,65 @@ namespace zynforge
         }
 
         constexpr const char* kFinalWriteFailed = "Final write failed (destination full?)";
+        constexpr const char* kCancelled = "Cancelled";
+
+        bool stopped (const std::atomic<bool>* cancel) noexcept
+        {
+            return cancel != nullptr && cancel->load (std::memory_order_relaxed);
+        }
+
+        bool overFullScale (const juce::AudioFormatWriter& writer, const juce::AudioBuffer<float>& block, int samples)
+        {
+            return ! writer.isFloatingPoint() && block.getMagnitude (0, samples) > 1.0f;
+        }
+
+        struct ChannelSource { juce::AudioFormatReader* reader; int channel; };
+
+        // At the session rate the samples go across as the file holds them.
+        // Through floats a 24-bit value can come back one step low, because
+        // the two conversions do not scale alike, and a resampler at ratio 1
+        // is still a low-pass. Only a change of type goes through floats.
+        juce::String copySameRate (const std::vector<ChannelSource>& outputs, juce::AudioFormatWriter& writer,
+                                   juce::int64 length, const std::atomic<bool>* cancel, bool& clipped)
+        {
+            constexpr int block = 4096;
+            const int channels = (int) outputs.size();
+            const bool sameType = std::all_of (outputs.begin(), outputs.end(), [&writer] (const ChannelSource& o)
+                                               { return o.reader->usesFloatingPointData == writer.isFloatingPoint(); });
+
+            juce::AudioBuffer<float> audio (channels, block);
+            std::vector<const int*> asInts ((size_t) channels + 1, nullptr);   // writers read to a null
+            for (int c = 0; c < channels; ++c)
+                asInts[(size_t) c] = reinterpret_cast<const int*> (audio.getReadPointer (c));
+
+            std::vector<std::vector<float*>> planes;
+            for (int c = 0; c < channels; ++c)
+            {
+                planes.emplace_back ((size_t) outputs[(size_t) c].reader->numChannels, nullptr);
+                planes.back()[(size_t) outputs[(size_t) c].channel] = audio.getWritePointer (c);
+            }
+
+            for (juce::int64 position = 0; position < length; position += block)
+            {
+                if (stopped (cancel)) return kCancelled;
+                const int count = (int) juce::jmin ((juce::int64) block, length - position);
+                for (int c = 0; c < channels; ++c)
+                {
+                    auto* reader = outputs[(size_t) c].reader;
+                    auto& plane = planes[(size_t) c];
+                    const bool read = sameType
+                        ? reader->read (reinterpret_cast<int* const*> (plane.data()), (int) plane.size(),
+                                        position, count, false)
+                        : reader->read (plane.data(), (int) plane.size(), position, count);
+                    if (! read) return "Read failed";
+                }
+                if (! sameType) clipped = clipped || overFullScale (writer, audio, count);
+                const bool written = sameType ? writer.write (asInts.data(), count)
+                                              : writer.writeFromFloatArrays (audio.getArrayOfReadPointers(), channels, count);
+                if (! written) return "Write failed (destination full?)";
+            }
+            return {};
+        }
     }
 
     // Bit depth the chosen container can actually write. FLAC tops out at
@@ -112,7 +173,8 @@ namespace zynforge
     bool TrackExporter::exportTrack (const juce::File& source,
                                      const juce::File& destWithoutExt,
                                      const ExportOptions& opts,
-                                     juce::String& outError)
+                                     juce::String& outError,
+                                     const std::atomic<bool>* cancel)
     {
         outError.clear();
 
@@ -136,7 +198,9 @@ namespace zynforge
         }
         if (reader == nullptr) { outError = "Cannot read source"; return false; }
 
-        const auto channels  = (int) reader->numChannels;
+        const auto sourceChannels = (int) reader->numChannels;
+        const int  onlyChannel = opts.onlyChannel < sourceChannels ? opts.onlyChannel : -1;
+        const auto channels  = onlyChannel >= 0 ? 1 : sourceChannels;
         const auto srcSR     = reader->sampleRate;
         const auto destSR    = opts.sampleRate;
         const auto srcLen    = reader->lengthInSamples;
@@ -161,33 +225,20 @@ namespace zynforge
         }
         outStream.release(); // writer owns the stream now
 
-        // Same-rate export: copy straight through. Running a rate-1.0 export
-        // through ResamplingAudioSource put a Lagrange interpolator in the path
-        // for no reason -- the output was neither bit-exact nor sample-aligned
-        // with the source, which matters when the stems are going back into
-        // another DAW alongside the originals.
+        bool clipped = false;
+        const juce::ScopeGuard countClipped { [this, &clipped] { if (clipped) ++clippedFiles; } };
+
+        // Same-rate export: copy straight through, so the stems line up with
+        // the originals when they go back into another DAW.
         if (juce::approximatelyEqual (srcSR, destSR))
         {
-            juce::AudioBuffer<float> copyBuf (channels, 4096);
-            juce::int64 pos = 0;
-            while (pos < srcLen)
+            std::vector<ChannelSource> outputs;
+            for (int c = 0; c < channels; ++c) outputs.push_back ({ reader.get(), onlyChannel >= 0 ? onlyChannel : c });
+            outError = copySameRate (outputs, *writer, srcLen, cancel, clipped);
+            if (outError.isNotEmpty())
             {
-                const int n = (int) juce::jmin ((juce::int64) 4096, srcLen - pos);
-                copyBuf.clear();
-                if (! reader->read (&copyBuf, 0, n, pos, true, true))
-                {
-                    outError = "Read failed";
-                    writer = nullptr; destPcmFile.deleteFile();
-                    return false;
-                }
-                const auto** arr = (const float**) copyBuf.getArrayOfReadPointers();
-                if (! writer->writeFromFloatArrays (arr, channels, n))
-                {
-                    outError = "Write failed (destination full?)";
-                    writer = nullptr; destPcmFile.deleteFile();
-                    return false;
-                }
-                pos += n;
+                writer = nullptr; destPcmFile.deleteFile();
+                return false;
             }
             if (! flushFloatAiffBeforeClose (writer.get()))
             {
@@ -207,15 +258,23 @@ namespace zynforge
 
         // Keep the reader alive and propagate decoder/I/O failures through resampling.
         CheckedReaderSource readerSrc (*reader);
-        SincResampler resampler (&readerSrc, channels);
+        SincResampler resampler (&readerSrc, sourceChannels);
         resampler.setResamplingRatio (srcSR / destSR);
         const int block = 4096;
         resampler.prepareToPlay (block, destSR);
 
-        juce::AudioBuffer<float> buf (channels, block);
+        juce::AudioBuffer<float> buf (sourceChannels, block);
         juce::int64 written = 0;
         while (written < destLen)
         {
+            if (stopped (cancel))
+            {
+                outError = kCancelled;
+                writer = nullptr;
+                resampler.releaseResources();
+                destPcmFile.deleteFile();
+                return false;
+            }
             const int thisBlock = (int) juce::jmin ((juce::int64) block, destLen - written);
             buf.clear();
             juce::AudioSourceChannelInfo info (&buf, 0, thisBlock);
@@ -229,7 +288,8 @@ namespace zynforge
                 return false;
             }
 
-            const auto** arr = (const float**) buf.getArrayOfReadPointers();
+            clipped = clipped || overFullScale (*writer, buf, thisBlock);
+            const auto* arr = buf.getArrayOfReadPointers() + juce::jmax (0, onlyChannel);
             if (! writer->writeFromFloatArrays (arr, channels, thisBlock))
             {
                 // Close + DELETE the partial file. Returning with it in place
@@ -265,7 +325,8 @@ namespace zynforge
                                           const juce::File& sourceR,
                                           const juce::File& destWithoutExt,
                                           const ExportOptions& opts,
-                                          juce::String& outError)
+                                          juce::String& outError,
+                                          const std::atomic<bool>* cancel)
     {
         outError.clear();
         if (! sourceL.existsAsFile() || ! sourceR.existsAsFile())
@@ -308,6 +369,25 @@ namespace zynforge
         }
         outStream.release();
 
+        bool clipped = false;
+        const juce::ScopeGuard countClipped { [this, &clipped] { if (clipped) ++clippedFiles; } };
+
+        if (juce::approximatelyEqual (srcSR, destSR))
+        {
+            outError = copySameRate ({ { readerL.get(), 0 }, { readerR.get(), 0 } }, *writer, srcLen, cancel, clipped);
+            const bool copied = outError.isEmpty();
+            const bool finalized = copied && flushFloatAiffBeforeClose (writer.get());
+            writer = nullptr;
+            if (copied && (! finalized || closeFailed->load()))
+                outError = finalized ? kFinalWriteFailed : "Final audio header flush failed";
+            if (outError.isNotEmpty())
+            {
+                destPcmFile.deleteFile();
+                return false;
+            }
+            return installCompletedExport (destPcmFile, finalPcmFile, outError);
+        }
+
         // Each mono source resamples independently; we interleave the two
         // resampled mono blocks into one stereo block per write.
         CheckedReaderSource readerSrcL (*readerL);
@@ -324,6 +404,15 @@ namespace zynforge
         juce::int64 written = 0;
         while (written < destLen)
         {
+            if (stopped (cancel))
+            {
+                outError = kCancelled;
+                writer = nullptr;
+                resL.releaseResources();
+                resR.releaseResources();
+                destPcmFile.deleteFile();
+                return false;
+            }
             const int thisBlock = (int) juce::jmin ((juce::int64) block, destLen - written);
             monoL.clear(); monoR.clear();
             { juce::AudioSourceChannelInfo i (&monoL, 0, thisBlock); resL.getNextAudioBlock (i); }
@@ -339,6 +428,7 @@ namespace zynforge
             }
             stereo.copyFrom (0, 0, monoL, 0, 0, thisBlock);
             stereo.copyFrom (1, 0, monoR, 0, 0, thisBlock);
+            clipped = clipped || overFullScale (*writer, stereo, thisBlock);
             const auto** arr = (const float**) stereo.getArrayOfReadPointers();
             if (! writer->writeFromFloatArrays (arr, 2, thisBlock))
             {
@@ -392,10 +482,12 @@ namespace zynforge
 
     bool ExportFileStream::write (const juce::AudioBuffer<float>& block, int numSamples)
     {
+        if (bitsForFormat (options.format, options.bitsPerSample) < 32 && block.getMagnitude (0, numSamples) > 1.0f)
+            clipped = true;
         return writer != nullptr && writer->writeFromAudioSampleBuffer (block, 0, numSamples);
     }
 
-    bool ExportFileStream::commit (juce::String& error)
+    bool ExportFileStream::commit (juce::String& error, const std::atomic<bool>* cancel)
     {
         if (writer == nullptr) { error = "Cannot write to destination"; return false; }
         const bool finalized = flushFloatAiffBeforeClose (writer.get());
@@ -404,7 +496,7 @@ namespace zynforge
         if (closeFailed->load()) { error = kFinalWriteFailed; return false; }
 
         if (convertOnCommit)
-            return exporter.exportTrack (temporary, destWithoutExt, options, error);
+            return exporter.exportTrack (temporary, destWithoutExt, options, error, cancel);
         const auto finalFile = destWithoutExt.withFileExtension (TrackExporter::extensionFor (options.format));
         return installCompletedExport (temporary, finalFile, error);
     }
