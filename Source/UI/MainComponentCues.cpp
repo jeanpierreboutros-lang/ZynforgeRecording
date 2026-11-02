@@ -252,27 +252,18 @@ void MainComponent::jumpToCue (int index)
     auto& player = engine.getPlayer();
     if (! playheadLockedForPunch())   // the mixer recall below still runs
         player.setPositionSamples (cue.samplePos);
-    const bool hadTempoMap = ! engine.getTempoMap().empty();
-    bool clickNeedsRefresh = false;
 
     // Restore the cue's tempo if it has one (older cues stored 0 →
     // skip so the engineer doesn't get yanked to 0 BPM).
     if (cue.tempoBpm > 0.0f)
     {
-        const float oldBpm = engine.getSessionTempoBpm();
         engine.setSessionTempoBpm (cue.tempoBpm);
         tempoBar.setBpm (engine.getSessionTempoBpm());
-        // Click track is tempo-locked -- regenerate on tempo change so
-        // the metronome lines up with the recalled cue.
-        clickNeedsRefresh = clickTrackIndex >= 0
-                         && std::abs (oldBpm - cue.tempoBpm) > 0.05f;
     }
 
     // Per-cue tempo curve -- install the cue's tempo map (offsets
     // translated to absolute sample positions starting at cue.samplePos)
-    // into the engine's tempo map. The audio thread already walks the
-    // map each block and pushes the resulting BPM to ClickEngine, so
-    // accelerandos / ritardandos within the song are honoured automatically.
+    // into the engine's tempo map.
     if (! cue.tempoCurve.empty())
     {
         std::vector<zynforge::AudioEngine::TempoChange> map;
@@ -284,29 +275,9 @@ void MainComponent::jumpToCue (int index)
     else
     {
         // No curve on this cue -> CLEAR any map left by a previous cue, else a
-        // single-BPM song inherits the last song's accelerando (the click runs
-        // the wrong ramp). Same clear-first rule as the automation lanes below.
+        // single-BPM song inherits the last song's accelerando. Same clear-first
+        // rule as the automation lanes below.
         engine.setTempoMap ({});
-    }
-
-    // Capture the new map, not the previous cue's map. A curve-only change
-    // matters even when both cue headers have the same BPM. The asynchronous
-    // reload rewinds playback, so restore the requested cue position on
-    // successful completion.
-    clickNeedsRefresh = clickTrackIndex >= 0
-                     && (clickNeedsRefresh || hadTempoMap || ! cue.tempoCurve.empty());
-    // A take can't reload the click, so the timer does it after the take stops.
-    if (clickNeedsRefresh && engine.isRecording())
-        clickRefreshPending = true;
-    else if (clickNeedsRefresh)
-    {
-        const auto cuePosition = cue.samplePos;
-        juce::Component::SafePointer<MainComponent> self (this);
-        generateOrRefreshClickTrack ([self, cuePosition] (bool generated)
-        {
-            if (generated && self != nullptr)
-                self->engine.getPlayer().setPositionSamples (cuePosition);
-        });
     }
 
     // Reinstall this cue's automation lanes so the song plays back with its

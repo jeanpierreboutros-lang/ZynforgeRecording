@@ -61,20 +61,6 @@ namespace zynforge
         tapButton.onClick = [this] { doTap(); };
         addAndMakeVisible (tapButton);
 
-        // CLICK = render a metronome track at the current tempo into
-        // the session's Audio Files/ folder. Following calls re-render
-        // the same file in place so a tempo change keeps the click in
-        // sync without piling up tracks.
-        // Click track button uses accentVS (warm VSC amber) instead
-        // of brandOrange -- see brandOrange consolidation: the orange
-        // token is now reserved for signalMute() + brand assertion.
-        clickButton.setColour (juce::TextButton::buttonColourId,  brand::accentVS);
-        clickButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentVS));
-        clickButton.setTooltip ("Generate / regenerate a metronome track at the current tempo. "
-                                "Re-pressing after a tempo change updates it in place.");
-        clickButton.onClick = [this] { if (onCreateClickTrack) onCreateClickTrack(); };
-        addAndMakeVisible (clickButton);
-
         startTimerHz (30);
     }
 
@@ -137,7 +123,7 @@ namespace zynforge
 
     void TempoBar::timerCallback()
     {
-        // Visual click LED -- pulses at the current tempo. Pure cosmetic.
+        // Visual LED -- pulses at the current tempo. Pure cosmetic.
         const double tickMs = 60000.0 / juce::jmax (20.0f, currentBpm);
         beatPhase += 1000.0 / 30.0;
         if (beatPhase >= tickMs)
@@ -182,14 +168,11 @@ namespace zynforge
         auto r = getLocalBounds().reduced (brand::space::md, brand::space::xs);
 
         // Lay the title on the left, then anchor the buttons from the RIGHT
-        // so each gets its full width and its label never truncates (the old
-        // left-to-right flow overflowed the bar and squeezed CLICK down to
-        // "C..."). The BPM value label absorbs any leftover middle space.
+        // so each gets its full width and its label never truncates. The BPM
+        // value label absorbs any leftover middle space.
         titleLabel.setBounds (r.removeFromLeft (52));
         r.removeFromLeft (brand::space::xs);
 
-        clickButton.setBounds (r.removeFromRight (74).reduced (0, 2));
-        r.removeFromRight (brand::space::xs);
         tapButton  .setBounds (r.removeFromRight (52).reduced (0, 2));
         r.removeFromRight (brand::space::sm);
         plusButton .setBounds (r.removeFromRight (24).reduced (0, 2));

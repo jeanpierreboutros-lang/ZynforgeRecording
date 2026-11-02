@@ -288,25 +288,6 @@ void MainComponent::restoreSessionDocuments (const juce::File& dir)
     }
     if (engine.getPlayer().isLoaded()) pendingSampleRate = engine.getPlayer().getSampleRate();
     engine.setSessionSampleRate (pendingSampleRate);
-    // The click strip's index is SESSION-scoped. Reset it and re-detect from
-    // the just-loaded session, so a stale index carried over from a previous
-    // session can never deleteFile()/overwrite THIS session's Track_NN.wav on
-    // a tempo change -- and so tempo refresh keeps working when reopening a
-    // session that already contains a "Click" strip.
-    clickTrackIndex = -1;
-    {
-        // Regeneration owns only explicitly generated reference media. A
-        // recorded console Click return can also be routed to None for playback.
-        auto& rec = engine.getRecorder();
-        for (int i = 0; i < rec.getNumTracks(); ++i)
-        {
-            auto& t = rec.getTrack (i);
-            if (t.referenceMedia.load (std::memory_order_relaxed)
-                && t.getNameThreadSafe() == "Click"
-                && t.inputRouting.load (std::memory_order_relaxed) < 0)
-            { clickTrackIndex = i; break; }
-        }
-    }
     lastTrackCount = -1;                      // force a strip rebuild on the next tick
     undoManager.clearUndoHistory();           // a fresh session starts with a clean undo stack
     rebaselineMixerUndo();                    // don't record the load itself as a mixer undo step
@@ -480,7 +461,6 @@ void MainComponent::closeSession()
             self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
             engine.setStripCount (0);
 
-            self->clickTrackIndex = -1;           // session-scoped; must not survive a close
             self->undoManager.clearUndoHistory();
             self->lastTrackCount = -1;            // force a strip rebuild (now empty)
             self->updateTransportLabels();
@@ -2308,14 +2288,6 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
     const int n = (int) obj->getProperty ("trackCount");
     if (n <= 0) { showStatus ("Template has no strips"); return; }
 
-    // The click strip is SESSION-scoped and a template replaces the whole strip
-    // layout, so any index carried over is stale. Leaving it set made the
-    // "is this really a Click strip?" guard in generateOrRefreshClickTrack fail
-    // forever after ("Click slot isn't a Click strip"), permanently disabling
-    // Generate Click Track for the rest of the session -- every other
-    // session-boundary path (open / close / new) already resets it.
-    clickTrackIndex = -1;
-
     // Stop the live strips' meter timers before setStripCount frees
     // the TrackStates they reference (a template with fewer strips shrinks the
     // recorder vector); the strips rebuild on the next 10 Hz tick.
@@ -2521,7 +2493,6 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     forgetSessionUiState();
     engine.clearAllStripOverrides();
     engine.claimMixerFor (sessionFolder);
-    clickTrackIndex = -1;
     // The previous session's undo steps would apply to this one's files and
     // strips. Retake the mixer baseline on the next idle tick, after the
     // caller has applied its template, so that is not an undo step either.

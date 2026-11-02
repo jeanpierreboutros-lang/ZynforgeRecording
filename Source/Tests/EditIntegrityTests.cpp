@@ -441,13 +441,13 @@ namespace zynforge
                 s.engine.clearAutomation (AP::Volume);
             }
 
-            beginTest ("Clear with the Lane on Click or Tempo erases nothing");
+            beginTest ("Clear with the Lane on Tempo erases nothing");
             {
                 Show s (2, { 48000, 48000 });
                 using Param = AutomationToolbar::Param;
                 s.engine.addAutomationPoint (0, AP::Mute, 12000, 1.0f);
                 s.engine.addAutomationPoint (1, AP::Mute, 24000, 1.0f);
-                for (auto param : { Param::Click, Param::Tempo })
+                for (auto param : { Param::Tempo })
                 {
                     s.main.automationToolbar->setParamSilently (param);
                     s.main.automationToolbar->onClearAll();
@@ -504,9 +504,7 @@ namespace zynforge
                     expectWithinAbsoluteError (s.engine.getAutomation (0, AP::Pan).front().value, 0.05f, 0.001f,
                                                "Up must change the lane the row shows");
 
-                    // A Click lane has no points, so neither does its menu or hit-test.
-                    row.laneMode = Lane::Click;
-                    expect (! row.shownAutomationParam().has_value(), "a Click lane reported Volume points");
+                    // A Tempo lane has no points, so neither does its menu or hit-test.
                     row.laneMode = Lane::Tempo;
                     expect (! row.shownAutomationParam().has_value(), "a Tempo lane reported Volume points");
                     row.laneMode = Lane::Volume;
@@ -705,7 +703,7 @@ namespace zynforge
                             "the row never picked up its waveform after the cache loaded");
             }
 
-            beginTest ("Tempo lane edits are undoable and a generated click follows them");
+            beginTest ("Tempo lane edits are undoable");
             {
                 Show s (2, { 48000, 48000 });
                 s.engine.clearTempoMap();
@@ -716,23 +714,16 @@ namespace zynforge
                     auto& row = *rows[0];
                     row.laneMode = Lane::Tempo;
                     pressButton (*s.main.automationToolbar, "+ Point");
-                    s.main.clickTrackIndex = 1;
-                    s.main.clickRefreshPending = false;
                     s.main.undoManager.clearUndoHistory();
 
                     click (row, { row.getHeaderWidth() + 200, 40 });
                     expectEquals ((int) s.engine.getTempoMap().size(), 1, "setup: the point landed");
-                    expect (s.main.clickRefreshPending, "the click must follow a lane edit");
 
-                    s.main.clickRefreshPending = false;
                     s.main.editUndo();
                     expect (s.engine.getTempoMap().empty(), "the tempo edit never reached undo");
-                    expect (s.main.clickRefreshPending, "the click must follow the undo");
                     s.main.editRedo();
                     expectEquals ((int) s.engine.getTempoMap().size(), 1);
 
-                    s.main.clickTrackIndex = -1;
-                    s.main.clickRefreshPending = false;
                     pressButton (*s.main.automationToolbar, "Select");
                 }
                 s.engine.clearTempoMap();
@@ -874,26 +865,6 @@ namespace zynforge
                 expect (s.main.selectedLogical.empty(), "another session kept the selection");
                 expectEquals (s.page().getActiveRowTrackIndex(), -1);
                 other.deleteRecursively();
-            }
-
-            beginTest ("A generated click row unlocks with its session and follows its strip");
-            {
-                Show s (3, { 48000, 48000, 48000 });
-                s.main.clickTrackIndex = 2;
-                s.main.rebuildStrips();
-                s.page().refresh();
-                auto rows = rowsOf (s.page());
-                expect (rows.size() == 3 && rows[2]->clickRowIdx == 2, "setup: the click row is known");
-
-                s.main.clickTrackIndex = -1;       // what every session swap does
-                s.main.rebuildStrips();
-                if (rows.size() == 3)
-                    expectEquals (rows[2]->clickRowIdx, -1, "strip 3 stayed locked in the next session");
-
-                s.main.clickTrackIndex = 2;
-                expect (s.engine.reorderTracks ({ 2, 0, 1 }));
-                expectEquals (s.main.clickTrackIndex, 0, "the click index must follow its strip");
-                s.main.clickTrackIndex = -1;
             }
 
             beginTest ("Up and Down change a point's value and nothing else");

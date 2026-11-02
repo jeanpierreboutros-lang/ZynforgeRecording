@@ -26,11 +26,6 @@ namespace zynforge
         float getBpm() const noexcept { return currentBpm; }
 
         std::function<void (float)> onBpmChanged;
-        // Fired when the engineer presses the CLICK button. MainComponent
-        // synthesises a click WAV at the current tempo, drops it into
-        // the session's Audio Files/ folder, and grows the recorder to
-        // include it as a normal track.
-        std::function<void()>       onCreateClickTrack;
 
         void paint (juce::Graphics&) override;
         void resized() override;
@@ -47,7 +42,6 @@ namespace zynforge
         juce::TextButton minusButton  { "-" };
         juce::TextButton plusButton   { "+" };
         juce::TextButton tapButton    { "TAP" };
-        juce::TextButton clickButton  { "CLICK" };
 
         // Beat LED phase counter -- runs off the timer (no audio sync;
         // it's a visual confidence cue, not a clock).

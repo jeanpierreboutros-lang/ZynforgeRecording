@@ -1283,7 +1283,6 @@ namespace zynforge
         for (int t = 0; t < recorder.getNumTracks(); ++t)
         {
             if (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed)) continue;
-            if (recorder.getTrack (t).referenceMedia.load (std::memory_order_relaxed)) continue;
             if (isTrackArrangementEmpty (t)) continue;
 
             songs::Voice voice;

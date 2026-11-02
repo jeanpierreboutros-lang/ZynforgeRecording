@@ -12,7 +12,6 @@
 #include "BackupMirrorDialog.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
-#include "ClickSettingsDialog.h"
 #include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 #include "RecordPosition.h"
@@ -441,10 +440,10 @@ void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
         // What the strip hears on this device: a saved patch past a smaller
         // device's inputs already wraps live and must not be overwritten here.
         const int dev = engine.getEffectiveInputRouting (i);
-        // Playback-only strips (notably the generated Click) and buses have
-        // no input by design. Never turn them into live-input strips here.
+        // Buses have no input by design. Never turn them into live-input
+        // strips here.
         if (isArmed && ! t.isBus.load (std::memory_order_relaxed)
-            && i != clickTrackIndex && (dev < 0 || dev >= numInputs))
+            && (dev < 0 || dev >= numInputs))
         {
             const int target = numInputs > 0 ? (i % numInputs) : 0;
             engine.setTrackInputRouting (i, target);
@@ -1300,7 +1299,7 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
         engine.clearSessionState();
         forgetSessionUiState();
         engine.setStripCount (0);
-        clickTrackIndex = -1; lastTrackCount = -1;
+        lastTrackCount = -1;
         undoManager.clearUndoHistory();
         updateTransportLabels(); explicitDocumentOpened = false; showStartupWelcome();
     }

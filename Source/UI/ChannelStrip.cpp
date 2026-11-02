@@ -1312,12 +1312,9 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
 
         // ── 3. Two rows of two buttons each: [ I | R ] / [ S | M ] ──
-        //   ...except on the generated metronome strip, which is playback-
-        //   only -- record-arm and input-monitor make no sense so those two
-        //   pills are hidden, and the SOLO + MUTE row sits alone with no gap
-        //   above it. Known by its flag: a recorded click return may well be
-        //   named "Click", and it needs its R button.
-        const bool isClickStrip = state.referenceMedia.load (std::memory_order_relaxed);
+        //   ...except on a bus strip, which is playback-only -- record-arm and
+        //   input-monitor make no sense so those two pills are hidden, and the
+        //   SOLO + MUTE row sits alone with no gap above it.
         const bool isBusStrip   = state.isBus.load (std::memory_order_relaxed);
         const int btnH = 24;
         const int btnGap = 3;
@@ -1332,9 +1329,9 @@ namespace zynforge
         const bool stack = getWidth() < 78;
         const int rowsForButtons = stack ? 4 : 2;
 
-        if (isClickStrip || isBusStrip)
+        if (isBusStrip)
         {
-            // Bus / click tracks have no input -- no R / I buttons.
+            // Bus tracks have no input -- no R / I buttons.
             // Reserve the missing row(s) as empty space above the
             // remaining S / M row so the fader + meter below start at
             // the same Y as a full audio strip's. Without this, the

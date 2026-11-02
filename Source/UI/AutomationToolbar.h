@@ -12,7 +12,7 @@ namespace zynforge
     {
     public:
         enum class Tool : int { Select = 0, AddPoint, DeletePoint };
-        enum class Param : int { Volume = 0, Pan, Mute, Click, Tempo };
+        enum class Param : int { Volume = 0, Pan, Mute, Tempo };
         // Mirrors AudioEngine::AutomationWriteMode -- order matters.
         enum class WriteMode : int { Off = 0, Touch = 1, Latch = 2, Write = 3 };
 

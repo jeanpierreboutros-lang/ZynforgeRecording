@@ -10,7 +10,6 @@
 #include "EditToolsBar.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
-#include "ClickSettingsDialog.h"
 #include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 
@@ -51,8 +50,6 @@ MainComponent::MainComponent()
                 cue.automation = juce::var (remapped);
             }
         clipClipboard = juce::var(); // any copied implicit track index is now stale
-        if (clickTrackIndex >= 0 && clickTrackIndex < (int) destination.size())
-            clickTrackIndex = destination[(size_t) clickTrackIndex];
         undoManager.clearUndoHistory(); // old per-index snapshots must not undo onto different audio
         rebaselineMixerUndo();
         // reorderTracks bumps the track generation, so the strips rebuild on
@@ -512,63 +509,6 @@ MainComponent::MainComponent()
     {
         engine.setSessionTempoBpm (bpm);
         tempoBar.setBpm (engine.getSessionTempoBpm());   // clamp echo
-
-        // If a click track has already been created in this session,
-        // regenerate it so the metronome stays locked to the new tempo. A take
-        // or session job refuses the render; the timer redoes it afterwards.
-        if (clickTrackIndex >= 0)
-        {
-            if (engine.isRecording() || sessionIoBusy.load()) clickRefreshPending = true;
-            else generateOrRefreshClickTrack();
-        }
-    };
-    tempoBar.onCreateClickTrack = [this]
-    {
-        // CLICK button now opens the Click II dialog. The real-time
-        // click engine runs in the audio thread so tempo / voice /
-        // subdivision changes take effect on the next beat without
-        // ever stopping playback.
-        auto& cl = engine.getClickEngine();
-        zynforge::ClickSettings init;
-        // Seed the dialog from the LIVE click engine, not fabricated defaults.
-        // The engine DOES expose getters (used by the offline click render), so
-        // reopening to just toggle ON no longer resets the engineer's cowbell /
-        // level / subdivision back to Click / 0 dB / quarter.
-        init.on              = cl.isEnabled();
-        init.click1.volumeDb = cl.getVol1Db();
-        init.click1.voice    = (zynforge::ClickSettings::Voice) cl.getVoice1();
-        init.click1.sub      = (zynforge::ClickSettings::Subdivision) cl.getSub1();
-        init.click2.volumeDb = cl.getVol2Db();
-        init.click2.voice    = (zynforge::ClickSettings::Voice) cl.getVoice2();
-        init.click2.sub      = (zynforge::ClickSettings::Subdivision) cl.getSub2();
-
-        juce::Component::SafePointer<MainComponent> self (this);
-        zynforge::ClickSettingsDialog::launch (init, engine.getSessionTempoBpm(),
-            [self] (const zynforge::ClickSettings& s)
-            {
-                if (self == nullptr) return;
-                auto& c = self->engine.getClickEngine();
-                c.setEnabled    (s.on);
-                c.setVolume1Db  (s.click1.volumeDb);
-                c.setVolume2Db  (s.click2.volumeDb);
-                c.setVoice1     ((zynforge::ClickEngine::Voice) s.click1.voice);
-                c.setVoice2     ((zynforge::ClickEngine::Voice) s.click2.voice);
-                c.setSub1       ((zynforge::ClickEngine::Subdivision) s.click1.sub);
-                c.setSub2       ((zynforge::ClickEngine::Subdivision) s.click2.sub);
-            },
-            [self] (std::function<void (bool)> completion)
-            {
-                // 'Generate click track' button -- render an audio file
-                // of the click for offline workflows (mixdown / export).
-                // The result matters: the dialog only switches the live click
-                // engine off if the render actually happened.
-                if (self == nullptr)
-                {
-                    if (completion) completion (false);
-                    return;
-                }
-                self->generateOrRefreshClickTrack (std::move (completion));
-            });
     };
     addAndMakeVisible (tempoBar);
 
@@ -879,8 +819,8 @@ void MainComponent::switchView (View v)
 }
 
 // Every session swap and layout change comes through rebuildStrips. The strip
-// selection and the click row are positions in ONE layout of ONE session: left
-// alone, a range edit, Delete or a paste hits whatever now sits at the old index.
+// selection holds positions in ONE layout of ONE session: left alone, a range
+// edit, Delete or a paste hits whatever now sits at the old index.
 void MainComponent::syncStripSelectionScope()
 {
     const int layout = engine.getRecorder().getTrackGeneration();
@@ -891,8 +831,6 @@ void MainComponent::syncStripSelectionScope()
         selectionLayoutGen = layout;
         selectionSession   = session;
     }
-    if (editPage != nullptr)
-        editPage->setClickTrackPresent (clickTrackIndex >= 0, clickTrackIndex);
 }
 
 void MainComponent::rebuildStrips()

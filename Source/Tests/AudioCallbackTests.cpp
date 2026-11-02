@@ -489,7 +489,6 @@ namespace zynforge
                     CallbackFixture f (1, 1, 2);
                     expect (f.engine.loadSession (dir, false, false) == 1);
                     f.engine.setMasterOutputs (0, 1);
-                    f.engine.getClickEngine().setEnabled (false);
                     f.engine.startPlayback();
                     expect (fillPlaybackBuffer (f) > 0.05f, "session never became audible");
 
@@ -528,22 +527,6 @@ namespace zynforge
                     f.engine.stopPlayback();
                 }
                 dir.deleteRecursively();
-            }
-
-            // ─── Click track follows the monitor bus ─────────────────
-            beginTest ("Click engine writes to the configured master output pair");
-            {
-                CallbackFixture f (0, 0, 8);
-                f.engine.getClickEngine().setEnabled (true);
-                f.engine.setMasterStereo (true);
-                f.engine.setMasterOutputs (4, 5);
-                // ClickEngine fires at the first sample of the first
-                // block (samplesUntilNextBeat1 = 0 after prepare).
-                f.process (256);
-                // Click sample should land on outs 4/5; not on 0/1.
-                expect      (f.peakOut (4, 256) > 0.0f);
-                expectEquals (f.peakOut (0, 256), 0.0f);
-                expectEquals (f.peakOut (1, 256), 0.0f);
             }
 
             // ─── Stereo-pair summing ─────────────────────────────────
@@ -2488,7 +2471,6 @@ namespace zynforge
                     expect (f.engine.loadSession (dir, false, false) == 3);
                     f.engine.setMasterOutputs (0, 1);
                     f.engine.setStreamOutputs (-1, -1);
-                    f.engine.getClickEngine().setEnabled (false);
 
                     using P = AudioEngine::AutomationParam;
                     auto& rec = f.engine.getRecorder();

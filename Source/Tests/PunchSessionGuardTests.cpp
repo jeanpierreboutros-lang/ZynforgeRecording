@@ -516,11 +516,6 @@ namespace zynforge
                         main.engine.setTrackLinkedRouting (0, 9);
                         expectEquals (recorder.getTrack (0).outputRouting.load(), 3,
                                       "a linked patch change half-applied during a take");
-                        main.clickTrackIndex = 0;
-                        main.tempoBar.onBpmChanged (131.0f);
-                        expect (main.clickRefreshPending, "a tempo change during a take never re-renders the click");
-                        main.clickTrackIndex = -1;
-                        main.clickRefreshPending = false;
                         recorder.stopRecording();
                     }
                     r.location.deleteRecursively();

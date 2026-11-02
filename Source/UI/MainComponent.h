@@ -413,7 +413,7 @@ private:
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
-    // One undo step around a tempo-map edit; a generated click follows it.
+    // One undo step around a tempo-map edit.
     void runTempoEdit (const juce::String& label, std::function<void()> mutate);
     // Test seam: receives what either delete prompt would run on "Delete".
     std::function<void (std::function<void()>)> confirmForTests;
@@ -720,16 +720,6 @@ private:
     void addCueAtTransport();
     void updateCueAtTransport();
     void renameCurrentCue();
-    // Build / refresh the metronome track. Walks the current tempo
-    // (and tempoMap, if any) to lay down a click WAV in the session's
-    // Audio Files/ folder. Tracks the file path so a re-press just
-    // overwrites it in place rather than piling up tracks.
-    // The render runs on the owned session-I/O worker. Completion (when given)
-    // is delivered on the message thread after the file is installed/reloaded.
-    void generateOrRefreshClickTrack (std::function<void (bool)> completion = {});
-    int  clickTrackIndex { -1 };   // -1 = not yet created in this session
-    bool clickRefreshPending { false };   // tempo changed while the render was refused
-
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
     bool songExportRunning { false };   // message thread; turns menu item 967 into its cancel
 
@@ -740,7 +730,7 @@ private:
     std::atomic<bool> sessionIoBusy { false };
 
     // Every unbounded session-file job (track export, stem/mix bounce,
-    // import, Save As copy, relocation, show handoff, click render) runs on
+    // import, Save As copy, relocation, show handoff) runs on
     // this ONE owned worker, never on the message thread and never detached.
     // It releases sessionIoBusy on every exit path before the job's
     // completion runs, and the destructor cancels + joins it while the engine

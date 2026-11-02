@@ -2050,8 +2050,6 @@ namespace zynforge
                                   std::memory_order_relaxed);
         timeSigDenominator.store (appProps->getIntValue ("timeSigDenominator", 4),
                                   std::memory_order_relaxed);
-        // Sync the metronome bar length to the restored meter.
-        click.setBeatsPerBar (timeSigNumerator.load (std::memory_order_relaxed));
 
         // Restore the active session folder (set by New Session... / Open
         // Session...) so Save / Save As stay enabled across app restarts.
@@ -2160,8 +2158,6 @@ namespace zynforge
         // IO thread -- no priority inversion under load.
         recorder.setAudioWorkgroup (std::move (workgroup));
 
-        click.prepare (sr);
-        click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
         loudness.prepare (sr);
 
         // Strip count is user-controlled: the app opens with NO channels
@@ -2314,9 +2310,6 @@ namespace zynforge
         if (denominator > 32) denominator = 32;
         timeSigNumerator  .store (numerator,   std::memory_order_relaxed);
         timeSigDenominator.store (denominator, std::memory_order_relaxed);
-        // Keep the metronome's bar length in sync so the accent (downbeat)
-        // lands on beat 1 of the actual meter, not a fixed 4.
-        click.setBeatsPerBar (numerator);
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();
@@ -2330,9 +2323,6 @@ namespace zynforge
     {
         bpm = juce::jlimit (20.0f, 999.0f, bpm);
         currentTempoBpm.store (bpm, std::memory_order_relaxed);
-        // Hand the new tempo to the real-time click immediately -- atomic
-        // store, so the audio thread picks it up at the next block.
-        click.setTempoBpm (bpm);
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();
@@ -3499,45 +3489,6 @@ namespace zynforge
             fastaccum::downcastDoubleToFloat (outputs[ch],
                                                outputAccum.getReadPointer (ch),
                                                numSamples);
-        }
-
-        // ── Real-time click mix ────────────────────────────────────
-        // Click runs on the audio thread so a tempo / voice change
-        // takes effect on the next beat -- no file reload, no glitch.
-        // Routed through the master output pair (masterOutL / masterOutR)
-        // so it follows the engineer's monitor-bus choice instead of
-        // pinning to hardware outs 0+1.
-        // Per-block tempo-map lookup. If a tempo map exists and the player is
-        // rolling, resolve the BPM at the playhead and feed it to the click.
-        // Try-lock the map: if the message thread is mid-edit, leave the click
-        // at its last bpm rather than block or read a mutating vector.
-        {
-            const juce::ScopedTryLock tempoStl (tempoLock);
-            if (tempoStl.isLocked() && ! tempoMap.empty() && player.isPlaying())
-            {
-                const auto playPosNow = player.getPositionSamples();
-                float bpm = currentTempoBpm.load (std::memory_order_relaxed);
-                for (const auto& tc : tempoMap)
-                {
-                    if (tc.samplePos <= playPosNow) bpm = tc.bpm;
-                    else break;
-                }
-                click.setTempoBpm (bpm);
-            }
-        }
-
-        // Master MUTE gates the click too. The click is written straight into
-        // the output buffers AFTER the master fader/mute has been applied to
-        // the monitor sum, so muting the master used to leave the metronome
-        // audible on the monitor bus it rides -- surprising, and loud, in a
-        // "kill the monitors" moment.
-        // It stays off a held pair with the mix, or it would be the one thing
-        // on those console channels. It still counts, so the beat holds.
-        if (click.isEnabled() && ! masterState.muted.load (std::memory_order_relaxed))
-        {
-            float* L = masterAudible ? outputs[outL] : nullptr;
-            float* R = masterAudible && masterPair.right != outL ? outputs[masterPair.right] : nullptr;
-            click.processBlock (L, R, numSamples);
         }
 
         // CPU-load: (callback wall time) / (block period). EMA-smoothed

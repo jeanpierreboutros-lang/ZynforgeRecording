@@ -132,7 +132,7 @@ namespace zynforge
             meter.detach();
         }
 
-        // Toolbar / click-overlay context -- set by the host EditPage
+        // Toolbar context -- set by the host EditPage
         // after construction so all rows share the same global view.
         AutomationToolbar* toolbar  { nullptr };
         EditToolsBar*      toolsBar { nullptr };
@@ -140,10 +140,6 @@ namespace zynforge
                             std::function<void()> mutate)> automationEditWrapper;
         std::function<void()>                       automationDragBegin;
         std::function<void (const juce::String&)>   automationDragEnd;
-        // Index of the Click track when one exists. Used to suppress
-        // automation-lane edits on that row (engineers don't draw
-        // gain points on the metronome). -1 = no click track.
-        int    clickRowIdx  { -1 };
         // Drag tracking -- while > -1, mouseDrag moves the indexed
         // point on the active lane.
         int    draggingPointIdx { -1 };
@@ -315,7 +311,6 @@ namespace zynforge
                 m.addItem (30, "volume",      true, laneMode == LaneMode::Volume);
                 m.addItem (32, "mute",        true, laneMode == LaneMode::Mute);
                 m.addItem (33, "pan",         true, laneMode == LaneMode::Pan);
-                m.addItem (34, "click",       true, laneMode == LaneMode::Click);
 
                 juce::Component::SafePointer<TrackRow> self (this);
                 m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&viewButton),
@@ -329,7 +324,6 @@ namespace zynforge
                         case 30: self->laneMode = LaneMode::Volume;     break;
                         case 32: self->laneMode = LaneMode::Mute;       break;
                         case 33: self->laneMode = LaneMode::Pan;        break;
-                        case 34: self->laneMode = LaneMode::Click;      break;
                         default: return;
                     }
                     // A focused point belongs to the lane that just left.
@@ -350,7 +344,6 @@ namespace zynforge
                             case LaneMode::Volume: self->toolbar->setParamSilently (P::Volume); break;
                             case LaneMode::Pan:    self->toolbar->setParamSilently (P::Pan);    break;
                             case LaneMode::Mute:   self->toolbar->setParamSilently (P::Mute);   break;
-                            case LaneMode::Click:  self->toolbar->setParamSilently (P::Click);  break;
                             default: break;   // Waveform / Markers don't map to an automation param
                         }
                     }
@@ -884,7 +877,7 @@ namespace zynforge
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
             // All lane-content drawing runs inside this lambda. The non-waveform
-            // lane modes (Click / Tempo / Markers / Volume·Pan·Mute automation)
+            // lane modes (Tempo / Markers / Volume·Pan·Mute automation)
             // early-`return` once they've drawn their lane -- by
             // doing so from the lambda (not paint()), they no longer SKIP the
             // pinned header painted LAST below. Skipping it left the header
@@ -988,7 +981,7 @@ namespace zynforge
 
             // Pro Tools-style: the waveform is ALWAYS the base layer,
             // even when a different lane mode (Volume / Pan / Mute /
-            // Click / Tempo / Markers) is selected. The lane data is
+            // Tempo / Markers) is selected. The lane data is
             // drawn on top with a semi-transparent backdrop. Paint
             // the waveform here as the substrate; the lane branch
             // below then overlays its content. Skip the substrate when the
@@ -1117,77 +1110,6 @@ namespace zynforge
                         lineCol = muted ? brand::brandOrange : brand::textMuted;
                         label   = muted ? "MUTED" : "open";
                         break;
-                    }
-                    case LaneMode::Click:
-                    {
-                        // Beat grid for the whole lane -- every quarter
-                        // note at the current session tempo. The lane
-                        // adapts its density: if beats would pack closer
-                        // than ~6 px we drop to bar markers, then to
-                        // 4-bar markers, etc., so the lane never moires
-                        // into a solid stripe at long zoom-outs.
-                        const float bpm = engine.getSessionTempoBpm();
-                        const auto& player = engine.getPlayer();
-                        const juce::int64 totalSamples = player.isLoaded()
-                            ? player.getTotalLengthSamples() : 0;
-                        const double sr = player.getSampleRate() > 0.0
-                            ? player.getSampleRate()
-                            : (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-                               ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
-                               : 48000.0);
-                        if (totalSamples > 0 && bpm > 0.0f && sr > 0.0
-                            && inner.getWidth() > 0)
-                        {
-                            const double samplesPerBeat = 60.0 * sr / bpm;
-                            const double pxPerBeat = samplesPerBeat
-                                * (double) inner.getWidth()
-                                / (double) totalSamples;
-
-                            // Pick a stride: 1 beat / 1 bar (4) / 4 bars
-                            // (16) / 16 bars (64). Keeps adjacent ticks
-                            // at least ~6 px apart for visual clarity.
-                            int stride = 1;
-                            while (pxPerBeat * stride < 6.0 && stride < 4096)
-                                stride *= 4;
-
-                            const auto visible = inner.getIntersection (g.getClipBounds());
-                            const double samplesPerTick = samplesPerBeat * stride;
-                            const double samplesPerPixel = (double) totalSamples / inner.getWidth();
-                            const auto firstTick = (juce::int64) juce::jmax (0.0,
-                                std::floor ((visible.getX() - inner.getX()) * samplesPerPixel
-                                            / samplesPerTick) - 1.0);
-                            const auto lastTick = (juce::int64) juce::jmin (
-                                std::ceil ((double) totalSamples / samplesPerTick) - 1.0,
-                                std::ceil ((visible.getRight() - inner.getX()) * samplesPerPixel
-                                           / samplesPerTick) + 1.0);
-                            for (juce::int64 tick = firstTick;
-                                 ! visible.isEmpty() && tick <= lastTick; ++tick)
-                            {
-                                const double s = tick * samplesPerTick;
-                                const double prop = s / (double) totalSamples;
-                                const int x = inner.getX()
-                                            + (int) (prop * inner.getWidth());
-                                const int beatsPerBar = juce::jmax (1, engine.getTimeSignatureNumerator());
-                                const bool downbeat = (tick * stride % beatsPerBar) == 0;
-                                g.setColour (downbeat ? brand::brandOrange
-                                                       : brand::accentStatus.withAlpha (zynforge::brand::alpha::muted));
-                                g.drawVerticalLine (x,
-                                                    (float) inner.getY(),
-                                                    (float) inner.getBottom());
-                            }
-                        }
-                        g.setColour (brand::textTertiary);
-                        g.setFont (brand::type::caption());
-                        g.drawText ("click " + juce::String (bpm, 1) + " BPM",
-                                    inner.reduced (4, 2),
-                                    juce::Justification::topLeft, false);
-                        if (playheadX >= 0 && playheadX < wavePane.getWidth())
-                        {
-                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
-                            g.fillRect (juce::Rectangle<int> (headerW + playheadX,
-                                                              0, 2, getHeight()));
-                        }
-                        return;
                     }
                     case LaneMode::Tempo:
                     {
@@ -2148,9 +2070,6 @@ namespace zynforge
             header.removeFromLeft (swatchW);
             header.removeFromLeft (4);
 
-            const bool isClickRow =
-                engine.getRecorder().getTrack (index).referenceMedia.load (std::memory_order_relaxed);
-
             // -------------- LEFT (name + buttons) --------------
             constexpr int leftBlockW = 140;
             auto leftBlock = header.removeFromLeft (leftBlockW).reduced (brand::space::xs, brand::space::xs);
@@ -2160,37 +2079,18 @@ namespace zynforge
             leftBlock.removeFromTop (3);
 
             const int btnH = 22;
-            if (isClickRow)
-            {
-                armButton .setVisible (false); armButton .setBounds ({});
-                monButton .setVisible (false); monButton .setBounds ({});
-                auto row = leftBlock.removeFromTop (btnH);
-                const int half = row.getWidth() / 2;
-                soloButton.setBounds (row.removeFromLeft (half).reduced (1));
-                muteButton.setBounds (row.reduced (1));
-            }
-            else
-            {
-                armButton.setVisible (true);
-                monButton.setVisible (true);
-                // Four buttons across one row, Pro Tools-style:
-                //   [ REC ][  I  ][  S  ][  M  ]
-                auto row = leftBlock.removeFromTop (btnH);
-                const int quarter = row.getWidth() / 4;
-                armButton .setBounds (row.removeFromLeft (quarter).reduced (1));
-                monButton .setBounds (row.removeFromLeft (quarter).reduced (1));
-                soloButton.setBounds (row.removeFromLeft (quarter).reduced (1));
-                muteButton.setBounds (row.reduced (1));
-            }
+            // Four buttons across one row, Pro Tools-style:
+            //   [ REC ][  I  ][  S  ][  M  ]
+            auto row = leftBlock.removeFromTop (btnH);
+            const int quarter = row.getWidth() / 4;
+            armButton .setBounds (row.removeFromLeft (quarter).reduced (1));
+            monButton .setBounds (row.removeFromLeft (quarter).reduced (1));
+            soloButton.setBounds (row.removeFromLeft (quarter).reduced (1));
+            muteButton.setBounds (row.reduced (1));
             leftBlock.removeFromTop (4);
 
             // The VIEW button (lane-mode picker) takes the bottom-left.
-            // On Click rows it's hidden -- metronome lane has no choice.
-            viewButton.setVisible (! isClickRow);
-            if (! isClickRow)
-                viewButton.setBounds (leftBlock.removeFromTop (18));
-            else
-                viewButton.setBounds ({});
+            viewButton.setBounds (leftBlock.removeFromTop (18));
 
             // -------------- MIDDLE (meter) --------------
             // Slim LedMeter -- a clean ~22 px bar (no dB-label gutter). Small
@@ -2726,16 +2626,15 @@ namespace zynforge
                 }
             }
 
-            // Lane-area interaction -- only when the toolbar is wired, this
-            // row isn't the Click track itself, and the row SHOWS an editable
-            // lane (Volume / Pan / Mute, or the shared Tempo lane). A Waveform,
-            // Markers or Click lane draws no points: a click there (a gap
+            // Lane-area interaction -- only when the toolbar is wired and the
+            // row SHOWS an editable lane (Volume / Pan / Mute, or the shared
+            // Tempo lane). A Waveform or Markers lane draws no points: a click there (a gap
             // between clips, past a short take, an empty session) used to fall
             // through to here and add, delete or grab a HIDDEN point -- or
             // write the tempo map -- with whatever the toolbar last held.
             const bool showsEditableLane = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
                                         || laneMode == LaneMode::Mute   || laneMode == LaneMode::Tempo;
-            if (toolbar != nullptr && index != clickRowIdx && showsEditableLane && inWavePane (e.x))
+            if (toolbar != nullptr && showsEditableLane && inWavePane (e.x))
             {
                 const auto coord = laneCoordAt (e.getPosition());
                 const auto p     = currentLaneParam();
@@ -3684,7 +3583,7 @@ namespace zynforge
         // they never disagree. It used to prefer the toolbar's param,
         // which a VIEW pick on ANOTHER row changes silently: this row then
         // drew Volume points under a "pan C" readout while its menus
-        // edited Pan. Falls through to Volume for Click / Tempo / unknown.
+        // edited Pan. Falls through to Volume for Tempo / unknown.
         AudioEngine::AutomationParam currentLaneParam() const
         {
             switch (laneMode)
@@ -3698,13 +3597,13 @@ namespace zynforge
     public:
         // The automation lane this row draws points for, if it draws any.
         // currentLaneParam() falls through to Volume for every other lane, so
-        // anything that edits points must ask here first: a Click or Tempo
-        // lane, a Waveform lane and the click strip show none.
+        // anything that edits points must ask here first: a Tempo lane and a
+        // Waveform lane show none.
         std::optional<AudioEngine::AutomationParam> shownAutomationParam() const
         {
             const bool showsPoints = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
                                   || laneMode == LaneMode::Mute;
-            if (! showsPoints || index == clickRowIdx) return {};
+            if (! showsPoints) return {};
             return currentLaneParam();
         }
 
@@ -4052,7 +3951,7 @@ namespace zynforge
     public:
         // What this row draws in the lane area (matches the toolbar's
         // Param, or the row's own VIEW choice when no toolbar is wired).
-        enum class LaneMode { Waveform, Markers, Volume, Mute, Pan, Click, Tempo };
+        enum class LaneMode { Waveform, Markers, Volume, Mute, Pan, Tempo };
         LaneMode laneMode { LaneMode::Waveform };
 
     private:

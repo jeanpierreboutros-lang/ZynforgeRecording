@@ -636,15 +636,6 @@ public:
             expectEquals (found[0].startSample, (juce::int64) 10 * rate, "the marker went to the file position");
         }
 
-        beginTest ("A generated click does not hold the song quorum open");
-        {
-            Folder f; expect (write (f.track()));  expect (write (f.track (2)));
-            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
-            expectEquals ((int) e.songScanVoices().size(), 2);
-            e.getRecorder().getTrack (1).referenceMedia.store (true);
-            expectEquals ((int) e.songScanVoices().size(), 1);
-        }
-
         beginTest ("A stereo pair is one voice of the quorum");
         {
             Folder f; expect (write (f.track()));  expect (write (f.track (2)));

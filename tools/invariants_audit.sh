@@ -338,10 +338,6 @@ report "persistent text writes use atomic replacement" \
        "$HITS"
 
 HITS=""
-grep -q "sessionJobs.launch (" Source/UI/MainComponentTools.cpp \
-    || HITS="Source/UI/MainComponentTools.cpp: click-track render returned to the message thread"
-grep -q "temporary.replaceFileIn (destination)" Source/Audio/ClickTrackRenderer.cpp \
-    || HITS+=$'\nSource/Audio/ClickTrackRenderer.cpp: click render replaces/deletes the previous file before success'
 grep -q "installCompletedExport" Source/Audio/TrackExporter.cpp \
     || HITS+=$'\nSource/Audio/TrackExporter.cpp: track export no longer installs transactionally'
 grep -q "installBounce" Source/Audio/AudioEngineClips.cpp \

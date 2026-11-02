@@ -310,7 +310,7 @@ namespace zynforge
                 e.setTrackMuted (0, false);
             }
 
-            beginTest ("With the mix held off, the click stays off and the master still meters");
+            beginTest ("With the mix held off, the master still meters");
             {
                 Rig r (2, 2, 8);
                 auto& e = r.engine; auto& rec = e.getRecorder();
@@ -318,16 +318,8 @@ namespace zynforge
                 rec.getTrack (1).monitor.store (true);
                 r.input (1, 0.25f);
                 e.getMasterState().peak.store (0.0f);
-                e.getClickEngine().prepare (48000.0);
-                e.getClickEngine().setEnabled (true);
-                float loudest = 0.0f;
-                for (int b = 0; b < 200; ++b)
-                {
-                    r.process();
-                    loudest = juce::jmax (loudest, r.peak (1));
-                }
-                e.getClickEngine().setEnabled (false);
-                expectEquals (loudest, 0.0f, "the click stayed on a held pair");
+                r.process();
+                expectEquals (r.peak (1), 0.0f, "the mix reached a held pair");
                 expect (e.getMasterState().peak.load() > 0.01f, "the held mix stopped metering");
             }
 

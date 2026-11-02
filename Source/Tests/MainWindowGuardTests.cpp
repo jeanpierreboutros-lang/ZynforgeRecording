@@ -1371,27 +1371,7 @@ namespace zynforge
                 expect (w.main.srWarnLabel.getText().isEmpty());
             }
 
-            beginTest ("A strip named Click keeps its R and I; the generated click does not");
-            {
-                Window w;
-                w.engine().setTrackName (0, "Click");
-                w.main.rebuildStrips();
-                w.main.strips.front()->setSize (120, 500);
-                auto armVisible = [&]
-                {
-                    for (auto* child : w.main.strips.front()->getChildren())
-                        if (child->getTitle().containsIgnoreCase ("arm") || child->getTitle().containsIgnoreCase ("record"))
-                            return child->isVisible();
-                    return false;
-                };
-                expect (armVisible(), "a recorded click return lost its R button");
-                w.recorder().getTrack (0).referenceMedia.store (true);
-                w.main.strips.front()->resized();
-                expect (! armVisible(), "the generated click grew an R button");
-                w.recorder().getTrack (0).referenceMedia.store (false);
-            }
-
-            beginTest ("A session saved before the flag still knows its click strip");
+            beginTest ("A session saved before the flag still knows its reference bed");
             {
                 Window w;
                 w.engine().setTrackName (1, "Click");
@@ -1460,28 +1440,6 @@ namespace zynforge
                 w.main.cueRamp.active = true;
                 expect (w.engine().reorderTracks ({ 2, 1, 0 }));
                 expect (! w.main.cueRamp.active, "a fade kept writing to indices that moved");
-            }
-
-            beginTest ("A tempo cue recalled during a take refreshes the click afterwards");
-            {
-                Window w;
-                w.main.clickTrackIndex = 0;
-                w.recorder().getTrack (0).referenceMedia.store (true);
-                w.engine().setSessionTempoBpm (120.0f);
-                SetlistBar::Cue cue;
-                cue.name = "Fast";
-                cue.tempoBpm = 150.0f;
-                w.main.cues.push_back (cue);
-                w.arm ({ 1 });
-                w.engine().armContinue (w.engine().getCaptureLengthSamples());
-                expect (w.engine().startRecording (w.session), w.recorder().getStartError());
-                w.main.jumpToCue (0);
-                expect (w.main.clickRefreshPending, "the promised click refresh was never queued");
-                w.main.clickRefreshPending = false;
-                w.main.clickTrackIndex = -1;
-                feedAll (w.recorder(), 0.1f, 4);
-                w.main.stopActiveCaptureAsync (false);
-                expect (w.stopped());
             }
 
             beginTest ("Tap STOP again shows at once, ahead of anything queued");

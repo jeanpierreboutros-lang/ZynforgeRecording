@@ -4,7 +4,6 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "Markers.h"
-#include "ClickEngine.h"
 #include "VcaBus.h"
 #include "../Network/RemoteControl.h"
 
@@ -259,7 +258,7 @@ namespace zynforge
         // Load a session's audio into the player + seed clips. preserveEdits
         // is false for a genuine session OPEN (wipe stale clips; the caller's
         // .zfproj playlist restore repopulates) and true for a SAME-session
-        // reload (click-track regen) that must keep the engineer's edits.
+        // reload that must keep the engineer's edits.
         int  loadSession (const juce::File& sessionDir, bool preserveEdits = false, bool appendRecordedAudio = false);
 
         // Per-SESSION strip mix state: name, colour, gain, pan, mute, solo,
@@ -552,8 +551,7 @@ namespace zynforge
         float  getSessionTempoBpm() const noexcept { return currentTempoBpm.load (std::memory_order_relaxed); }
         void   setSessionTempoBpm (float bpm);
 
-        // Time signature -- clicks accent beat 1 of each bar; the click
-        // engine consumes (numerator, denominator). Persisted to appProps.
+        // Time signature. Persisted to appProps.
         int   getTimeSignatureNumerator()   const noexcept { return timeSigNumerator  .load (std::memory_order_relaxed); }
         int   getTimeSignatureDenominator() const noexcept { return timeSigDenominator.load (std::memory_order_relaxed); }
         void  setTimeSignature (int numerator, int denominator);
@@ -879,8 +877,7 @@ namespace zynforge
         // are not finished. Asked before a job starts and by the job itself.
         juce::String exportRefusal() const;
         // What Detect Songs listens to: one voice per logical strip, as the
-        // arrangement plays it. A generated click is on all the time, so it
-        // would hold the quorum open across every gap between songs.
+        // arrangement plays it.
         std::vector<songs::Voice> songScanVoices();
         // Any strip or VCA soloed. A mix render follows solo, so its file
         // holds only what is soloed, and the engineer must be told.
@@ -1231,12 +1228,8 @@ namespace zynforge
         std::atomic<bool> punchEnabled { false };
         bool              punchLoopWasEnabled { false };
 
-        ClickEngine        click;
         std::atomic<bool> controlsLocked { false };
         std::array<VcaBus, kNumVcas> vcas;
-    public:
-        ClickEngine& getClickEngine() noexcept { return click; }
-    private:
         RemoteControl remotes { *this };   // OSC, desk macros, control surface
         std::unique_ptr<juce::PropertiesFile> appProps;
         RemoteTransportHandler remoteTransportHandler;
@@ -1312,10 +1305,7 @@ namespace zynforge
         // split / paste use the playhead as the fallback).
         std::atomic<juce::int64> editCursorSample { -1 };
         std::vector<TempoChange> tempoMap;   // sorted by samplePos
-        // Guards tempoMap against the audio-thread reader (click tempo-map
-        // lookup) racing the message-thread mutators. Writers take a
-        // ScopedLock; the audio thread uses a ScopedTryLock and, if it can't
-        // acquire, keeps the click at its last resolved bpm for that block.
+        // Guards tempoMap across the threads that read and write it.
         mutable juce::CriticalSection tempoLock;
         // Active snap grid. Read by snapSampleToGrid + by the
         // splitTrackAtPlayhead path. Default Off.

@@ -40,13 +40,6 @@ void MainComponent::timerCallback()
     updatePunchPill();
     updateNextCueCountdown();
 
-    if (clickRefreshPending && clickTrackIndex >= 0 && ! engine.isRecording()
-        && ! sessionIoBusy.load() && ! captureMetadataPending && pendingMetadataSaves == 0)
-    {
-        clickRefreshPending = false;   // a tempo change during a take/job
-        generateOrRefreshClickTrack();
-    }
-
     if (uiLayoutSavePending && ! sessionIoBusy.load()) requestUILayoutSave();
 
     if (cueRamp.active) updateCueRamp();

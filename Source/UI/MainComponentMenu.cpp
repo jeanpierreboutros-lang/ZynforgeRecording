@@ -13,7 +13,6 @@
 #include "PatchPage.h"
 #include "Meterbridge.h"
 #include "MarkerListDialog.h"
-#include "ClickSettingsDialog.h"
 #include "TimecodeSyncDialog.h"
 #include "ControlSurfacesDialog.h"
 #include "DeskMacroDialog.h"

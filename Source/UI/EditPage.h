@@ -131,8 +131,7 @@ namespace zynforge
         { return (! canMutateTimeline || canMutateTimeline()) && ! readOnlyWhileRecording; }
 
 
-        // Tempo-lane edits go through this so they join Cmd+Z and refresh a
-        // generated click track, as a change on the TempoBar does.
+        // Tempo-lane edits go through this so they join Cmd+Z.
         std::function<void (const juce::String&, std::function<void()>)> tempoEditWrapper;
 
         // Memory-Location recall hooks. setLogicalRowsVisible takes a
@@ -230,10 +229,6 @@ namespace zynforge
         // Param choice. Called whenever the toolbar's onParamChanged
         // fires.
         void applyToolbarParamToAllRows();
-
-        // True when MainComponent has dropped a metronome track; the
-        // EDIT rows draw a beat-overlay on every other row when on.
-        void setClickTrackPresent (bool present, int clickTrackIdx);
 
         // Re-scan the session dir, rebuild row list, and re-issue
         // thumbnail-load requests for each track. Safe to call repeatedly.
@@ -373,8 +368,6 @@ namespace zynforge
         juce::TextButton zoomVIn  { "V+" }, zoomVOut { "V-" };
         juce::TextButton zoomHIn  { "H+" }, zoomHOut { "H-" };
         juce::TextButton followButton { "FOLLOW" };
-        bool clickPresent { false };
-        int  clickTrackIdx { -1 };
 
         // WaveCache.wfm persistence: writes the AudioThumbnailCache
         // contents to disk so the EDIT view re-renders waveforms

@@ -46,12 +46,11 @@ namespace zynforge
                 vp->mouseWheelMove (e.getEventRelativeTo (vp), w);
         }
 
-        // Push-down configuration: toolbar pointer + click-overlay state.
+        // Push-down configuration: toolbar pointer.
         // Stored here so newly-created rows pick them up automatically;
         // existing rows are mutated through updateRowContext().
         AutomationToolbar* sharedToolbar       { nullptr };
         EditToolsBar*      sharedToolsBar      { nullptr };
-        int                sharedClickRowIdx   { -1 };
         // Forwarded from EditPage -> MainComponent. When set, every
         // per-point automation edit a TrackRow performs goes through
         // this wrapper so Cmd+Z reverts it.
@@ -68,7 +67,6 @@ namespace zynforge
             {
                 r->toolbar                = sharedToolbar;
                 r->toolsBar               = sharedToolsBar;
-                r->clickRowIdx            = sharedClickRowIdx;
                 r->automationEditWrapper  = sharedAutomationEditWrapper;
                 r->automationDragBegin    = sharedAutomationDragBegin;
                 r->automationDragEnd      = sharedAutomationDragEnd;
@@ -137,7 +135,6 @@ namespace zynforge
                 r->onApplyToAllRows = [this] (TrackRow::Size s, int customPx) { applySizeToAll (s, customPx); };
                 r->toolbar                = sharedToolbar;
                 r->toolsBar               = sharedToolsBar;
-                r->clickRowIdx            = sharedClickRowIdx;
                 r->automationEditWrapper  = sharedAutomationEditWrapper;
                 r->automationDragBegin    = sharedAutomationDragBegin;
                 r->automationDragEnd      = sharedAutomationDragEnd;
@@ -757,22 +754,9 @@ namespace zynforge
             case AutomationToolbar::Param::Volume: lm = TrackRow::LaneMode::Volume; break;
             case AutomationToolbar::Param::Pan:    lm = TrackRow::LaneMode::Pan;    break;
             case AutomationToolbar::Param::Mute:   lm = TrackRow::LaneMode::Mute;   break;
-            case AutomationToolbar::Param::Click:  lm = TrackRow::LaneMode::Click;  break;
             case AutomationToolbar::Param::Tempo:  lm = TrackRow::LaneMode::Tempo;  break;
         }
         list->forceLaneMode (lm);
-    }
-
-    void EditPage::setClickTrackPresent (bool present, int clickIdx)
-    {
-        clickPresent  = present;
-        clickTrackIdx = clickIdx;
-        if (list != nullptr)
-        {
-            list->sharedClickRowIdx  = present ? clickIdx : -1;
-            list->updateRowContext();
-        }
-        repaint();
     }
 
     int EditPage::selectedClipIndexOn (const SelectedClip& s) const
