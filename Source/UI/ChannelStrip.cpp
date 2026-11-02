@@ -1024,8 +1024,10 @@ namespace zynforge
             idRow.removeFromRight (26);      // painted EG badge
         if (swatch != nullptr)
             swatch->setBounds (idRow.removeFromRight (kIdRowH).withSizeKeepingCentre (10, 10));
-        const bool narrow = getWidth() < 78;
-        nameLabel.setFont (narrow ? brand::type::channelName() : brand::type::sectionTitle());
+        // Largest type on the strip at every size, chosen for the room there is.
+        nameLabel.setFont (getWidth() < 64 ? brand::type::channelName()
+                         : getWidth() < 96 ? brand::type::sectionTitle()
+                                           : brand::type::headline());
         nameLabel.setBounds (r.removeFromTop (kNameRowH));
         r.removeFromTop (brand::space::md);
 
