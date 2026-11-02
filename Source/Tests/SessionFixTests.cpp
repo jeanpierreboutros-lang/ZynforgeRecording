@@ -379,6 +379,69 @@ public:
         }
     }
 
+    void testCopiesThatDoNotOpen()
+    {
+        // A journal that cannot be replayed makes the copy refuse to open, and
+        // only the copy: the source is already open by then.
+        const auto breakJournal = [] (const juce::File& session)
+        {
+            const auto journal = session.getChildFile ("Session File Backups/reorder_broken");
+            journal.createDirectory();
+            journal.getChildFile ("journal.json").replaceWithText ("not json");
+        };
+
+        beginTest ("Save As says so when the copy would not open");
+        {
+            Folder f; writeSavedShow (f); expect (writeAudio (f.track (1)));
+            const auto dest = f.dir.getSiblingFile ("Copy");
+            Host host (f);
+            breakJournal (f.dir);
+            expect (host.main.sessionJobs.reserve());
+            host.main.completeSaveAs (f.dir, dest);
+            expect (pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }));
+            expect (host.status().contains ("did not open"), host.status());
+            expect (host.status().contains ("incomplete file move"), "the reason was lost: " + host.status());
+            expect (host.main.engine.getActiveSessionDir() == f.dir, "the app stays on the session it had");
+        }
+
+        beginTest ("Move says so when the session would not open at its new home");
+        {
+            Folder f, parent ("Parent"); writeSavedShow (f); expect (writeAudio (f.track (1)));
+            Host host (f);
+            breakJournal (f.dir);
+            expect (host.main.sessionJobs.reserve());
+            host.main.completeRelocate (f.dir, parent.dir);
+            expect (pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }));
+            expect (host.status().contains ("did not open"), host.status());
+            expect (host.status().contains (parent.dir.getChildFile ("Show").getFullPathName()), host.status());
+        }
+
+        beginTest ("A carried edit stays this session's when the copy does not open");
+        {
+            Folder f, copy ("Copy"); writeSavedShow (f); writeSavedShow (copy);
+            Host host (f);
+            breakJournal (copy.dir);
+            host.main.carryMixerInto (copy.dir);
+            expect (host.main.openCopiedSession (f.dir, copy.dir, true).contains ("incomplete file move"));
+            expect (host.main.engine.mixerBelongsTo (f.dir), "memory still holds the old session's edits");
+        }
+
+        beginTest ("Move's line carries everything the engineer has to know");
+        {
+            const juce::File from ("/Volumes/Old/Show"), to ("/Volumes/New/Show");
+            const auto line = [&] (bool carried, bool oldRemains, const juce::String& refused)
+            { return MainComponent::moveStatusLine (from, to, carried, oldRemains, refused); };
+            expectEquals (line (true, false, {}), juce::String ("Session moved to /Volumes/New/Show"));
+            expect (line (false, false, {}).contains ("without its unsaved changes"));
+            expect (line (true, true, {}).contains ("could not be fully removed: /Volumes/Old/Show"));
+            const auto both = line (false, true, {});
+            expect (both.contains ("without its unsaved changes") && both.contains ("could not be fully removed"),
+                    "the old folder's message hid the lost edits: " + both);
+            const auto refused = line (true, false, "Session has an incomplete file move");
+            expect (refused.startsWith ("! ") && refused.contains ("did not open: Session has an incomplete file move"), refused);
+        }
+    }
+
     void testUnloadedSession()
     {
         beginTest ("A session pinned but not loaded makes no handoff or project from empty memory");
@@ -420,6 +483,7 @@ public:
         testHandoffLines();
         testSoundcheckPatchStaysOut();
         testMissingDrive();
+        testCopiesThatDoNotOpen();
         testUnloadedSession();
     }
 };

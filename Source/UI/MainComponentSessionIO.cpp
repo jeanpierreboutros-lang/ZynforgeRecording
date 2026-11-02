@@ -1607,7 +1607,7 @@ void MainComponent::completeSaveAs (const juce::File& source, const juce::File& 
         {
             const bool ok = zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
                          && copyDirectoryCancellable (source, dest, cancel);
-            return [self, ok, dest, createdDestination, carryEdits]
+            return [self, ok, source, dest, createdDestination, carryEdits]
             {
                 if (self == nullptr) return;
                 self->engine.setSessionTransitionActive (false);
@@ -1618,9 +1618,11 @@ void MainComponent::completeSaveAs (const juce::File& source, const juce::File& 
                     return;
                 }
                 const bool carried = ! carryEdits || self->carryMixerInto (dest);
-                self->openSessionFolder (dest);
-                self->showStatus (carried ? "Saved As -> " + dest.getFileName()
-                                          : "Saved As -> " + dest.getFileName() + "; unsaved changes could not be carried over");
+                const auto refused = self->openCopiedSession (source, dest, carryEdits);
+                auto status = "Saved As -> " + dest.getFileName();
+                if (! carried) status << "; unsaved changes could not be carried over";
+                if (refused.isNotEmpty()) status = "! " + status + "; the copy did not open: " + refused;
+                self->showStatus (status);
             };
         });
     };
@@ -1646,6 +1648,17 @@ bool MainComponent::carryMixerInto (const juce::File& copy)
 {
     engine.claimMixerFor (copy);
     return saveSessionStateTo (copy);
+}
+
+// Why the new folder of a Save As or a Move would not open; empty when it did.
+// openSessionFolder has just put the reason on the status line. A refusal leaves
+// the old session in memory, and carrying its edits claimed the mixer for the
+// copy, so that claim goes back or nothing would save or protect that memory.
+juce::String MainComponent::openCopiedSession (const juce::File& source, const juce::File& copy, bool carried)
+{
+    if (openSessionFolder (copy) >= 0) return {};
+    if (carried && engine.getActiveSessionDir() == source) engine.claimMixerFor (source);
+    return statusLabel.getText();
 }
 
 void MainComponent::offerContinueFromDisk (const juce::String& action, const juce::String& carried,
@@ -2166,6 +2179,15 @@ void MainComponent::relocateActiveSession()
         });
 }
 
+juce::String MainComponent::moveStatusLine (const juce::File& oldDir, const juce::File& newDir, bool carried,
+                                            bool oldCopyRemains, const juce::String& refused)
+{
+    auto line = (carried ? "Session moved to " : "Session moved, without its unsaved changes, to ")
+              + newDir.getFullPathName();
+    if (oldCopyRemains) line << "; the old folder could not be fully removed: " << oldDir.getFullPathName();
+    return refused.isEmpty() ? line : "! " + line + "; it did not open: " + refused;
+}
+
 void MainComponent::completeRelocate (const juce::File& oldDir, const juce::File& newParent)
 {
     const auto newDir = newParent.getChildFile (oldDir.getFileName());
@@ -2230,12 +2252,9 @@ void MainComponent::completeRelocate (const juce::File& oldDir, const juce::File
                     // The default sessions folder stays where it was: moving one
                     // session to an archive drive must not send every New
                     // Session, import and crash-recovery scan there too.
-                    self->openSessionFolder (newDir);   // re-pin paths + reload audio from the new home
-                    self->showStatus (oldCopyRemains
-                        ? "Session moved, but the old folder could not be fully removed: "
-                            + oldDir.getFullPathName()
-                        : (carried ? "Session moved to " : "Session moved, without its unsaved changes, to ")
-                            + newDir.getFullPathName());
+                    // Re-pins paths and reloads audio from the new home.
+                    const auto refused = self->openCopiedSession (oldDir, newDir, carryEdits);
+                    self->showStatus (moveStatusLine (oldDir, newDir, carried, oldCopyRemains, refused));
                 };
         });
     };

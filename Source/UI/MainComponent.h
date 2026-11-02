@@ -195,6 +195,9 @@ private:
     void completeRelocate (const juce::File& oldDir, const juce::File& newParent);
     void completeShowHandoff (const juce::File& source, const juce::File& dest);
     bool carryMixerInto (const juce::File& copy);
+    juce::String openCopiedSession (const juce::File& source, const juce::File& copy, bool carried);
+    static juce::String moveStatusLine (const juce::File& oldDir, const juce::File& newDir, bool carried,
+                                        bool oldCopyRemains, const juce::String& refused);
     void startHandoffCopy (const juce::File& source, const juce::File& dest);
     // When a job's save of the source fails, whether to go on from what is on
     // disk. The tests stand in for the dialog through continueFromDiskPromptForTests.
