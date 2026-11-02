@@ -374,8 +374,8 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) useCaptureDaemon
         << '|' << (int) captureSupervisor.isAttached()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording())
-        << '|' << (int) songExportRunning
-        << '|' << (int) engine.isTakeOnDisk();
+        << '|' << (int) engine.isTakeOnDisk()
+        << '|' << (int) songExportRunning;
 
     if (sig != lastMenuStateSig)
     {
