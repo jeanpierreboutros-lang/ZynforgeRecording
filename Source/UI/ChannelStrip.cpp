@@ -1114,11 +1114,17 @@ namespace zynforge
 
         auto cluster = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), clusterW),
                                                 r.getHeight());
+        // On a narrow strip the meter's scale has to do: the ruler would take
+        // the whole fader's width, and a fader nobody can see can't be moved.
+        const bool roomForRuler = cluster.getWidth() >= rulerW + 2 + kMinFaderW + 2 + meterW;
         if (dbRuler != nullptr)
         {
-            dbRuler->setVisible (true);
-            dbRuler->setBounds (cluster.removeFromLeft (rulerW));
-            cluster.removeFromLeft (2);
+            dbRuler->setVisible (roomForRuler);
+            if (roomForRuler)
+            {
+                dbRuler->setBounds (cluster.removeFromLeft (rulerW));
+                cluster.removeFromLeft (2);
+            }
         }
         meter.setBounds (cluster.removeFromRight (meterW));
         cluster.removeFromRight (2);

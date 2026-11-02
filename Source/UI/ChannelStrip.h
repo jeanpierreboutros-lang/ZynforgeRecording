@@ -117,6 +117,7 @@ namespace zynforge
         static constexpr int kNameRowH = 22;
         static constexpr int kHeaderH  = kIdRowH + kNameRowH + 8;
         static constexpr int kFaderValueH = 14;
+        static constexpr int kMinFaderW   = 18;
 
         juce::Rectangle<int> contentArea() const;
         juce::Rectangle<int> numberBounds() const;
