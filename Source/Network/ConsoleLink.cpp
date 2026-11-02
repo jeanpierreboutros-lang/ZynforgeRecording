@@ -60,12 +60,19 @@ namespace zynforge
         connected = true;
         dialectConfirmed = false;
         deskAsked = false;
+        connectedAtMs = juce::Time::currentTimeMillis();
+        lastAnswerMs = 0;
+        reportedHealth = Health::NotAnswered;
+        neverAnsweredReported = false;
 
         // HANDSHAKE. Send the dialect's probe; a parseable reply confirms the
         // address model and unlocks the write tier. Nothing blocks on it -- the
         // link is immediately usable read-only either way.
         if (profile.dialect.probe)
+        {
             sendMessage (profile.dialect.probe());
+            nextProbeMs = connectedAtMs + kProbeMs;
+        }
         // Ask for pushed updates (names / scene changes) where supported.
         // Subscriptions EXPIRE (the X32's /xremote lasts ~10 s), so this is the
         // first of a repeating series -- see startHeartbeat.
@@ -77,8 +84,10 @@ namespace zynforge
         startHeartbeat();
 
         if (onStatus)
-            onStatus (profile.displayName + " link up: " + address + ":"
-                      + juce::String (usePort) + "  (" + transport->getName() + ")");
+            onStatus (profile.displayName + " link open to " + address + ":"
+                      + juce::String (usePort) + "  (" + transport->getName() + ") -- "
+                      + (profile.dialect.probe ? "waiting for the desk to answer"
+                                               : "this link can't tell whether a desk is there"));
         return true;
     }
 
@@ -96,7 +105,7 @@ namespace zynforge
         dialectConfirmed = false;
         host.clear();
         cancelDeskReads();
-        nextSubscribeMs = 0;
+        nextSubscribeMs = nextProbeMs = 0;
         stopTimer();
     }
 
@@ -467,6 +476,7 @@ namespace zynforge
                 return;
 
             case ConsoleEvent::Type::HandshakeOk:
+                lastAnswerMs = juce::Time::currentTimeMillis();
                 if (! dialectConfirmed)
                 {
                     dialectConfirmed = true;
@@ -662,8 +672,61 @@ namespace zynforge
             if (isOnSoundcheckPatch()) startPatchRead (PatchRead::Check);
         }
 
+        // 4. Ask again, then say what the answers add up to.
+        if (nextProbeMs != 0 && now >= nextProbeMs)
+        {
+            sendMessage (profile.dialect.probe());
+            nextProbeMs = now + kProbeMs;
+        }
+        reportHealthChange (now);
+
         // The watchdog above beats for as long as the link is up, so the
         // timer only stops in disconnect().
+    }
+
+    ConsoleLink::Health ConsoleLink::getHealth() const
+    {
+        if (! profile.dialect.probe) return Health::CannotTell;
+        if (lastAnswerMs == 0)       return Health::NotAnswered;
+        return juce::Time::currentTimeMillis() - lastAnswerMs > kDeskSilentMs ? Health::Silent
+                                                                              : Health::Answering;
+    }
+
+    juce::String ConsoleLink::healthText() const
+    {
+        switch (getHealth())
+        {
+            case Health::CannotTell:  return "this link can't tell whether a desk is there";
+            case Health::NotAnswered: return "no answer from the desk yet";
+            case Health::Answering:   return "desk answering";
+            case Health::Silent:      return "desk not answering";
+        }
+        return {};
+    }
+
+    // Once per change: this runs every second for as long as a link is open.
+    void ConsoleLink::reportHealthChange (juce::int64 now)
+    {
+        const auto health = getHealth();
+        const auto who = profile.displayName + " at " + host;
+        if (health == Health::NotAnswered)
+        {
+            if (! neverAnsweredReported && now - connectedAtMs > kDeskSilentMs)
+            {
+                neverAnsweredReported = true;
+                if (onStatus) onStatus (who + " has not answered. Names and scene markers need a desk at "
+                                        "that address.");
+            }
+            return;
+        }
+        if (health == reportedHealth) return;
+        const auto previous = reportedHealth;
+        reportedHealth = health;
+        if (! onStatus) return;
+        if (health == Health::Silent)
+            onStatus (who + " stopped answering -- names and scene markers have stopped.");
+        else if (health == Health::Answering && previous == Health::Silent)
+            onStatus (who + " is answering again.");
     }
 
     // ── Persistence ─────────────────────────────────────────────────────

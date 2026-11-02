@@ -265,7 +265,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         {
             juce::PopupMenu m;
             m.addItem (954, consoleLink.isConnected()
-                               ? "Console: disconnect " + consoleLink.getHost()
+                               ? "Console: disconnect " + consoleLink.getHost() + " (" + consoleLink.healthText() + ")"
                                : juce::String ("Console: connect..."));
             // Repatch + gain items only light up for a desk we drive over OSC.
             // Write-tier items also require a TRUSTWORTHY dialect: either the
@@ -358,6 +358,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << engine.getLtcSourceStrip()
         << '|' << (int) twinLink.isEnabled()
         << '|' << (int) consoleLink.isConnected()
+        << '|' << (int) consoleLink.getHealth()
         << '|' << (int) consoleLink.getPatch()
         << '|' << (int) consoleLink.isOnSoundcheckPatch()
         << '|' << (int) consoleLink.getProfile().canRepatch
@@ -626,7 +627,8 @@ juce::String MainComponent::consoleLinkSummary() const
     if (! consoleLink.isConnected()) return "Console link: not connected";
     return "Console link: " + profile.displayName + " at " + consoleLink.getHost()
          + (consoleLink.isDialectConfirmed() ? ", dialect confirmed by the desk"
-                                             : ", dialect not confirmed by the desk");
+                                             : ", dialect not confirmed by the desk")
+         + ", " + consoleLink.healthText();
 }
 
 int MainComponent::oscListenPort() const

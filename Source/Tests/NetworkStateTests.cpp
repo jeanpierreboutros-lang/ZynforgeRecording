@@ -205,6 +205,7 @@ namespace zynforge
 
             cuesKeepTheShowPatch (main);
             aRemoteCannotStartOrLandInAPunch (main);
+            aDeskThatGoesAway (main);
             deskWithNoSoundcheckState (main);
             restoreIsConfirmedByTheDesk();
             gainsAreConfirmedByTheDesk();
@@ -445,6 +446,123 @@ namespace zynforge
                 expect (main.statusLabel.getText().contains ("PUNCH"), main.statusLabel.getText());
                 e.setChaseMode (AudioEngine::ChaseMode::Off);
                 main.serviceTimecodeChase();
+            }
+        }
+
+        // ── Is anyone there ────────────────────────────────────────────────
+
+        void aDeskThatGoesAway (MainComponent& main)
+        {
+            using Health = ConsoleLink::Health;
+            const auto answer = [] (ConsoleLink& link) { link.injectReply (ConsoleMessage ("/info", { juce::String ("X32") })); };
+
+            beginTest ("A desk that stops answering is reported once, and again when it returns");
+            {
+                ConsoleLink link;
+                juce::StringArray said;
+                link.onStatus = [&] (const juce::String& s) { said.add (s); };
+                link.setMessageHook ([] (const ConsoleMessage&) {});
+                expect (link.getHealth() == Health::NotAnswered);
+                answer (link);
+                expect (link.getHealth() == Health::Answering);
+                link.timerCallback();
+
+                said.clear();
+                link.lastAnswerMs -= ConsoleLink::kDeskSilentMs + 1000;
+                link.timerCallback();
+                expect (link.getHealth() == Health::Silent);
+                expect (link.isConnected(), "a desk may come back, so the link stays");
+                expectEquals (said.size(), 1);
+                expect (said[0].containsIgnoreCase ("stopped answering"), said[0]);
+
+                link.timerCallback();
+                expectEquals (said.size(), 1, "the notice repeats every second");
+
+                answer (link);
+                link.timerCallback();
+                expect (link.getHealth() == Health::Answering);
+                expect (said.joinIntoString (" ").containsIgnoreCase ("answering again"), said.joinIntoString (" "));
+            }
+
+            beginTest ("The probe goes out again while the link is up, and only the probe");
+            {
+                ConsoleLink link;
+                std::vector<ConsoleMessage> sent;
+                link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.nextProbeMs = 1;
+                link.timerCallback();
+                expectEquals ((int) sent.size(), 1);
+                if (! sent.empty()) expectEquals (sent[0].address, juce::String ("/info"));
+                link.timerCallback();
+                expectEquals ((int) sent.size(), 1, "the probe floods the desk");
+            }
+
+            beginTest ("A desk that never answered is called that, not lost");
+            {
+                ConsoleLink link;
+                juce::StringArray said;
+                link.onStatus = [&] (const juce::String& s) { said.add (s); };
+                link.setMessageHook ([] (const ConsoleMessage&) {});
+                link.connectedAtMs = juce::Time::currentTimeMillis() - ConsoleLink::kDeskSilentMs - 1000;
+                link.timerCallback();
+                link.timerCallback();
+                expect (link.getHealth() == Health::NotAnswered);
+                expectEquals (said.size(), 1);
+                expect (said[0].containsIgnoreCase ("has not answered"), said[0]);
+            }
+
+            beginTest ("A link that reads nothing says it can't tell, on every such profile");
+            {
+                int checked = 0;
+                for (const auto& p : consoleProfiles())
+                    if (! p.dialect.probe)
+                    {
+                        ++checked;
+                        ConsoleLink link;
+                        link.setProfile (p.kind);
+                        link.setMessageHook ([] (const ConsoleMessage&) {});
+                        expect (link.getHealth() == Health::CannotTell, p.displayName);
+                        expect (link.healthText().containsIgnoreCase ("can't tell"), link.healthText());
+                    }
+                expect (checked >= 2, "SSL and Generic have no probe");
+            }
+
+            beginTest ("A desk gone during a take raises a notice, not a danger, and pre-flight shows it");
+            {
+                Bench b (main);
+                auto& link = main.consoleLink;
+                link.setMessageHook ([] (const ConsoleMessage&) {});
+                link.injectReply (ConsoleMessage ("/info", { juce::String ("X32") }));
+                EngineStatus rolling;
+                rolling.recording = true;
+
+                main.updateCaptureWarnings (rolling);
+                expect (! main.alarmBanner.getText().contains ("CONSOLE"), "a healthy desk raised an alarm");
+                expect (main.deskLinkRow().status == PreflightRow::Status::ok);
+
+                link.lastAnswerMs -= ConsoleLink::kDeskSilentMs + 1000;
+                main.updateCaptureWarnings (rolling);
+                expect (main.alarmBanner.getText().contains ("CONSOLE NOT ANSWERING"), main.alarmBanner.getText());
+                expect (main.alarmBanner.getLevel() == AlarmBanner::Level::Notice, "a console can't threaten the take");
+                expect (main.deskLinkRow().isProblem());
+
+                main.updateCaptureWarnings (EngineStatus());
+            }
+
+            beginTest ("A desk that never answered raises nothing during a take");
+            {
+                Bench b (main);
+                main.consoleLink.setProfile (ConsoleProfile::Kind::DiGiCo);
+                main.consoleLink.setMessageHook ([] (const ConsoleMessage&) {});
+                main.consoleLink.connectedAtMs = 1;
+                EngineStatus rolling;
+                rolling.recording = true;
+                main.updateCaptureWarnings (rolling);
+                expect (! main.alarmBanner.getText().contains ("CONSOLE"), "a false alarm for the whole show");
+                main.updateCaptureWarnings (EngineStatus());
+                main.consoleLink.setMessageHook (nullptr);
+                main.consoleLink.disconnect();
+                main.consoleLink.setProfile (ConsoleProfile::Kind::BehringerX32);
             }
         }
 

@@ -403,7 +403,7 @@ void MainComponent::promptConsoleConnect()
             const bool mayReadDisk = ! self->engine.isTakeOnDisk();
             self->consoleLink.setSessionDir (sess, mayReadDisk);
             if (mayReadDisk && sess.isDirectory() && self->consoleLink.loadFrom (sess))
-                self->showStatus ("Console link up: " + host
+                self->showStatus ("Console link open: " + host
                             + " -- loaded saved patch + gains from session");
         }), false);
 }

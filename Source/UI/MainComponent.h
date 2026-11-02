@@ -546,6 +546,7 @@ private:
     // setting (device, SR, inputs, armed, backup, disk, cues, recording state).
     void  showPreflightChecklist();
     zynforge::PreflightRow deskPatchRow() const;
+    zynforge::PreflightRow deskLinkRow() const;
     juce::String backupChecklistRow();
 
     zynforge::ZynForgeLookAndFeel laf;

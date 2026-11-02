@@ -57,6 +57,15 @@ namespace zynforge
         bool isConnected() const noexcept { return connected; }
         juce::String getHost() const      { return host; }
 
+        // isConnected says a socket is open, and on UDP that holds from connect
+        // to disconnect with nobody there. Only a reply to the dialect's probe
+        // says a desk is. A desk that pushes but doesn't answer the probe stays
+        // NotAnswered rather than falling Silent between its pushes, and a
+        // dialect with no probe can't tell at all.
+        enum class Health { CannotTell, NotAnswered, Answering, Silent };
+        Health getHealth() const;
+        juce::String healthText() const;
+
         // Patch state machine. Idle -> (query+stash) -> Soundcheck -> (restore,
         // read back) -> Stage. Where the desk was last known to be: closing the
         // link or changing session moves no desk, so neither changes this. A
@@ -194,6 +203,9 @@ namespace zynforge
         //    is reported and disconnected instead of showing as up all show.
         // 4. CLAIM CHECK. A SOUNDCHECK that came from a file, or that a link
         //    drop left standing, is asked about once the link is up.
+        // 5. IS ANYONE THERE. The probe goes out again every few seconds, because
+        //    nothing else makes every dialect answer. A desk that stops is
+        //    reported once, and again when it comes back.
         void timerCallback() override;
         void startHeartbeat();
         // Every read of the input blocks collects into deskRead, so a failed
@@ -202,6 +214,7 @@ namespace zynforge
         void startPatchRead (PatchRead);
         void finishPatchRead();
         void patchReadTimedOut();
+        void reportHealthChange (juce::int64 now);
         void finishPatchStash();
         void finishPatchRestore();
         void finishPatchCheck();
@@ -214,6 +227,8 @@ namespace zynforge
         { return value >= 0 && value < profile.cardBlockFirst + profile.numInBlocks; }
         static constexpr int kHeartbeatMs      = 1000;
         static constexpr int kResubscribeMs    = 5000;   // < the X32's ~10 s expiry
+        static constexpr int kProbeMs          = 4000;
+        static constexpr int kDeskSilentMs     = 13000;  // three probes, on a network that drops some
         static constexpr int kPatchTimeoutMs   = 1200;
         static constexpr int kGainTimeoutMs    = 1500;
         static constexpr float kGainMatchDb    = 0.5f;   // one X32 head-amp step
@@ -254,6 +269,11 @@ namespace zynforge
         juce::int64          patchDeadlineMs { 0 };
         juce::int64          gainDeadlineMs  { 0 };
         juce::int64          nextSubscribeMs { 0 };
+        juce::int64          nextProbeMs { 0 };
+        juce::int64          connectedAtMs { 0 };
+        juce::int64          lastAnswerMs { 0 };    // 0 = no answer on this link yet
+        Health               reportedHealth { Health::NotAnswered };
+        bool                 neverAnsweredReported { false };
 
         std::function<void (const ConsoleMessage&)> msgHook;
 

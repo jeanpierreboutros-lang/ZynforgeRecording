@@ -1552,6 +1552,17 @@ zynforge::PreflightRow MainComponent::deskPatchRow() const
              "Desk patch", consoleLink.deskPatchText() };
 }
 
+zynforge::PreflightRow MainComponent::deskLinkRow() const
+{
+    using Row = zynforge::PreflightRow;
+    using Health = zynforge::ConsoleLink::Health;
+    const auto health = consoleLink.getHealth();
+    return { health == Health::Answering  ? Row::Status::ok
+           : health == Health::CannotTell ? Row::Status::info
+                                          : Row::Status::warning,
+             "Desk link", consoleLink.healthText() };
+}
+
 void MainComponent::showPreflightChecklist()
 {
     // Every check below goes to the drives, from this thread.
@@ -1615,6 +1626,8 @@ void MainComponent::showPreflightChecklist()
                                            : engine.getPlayer().isPlaying() ? juce::String ("Playing back")
                                                                             : juce::String ("Idle") });
     rows.push_back (Row::fromLine (backupChecklistRow()));
+    if (consoleLink.isConnected())
+        rows.push_back (deskLinkRow());
     if (consoleLink.isConnected() || consoleLink.isOnSoundcheckPatch())
         rows.push_back (deskPatchRow());
     if (zynforge::vsc::hasSavedPatch (engine))
