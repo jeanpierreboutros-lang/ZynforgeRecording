@@ -492,6 +492,7 @@ namespace zynforge
                 ConsoleLink link;
                 std::vector<ConsoleMessage> sent;
                 link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.nextSubscribeMs = juce::Time::currentTimeMillis() + 60000;   // not what this asks about
                 link.nextProbeMs = 1;
                 link.timerCallback();
                 expectEquals ((int) sent.size(), 1);
@@ -562,6 +563,7 @@ namespace zynforge
                 rolling.recording = true;
                 main.updateCaptureWarnings (rolling);
                 expect (! main.alarmBanner.getText().contains ("CONSOLE"), "a false alarm for the whole show");
+                expect (! main.deskLinkRow().isProblem(), "pre-flight warns on every show for a dialect's silence");
                 main.updateCaptureWarnings (EngineStatus());
                 main.consoleLink.setMessageHook (nullptr);
                 main.consoleLink.disconnect();
@@ -655,9 +657,9 @@ namespace zynforge
                 capture();
                 main.onLockToggled();
                 main.finishSessionFromConsole (open, true, 0);
+                expect (main.statusLabel.getText().containsIgnoreCase ("locked"), main.statusLabel.getText());
                 main.onLockToggled();
                 expect (e.getActiveSessionDir() == open, "the session was replaced under LOCK");
-                expect (main.statusLabel.getText().containsIgnoreCase ("locked"), main.statusLabel.getText());
 
                 capture();
                 main.sessionIoBusy.store (true);
@@ -869,6 +871,16 @@ namespace zynforge
                     main.consoleLink.disconnect();
                 }
                 main.consoleLink.setProfile (ConsoleProfile::Kind::BehringerX32);
+            }
+
+            beginTest ("Every profile that can repatch has blocks to repatch and can read them back");
+            {
+                for (const auto& p : consoleProfiles())
+                    if (p.canRepatch)
+                    {
+                        expect (p.numInBlocks > 0, p.displayName + " would call an empty patch complete");
+                        expect (p.dialect.queryInBlock != nullptr, p.displayName + " could never confirm STAGE");
+                    }
             }
 
             beginTest ("A desk that can repatch says it has not been read until it has");

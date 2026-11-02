@@ -23,7 +23,8 @@ namespace zynforge
     //    input-routing blocks and stashes whatever the show patch is (analog,
     //    AES50 stage boxes, anything), then sets them to the record-card
     //    returns. exitSoundcheck() restores the stash verbatim -- no
-    //    assumptions about the rig.
+    //    assumptions about the rig -- and reads it back, because only the
+    //    desk can say it landed.
     //
     // 2. Head-amp gain capture / restore -- recall the preamps to exactly
     //    where they were on show night so playback hits the console at show

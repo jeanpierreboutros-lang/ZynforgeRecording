@@ -105,7 +105,7 @@ namespace zynforge
         dialectConfirmed = false;
         host.clear();
         cancelDeskReads();
-        nextSubscribeMs = nextProbeMs = 0;
+        nextSubscribeMs = nextProbeMs = lastAnswerMs = connectedAtMs = 0;
         stopTimer();
     }
 
@@ -388,8 +388,8 @@ namespace zynforge
     juce::String ConsoleLink::deskPatchText() const
     {
         if (! profile.canRepatch)
-            return profile.hasNativeVsc ? "not visible here -- check the console's own Virtual Soundcheck"
-                                        : "not visible here -- this link reads no routing";
+            return profile.hasNativeVsc ? "not visible here: check the console's own Virtual Soundcheck"
+                                        : "not visible here: this link reads no routing";
         if (isOnSoundcheckPatch())  return "on SOUNDCHECK (card returns)";
         if (patch == Patch::Stage)  return "stage inputs";
         return "not read from the desk";
@@ -635,6 +635,15 @@ namespace zynforge
             nextSubscribeMs = now + kResubscribeMs;
         }
 
+        // 4. Ask again, then say what the answers add up to. First, so a timed-out
+        //    restore below is the line left on screen.
+        if (nextProbeMs != 0 && now >= nextProbeMs)
+        {
+            sendMessage (profile.dialect.probe());
+            nextProbeMs = now + kProbeMs;
+        }
+        reportHealthChange (now);
+
         // 2. Reply-timeout watchdogs. A query is still outstanding past its
         //    deadline -> a reply was lost; abort cleanly so the UI doesn't sit
         //    forever on "Reading console patch..." / "Capturing head-amp gains".
@@ -672,14 +681,6 @@ namespace zynforge
             if (isOnSoundcheckPatch()) startPatchRead (PatchRead::Check);
         }
 
-        // 4. Ask again, then say what the answers add up to.
-        if (nextProbeMs != 0 && now >= nextProbeMs)
-        {
-            sendMessage (profile.dialect.probe());
-            nextProbeMs = now + kProbeMs;
-        }
-        reportHealthChange (now);
-
         // The watchdog above beats for as long as the link is up, so the
         // timer only stops in disconnect().
     }
@@ -711,7 +712,7 @@ namespace zynforge
         const auto who = profile.displayName + " at " + host;
         if (health == Health::NotAnswered)
         {
-            if (! neverAnsweredReported && now - connectedAtMs > kDeskSilentMs)
+            if (! neverAnsweredReported && connectedAtMs != 0 && now - connectedAtMs > kDeskSilentMs)
             {
                 neverAnsweredReported = true;
                 if (onStatus) onStatus (who + " has not answered. Names and scene markers need a desk at "

@@ -1573,9 +1573,12 @@ zynforge::PreflightRow MainComponent::deskLinkRow() const
     using Row = zynforge::PreflightRow;
     using Health = zynforge::ConsoleLink::Health;
     const auto health = consoleLink.getHealth();
-    return { health == Health::Answering  ? Row::Status::ok
-           : health == Health::CannotTell ? Row::Status::info
-                                          : Row::Status::warning,
+    // A dialect nobody has verified may never answer its probe, and a warning
+    // that is always up on that rig teaches the engineer to skip this list.
+    const bool unverified = health == Health::NotAnswered && ! consoleLink.getProfile().dialectTrusted;
+    return { health == Health::Answering ? Row::Status::ok
+           : health == Health::CannotTell || unverified ? Row::Status::info
+                                                        : Row::Status::warning,
              "Desk link", consoleLink.healthText() };
 }
 

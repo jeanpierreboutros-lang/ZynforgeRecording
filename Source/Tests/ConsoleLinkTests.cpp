@@ -161,7 +161,7 @@ namespace zynforge
                 link.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/000/gain"), 0.9f));
                 expectWithinAbsoluteError (link.getCapturedGains().at (0), 0.5f, 1.0e-6f,
                                            "live console updates must not overwrite the capture snapshot");
-                expectEquals ((int) sent.size(), 3);
+                expectEquals ((int) sent.size(), 6, "three writes, then three read-backs");
                 if (haveAtLeast (sent, 1, "restoreGains writes")
                     && expectAtLeastOneFloatArg (sent[0]))
                     expectWithinAbsoluteError (sent[0].args[0].getFloat32(), 0.5f, 1.0e-6f);

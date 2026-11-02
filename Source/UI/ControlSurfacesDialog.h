@@ -68,8 +68,7 @@ namespace zynforge
 
         inline juce::String portTakenText (int port)
         {
-            return "Could not listen on UDP port " + juce::String (port)
-                 + ". Another app may hold it, so pick another in Protocol Settings.";
+            return "Could not listen on UDP port " + juce::String (port);
         }
 
         // Empty when it did what was asked, otherwise why it didn't.
@@ -83,7 +82,9 @@ namespace zynforge
                     return {};
                 }
                 // Switches the single receiver.
-                return e.getRemotes().startOsc (oscPort (e), pi.dialect) ? juce::String() : portTakenText (oscPort (e));
+                return e.getRemotes().startOsc (oscPort (e), pi.dialect)
+                           ? juce::String()
+                           : portTakenText (oscPort (e)) + ". Another app may hold it: pick another in Protocol Settings.";
             }
             // MIDI surface: open it on the saved MIDI in/out (one surface at a time).
             if (on)
