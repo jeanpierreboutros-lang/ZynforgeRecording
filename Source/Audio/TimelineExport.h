@@ -8,7 +8,8 @@
 namespace zynforge::timelineexport
 {
     // Portable session-timeline sidecar (CSV/EDL-style). Hands an editor the
-    // track→file map plus timecode-stamped markers + cues so the session can
+    // track→file map, the clips that play them, and timecode-stamped markers +
+    // cues so the session can
     // be rebuilt in another DAW (Pro Tools / Nuendo / Reaper). Not AAF -- a
     // bounded, universally-ingestable first step. Pure + headless-testable:
     // buildCsv takes plain data and returns the file text.
@@ -65,6 +66,19 @@ namespace zynforge::timelineexport
 
     struct MarkEntry  { juce::int64 sample { 0 }; juce::String name, type; };
 
+    // One clip of the arrangement: what plays at a timeline position. Positions
+    // in [Markers] and [Cues] are arrangement positions, so once a clip has
+    // moved, these rows are what lines the audio up with them. fileSample
+    // counts through the whole take, across its parts.
+    struct ClipEntry
+    {
+        int index1 { 0 };
+        juce::String name, file;
+        int channel1 { 0 };
+        juce::int64 timelineSample { 0 }, fileSample { 0 }, length { 0 };
+        bool muted { false };
+    };
+
     // SMPTE HH:MM:SS:FF for a sample position at the given audio rate + fps.
     inline juce::String samplesToTimecode (juce::int64 samples, double sampleRate, int fps)
     {
@@ -97,7 +111,8 @@ namespace zynforge::timelineexport
                                   double sampleRate, int fps,
                                   const std::vector<TrackEntry>& tracks,
                                   const std::vector<MarkEntry>&  markers,
-                                  const std::vector<MarkEntry>&  cues)
+                                  const std::vector<MarkEntry>&  cues,
+                                  const std::vector<ClipEntry>&  clips = {})
     {
         juce::String out;
         out << "# Zynforge Recording -- session timeline export\r\n";
@@ -120,6 +135,14 @@ namespace zynforge::timelineexport
         for (const auto& c : cues)
             out << samplesToTimecode (c.sample, sampleRate, fps) << ","
                 << c.sample << "," << csvField (c.name) << "\r\n";
+
+        out << "\r\n[Clips]\r\nIndex,Name,File,Channel,Timecode,TimelineSamples,FileSamples,LengthSamples,Muted\r\n";
+        for (const auto& c : clips)
+            out << c.index1 << "," << csvField (c.name) << "," << csvField (c.file) << ","
+                << (c.channel1 > 0 ? juce::String (c.channel1) : juce::String()) << ","
+                << samplesToTimecode (c.timelineSample, sampleRate, fps) << ","
+                << c.timelineSample << "," << c.fileSample << "," << c.length << ","
+                << (c.muted ? "yes" : "no") << "\r\n";
 
         return out;
     }

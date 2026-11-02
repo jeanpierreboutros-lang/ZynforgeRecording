@@ -57,6 +57,12 @@ namespace zynforge
 
         bool startRecording (const juce::File& sessionDir);
         juce::String getStartError() const { return startError; }
+        // The caller refused this start before it reached the recorder.
+        void refuseStart (const juce::String& reason)
+        {
+            startError = reason;
+            discardTakeArms();
+        }
         void stopRecording();
         bool isRecording() const noexcept { return recording.load (std::memory_order_acquire); }
         bool isFinalizing() const noexcept { return finalizing.load (std::memory_order_acquire); }

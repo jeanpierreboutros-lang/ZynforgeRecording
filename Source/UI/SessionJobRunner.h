@@ -57,12 +57,14 @@ namespace zynforge
         void release() noexcept { shared->busy.store (false); }
 
         // Start `work` under a reservation the caller already holds. Joins the
-        // previous job first; it has already posted its completion.
-        void launch (Work work)
+        // previous job first; it has already posted its completion. `name` is
+        // what a long job is called to the engineer, who may need to stop it.
+        void launch (Work work, const juce::String& name = {})
         {
             jassert (shared->busy.load());
             join();
             shared->cancel.store (false);
+            shared->name = name;
             worker = std::thread ([state = shared, work = std::move (work)]
             {
                 Completion done;
@@ -71,6 +73,7 @@ namespace zynforge
                 juce::MessageManager::callAsync ([state, done = std::move (done)]
                 {
                     if (! state->alive.load()) return;
+                    state->name.clear();
                     state->busy.store (false);
                     if (done) done();
                 });
@@ -85,6 +88,9 @@ namespace zynforge
             return true;
         }
 
+        // The running job's name; empty when none, or when it has no name.
+        juce::String runningJob() const { return shared->name; }
+
         // Ask the running job to stop at its next cancellation point.
         void cancel() noexcept { shared->cancel.store (true); }
         void cancelAndJoin()   { cancel(); join(); }
@@ -96,6 +102,7 @@ namespace zynforge
             std::atomic<bool>& busy;
             std::atomic<bool>  cancel { false };
             std::atomic<bool>  alive  { true };
+            juce::String       name;   // message thread only
         };
 
         void join() { if (worker.joinable()) worker.join(); }
