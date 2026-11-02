@@ -709,6 +709,45 @@ public:
         }
     }
 
+    void testManyTemplates()
+    {
+        beginTest ("More templates than the menu holds never land on another command");
+        {
+            Folder dir ("Templates", false);
+            for (int i = 0; i < 60; ++i)
+                expect (dir.dir.getChildFile (juce::String::formatted ("Template %02d.zftemplate", i))
+                               .replaceWithText ("{}"));
+            MainComponent host; host.stopTimer();
+            host.templatesDirForTests = dir.dir;
+
+            int offered = 0, asDefault = 0;
+            juce::String note;
+            for (const auto& row : walk (host.getMenuForIndex (0, {})))
+            {
+                if (row.text.contains ("more not shown")) note = row.text;
+                if (! row.text.startsWith ("Template ")) continue;
+                if (row.id >= 2000) { ++asDefault; expect (row.id <= 2099); }
+                else { ++offered; expect (row.id >= 200 && row.id <= 249, row.text); }
+            }
+            expectEquals (offered, 50);
+            expectEquals (asDefault, 50);
+            expect (note.startsWith ("10 more"), note);
+            expect (host.getMenuCommands().conflicts().isEmpty());
+        }
+
+        beginTest ("The template list keeps one order from one menu to the next");
+        {
+            Folder dir ("Templates", false);
+            for (const auto* name : { "Zebra", "Alpha", "Mid" })
+                expect (dir.dir.getChildFile (juce::String (name) + ".zftemplate").replaceWithText ("{}"));
+            MainComponent host; host.stopTimer();
+            host.templatesDirForTests = dir.dir;
+            const auto list = host.listSessionTemplates();
+            expectEquals (list[0].getFileNameWithoutExtension(), juce::String ("Alpha"));
+            expectEquals (list[2].getFileNameWithoutExtension(), juce::String ("Zebra"));
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -726,6 +765,7 @@ public:
         testBackupsAreFound();
         testOpeningAFolderThatIsNoSession();
         testFirstSaveIsReported();
+        testManyTemplates();
     }
 };
 

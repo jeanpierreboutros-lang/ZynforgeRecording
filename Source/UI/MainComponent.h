@@ -532,7 +532,10 @@ private:
     void warnIfSampleRateMismatch();
 
     // Session templates -- engineer's per-strip layout reusable across shows.
+    // The menu's id range for them, 200-249. Ids past it are other commands.
+    static constexpr int kMenuTemplateSlots = 50;
     juce::File  templatesDir() const;
+    juce::File  templatesDirForTests;
     juce::Array<juce::File> listSessionTemplates() const;
     void  promptSaveSessionTemplate();
     void  applySessionTemplate (const juce::File& templateFile);

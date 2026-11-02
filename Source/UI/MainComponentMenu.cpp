@@ -97,7 +97,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         juce::PopupMenu templates;
         const auto tList    = listSessionTemplates();
         const auto starred  = getDefaultTemplate();
-        for (int i = 0; i < tList.size(); ++i)
+        // The ids after 200-249 are other commands, so the list stops there.
+        // "Delete a template..." shows every one, which is the way back to the rest.
+        const int tShown = juce::jmin (tList.size(), kMenuTemplateSlots);
+        for (int i = 0; i < tShown; ++i)
         {
             const bool isDefault = (tList[i] == starred);
             const auto label = tList[i].getFileNameWithoutExtension()
@@ -108,6 +111,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             templates.addItem (-1, "(no templates yet)", false);
         else
         {
+            if (tList.size() > tShown)
+                templates.addItem (-1, juce::String (tList.size() - tShown) + " more not shown: delete some to reach them", false);
             templates.addSeparator();
 
             // 'Set default template' sub-popup: lists every template + 'None'.
@@ -115,7 +120,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             // folder, so the engineer starts each show pre-patched.
             juce::PopupMenu setDefault;
             setDefault.addItem (260, "(None)", true, ! starred.existsAsFile());
-            for (int i = 0; i < tList.size(); ++i)
+            for (int i = 0; i < tShown; ++i)
                 setDefault.addItem (2000 + i, tList[i].getFileNameWithoutExtension(),
                                     true, tList[i] == starred);
             templates.addSubMenu ("Set default template", setDefault);
@@ -431,7 +436,7 @@ void MainComponent::registerMenuCommands()
     });
     m.add (70,  [this] { promptSaveSessionTemplate(); });
     m.add (71,  [this] { printSetlist(); });
-    m.addRange (200, 249, [this] (int offset)
+    m.addRange (200, 200 + kMenuTemplateSlots - 1, [this] (int offset)
     {
         const auto list = listSessionTemplates();
         if (offset < list.size())

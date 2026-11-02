@@ -2340,6 +2340,7 @@ juce::File MainComponent::getSessionsRoot() const
 // fresh session.
 juce::File MainComponent::templatesDir() const
 {
+    if (templatesDirForTests != juce::File()) return templatesDirForTests;
     auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
                     .getChildFile ("Zynforge Recording")
                     .getChildFile ("Templates");
@@ -2351,7 +2352,14 @@ juce::File MainComponent::templatesDir() const
 // to the next: the directory's own order is arbitrary.
 juce::Array<juce::File> MainComponent::listSessionTemplates() const
 {
-    return templatesDir().findChildFiles (juce::File::findFiles, false, "*.zftemplate");
+    auto list = templatesDir().findChildFiles (juce::File::findFiles, false, "*.zftemplate");
+    struct ByName
+    {
+        static int compareElements (const juce::File& a, const juce::File& b)
+        { return a.getFileName().compareNatural (b.getFileName()); }
+    } byName;
+    list.sort (byName);
+    return list;
 }
 
 // A template holds the show's patch. During Virtual Soundcheck the live outputs
