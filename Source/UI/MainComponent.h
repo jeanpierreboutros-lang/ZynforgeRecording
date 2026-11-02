@@ -353,6 +353,7 @@ private:
     void saveFinalizedCaptureMetadata (bool mediaOk, juce::String mediaError,
                                        std::function<void (bool)> completion);
     void promptConsoleConnect();
+    void loadConsoleStateAfterConnect (const juce::String& host);
     void wireConsoleLink();
     void saveConsoleLog();
     void writeConsoleLog (const juce::File&);

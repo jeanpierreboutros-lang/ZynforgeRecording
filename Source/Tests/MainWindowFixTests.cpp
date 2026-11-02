@@ -5,8 +5,10 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../UI/MainComponent.h"
+#include "../UI/PatchPage.h"
 #include "../UI/SessionProjPath.h"
 #include "../Audio/ChannelAlarm.h"
+#include "../Audio/PreflightProbes.h"
 #include "../Audio/SessionBackup.h"
 #include "../Audio/VirtualSoundcheck.h"
 #include "SilentTestDevice.h"
@@ -179,6 +181,8 @@ namespace zynforge
             gridKeepsItsFaders();
             headerKeepsItsWarnings();
             recordTimeWarns();
+            noDriveReadsDuringATake();
+            smallRepairs();
         }
 
     private:
@@ -909,6 +913,16 @@ namespace zynforge
             }
         }
 
+        // The modal count falls before the answer's callback runs, so wait for
+        // the status line the callback leaves.
+        static void answerModal (Window& w, int answer)
+        {
+            const juce::String waiting ("waiting for the answer");
+            w.main.statusLabel.setText (waiting, juce::dontSendNotification);
+            if (auto* modal = juce::Component::getCurrentlyModalComponent()) modal->exitModalState (answer);
+            pumpUntil ([&] { return w.main.statusLabel.getText() != waiting; }, 2000);
+        }
+
         void nameStrips (Window& w, const juce::String& prefix)
         {
             for (int t = 0; t < w.recorder().getNumTracks(); ++t)
@@ -966,8 +980,7 @@ namespace zynforge
                 expectEquals (modalCount(), 1);
                 swapSession (w, 2);
                 nameStrips (w, "New ");
-                if (auto* modal = juce::Component::getCurrentlyModalComponent()) modal->exitModalState (1);
-                pumpUntil ([] { return modalCount() == 0; }, 2000);
+                answerModal (w, 1);
                 expectEquals (w.recorder().getTrack (0).name, juce::String ("New 1"),
                               "the old session's names landed on the new strips");
             }
@@ -998,8 +1011,7 @@ namespace zynforge
                 if (last != nullptr) last->onClick();
                 expectEquals (modalCount(), 1, "a picker opened for a strip that is gone");
 
-                dialog->exitModalState (0);
-                pumpUntil ([] { return modalCount() == 0; }, 2000);
+                answerModal (w, 0);
                 expect (w.recorder().getTrack (0).colourARGB.load() == keep.getARGB(),
                         "Cancel painted the old session's colours over this one");
             }
@@ -1175,6 +1187,44 @@ namespace zynforge
                 rec.stopRecording();
                 dir.deleteRecursively();
             }
+        }
+
+        void noDriveReadsDuringATake()
+        {
+            beginTest ("Session Info and console state keep off the take's drive");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording());
+                w.main.showSessionInfo();
+                expectEquals (modalCount(), 0, "Session Info opened during the take");
+                expect (w.main.statusLabel.getText().contains ("after the take"), w.main.statusLabel.getText());
+
+                w.session.getChildFile ("console_state.json").replaceWithText (R"({"deskPatch":"stage"})");
+                w.main.statusLabel.setText ("Recording", juce::dontSendNotification);
+                w.main.loadConsoleStateAfterConnect ("10.0.0.1");
+                expect (! w.main.statusLabel.getText().contains ("loaded saved patch"), "the read ran during the take");
+                stopTake (w);
+
+                expect (w.engine().hasSessionFolder());
+                juce::PopupMenu menu = w.main.getMenuForIndex (3, "Session");
+                bool found = false, enabled = false;
+                for (juce::PopupMenu::MenuItemIterator item (menu, true); item.next();)
+                    if (item.getItem().itemID == 251) { found = true; enabled = item.getItem().isEnabled; }
+                expect (found && enabled, "Session Info stayed grey after the take");
+            }
+        }
+
+        void smallRepairs()
+        {
+
+
+
+
+
+
+
         }
 
         static void dismissModals()

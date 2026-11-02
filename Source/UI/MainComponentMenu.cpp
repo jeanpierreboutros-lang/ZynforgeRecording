@@ -306,7 +306,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         }
 
         menu.addSeparator();
-        menu.addItem (251, "Session Info...", engine.hasSessionFolder());
+        menu.addItem (251, "Session Info...", engine.hasSessionFolder() && ! engine.isTakeOnDisk());
     }
     else if (topLevelIndex == 4)  // Help
     {
@@ -368,7 +368,8 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) useCaptureDaemon
         << '|' << (int) captureSupervisor.isAttached()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording())
-        << '|' << (int) songExportRunning;
+        << '|' << (int) songExportRunning
+        << '|' << (int) engine.isTakeOnDisk();
 
     if (sig != lastMenuStateSig)
     {
