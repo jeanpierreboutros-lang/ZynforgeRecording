@@ -72,6 +72,11 @@ namespace zynforge
         // +1 = move down (later). Host applies the swap + persists.
         std::function<void (int /*direction*/)> onMoveCue;
 
+        // An empty setlist needs no row of its own, only a way to start one:
+        // collapsed, the bar is just its + Cue button, as a neutral header chip.
+        void setCollapsed (bool shouldCollapse);
+        bool isCollapsed() const noexcept { return collapsed; }
+
         void mouseDown (const juce::MouseEvent&) override;
 
         void paint (juce::Graphics&) override;
@@ -125,6 +130,7 @@ namespace zynforge
         juce::TextButton   recallButton;
 
         bool suppressComboCallback { false };
+        bool collapsed { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SetlistBar)
     };

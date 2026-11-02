@@ -81,6 +81,43 @@ namespace zynforge
 
         auto inner = r.reduced (8.0f, 6.0f);
 
+        // A short row can't hold three bars: the numbers are what matter, so
+        // they share one line under the device format.
+        if (getHeight() < 72)
+        {
+            auto paintValue = [&] (juce::Rectangle<float> cell, const char* label,
+                                   const juce::String& value, juce::Colour colour)
+            {
+                g.setColour (brand::textTertiary);
+                g.setFont (brand::type::ledLabel());
+                g.drawText (label, cell.removeFromLeft (36.0f), juce::Justification::centredLeft, false);
+                g.setColour (colour);
+                g.setFont (brand::type::mono (11.0f, true));
+                g.drawText (value, cell, juce::Justification::centredLeft, false);
+            };
+
+            auto top = inner.removeFromTop (inner.getHeight() * 0.5f);
+            g.setColour (brand::textSecondary);
+            g.setFont (brand::type::mono (10.0f, true));
+            g.drawText ((sampleRate > 0.0 && blockSize > 0)
+                            ? juce::String (sampleRate / 1000.0, 1) + " kHz  /  " + juce::String (blockSize) + " smp"
+                            : juce::String ("-- kHz  /  -- smp"),
+                        top, juce::Justification::centredLeft, false);
+            if (missed > 0)
+            {
+                g.setColour (brand::accentRecord);
+                g.drawText ("DROP " + juce::String (missed), top, juce::Justification::centredRight, false);
+            }
+
+            const float cellW = inner.getWidth() / 3.0f;
+            paintValue (inner.removeFromLeft (cellW * 0.85f), "AUDIO",
+                        juce::String ((int) std::round (cpu)) + "%", ledColour (cpu));
+            paintValue (inner.removeFromRight (cellW * 0.85f), "BUF",
+                        juce::String ((int) std::round (buf)) + "%", ledColour (buf));
+            paintValue (inner, "DISK", juce::String (disk, 1), ledColour (juce::jmin (100.0f, disk * 2.0f)));
+            return;
+        }
+
         // Header line: live device format -- sample rate + actual buffer
         // (block) size in samples. The buffer is the real glitch-headroom
         // number; smaller = tighter. "-- " until the device reports.

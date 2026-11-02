@@ -9,6 +9,8 @@
 
 using namespace zynforge;
 
+namespace { constexpr int kEditToolsW = 330; }
+
 void MainComponent::paint (juce::Graphics& g)
 {
     // Whole-window vertical gradient -- top sits 6% above bgDeep, bottom
@@ -163,6 +165,13 @@ void MainComponent::resized()
     row1.removeFromRight (brand::space::sm);
     addChannelButton.setBounds (row1.removeFromRight (70).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
+    // An empty setlist takes no row: its + Cue waits in the header with + CH.
+    setlistBar.setCollapsed (cues.empty());
+    if (setlistBar.isCollapsed())
+    {
+        setlistBar.setBounds (row1.removeFromRight (64).reduced (0, 2));
+        row1.removeFromRight (brand::space::sm);
+    }
     lockButton   .setBounds (row1.removeFromRight (76).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
     backupButton .setBounds (row1.removeFromRight (96).reduced (0, 2));
@@ -228,17 +237,35 @@ void MainComponent::resized()
         ? r.removeFromTop (60).reduced (brand::space::lg, brand::space::xs)
         : juce::Rectangle<int>());
 
-    auto clockRow = r.removeFromTop (96).reduced (brand::space::lg, brand::space::sm);
+    // Tracks are what a laptop screen is for, so this row stays short, more so
+    // in EDIT, which also puts its tools here instead of on a row of their own.
+    const int clockRowH = currentView == View::Edit ? 56 : 72;
+    auto clockRow = r.removeFromTop (clockRowH).reduced (brand::space::lg, brand::space::xs);
     // Give the performance dashboard more room while recording so audio
     // load / buffer / disk are readable at a glance during a take.
     const int dashW = engine.isRecording() ? 320 : 240;
-    perfDashboard.setBounds (clockRow.removeFromRight (dashW).reduced (brand::space::xs, brand::space::xs));
+    perfDashboard.setBounds (clockRow.removeFromRight (dashW));
+    clockRow.removeFromRight (brand::space::sm);
+    auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;
+    if (editToolsBar != nullptr)
+    {
+        const bool showTools = editToolsBar->isVisible();
+        editToolsBar->setBounds (showTools ? clockRow.removeFromRight (kEditToolsW) : juce::Rectangle<int>());
+        if (showTools) clockRow.removeFromRight (brand::space::sm);
+    }
     bigClock.setBounds (clockRow);
 
-    auto bar = r.removeFromTop (36).reduced (12, 2);
-    nextCueLabel.setBounds (bar.removeFromRight (200).reduced (brand::space::xs, brand::space::xs));
-    bar.removeFromRight (brand::space::sm);
-    setlistBar.setBounds (bar);
+    if (setlistBar.isCollapsed())
+    {
+        nextCueLabel.setBounds ({});
+    }
+    else
+    {
+        auto bar = r.removeFromTop (36).reduced (12, 2);
+        nextCueLabel.setBounds (bar.removeFromRight (200).reduced (brand::space::xs, brand::space::xs));
+        bar.removeFromRight (brand::space::sm);
+        setlistBar.setBounds (bar);
+    }
 
     // Per-preset strip sizing. floorW = minimum width (so the strip stays
     // readable); ceilW = MAXIMUM width so strips don't stretch wastefully wide
@@ -279,18 +306,6 @@ void MainComponent::resized()
         {
             masterStrip->setBounds ({});
         }
-    }
-
-    auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;
-    if (editToolsBar != nullptr && editToolsBar->isVisible())
-    {
-        auto topRow = viewportArea.removeFromTop (44).reduced (2, 0);
-        editToolsBar->setBounds (topRow.removeFromRight (394));
-        viewportArea.removeFromTop (brand::space::xs);
-    }
-    else if (editToolsBar != nullptr)
-    {
-        editToolsBar->setBounds ({});
     }
 
     stripsViewport.setBounds (viewportArea);

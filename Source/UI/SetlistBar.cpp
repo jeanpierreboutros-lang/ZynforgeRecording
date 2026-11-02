@@ -125,8 +125,23 @@ namespace zynforge
         repaint();
     }
 
+    void SetlistBar::setCollapsed (bool shouldCollapse)
+    {
+        if (collapsed == shouldCollapse) return;
+        collapsed = shouldCollapse;
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &titleLabel, &prevButton, &cueCombo,
+                                                                            &nextButton, &updateButton, &recallButton })
+            c->setVisible (! collapsed);
+        addCueButton.setColour (juce::TextButton::buttonColourId, collapsed ? brand::bgElevated : brand::selectFill);
+        addCueButton.setColour (juce::TextButton::textColourOffId,
+                                collapsed ? brand::textSecondary : brand::onSignal (brand::selectFill));
+        resized();
+        repaint();
+    }
+
     void SetlistBar::paint (juce::Graphics& g)
     {
+        if (collapsed) return;
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.04f, 0.10f));
         g.fillRoundedRectangle (r, brand::radius::md);
@@ -140,6 +155,11 @@ namespace zynforge
         //   SETLIST | ◂ | combo(260px) | ▸ | + Cue | Update | Rename
         // The combo is fixed-width -- the engineer doesn't want it
         // swallowing the whole row. Empty space sits to the right.
+        if (collapsed)
+        {
+            addCueButton.setBounds (getLocalBounds());
+            return;
+        }
         auto r = getLocalBounds().reduced (brand::space::md, brand::space::xs);
 
         titleLabel  .setBounds (r.removeFromLeft (64));

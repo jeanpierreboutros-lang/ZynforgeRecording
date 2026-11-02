@@ -239,6 +239,9 @@ void MainComponent::updateNextCueCountdown()
         if (nextCueLabel.getText() != txt)
             nextCueLabel.setText (txt, juce::dontSendNotification);
     }
+
+    // The first cue brings the setlist row in; deleting the last takes it away.
+    if (cues.empty() != setlistBar.isCollapsed()) resized();
 }
 
 void MainComponent::syncStripsWithEngine()

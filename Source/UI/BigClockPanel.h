@@ -28,8 +28,8 @@ namespace zynforge
         void setLoudness  (float integratedLufs, float momentaryLufs, float truePeakDb);
 
         // True when any strip is record-armed but the transport is
-        // still idle. Paints a brand-orange ready border so the
-        // engineer sees, at a glance, that hitting RECORD will roll.
+        // still idle. Lights the lamp amber and reads ARMED, so the engineer
+        // sees, at a glance, that hitting RECORD will roll.
         void setArmedReady (bool ready);
 
         void paint (juce::Graphics&) override;
@@ -48,11 +48,9 @@ namespace zynforge
         float  lufsMomentary    { -120.0f };
         float  truePeakDb       { -120.0f };
 
-        // Pulse animation. timerCallback (30 Hz) advances pulsePhase
-        // when either Recording is active OR armedReady is on; paint
-        // reads pulsePhase to modulate background alpha + border
-        // brightness. When neither state is active the timer stops and
-        // the value is reset, so an idle window doesn't burn CPU.
+        // Pulse animation. timerCallback advances pulsePhase while Recording
+        // is active; paint reads it to modulate the background. Otherwise the
+        // timer stops and the value is reset, so an idle window doesn't burn CPU.
         float pulsePhase { 0.0f };
         float igniteLevel { 0.0f };   // ramps 0→1 over ~300ms when recording starts
         void  timerCallback() override;

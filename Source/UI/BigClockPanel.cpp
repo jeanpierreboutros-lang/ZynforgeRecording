@@ -2,33 +2,6 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
-// ── Heated Steel (Direction C) -- forge-mark glyph ────────────────────
-namespace
-{
-    namespace steel
-    {
-        inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)
-        {
-            const auto orange = zynforge::brand::brandOrange;
-            const auto xf = juce::AffineTransform::scale (r.getWidth(), r.getHeight()).translated (r.getX(), r.getY());
-            juce::Path hex;
-            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
-            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
-            juce::Path chv;
-            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
-            chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
-            hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? orange.withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::wash)); g.fillPath (hex);
-            g.setColour (hot ? orange.withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f)); g.strokePath (hex, juce::PathStrokeType (1.0f));
-            g.setColour (hot ? orange : zynforge::brand::gloss (0.24f));
-            g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            const float s = r.getWidth() * 0.05f;
-            g.setColour (hot ? orange : zynforge::brand::gloss (0.30f));
-            g.fillEllipse (r.getCentreX() - s, r.getY() + r.getHeight() * 0.27f - s, s * 2.0f, s * 2.0f);
-        }
-    }
-}
-
 namespace zynforge
 {
     BigClockPanel::BigClockPanel()
@@ -188,118 +161,103 @@ namespace zynforge
         g.setColour (brand::edge);
         g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 1.0f);
 
-        steel::drawForgeMark (g, { r.getX() + 14.0f, r.getBottom() - 34.0f, 24.0f, 24.0f },
-                              mode == Mode::Recording);
-
-        auto inner = r.reduced (16.0f, 10.0f);
+        // This row is short, so it is laid out for reading from the mix position:
+        // state, time and record time left are large; the rest gives way first.
+        auto inner = r.reduced ((float) brand::space::lg, 2.0f + (float) brand::space::xs);
+        const bool tall = inner.getHeight() >= 48.0f;
 
         // Left: state + lamp
-        auto left = inner.removeFromLeft (juce::jmin (220.0f, inner.getWidth() * 0.30f));
+        auto left = inner.removeFromLeft (tall ? 128.0f : 112.0f);
         {
             // Armed and waiting is a lamp, not a frame: bright is for the take.
             juce::Colour lamp = armedReady ? brand::signalArmedReady() : brand::textMuted;
-            juce::String label = "IDLE";
+            juce::String label = armedReady ? "ARMED" : "IDLE";
             if (mode == Mode::Recording) { lamp = brand::accentRecord; label = "REC"; }
             else if (mode == Mode::Playing) { lamp = brand::accentPlay;  label = "PLAY"; }
 
-            const float lampRadius = 9.0f;
+            const float lampSize = 14.0f;
             g.setColour (lamp);
-            g.fillEllipse (left.getX(), left.getY() + 14.0f, lampRadius * 2.0f, lampRadius * 2.0f);
+            g.fillEllipse (left.withWidth (lampSize).withSizeKeepingCentre (lampSize, lampSize));
 
             g.setColour (brand::textPrimary);
-            g.setFont (brand::type::headline());
-            g.drawText (label,
-                        left.withTrimmedLeft (lampRadius * 2.0f + 12.0f),
+            g.setFont (brand::type::ui (brand::type::h_subhead, true));
+            g.drawText (label, left.withTrimmedLeft (lampSize + (float) brand::space::md),
                         juce::Justification::centredLeft, false);
         }
 
-        // Right: disk/health column
-        auto right = inner.removeFromRight (juce::jmin (260.0f, inner.getWidth() * 0.40f));
-        {
-            // Each row is [label left, value right]. Label uses the UI
-            // font; value uses tabular mono so the digits don't dance
-            // while the engineer's eye is on the timer.
-            auto drawRow = [&] (juce::Rectangle<float> line,
-                                const char* label, const juce::String& value,
-                                juce::Colour labelCol = brand::textSecondary,
-                                juce::Colour valueCol = brand::textPrimary)
-            {
-                g.setColour (labelCol);
-                g.setFont (brand::type::caption());
-                g.drawText (label, line, juce::Justification::topLeft, false);
-                g.setColour (valueCol);
-                g.setFont (zynforge::brand::type::monoStamp());
-                g.drawText (value, line, juce::Justification::topRight, false);
-            };
+        // Centre: the timer. Tabular numerals -- the string can't shift width
+        // as seconds tick. It keeps its room; the health column gives way.
+        const float timerPt = juce::jmin (inner.getHeight() * 0.95f, brand::type::h_hero + 4.0f);
+        const auto  timerFont = brand::type::mono (timerPt, true);
+        const float timerW = timerFont.getStringWidthFloat (elapsedText) + (float) brand::space::xl;
 
+        // Right: record time left, then the disk-health rows if there is room.
+        const float spare = inner.getWidth() - timerW;
+        auto right = inner.removeFromRight (juce::jlimit (0.0f, 300.0f, spare));
+        const bool primaryStale = diskReading == DiskReading::PrimaryStale;
+        const bool copyStale    = diskReading == DiskReading::CopyStale;
+        const auto valueCol     = primaryStale ? brand::alertAmber : brand::textPrimary;
+        {
             // With a copy's drive not answering the time left is the primary's
             // alone, so the label says that instead of implying the whole rig.
-            const bool primaryStale = diskReading == DiskReading::PrimaryStale;
-            const bool copyStale    = diskReading == DiskReading::CopyStale;
-            const auto valueCol     = primaryStale ? brand::alertAmber : brand::textPrimary;
-            drawRow (right.removeFromTop (14.0f), "FREE",
-                     primaryStale ? juce::String ("STALE")
-                                  : freeGB < 0.0 ? juce::String ("--")
-                                                 : juce::String::formatted ("%.1f GB", freeGB),
-                     brand::textSecondary, valueCol);
-            drawRow (right.removeFromTop (14.0f),
-                     copyStale ? "PRIMARY TIME LEFT" : "RECORD TIME LEFT",
-                     primaryStale ? juce::String ("STALE") : formatRemaining (remainingSeconds),
-                     copyStale ? brand::alertAmber : brand::textSecondary, valueCol);
-            drawRow (right.removeFromTop (14.0f), "LAST WRITE",
-                     juce::String (lastWriteMs) + " ms");
-            drawRow (right.removeFromTop (14.0f),
-                     missed > 0 ? "MISSED SAMPLES" : "NO MISSED WRITES",
-                     missed > 0 ? juce::String (missed) : juce::String(),
-                     missed > 0 ? brand::accentRecord : brand::textSecondary,
-                     missed > 0 ? brand::accentRecord : brand::textPrimary);
-            drawRow (right.removeFromTop (14.0f), "MARKERS",
-                     juce::String (markerCount));
-
-            // Master loudness (BS.1770). Integrated program loudness +
-            // true-peak; true-peak turns red as it approaches 0 dBTP.
-            auto lufsStr = [] (float v)
-            { return v <= -119.0f ? juce::String ("--") : juce::String (v, 1) + " LUFS"; };
-            drawRow (right.removeFromTop (14.0f), "LOUDNESS (I)", lufsStr (lufsIntegrated));
-            drawRow (right.removeFromTop (14.0f), "MOMENTARY",    lufsStr (lufsMomentary),
-                     brand::textSecondary, brand::textPrimary);
-            const bool tpHot = truePeakDb > -1.0f;
-            drawRow (right.removeFromTop (14.0f), "TRUE PEAK",
-                     truePeakDb <= -119.0f ? juce::String ("--")
-                                           : juce::String (truePeakDb, 1) + " dBTP",
-                     tpHot ? brand::accentRecord : brand::textSecondary,
-                     tpHot ? brand::accentRecord : brand::textPrimary);
+            auto block = right.removeFromLeft (juce::jmin (124.0f, right.getWidth()));
+            g.setColour (copyStale ? brand::alertAmber : brand::textSecondary);
+            g.setFont (brand::type::caption());
+            g.drawText (copyStale ? "PRIMARY TIME LEFT" : "RECORD TIME LEFT",
+                        block.removeFromTop (14.0f), juce::Justification::centredLeft, false);
+            g.setColour (valueCol);
+            g.setFont (brand::type::mono (tall ? brand::type::h_subhead : brand::type::h_headline, true));
+            g.drawText (primaryStale ? juce::String ("STALE") : formatRemaining (remainingSeconds),
+                        block, juce::Justification::centredLeft, false);
         }
 
-        // Centre: huge timer. Tabular numerals -- the timer string can't
-        // shift width as seconds tick. Hero scale (h_hero=44) pinned via
-        // brand::type so the timer's weight is system-managed, not bespoke.
-        const float timerPt = juce::jmin (inner.getHeight() * 0.95f,
-                                          brand::type::h_hero + 12.0f);
+        // Each row is [label left, value right]. Label uses the UI font; value
+        // uses tabular mono so the digits don't dance. A row that doesn't fit
+        // isn't drawn.
+        const float rowH = 13.0f;
+        auto drawRow = [&] (const char* label, const juce::String& value,
+                            juce::Colour labelCol = brand::textSecondary,
+                            juce::Colour rowValueCol = brand::textPrimary)
+        {
+            if (right.getHeight() < rowH || right.getWidth() < 120.0f) return;
+            auto line = right.removeFromTop (rowH);
+            g.setColour (labelCol);
+            g.setFont (brand::type::caption());
+            g.drawText (label, line, juce::Justification::centredLeft, false);
+            g.setColour (rowValueCol);
+            g.setFont (zynforge::brand::type::monoStamp());
+            g.drawText (value, line, juce::Justification::centredRight, false);
+        };
+
+        drawRow ("FREE",
+                 primaryStale ? juce::String ("STALE")
+                              : freeGB < 0.0 ? juce::String ("--")
+                                             : juce::String::formatted ("%.1f GB", freeGB),
+                 brand::textSecondary, valueCol);
+        drawRow (missed > 0 ? "MISSED SAMPLES" : "NO MISSED WRITES",
+                 missed > 0 ? juce::String (missed) : juce::String(),
+                 missed > 0 ? brand::accentRecord : brand::textSecondary,
+                 missed > 0 ? brand::accentRecord : brand::textPrimary);
+        drawRow ("LAST WRITE", juce::String (lastWriteMs) + " ms");
+        drawRow ("MARKERS", juce::String (markerCount));
+
+        // Master loudness (BS.1770). Integrated program loudness + true-peak;
+        // true-peak turns red as it approaches 0 dBTP.
+        auto lufsStr = [] (float v)
+        { return v <= -119.0f ? juce::String ("--") : juce::String (v, 1) + " LUFS"; };
+        drawRow ("LOUDNESS (I)", lufsStr (lufsIntegrated));
+        drawRow ("MOMENTARY",    lufsStr (lufsMomentary));
+        const bool tpHot = truePeakDb > -1.0f;
+        drawRow ("TRUE PEAK",
+                 truePeakDb <= -119.0f ? juce::String ("--") : juce::String (truePeakDb, 1) + " dBTP",
+                 tpHot ? brand::accentRecord : brand::textSecondary,
+                 tpHot ? brand::accentRecord : brand::textPrimary);
+
         const auto timerCol = mode == Mode::Recording ? brand::accentRecord
                             : mode == Mode::Playing   ? brand::accentPlay
                                                       : brand::textSecondary;
-        // Legibility first: a soft orange bloom around the digits (the old
-        // approach) fringed every glyph and made the timer read as a blurry
-        // smear against the warm, breathing ember background. Instead anchor
-        // the digits with a CRISP 1 px dark contour -- a hard edge separates
-        // each glyph from the bg, so the readout stays sharp at a glance --
-        // then stamp the bright face on top. The "heat" now comes from the
-        // panel's ember underglow, not from blurring the numerals.
-        g.setFont (brand::type::mono (timerPt, true));
-        {
-            g.setColour (brand::debossInk.withAlpha (zynforge::brand::alpha::muted));
-            const float o = 1.0f;
-            for (auto d : { juce::Point<float> (-o, 0.0f), {  o, 0.0f },
-                            {  0.0f, -o },                 {  0.0f, o },
-                            { -o, -o }, { o, -o }, { -o, o }, { o, o } })
-                g.drawText (elapsedText, inner.translated (d.x, d.y),
-                            juce::Justification::centred, false);
-        }
-        // Recording stays incandescent but brighter/cleaner so it pops off the
-        // dark contour; play/idle keep their accent face.
-        g.setColour (mode == Mode::Recording ? brand::lift (timerCol, brand::tint::hover)
-                                             : timerCol);
+        g.setFont (timerFont);
+        g.setColour (mode == Mode::Recording ? brand::lift (timerCol, brand::tint::hover) : timerCol);
         g.drawText (elapsedText, inner, juce::Justification::centred, false);
     }
 }
