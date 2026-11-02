@@ -521,8 +521,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
             || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort || consoleSilent)
         {
-            // Most serious first: the banner shares its row with the header
-            // buttons, and a long list can run out of room at the far end.
+            // Most serious first. Two spaces end each alarm: that is how the
+            // banner tells them apart, and a '!' is what makes one a danger.
             juce::String warn;
             if (deviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
