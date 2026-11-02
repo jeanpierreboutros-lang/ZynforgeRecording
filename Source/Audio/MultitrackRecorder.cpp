@@ -8,6 +8,7 @@
 #include "PunchSplice.h"
 #include "MultiPartReader.h"
 #include "PreflightProbes.h"
+#include "TrackOrderLog.h"
 #include "../Network/CaptureIdentity.h"
 
 #include <juce_cryptography/juce_cryptography.h>
@@ -703,6 +704,7 @@ namespace zynforge
     {
         juce::File   sessionDir, audioFilesDir;
         juce::String sessionId;                  // persistent capture identity
+        trackorder::Log trackOrder;              // what each copy must catch up with
         TakeFormat   primary;                    // selected, then adopted from an existing take
         bool         backupRequested { false }, backupReady { false };
         // Claimed on the first media mutation; see invalidateReportsBeforeMediaMutation.
@@ -927,6 +929,7 @@ namespace zynforge
     // still-existing primary at another path is a fork, not this take.
     bool MultitrackRecorder::claimTakeIdentity (TakeStart& take)
     {
+        take.trackOrder = trackorder::read (take.sessionDir);
         const auto idFile = take.sessionDir.getChildFile (".zynforge-capture-id");
         take.sessionId = idFile.loadFileAsString().trim();
         if (take.sessionId.isNotEmpty()) return true;
@@ -1282,6 +1285,7 @@ namespace zynforge
         int          copyIndex {};
         juce::File   root, sessionDir, backupRoot;
         juce::String sessionId;
+        trackorder::Log trackOrder;
         TakeFormat   format;
         bool         continuing {}, punching {};
         LeadInPlan   leadIn;
@@ -1310,11 +1314,66 @@ namespace zynforge
             }
             else if (! copy.getChildFile ("Audio Files").findChildFiles (
                          juce::File::findFiles, false, "Track_*").isEmpty()) return CopyClaim::conflict;
-            auto* metadata = new juce::DynamicObject();
-            metadata->setProperty ("id", sessionId); metadata->setProperty ("path", identity);
-            return copy.createDirectory().wasOk()
-                       && atomicfile::writeText (owner, juce::JSON::toString (juce::var (metadata)))
+            // A strip move a crash cut short goes back first, and that restores
+            // the very file written below.
+            if (! TrackFileTransaction::recover (copy)) return CopyClaim::interrupted;
+            // A copy with no takes has nothing to move, so it starts where the
+            // session is. One from before this log began starts at its beginning.
+            const bool holdsTakes = ! copy.getChildFile ("Audio Files").findChildFiles (
+                juce::File::findFiles, false, "Track_*").isEmpty();
+            const auto position = holdsTakes ? juce::JSON::parse (owner).getProperty ("trackOrder", "").toString()
+                                             : trackOrder.current;
+            return copy.createDirectory().wasOk() && writeOwner (position)
                      ? CopyClaim::claimed : CopyClaim::unwritable;
+        }
+
+        bool writeOwner (const juce::String& position) const
+        {
+            auto* metadata = new juce::DynamicObject();
+            metadata->setProperty ("id", sessionId);
+            metadata->setProperty ("path", sessionDir.getFullPathName());
+            metadata->setProperty ("trackOrder", position);
+            return atomicfile::writeText (root.getChildFile (sessionDir.getFileName()).getChildFile (".zynforge-primary"),
+                                          juce::JSON::toString (juce::var (metadata)));
+        }
+
+        // Takes this copy's files through every strip move it has not made, one
+        // transaction a step. Its position is written inside the transaction, so
+        // a crash at any moment leaves files and position agreeing: a step is
+        // never made twice, which would put a different channel under each name.
+        // False: this copy stays as it is, in the order it was.
+        bool followTrackOrder (CaptureCopy& copy) const
+        {
+            const auto copyDir  = root.getChildFile (sessionDir.getFileName());
+            const auto audioDir = copyDir.getChildFile ("Audio Files");
+            const auto position = juce::JSON::parse (copyDir.getChildFile (".zynforge-primary"))
+                                      .getProperty ("trackOrder", "").toString();
+            if (! trackOrder.readable) return false;
+            if (position == trackOrder.current) return true;
+
+            std::size_t next = 0;
+            if (position.isNotEmpty())
+            {
+                while (next < trackOrder.steps.size() && trackOrder.steps[next].to != position) ++next;
+                if (next == trackOrder.steps.size()) return false;   // not a place this session has been
+                ++next;
+            }
+            for (; next < trackOrder.steps.size(); ++next)
+            {
+                if (copy.abandoned.load (std::memory_order_acquire)) return false;
+                const auto& step = trackOrder.steps[next];
+                const auto removed = copyDir.getChildFile ("Removed Tracks").getChildFile (juce::Uuid().toString());
+                TrackFileTransaction files;
+                if (! files.begin (copyDir, trackorder::takeMoves (audioDir, removed, step.destination)))
+                    return false;
+                if (! writeOwner (step.to) || ! files.commit())
+                {
+                    TrackFileTransaction::recoverOne (files.folder);
+                    return false;
+                }
+                copy.noteProgress();
+            }
+            return true;
         }
 
         // The same take on both: a newly added copy cannot claim to hold the
@@ -1354,12 +1413,20 @@ namespace zynforge
                 return left ("holds audio whose ownership cannot be verified, which was preserved");
             if (claimed == CopyClaim::unwritable)
                 return left ("could not be written (full or read-only)");
+            if (claimed == CopyClaim::interrupted)
+                return left ("has a strip move that could not be put back");
 
             int recovered = 0;
             if (! recoverInterruptedPunches (audioDir, &recovered))
                 return left ("has an interrupted punch that could not be put back");
             if (recovered > 0)
                 return left ("had an interrupted punch put back, so it needs the session reopened");
+
+            // Everything from here names files by strip: after the recovery
+            // above, which reads the names this copy has now.
+            if (! followTrackOrder (copy))
+                return left ("holds its tracks in an older order and could not be moved to match");
+            copy.noteProgress();
 
             auto selected = format;
             if (continuing || punching)
@@ -1584,6 +1651,7 @@ namespace zynforge
             plan->sessionDir     = sessionDir;
             plan->backupRoot     = backupDir;
             plan->sessionId      = take.sessionId;
+            plan->trackOrder     = take.trackOrder;
             plan->format         = format;
             plan->continuing     = continueAsPart;
             plan->punching       = punchInActive;

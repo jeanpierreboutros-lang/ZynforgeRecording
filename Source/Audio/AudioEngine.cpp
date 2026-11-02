@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "SettingsFile.h"
 #include "TrackFileTransaction.h"
+#include "TrackOrderLog.h"
 #include "AtomicFile.h"
 #include "SessionMixFile.h"
 #include "FastAccumulate.h"
@@ -1658,24 +1659,8 @@ namespace zynforge
         if (! audio.isDirectory()) audio = session;
         std::vector<TrackFileTransaction::Move> moves;
         const auto removedDir = session.getChildFile ("Removed Tracks").getChildFile (juce::Uuid().toString());
-        // Each track's complete take (all containers and continuation parts)
-        // moves together. Removed audio is archived, never deleted.
         if (session.isDirectory())
-            for (int old = 0; old < n; ++old)
-            {
-                const auto prefix = juce::String::formatted ("Track_%02d", old + 1);
-                for (const auto& f : audio.findChildFiles (juce::File::findFiles, false, prefix + ".*;" + prefix + "_part*"))
-                {
-                    if (f.getFileName().containsIgnoreCase (".punchbase")) continue;
-                    if (! f.hasFileExtension ("wav;flac;aif;aiff")) continue;
-                    const int dest = destination[(size_t) old];
-                    const auto target = dest >= 0
-                        ? audio.getChildFile (juce::String::formatted ("Track_%02d", dest + 1)
-                                               + f.getFileName().substring (prefix.length()))
-                        : removedDir.getChildFile (f.getFileName());
-                    if (target != f) moves.emplace_back (f, target);
-                }
-            }
+            moves = trackorder::takeMoves (audio, removedDir, destination);
         auto remapClip = [&] (Clip& c, int oldTrack)
         {
             // Make implicit references explicit before filenames move, so a
@@ -1702,7 +1687,7 @@ namespace zynforge
         }
         TrackFileTransaction files;
         const bool disk = session.isDirectory();
-        if (disk && ! files.begin (session, moves))
+        if (disk && (! trackorder::ensureLog (session) || ! files.begin (session, moves)))
         { deviceManager.addAudioCallback (this); return false; }
 
         trackClips.clear(); trackPlaylists.clear();
@@ -1760,6 +1745,8 @@ namespace zynforge
                 }
                 else saved = false;
             }
+            // Backups and mirrors follow this log before they next join a take.
+            if (saved) saved = trackorder::append (session, destination);
             if (saved) saved = files.commit();
         }
         if (! saved)

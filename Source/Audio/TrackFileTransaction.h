@@ -95,7 +95,10 @@ public:
             e->setProperty ("temp", folder.getChildFile (juce::String (i++) + m.first.getFileExtension()).getFullPathName());
             entries.add (juce::var (e));
         }
-        for (const auto& f : session.findChildFiles (juce::File::findFiles, false, "*.zfproj;session_mix.json"))
+        // Hidden files too: each says how far along its strip moves this folder
+        // is, so it has to roll back with the files it describes.
+        for (const auto& f : session.findChildFiles (juce::File::findFiles, false,
+                                                     "*.zfproj;session_mix.json;.zynforge-track-order.json;.zynforge-primary"))
         {
             auto backup = folder.getChildFile ("metadata_" + f.getFileName());
             if (! f.copyFileTo (backup)) return false;

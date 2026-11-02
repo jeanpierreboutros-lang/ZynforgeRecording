@@ -687,7 +687,7 @@ namespace zynforge
         bool validateTakeStart (const TakeStart&);
         bool createTakeFolders (TakeStart&);
         void resolveTakeMirrors (const TakeStart&);
-        enum class CopyClaim { claimed, conflict, unwritable };
+        enum class CopyClaim { claimed, conflict, unwritable, interrupted };
         bool claimTakeIdentity (TakeStart&);
         bool recoverPrimaryPunches (const TakeStart&);
         static bool adoptExistingTakeFormat (const juce::File& copyAudioDir, TakeFormat& selected,

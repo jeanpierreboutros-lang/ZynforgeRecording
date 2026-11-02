@@ -8,6 +8,7 @@
 #include "../Audio/CaptureCopy.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/MultitrackRecorder.h"
+#include "../Audio/TrackOrderLog.h"
 #include "../Capture/CaptureDaemon.h"
 #include "../Capture/DeviceState.h"
 #include "../UI/MainComponent.h"
@@ -253,10 +254,302 @@ namespace zynforge
             }
         }
 
+        // ── Copies follow their strips ─────────────────────────────────────
+        struct CopyRig
+        {
+            juce::File root = tempDir ("copies");
+            juce::File session = root.getChildFile ("Show");
+            juce::File backup = root.getChildFile ("backup"), mirror = root.getChildFile ("mirror");
+            AudioEngine engine;
+            std::vector<float> levels;    // each strip's own signal, which moves with it
+            juce::UnitTest& test;
+
+            CopyRig (juce::UnitTest& owner, int strips) : test (owner)
+            {
+                session.createDirectory();
+                engine.setActiveSessionDir (session);
+                engine.claimMixerFor (session);
+                engine.setStripCount (strips);
+                engine.prepareForTests (kRate, kBlock);
+                for (int i = 0; i < strips; ++i) levels.push_back (0.1f * (float) (i + 1));
+                auto& rec = engine.getRecorder();
+                rec.setBackupDirectory (backup);
+                rec.setBackupCaptureFormat (CaptureFormat::Flac24);
+                (void) rec.setMirrors ({ { mirror, CaptureFormat::Aiff24 } });
+            }
+
+            ~CopyRig()
+            {
+                engine.clearAllStripOverrides();
+                root.deleteRecursively();
+            }
+
+            void take (bool continuing, int blocks = 40)
+            {
+                auto& rec = engine.getRecorder();
+                const int n = rec.getNumTracks();
+                std::vector<std::vector<float>> audio;
+                std::vector<const float*> inputs;
+                for (int t = 0; t < n; ++t)
+                {
+                    rec.getTrack (t).armed.store (true);
+                    audio.emplace_back ((size_t) kBlock, levels[(size_t) t]);
+                }
+                for (auto& channel : audio) inputs.push_back (channel.data());
+                if (continuing) rec.armContinue (0);
+                test.expect (rec.startRecording (session), rec.getStartError());
+                rec.waitForCopiesOpenForTests();
+                for (int b = 0; b < blocks; ++b)
+                {
+                    rec.processBlock (inputs.data(), n, kBlock);
+                    rec.drainPendingForTests();
+                }
+                rec.stopRecording();
+            }
+
+            void moveStrips (const std::vector<int>& order)
+            {
+                std::vector<float> next;
+                for (const int old : order) next.push_back (levels[(size_t) old]);
+                test.expect (engine.reorderTracks (order), "the strip move was refused");
+                levels = std::move (next);
+            }
+
+            juce::File takeFolder (const juce::File& copyRoot) const
+            {
+                return copyRoot.getChildFile ("Show").getChildFile ("Audio Files");
+            }
+        };
+
+        // Track_NN on one copy, read through every part: one strip's signal
+        // from its first sample to its last.
+        void expectEveryTrackWhole (const CopyRig& rig, const juce::File& audioDir, const juce::String& who,
+                                    int expectedFrames, const juce::String& ext)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            for (int t = 0; t < (int) rig.levels.size(); ++t)
+            {
+                const auto main = audioDir.getChildFile (juce::String::formatted ("Track_%02d", t + 1) + ext);
+                const auto reader = ConcatReader::create (fm, findTakeParts (main));
+                expect (reader != nullptr, who + " has no " + main.getFileName());
+                if (reader == nullptr) continue;
+                expectEquals ((int) reader->lengthInSamples, expectedFrames, who + " " + main.getFileName());
+                juce::AudioBuffer<float> buffer (1, (int) reader->lengthInSamples);
+                reader->read (&buffer, 0, buffer.getNumSamples(), 0, true, false);
+                juce::Range<float> range = buffer.findMinMax (0, 0, buffer.getNumSamples());
+                expectWithinAbsoluteError (range.getStart(), rig.levels[(size_t) t], 0.001f,
+                                           who + " " + main.getFileName() + " holds another channel");
+                expectWithinAbsoluteError (range.getEnd(), rig.levels[(size_t) t], 0.001f,
+                                           who + " " + main.getFileName() + " holds another channel");
+            }
+        }
+
+        void expectEveryCopyWhole (const CopyRig& rig, int frames)
+        {
+            expectEveryTrackWhole (rig, rig.session.getChildFile ("Audio Files"), "the primary", frames, ".wav");
+            expectEveryTrackWhole (rig, rig.takeFolder (rig.backup), "the backup", frames, ".flac");
+            expectEveryTrackWhole (rig, rig.takeFolder (rig.mirror), "the mirror", frames, ".aif");
+        }
+
+        static juce::var ownerOf (const CopyRig& rig, const juce::File& copyRoot)
+        {
+            return juce::JSON::parse (copyRoot.getChildFile ("Show").getChildFile (".zynforge-primary"));
+        }
+
+        void testCopiesFollowStrips()
+        {
+            constexpr int kPass = 40 * kBlock;
+
+            beginTest ("A moved strip takes its audio along on every copy");
+            {
+                CopyRig rig (*this, 3);
+                rig.take (false);
+                rig.moveStrips ({ 1, 2, 0 });
+                rig.take (true);
+                expectEveryCopyWhole (rig, 2 * kPass);
+            }
+
+            beginTest ("A deleted strip leaves every copy, and its audio is kept there");
+            {
+                CopyRig rig (*this, 3);
+                rig.take (false);
+                rig.moveStrips ({ 1, 2 });
+                rig.take (true);
+                expectEveryCopyWhole (rig, 2 * kPass);
+                expect (! rig.backup.getChildFile ("Show/Removed Tracks")
+                             .findChildFiles (juce::File::findFiles, true, "Track_01.flac").isEmpty(),
+                        "the backup threw a deleted strip's audio away");
+            }
+
+            beginTest ("A copy away when strips move catches up on its return, however far behind");
+            {
+                CopyRig rig (*this, 3);
+                rig.take (false);
+                const auto away = rig.root.getChildFile ("away");
+                expect (rig.backup.moveFileTo (away));
+                rig.moveStrips ({ 1, 2, 0 });
+                rig.moveStrips ({ 2, 0, 1 });
+                rig.moveStrips ({ 1, 0, 2 });
+                expect (away.moveFileTo (rig.backup));
+                rig.take (true);
+                expectEveryCopyWhole (rig, 2 * kPass);
+                expect (rig.engine.getRecorder().getCopyProblems().isEmpty(),
+                        rig.engine.getRecorder().getCopyProblems().joinIntoString (" | "));
+            }
+
+            beginTest ("A copy that cannot follow sits out the take, untouched, and says so");
+            {
+                CopyRig rig (*this, 2);
+                rig.take (false);
+                const auto journalHome = rig.backup.getChildFile ("Show/Session File Backups");
+                journalHome.deleteRecursively();
+                expect (journalHome.replaceWithText ("not a folder"));
+                rig.moveStrips ({ 1, 0 });
+
+                const auto backupAudio = rig.takeFolder (rig.backup);
+                const auto before = samplesOfTrack (backupAudio.getChildFile ("Track_01.flac"));
+                rig.take (true);
+                expect (rig.engine.getRecorder().getCopyProblems().joinIntoString (" ").contains ("older order"),
+                        rig.engine.getRecorder().getCopyProblems().joinIntoString (" | "));
+                expect (rig.engine.getRecorder().hasBackupFailed());
+                expect (samplesOfTrack (backupAudio.getChildFile ("Track_01.flac")) == before,
+                        "a copy that could not follow was changed anyway");
+                expect (! backupAudio.getChildFile ("Track_01_part02.flac").exists(),
+                        "a copy in the old order took a new pass");
+                expectEveryTrackWhole (rig, rig.session.getChildFile ("Audio Files"), "the primary", 2 * kPass, ".wav");
+
+                // Once it can, it follows, and the audio it missed is a lead-in.
+                expect (journalHome.deleteFile());
+                rig.take (true);
+                expect (rig.engine.getRecorder().getCopyProblems().isEmpty(),
+                        rig.engine.getRecorder().getCopyProblems().joinIntoString (" | "));
+                expectEquals (ownerOf (rig, rig.backup)["trackOrder"].toString(),
+                              trackorder::read (rig.session).current);
+            }
+
+            beginTest ("A copy in an order the session has no record of never joins");
+            {
+                CopyRig rig (*this, 2);
+                rig.take (false);
+                rig.moveStrips ({ 1, 0 });
+                const auto owner = rig.backup.getChildFile ("Show/.zynforge-primary");
+                auto saved = ownerOf (rig, rig.backup);
+                saved.getDynamicObject()->setProperty ("trackOrder", "somewhere else");
+                expect (owner.replaceWithText (juce::JSON::toString (saved)));
+                rig.take (true);
+                expect (rig.engine.getRecorder().getCopyProblems().joinIntoString (" ").contains ("older order"));
+                expect (! rig.takeFolder (rig.backup).getChildFile ("Track_01_part02.flac").exists());
+            }
+
+            beginTest ("A crash halfway through a copy's move is undone and made once");
+            {
+                CopyRig rig (*this, 3);
+                rig.take (false);
+                rig.moveStrips ({ 1, 2, 0 });
+
+                // The state a crash leaves: files moved, position written, no commit.
+                const auto copyDir = rig.backup.getChildFile ("Show");
+                const auto log = trackorder::read (rig.session);
+                TrackFileTransaction interrupted;
+                expect (interrupted.begin (copyDir, trackorder::takeMoves (copyDir.getChildFile ("Audio Files"),
+                                                                            copyDir.getChildFile ("Removed Tracks/x"),
+                                                                            log.steps[0].destination)));
+                auto owner = ownerOf (rig, rig.backup);
+                owner.getDynamicObject()->setProperty ("trackOrder", log.current);
+                expect (copyDir.getChildFile (".zynforge-primary").replaceWithText (juce::JSON::toString (owner)));
+
+                rig.take (true);
+                expectEveryCopyWhole (rig, 2 * kPass);
+            }
+
+            beginTest ("A move a copy finished is never made again");
+            {
+                CopyRig rig (*this, 3);
+                rig.take (false);
+                rig.moveStrips ({ 1, 2, 0 });
+                rig.take (true);
+                rig.take (true);
+                expectEveryCopyWhole (rig, 3 * kPass);
+            }
+
+            beginTest ("A strip move the primary rolled back leaves no step for a copy to make");
+            {
+                CopyRig rig (*this, 2);
+                rig.take (false);
+                rig.moveStrips ({ 1, 0 });
+                const auto before = trackorder::read (rig.session);
+                expect (rig.session.getChildFile ("Show.zfproj").replaceWithText ("not a project"));
+                expect (! rig.engine.reorderTracks ({ 1, 0 }));
+                rig.session.getChildFile ("Show.zfproj").deleteFile();
+                const auto after = trackorder::read (rig.session);
+                expectEquals (after.current, before.current);
+                expectEquals ((int) after.steps.size(), (int) before.steps.size());
+
+                // And the same when a crash cuts the move short after its step.
+                TrackFileTransaction interrupted;
+                expect (interrupted.begin (rig.session, {}));
+                expect (trackorder::append (rig.session, { 1, 0 }));
+                expect (TrackFileTransaction::recover (rig.session));
+                expectEquals (trackorder::read (rig.session).current, before.current);
+            }
+
+            beginTest ("A first strip move that never committed leaves nothing behind");
+            {
+                CopyRig rig (*this, 2);
+                rig.take (false);
+                expect (trackorder::ensureLog (rig.session));
+                TrackFileTransaction interrupted;
+                expect (interrupted.begin (rig.session, {}));
+                expect (trackorder::append (rig.session, { 1, 0 }));
+                expect (TrackFileTransaction::recover (rig.session));
+                expectEquals ((int) trackorder::read (rig.session).steps.size(), 0);
+            }
+
+            beginTest ("A copy added after strips moved joins at the current order");
+            {
+                CopyRig rig (*this, 2);
+                (void) rig.engine.getRecorder().setMirrors ({});
+                rig.engine.getRecorder().setBackupDirectory ({});
+                rig.take (false);
+                rig.moveStrips ({ 1, 0 });
+                rig.engine.getRecorder().setBackupDirectory (rig.backup);
+                rig.take (true);
+                expect (rig.engine.getRecorder().getCopyProblems().isEmpty(),
+                        rig.engine.getRecorder().getCopyProblems().joinIntoString (" | "));
+                expectEquals (ownerOf (rig, rig.backup)["trackOrder"].toString(),
+                              trackorder::read (rig.session).current);
+            }
+
+            beginTest ("A copy from before the log began makes every step from its start");
+            {
+                CopyRig rig (*this, 3);
+                rig.take (false);
+                const auto owner = rig.backup.getChildFile ("Show/.zynforge-primary");
+                auto saved = ownerOf (rig, rig.backup);
+                saved.getDynamicObject()->removeProperty ("trackOrder");
+                expect (owner.replaceWithText (juce::JSON::toString (saved)));
+                rig.moveStrips ({ 1, 2, 0 });
+                rig.take (true);
+                expectEveryCopyWhole (rig, 2 * kPass);
+            }
+        }
+
+        static std::vector<float> samplesOfTrack (const juce::File& file)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+            if (reader == nullptr) return {};
+            juce::AudioBuffer<float> buffer (1, (int) reader->lengthInSamples);
+            reader->read (&buffer, 0, buffer.getNumSamples(), 0, true, false);
+            return { buffer.getReadPointer (0), buffer.getReadPointer (0) + buffer.getNumSamples() };
+        }
+
         void runTest() override
         {
             const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
             testDaemonDevice();
+            AudioEngine::setTestModeSkipAudioInit (true);
+            testCopiesFollowStrips();
         }
     };
 
