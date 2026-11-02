@@ -290,8 +290,9 @@ namespace zynforge
             styleCombo (inputCombo);
             styleCombo (outputCombo);
 
-            // One patch in three views: either combo sets both sides, as the
-            // MIXER strip and PATCH do, and on both halves of a stereo row.
+            // One patch in three views: a channel picked in either combo sets
+            // both sides, as the MIXER strip and PATCH do, and on both halves of
+            // a stereo row. "-> Master" is not a channel: it moves the output.
             const auto patchFrom = [this] (const juce::ComboBox& combo)
             {
                 const int id = combo.getSelectedId();
@@ -301,7 +302,11 @@ namespace zynforge
                     engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
             };
             inputCombo.onChange  = [this, patchFrom] { patchFrom (inputCombo); };
-            outputCombo.onChange = [this, patchFrom] { patchFrom (outputCombo); };
+            outputCombo.onChange = [this, patchFrom]
+            {
+                if (outputCombo.getSelectedId() <= 1) engine.sendStripToMaster (index, stereo);
+                else                                  patchFrom (outputCombo);
+            };
             addAndMakeVisible (inputCombo);
             addAndMakeVisible (outputCombo);
 

@@ -12,6 +12,7 @@
 #include "../UI/MainComponent.h"
 #include "../UI/PatchPage.h"
 
+#include <atomic>
 #include <cmath>
 #include <functional>
 #include <CoreFoundation/CoreFoundation.h>
@@ -24,9 +25,7 @@ namespace zynforge
         EditRowFixTests() : juce::UnitTest ("EDIT row fixes", "zynforge") {}
 
         static constexpr int kRate = 48000;
-        static constexpr int kLaneW = 1000;
         using Row  = EditPage::TrackRow;
-        using Lane = Row::LaneMode;
 
         static bool pumpUntil (const std::function<bool()>& predicate, int timeoutMs = 3000)
         {
@@ -155,7 +154,7 @@ namespace zynforge
             main.setSize (1320, 820);
 
             rowsFollowTheSession (main);
-            AudioEngine::setTestModeSkipAudioInit (true);
+            theMasterIsNotAChannel (main);
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -210,7 +209,7 @@ namespace zynforge
                 Show show (main);
                 main.confirmForTests = [] (std::function<void()> confirm) { confirm(); };
                 show.session ({ "ONLY" }, false, false);
-                main.rebuildStripsIfLayoutChanged();
+                main.rebuildStrips();
                 expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
                 expectEquals ((int) main.strips.size(), 1, "setup: one strip");
 
@@ -222,6 +221,154 @@ namespace zynforge
                 show.engine.setTrackName (0, "RENAMED");
                 expect (pumpUntil ([&] { return rowsOf (show.page())[0]->getNameTextForTests() == "RENAMED"; }),
                         "the row stopped polling after a refused delete");
+            }
+        }
+
+        static juce::String patchOf (AudioEngine& engine, int track)
+        {
+            const auto& state = engine.getRecorder().getTrack (track);
+            return juce::String (state.inputRouting.load()) + "/" + juce::String (state.outputRouting.load());
+        }
+
+        // The strip's output combo: the one that offers the master.
+        static juce::ComboBox* outputComboOf (juce::Component& strip)
+        {
+            for (auto* child : strip.getChildren())
+                if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
+                    if (combo->getItemText (0).endsWith ("Master")) return combo;
+            return nullptr;
+        }
+
+        static juce::MouseEvent leftAt (juce::Component& c, juce::Point<int> p)
+        {
+            const auto now = juce::Time::getCurrentTime();
+            return { juce::Desktop::getInstance().getMainMouseSource(), p.toFloat(),
+                     juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier),
+                     juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation,
+                     juce::MouseInputSource::defaultRotation, juce::MouseInputSource::defaultTiltX,
+                     juce::MouseInputSource::defaultTiltY, &c, &c, now, p.toFloat(), now, 1, false };
+        }
+
+        void theMasterIsNotAChannel (MainComponent& main)
+        {
+            beginTest ("-> Master in the MIXER keeps the strip's input, on both halves of a pair");
+            {
+                Show show (main);
+                show.session ({ "KEYS", "VOX" }, true, true);
+                main.rebuildStrips();
+                expectEquals ((int) main.strips.size(), 2, "setup: a pair and a mono strip");
+
+                show.engine.setTrackLinkedRouting (2, 6);
+                auto* mono = outputComboOf (*main.strips[1]);
+                expect (mono != nullptr, "setup: the mono strip's output combo");
+                if (mono != nullptr)
+                {
+                    mono->setSelectedId (1, juce::sendNotificationSync);
+                    expectEquals (patchOf (show.engine, 2), juce::String ("6/-1"),
+                                  "the master took the strip's input with it");
+                    mono->setSelectedId (8, juce::sendNotificationSync);    // Out 7
+                    expectEquals (patchOf (show.engine, 2), juce::String ("6/6"), "a real channel stays linked");
+                }
+
+                show.engine.setTrackLinkedRouting (0, 4);
+                show.engine.setTrackLinkedRouting (1, 5);
+                auto* pair = outputComboOf (*main.strips[0]);
+                expect (pair != nullptr, "setup: the pair's output combo");
+                if (pair != nullptr)
+                {
+                    pair->setSelectedId (1, juce::sendNotificationSync);
+                    expectEquals (patchOf (show.engine, 0), juce::String ("4/-1"), "L lost its input");
+                    expectEquals (patchOf (show.engine, 1), juce::String ("5/-1"), "R lost its input");
+                }
+            }
+
+            beginTest ("Clearing an output in PATCH keeps the input; clearing an input still clears both");
+            {
+                Show show (main);
+                show.session ({ "KEYS", "VOX" }, true, true);
+                show.engine.setDeviceInputCountForTests (8);
+                show.engine.setDeviceOutputCountForTests (8);
+                const juce::ScopeGuard noDevice { [&show]
+                {
+                    show.engine.setDeviceInputCountForTests (0);
+                    show.engine.setDeviceOutputCountForTests (0);
+                } };
+
+                std::unique_ptr<juce::DialogWindow> window (PatchPage::launch (show.engine));
+                juce::TabbedComponent* tabs = nullptr;
+                std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+                {
+                    if (auto* t = dynamic_cast<juce::TabbedComponent*> (&c)) tabs = t;
+                    for (auto* child : c.getChildren()) walk (*child);
+                };
+                if (window != nullptr) walk (*window);
+                expect (tabs != nullptr, "setup: the patch tabs");
+                if (tabs != nullptr)
+                {
+                    // Matrix geometry: 90 px row header, 92 px column header, 56 px rows.
+                    const auto dot = [] (int column, int row, int columnWidth)
+                    { return juce::Point<int> (90 + column * columnWidth + 10, 92 + row * 56 + 10); };
+                    auto* outputs = tabs->getTabContentComponent (1);
+                    auto* inputs  = tabs->getTabContentComponent (0);
+                    outputs->setBounds (0, 0, 1000, 700);
+                    inputs->setBounds (0, 0, 1000, 700);
+                    const int colW = (1000 - 90 - 12) / 2;
+
+                    show.engine.setTrackLinkedRouting (2, 3);          // mono strip: column 1
+                    outputs->mouseDown (leftAt (*outputs, dot (1, 3, colW)));
+                    expectEquals (patchOf (show.engine, 2), juce::String ("3/-1"),
+                                  "clearing the output took the input with it");
+
+                    show.engine.setTrackLinkedRouting (0, 4);          // the pair: column 0
+                    show.engine.setTrackLinkedRouting (1, 5);
+                    outputs->mouseDown (leftAt (*outputs, dot (0, 4, colW)));
+                    expectEquals (patchOf (show.engine, 0), juce::String ("4/-1"), "L lost its input");
+                    expectEquals (patchOf (show.engine, 1), juce::String ("5/-1"), "R lost its input");
+
+                    show.engine.setTrackLinkedRouting (2, 3);
+                    outputs->mouseDown (leftAt (*outputs, dot (1, 5, colW)));
+                    expectEquals (patchOf (show.engine, 2), juce::String ("5/5"), "a real channel stays linked");
+
+                    inputs->mouseDown (leftAt (*inputs, dot (1, 5, colW)));
+                    expectEquals (patchOf (show.engine, 2), juce::String ("-1/-1"),
+                                  "an input cleared by hand clears both, as before");
+                }
+            }
+
+            beginTest ("-> Master is refused during a take and its finalization");
+            {
+                const auto dir = tempDir ("take");
+                expect (dir.createDirectory().wasOk());
+                {
+                    AudioEngine engine;
+                    engine.clearAllStripOverrides();
+                    engine.setStripCount (1);
+                    engine.prepareForTests ((double) kRate, 256);
+                    engine.getRecorder().getTrack (0).armed.store (true);
+                    engine.setTrackLinkedRouting (0, 5);
+                    engine.setActiveSessionDir (dir);
+                    engine.claimMixerFor (dir);
+                    expect (engine.startRecording (dir));
+                    engine.sendStripToMaster (0, false);
+                    expectEquals (patchOf (engine, 0), juce::String ("5/5"), "the output moved under a take");
+
+                    juce::WaitableEvent entered, release;
+                    std::atomic<bool> completed { false };
+                    engine.getRecorder().beforeFinalizationForTests = [&] { entered.signal(); release.wait (5000); };
+                    const juce::ScopeGuard releaseWorker { [&] { release.signal(); } };
+                    expect (engine.stopRecordingAsync ([&] (bool) { completed = true; }));
+                    expect (entered.wait (2000), "STOP never reached finalization");
+                    engine.sendStripToMaster (0, false);
+                    expectEquals (patchOf (engine, 0), juce::String ("5/5"), "the output moved while the take finalized");
+                    engine.setTrackLinkedRouting (0, 2);
+                    expectEquals (patchOf (engine, 0), juce::String ("5/5"),
+                                  "half a linked patch landed while the take finalized");
+                    release.signal();
+                    expect (pumpUntil ([&] { return completed.load(); }, 10000), "STOP did not complete");
+                    engine.clearAllStripOverrides();
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+                dir.deleteRecursively();
             }
         }
     };

@@ -93,6 +93,7 @@ namespace zynforge
         // Test-only: with no device open, report `n` active inputs, so the
         // smaller-device routing rules run without hardware.
         void setDeviceInputCountForTests (int n) noexcept { testDeviceInputs.store (n, std::memory_order_relaxed); }
+        void setDeviceOutputCountForTests (int n) noexcept { testDeviceOutputs.store (n, std::memory_order_relaxed); }
 
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
@@ -349,6 +350,12 @@ namespace zynforge
         // physical channel N on both sides. PATCH page + per-strip combos
         // both call this so input and output stay linked.
         void  setTrackLinkedRouting (int channelIndex, int deviceCh);
+        // The master is not a channel. -1 on an output means the mix; -1 on an
+        // input means no signal, and RECORD repatches an armed strip with no
+        // input. So going back to the master moves the output alone, on both
+        // halves of a pair, and the input keeps its patch. A real channel
+        // stays linked: that is setTrackLinkedRouting.
+        void  sendStripToMaster (int channelIndex, bool stereoPair);
 
         int   getCurrentDeviceInputCount()  const;
         int   getCurrentDeviceOutputCount() const;
@@ -917,6 +924,7 @@ namespace zynforge
         TimecodeChase    timecodeChase;
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
         std::atomic<int> testDeviceInputs { 0 };  // see setDeviceInputCountForTests
+        std::atomic<int> testDeviceOutputs { 0 }; // see setDeviceOutputCountForTests
         std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
         std::atomic<bool> keepRollingOnSyncLoss { false };
         std::unique_ptr<juce::MidiInput> mtcInput;

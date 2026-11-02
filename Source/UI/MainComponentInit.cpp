@@ -775,9 +775,10 @@ void MainComponent::rebuildStrips()
         };
         auto outCb = [this, i, step] (int dev)
         {
+            if (dev < 0) { engine.sendStripToMaster (i, step == 2); return; }
             engine.setTrackLinkedRouting (i, dev);
             if (step == 2)
-                engine.setTrackLinkedRouting (i + 1, (dev < 0) ? -1 : dev + 1);
+                engine.setTrackLinkedRouting (i + 1, dev + 1);
         };
 
         auto s = std::make_unique<ChannelStrip> (i, tL,

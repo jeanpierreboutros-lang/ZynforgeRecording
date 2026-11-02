@@ -209,8 +209,11 @@ namespace zynforge
                     expectEquals (patch (2), juce::String ("5/5"), "the input combo left the output behind");
                     combos[1]->setSelectedId (8, juce::sendNotificationSync);    // Out 7
                     expectEquals (patch (2), juce::String ("6/6"), "the output combo left the input behind");
-                    combos[1]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
-                    expectEquals (patch (2), juce::String ("-1/-1"));
+                    combos[1]->setSelectedId (1, juce::sendNotificationSync);    // -> Master
+                    expectEquals (patch (2), juce::String ("6/-1"), "the master took the input with it");
+                    mono.refreshRoutingSelection();
+                    combos[0]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
+                    expectEquals (patch (2), juce::String ("-1/-1"), "an input cleared by hand clears both");
                 }
 
                 h.engine.setTrackStereo (0, true);
@@ -225,6 +228,9 @@ namespace zynforge
                     combos[1]->setSelectedId (8, juce::sendNotificationSync);    // Out 7-8
                     expectEquals (patch (0), juce::String ("6/6"));
                     expectEquals (patch (1), juce::String ("7/7"), "R missed the output combo");
+                    combos[1]->setSelectedId (1, juce::sendNotificationSync);    // -> Master
+                    expectEquals (patch (0), juce::String ("6/-1"), "the master took L's input with it");
+                    expectEquals (patch (1), juce::String ("7/-1"), "the master took R's input with it");
                     combos[0]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
                     expectEquals (patch (0), juce::String ("-1/-1"));
                     expectEquals (patch (1), juce::String ("-1/-1"));
