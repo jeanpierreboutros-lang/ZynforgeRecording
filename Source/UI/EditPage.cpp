@@ -627,7 +627,7 @@ namespace zynforge
         // already wrote this session's cache (the common case), rather than
         // paying a cache-sized synchronous write on every quit.
         const auto sessionDir = engine.getActiveSessionDir();
-        if (! waveCacheSaved && ! engine.isRecording() && sessionDir.isDirectory())
+        if (! waveCacheSaved && ! engine.isTakeOnDisk() && sessionDir.isDirectory())
             wavecache::save (sessionDir, thumbnailCaches, [] { return false; });
     }
 
@@ -1100,7 +1100,7 @@ namespace zynforge
         if (! waveCacheSaved && ! waveCacheSaving.load() && ! waveCacheLoading
             && ! rec && ! engine.isSessionTransitionActive()
             && list != nullptr && list->rowCount() > 0
-            && engine.getActiveSessionDir().isDirectory()
+            && engine.hasSessionFolder()
             && list->allWaveformsLoaded())
         {
             beginWaveCacheSave (engine.getActiveSessionDir());
@@ -1126,7 +1126,7 @@ namespace zynforge
         // so the lane sat on the held envelope until the engineer moved the
         // mouse. Bounded: stops the moment every thumbnail is fully loaded.
         if (! rec && list != nullptr && list->rowCount() > 0
-            && engine.getActiveSessionDir().isDirectory()
+            && engine.hasSessionFolder()
             && ! list->allWaveformsLoaded())
             list->repaintRows();
 
