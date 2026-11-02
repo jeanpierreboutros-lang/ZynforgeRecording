@@ -159,6 +159,7 @@ namespace zynforge
             aSessionJobOwnsTheEditor (main);
             theRowMenuIsReachable();
             rowsKeepTheirView (main);
+            liveEnvelopeMeetsThePlayhead();
             scanRepaintsOnceMore();
             fadeToolGrabs();
         }
@@ -465,6 +466,55 @@ namespace zynforge
                 expect (repaint.tick (true), "a running scan repaints");
                 expect (repaint.tick (false), "the tick a scan ended on is the one that matters");
                 expect (! repaint.tick (false), "the repaint is bounded");
+            }
+        }
+
+        void liveEnvelopeMeetsThePlayhead()
+        {
+            beginTest ("With pre-roll on, the live waveform ends at the record head");
+            {
+                const auto dir = tempDir ("preroll");
+                expect (dir.createDirectory().wasOk());
+                {
+                    constexpr int block = 256;
+                    AudioEngine engine;
+                    engine.clearAllStripOverrides();
+                    engine.setStripCount (1);
+                    engine.prepareForTests ((double) kRate, block);
+                    auto& rec = engine.getRecorder();
+                    rec.getTrack (0).armed.store (true);
+                    rec.setPreRollSeconds (1);
+                    engine.setActiveSessionDir (dir);
+                    engine.claimMixerFor (dir);
+
+                    std::vector<float> audio ((size_t) block, 0.5f);
+                    const float* input[] { audio.data() };
+                    for (int b = 0; b < 200; ++b) rec.processBlock (input, 1, block);
+
+                    EditPage page (engine);
+                    page.setBounds (0, 0, 1400, 300);
+                    page.refresh();
+                    expect (engine.startRecording (dir));
+                    expect (rec.getPreRollHistorySamples() > 0, "setup: the take has pre-roll");
+                    for (int b = 0; b < 40; ++b) rec.processBlock (input, 1, block);
+
+                    const auto rows = rowsOf (page);
+                    expect (rows.size() == 1, "setup: one row");
+                    if (rows.size() == 1)
+                    {
+                        expect (pumpUntil ([&] { return rows[0]->getLiveEnvelopeSamplesForTests()
+                                                     >= rec.getPreRollHistorySamples(); }, 2000),
+                                "the live waveform started at zero, behind the record head");
+                        expect (std::abs (rec.getRecordTimelineSamples() - rows[0]->getLiveEnvelopeSamplesForTests())
+                                    <= 2 * TrackState::kLiveBinSamples,
+                                "the live waveform and the record head disagree");
+                    }
+                    engine.stopRecording();
+                    rec.setPreRollSeconds (0);
+                    engine.clearAllStripOverrides();
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+                dir.deleteRecursively();
             }
         }
 

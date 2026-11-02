@@ -374,9 +374,11 @@ namespace zynforge
             // Where the new audio anchors: a CONTINUE seeds the live envelope
             // with the existing take's length (in overview columns) so the
             // capture draws AFTER the take, not from the left edge. Stable for
-            // the whole pass (recordBaseSamples doesn't move mid-take).
+            // the whole pass (recordBaseSamples doesn't move mid-take). Pre-roll
+            // counts on the record head but has no live bins: they start at
+            // go-live.
             const auto base    = daemon ? remote.positionSamples - remote.elapsedSamples
-                                        : rec.getRecordBaseSamples();
+                                        : rec.getRecordBaseSamples() + rec.getPreRollHistorySamples();
             const juce::int64 prefill = base > 0 ? base / TrackState::kLiveBinSamples : 0;
             for (auto& r : rows)
             {
