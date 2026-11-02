@@ -177,6 +177,7 @@ namespace zynforge
         {
             auto tick = std::make_unique<juce::ToggleButton> (name);
             tick->setToggleState (true, juce::dontSendNotification);
+            dialog::styleCheckRow (*tick);
             tick->setColour (juce::ToggleButton::textColourId, brand::textPrimary);
             tick->setColour (juce::ToggleButton::tickColourId, brand::selectFill);
             tick->setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);

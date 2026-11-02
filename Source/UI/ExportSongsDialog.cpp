@@ -38,6 +38,7 @@ namespace zynforge
             auto row = std::make_unique<Row>();
             row->range = song;
             row->tick.setToggleState (true, juce::dontSendNotification);
+            dialog::styleCheckRow (row->tick);
             row->tick.setColour (juce::ToggleButton::tickColourId, brand::selectFill);
             row->tick.setColour (juce::ToggleButton::tickDisabledColourId, brand::edge);
             row->tick.onClick = [this] { refreshExportEnabled(); };
