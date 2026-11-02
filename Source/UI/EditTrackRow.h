@@ -737,7 +737,7 @@ namespace zynforge
             if (existingFrac <= 0.0 || thumb.getTotalLength() <= 0.0) return;
             auto existing = area.withWidth ((int) (area.getWidth() * juce::jlimit (0.0, 1.0, existingFrac)));
             if (existing.getWidth() <= 0) return;
-            g.setColour (brand::accentPlay.withAlpha (zynforge::brand::alpha::muted));   // existing take = dim context
+            g.setColour (brand::clipWave (getStripColour()).withAlpha (brand::alpha::muted));   // existing take = dim context
             drawThumbnailVisible (g, thumb, existing, 0.0, thumb.getTotalLength(), wholeFile ? -1 : chan, zoom);
         }
 
