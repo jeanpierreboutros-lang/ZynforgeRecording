@@ -155,6 +155,10 @@ private:
     // case onClosed is NOT called -- the caller runs its own continuation. This
     // lets the launch flow avoid auto-reopening a session under the dialog.
     bool offerSessionRecovery (std::function<void()> onClosed = {});
+    juce::Array<juce::File> sessionsToRecover (const juce::File& sessionsRoot) const;
+    juce::String removeRecoveredSession (const juce::File& dir);
+    bool helperHoldsSession (const juce::File& dir) const;
+    bool unprovenHelperAlive() const;
     void showStartupWelcome();
     void createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
     void openSessionFromWelcome (const juce::File&);

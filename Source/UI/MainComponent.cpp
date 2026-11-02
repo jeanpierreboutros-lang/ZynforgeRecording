@@ -1316,7 +1316,7 @@ juce::String MainComponent::lastCapturePrompt (const juce::File& target)
 
 bool MainComponent::deleteCaptureSession (const juce::File& target)
 {
-    if (engine.isRecording() || sessionIoBusy.load())
+    if (engine.isRecording() || sessionIoBusy.load() || helperHoldsSession (target))
     { showStatus ("Stop recording and finish session operations before removing a capture"); return false; }
     const bool deletingActive = target == engine.getActiveSessionDir();
     const auto moveToTrash = [&target]

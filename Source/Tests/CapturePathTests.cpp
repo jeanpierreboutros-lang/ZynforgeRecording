@@ -15,8 +15,10 @@
 #include "../UI/PreflightDialog.h"
 
 #include <cmath>
+#include <thread>
 #include <vector>
 #include <CoreFoundation/CoreFoundation.h>
+#include <unistd.h>
 
 namespace zynforge
 {
@@ -688,12 +690,127 @@ namespace zynforge
             }
         }
 
+        // Rolling in the daemon, with this window knowing nothing of it.
+        bool rollUnwatched (Rig& rig)
+        {
+            auto& main = *rig.main;
+            juce::BigInteger arms; arms.setBit (0);
+            expect (main.captureSupervisor.startRecording (rig.session, 1, (int) CaptureFormat::Wav24, arms));
+            if (! rig.daemon.isRecording()) return false;
+            main.captureSupervisor.disconnect();
+            main.captureSupervisor.forgetRollingTake();
+            main.engine.setExternalRecording (false);
+            main.useCaptureDaemon = false;
+            return true;
+        }
+
+        void testLiveHelperSessions()
+        {
+            using capture::identity::Endpoint;
+            using capture::identity::TakeClaim;
+
+            beginTest ("A session a helper is writing is never offered, with no link to that helper");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                rig.daemon.getRecorder().getTrack (0).armed.store (true);
+                if (! rollUnwatched (rig)) { expect (false, "the daemon did not roll"); return; }
+                expect (rig.session.getChildFile ("recording.session").existsAsFile());
+                expect (AudioEngine::findIncompleteSessions (rig.root).contains (rig.session));
+
+                expect (! main.sessionsToRecover (rig.root).contains (rig.session), "a live take is on the list");
+                expect (main.removeRecoveredSession (rig.session).isNotEmpty());
+                expect (rig.session.isDirectory(), "a live take was deleted");
+                expectEquals (main.openSessionFolder (rig.session, true), -1, "a live take was opened and repaired");
+                expect (rig.session.getChildFile ("recording.session").existsAsFile());
+                rig.daemon.getRecorder().stopRecording();
+            }
+
+            beginTest ("The claim stays up through a long STOP and goes when the files are final");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                auto& recorder = rig.daemon.getRecorder();
+                recorder.getTrack (0).armed.store (true);
+                juce::WaitableEvent closing, finish;
+                recorder.beforeFinalizationForTests = [&] { closing.signal(); finish.wait (5000); };
+                juce::BigInteger arms; arms.setBit (0);
+                expect (main.captureSupervisor.startRecording (rig.session, 1, (int) CaptureFormat::Wav24, arms));
+                std::thread stopper ([&] { recorder.stopRecording(); });
+                expect (closing.wait (5000));
+                juce::Thread::sleep (250);      // several status ticks
+                expect (TakeClaim::isHeld (rig.session), "a helper still closing files let go of its session");
+                finish.signal();
+                stopper.join();
+                recorder.beforeFinalizationForTests = {};
+                expect (pumpUntil ([&] { return ! TakeClaim::isHeld (rig.session); }, 3000),
+                        "a finished take still reads as live");
+            }
+
+            beginTest ("A helper that dies stops holding its session, and recovery lists it");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                MainComponent::s_testConstruct = true;
+                const auto root = tempDir ("crashed");
+                const juce::ScopeGuard cleanUp { [&]
+                {
+                    MainComponent::s_testConstruct = false;
+                    root.deleteRecursively();
+                } };
+                const auto session = root.getChildFile ("take");
+                session.createDirectory();
+                expect (session.getChildFile ("recording.session").replaceWithText ("{}"));
+                MainComponent main;
+                {
+                    TakeClaim helper;
+                    helper.hold (session);
+                    expect (TakeClaim::isHeld (session));
+                    expect (! main.sessionsToRecover (root).contains (session));
+                }
+                expect (main.sessionsToRecover (root).contains (session), "a crashed session stayed hidden");
+                expectEquals (main.removeRecoveredSession (session), juce::String());
+                expect (! session.exists());
+            }
+
+            beginTest ("A helper too old to say what it holds keeps recovery off everything");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                MainComponent::s_testConstruct = true;
+                const auto root = tempDir ("older");
+                const juce::ScopeGuard cleanUp { [&]
+                {
+                    MainComponent::s_testConstruct = false;
+                    root.deleteRecursively();
+                } };
+                const auto session = root.getChildFile ("take");
+                session.createDirectory();
+                expect (session.getChildFile ("recording.session").replaceWithText ("{}"));
+                MainComponent main;
+                const int port = 40000 + juce::Random::getSystemRandom().nextInt (9000);
+                main.captureDaemonPort = port;
+                Endpoint helper;
+                expect (helper.create (port));
+                expect (main.sessionsToRecover (root).contains (session), "a helper that publishes claims hid a crash");
+                const int claims = Endpoint::openSharedFile ((juce::String (port) + ".claims").toRawUTF8(), false);
+                expect (claims >= 0);
+                ::close (claims);
+                expect (juce::File ("/tmp/zynforge-capture-" + juce::String ((int) ::geteuid()))
+                            .getChildFile (juce::String (port) + ".claims").deleteFile());
+                expect (main.sessionsToRecover (root).isEmpty(), "a helper with no claims could be writing this");
+                expect (main.removeRecoveredSession (session).isNotEmpty());
+                expect (session.isDirectory());
+            }
+        }
+
         void runTest() override
         {
             const juce::ScopeGuard restoreTestMode { [] { AudioEngine::setTestModeSkipAudioInit (false); } };
             testDaemonDevice();
             AudioEngine::setTestModeSkipAudioInit (true);
             testCopiesFollowStrips();
+            testLiveHelperSessions();
             testPreRoll();
         }
     };

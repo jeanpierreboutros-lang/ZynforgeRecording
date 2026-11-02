@@ -3,6 +3,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 
 #include "../Audio/MultitrackRecorder.h"
+#include "../Network/CaptureIdentity.h"
 #include "../Network/CaptureLink.h"
 
 #include <atomic>
@@ -79,6 +80,7 @@ namespace zynforge::capture
         void handleCommand (const Command&);
         void statusLoop();
         EngineStatus buildStatus();
+        void releaseFinishedTake();
         void noteDevice (const juce::String& name);
         juce::String heldDevice() const;
 
@@ -96,6 +98,7 @@ namespace zynforge::capture
         std::atomic<bool>   deviceAvailable { false };
         std::atomic<bool>   captureDeviceLost { false };
         double              lastDiskHealthUpdateMs { 0.0 }; // under commandLock
+        identity::TakeClaim takeClaim;                      // under commandLock
         mutable std::mutex  deviceNameLock;   // JUCE owns the setup; the status thread may not read it
         juce::String        deviceName;       // set while a device runs
 

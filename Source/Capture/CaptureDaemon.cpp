@@ -52,6 +52,7 @@ namespace zynforge::capture
         // stopped reading; join only after that write can return.
         server.stop();
         if (statusThread.joinable()) statusThread.join();
+        takeClaim.release();
         if (! testMode.load())
         {
             deviceManager.removeAudioCallback (this);
@@ -214,6 +215,7 @@ namespace zynforge::capture
                     else
                         recorder.clearTimeReferenceHint();
                     recorder.setClockDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
+                    takeClaim.hold (dir);   // before recording.session exists
                     if (recorder.startRecording (dir))
                     { captureDeviceLost.store (false); r.ok = true; }
                     else r.error = recorder.getStartError().isNotEmpty()
@@ -378,8 +380,15 @@ namespace zynforge::capture
         }
     }
 
+    // One place for every way a take ends: STOP, device loss, a device restart.
+    void CaptureDaemon::releaseFinishedTake()
+    {
+        if (! recorder.isRecording() && ! recorder.isFinalizing()) takeClaim.release();
+    }
+
     EngineStatus CaptureDaemon::buildStatus()
     {
+        releaseFinishedTake();
         const auto nowMs = juce::Time::getMillisecondCounterHiRes();
         if (! recorder.isRecording())
         {
@@ -461,6 +470,7 @@ namespace zynforge::capture
                 // A take outlives its GUI: keep watching, or a fault that comes
                 // and goes while nobody is attached never reaches the report.
                 const std::lock_guard<std::mutex> g (commandLock);
+                releaseFinishedTake();
                 recorder.evaluateChannelAlarms();
             }
             for (int i = 0; i < 10 && running.load(); ++i)

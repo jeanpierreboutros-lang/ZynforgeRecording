@@ -143,6 +143,10 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (engine.isCaptureFinalizing())
     { showStatus ("Wait for recording finalization before switching sessions"); return -1; }
     if (! dir.isDirectory()) return 0;
+    // Everything below repairs and rewrites: nothing here may run under a helper
+    // that is writing this folder, adopted or not.
+    if (helperHoldsSession (dir))
+    { showStatus (dir.getFileName() + " is being written by the capture daemon. Reconnect to it, or wait for its take to end"); return -1; }
     if (! reload && isSessionOpen (dir))
     {
         showStatus (dir.getFileName() + " is already open");
