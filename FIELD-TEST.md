@@ -1,12 +1,95 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-11-02)
+# ZynForge Recording — Field-Test Checklist (updated 2026-11-03)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak, which ends only when someone presses STOP twice: nothing stops it unattended. Tick boxes only after performing them; the failure column tells you when to stop and report. Both Macs and the current DMG have `281c6c0` / protocol 4, and `main` is ahead of that build: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak, which ends only when someone presses STOP twice: nothing stops it unattended. Tick boxes only after performing them; the failure column tells you when to stop and report. The development Mac has `d4a9a57`, the Mac mini and the current DMG have `281c6c0`, all protocol 4, and `main` is ahead of both: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
 **Severity legend:** 🟥 = data-loss class (stop, report immediately) · 🟧 = audio-path class (stop if reproducible) · 🟨 = UX / stage-readiness · ⬜ = cosmetic.
 
 ---
+
+## 2026-11-03 fix round — not yet performed
+
+None of this has been tried on real hardware, and these fixes are in neither installed build (`d4a9a57` on the development Mac, `281c6c0` on the mini): install a build from `main` on purpose before starting. Use disposable sessions. Automated coverage is in [testing.md](testing.md). A build updated from an earlier one has no saved device, so the first RECORD asks: that is expected.
+
+### Device identity (only real hardware can prove this)
+
+1. Set the interface as chosen in DEVICE, Apply, quit. Set the macOS default input to the built-in mic. Launch: the header must read `In: <interface>`. Check the device's rate did not change at launch.
+2. Quit, unplug the interface, launch. `! In: <built-in>` in amber, one status line. Arm and press RECORD: the question names both devices. Return must cancel.
+3. Plug it back in while idle. Within a few seconds the header returns to `In: <interface>` with no click on playback, since nothing is rolling.
+4. Start a take on the built-in device (answer Record), plug the interface in during the take. Nothing may glitch or stop. At STOP it reopens within about a second.
+5. Rename an aggregate in Audio MIDI Setup while the app is closed. Launch: it opens under the new name (UID match) and settings hold the new name.
+6. Two identical interfaces: choose the second, swap their USB ports, reboot. It must come back to the same unit.
+7. Remove one member of an aggregate. The header goes amber if the input count fell, and RECORD asks. Record what the aggregate really does: whether it stays listed, and how its channels renumber, is macOS behaviour nothing here has seen.
+8. With the capture daemon on and a take rolling, force-quit the window and relaunch. The take must not glitch, and the interface's rate must not move.
+9. A device slow to appear (a Dante or Thunderbolt device): the first reopen may fail. Confirm the stand-in stays open and the retry lands.
+
+### A device that stops
+
+10. Pull the clock from an interface that stalls rather than disappears, or suspend its driver, during a take. `!! NO AUDIO FROM THE DEVICE` within about 2 s, take still open, and the time stays on the banner once it recovers.
+11. A device pair (separate input and output devices): unplug the output during a take. JUCE's combiner reports an error and stops. Confirm the alarm rises, and record what the take then does.
+12. The same during a daemon take, with the window closed: the report must carry `deviceStallMs`.
+
+### Trim-Follow
+
+13. On a desk pushing preamp values: patch strip 3 from In 7, move the gain on desk channel 7, and hear strip 3 follow while the strip at position 7 stays put.
+
+### Main window
+
+- [ ] **Banner.** With an armed spare channel at digital zero and the twin link pulled, the banner goes red, TWIN LOST appears, and the pages turn every 3 s with a count. Nothing in the window moves, and STOP takes a click through all of it.
+- [ ] **Banner at a distance.** Read "1 of 3" and the text from the mix position, at the smallest window.
+- [ ] **DEVICE > Test** on a Dante or MADI rig: confirm the tone arrives on the monitor pair only and on no desk return. Press master MUTE during the tone. Press RECORD during the tone.
+- [ ] **Remote RECORD during an autosave** with playback rolling, from a desk macro and from the twin leader: nothing starts, and the leader shows a refusal.
+- [ ] **Backup drive pulled** at idle and during a take: BACKUP reads `BACKUP !` within a few seconds and pre-flight opens within a few seconds, including on a stalled network share.
+- [ ] **Record time running out.** Drive a take to under 30, then under 10 minutes of record time: amber, then red. The clock keeps saying RECORD TIME LEFT in the last minute.
+- [ ] **PATCH.** Click the last row with a stereo strip on an 8-input and a 32-in/2-out device. Link a strip on the last input and confirm R's dot and the status line agree with what records.
+- [ ] **GRID at the smallest window:** faders usable, Mute present, vertical scroll reaches the last row.
+
+### Capture copies and the capture daemon
+
+Force-killing can wedge an audio device, so keep a recovery plan and stop if the interface becomes unstable.
+
+- [ ] **Daemon device.** With daemon mode on and the interface picked, pull its cable, plug it back, pick it in DEVICE, press RECORD. Confirm the take holds the interface's channels, or that RECORD was refused naming both devices. Then launch with daemon mode on and press RECORD with no change in DEVICE.
+- [ ] **Helper start.** On the mini with the HDSPe, time a cold launch with daemon mode on. Confirm no "never answered" message and no wedged device.
+- [ ] **Copies after a strip move.** With a backup and a mirror on real drives, record, move a strip, unplug the backup, move another strip, plug it back, press RECORD. Confirm each copy's track holds one channel from start to end. Note how long the first seconds of that take held the copy's ring on the slowest drive: the renames happen then, with the ring holding audio, and this is the case where a very slow drive could cost that copy audio.
+- [ ] **Pre-roll.** 56 channels, three copies, 30 s pre-roll, on the slowest drive that keeps real time. Press RECORD and confirm no hole after the pre-roll.
+- [ ] **Recovery.** Daemon rolling, force-quit the window, turn off daemon mode in settings, relaunch. Confirm the rolling session is not listed.
+- [ ] **Crash repair.** Kill the app mid-take on WAV past the first 5 s, and once past 4 GiB. Confirm the reopened take runs to the last seconds and opens in another DAW.
+
+### Sessions and tools
+
+- [ ] **Drive pulled with unsaved work.** Open a session on an external drive, change a fader, pull the drive. Press Cmd+Q. Expect *Session folder is missing* naming the folder, with Return cancelling. Reconnect, confirm the path comes back at the same mount point and that Save works. Repeat with File > Open and Close Session.
+- [ ] **Soak monitor on a real take.** Run `tools/soak_monitor.sh` through a real take with a custom session root in FLAC and with Track 1 unarmed. Quit the window with the daemon rolling and check for the `APP NOT RUNNING` line. A real crash report's file name on this macOS should match `Zynforge Recording-*.ips`.
+
+### Punch, reads and long jobs
+
+- [ ] **Pull the drive during an export.** Export Audio from a USB drive to another drive and unplug the source mid-file. Expect "Export INCOMPLETE" or "Export failed", and no finished file for the track in progress. Repeat with a FLAC session: this is the case a truncated file cannot stand in for, EIO from a real device, and it must end rather than hang.
+- [ ] **Pull the drive during a punch stop.** Punch, then pull the session's backup drive during finalization. Expect the copy reported failed, and the primary intact.
+- [ ] **Punch on an edited show.** Ripple pre-show out of a real take and press RECORD with a selection, with the cursor, while rolling, and in PUNCH mode. Each refuses, naming a strip. Confirm RECORD with the cursor still offers Record After Take.
+- [ ] **Cancel from the File menu during a 3-hour conversion.** Expect it to stop within a second or two, leave no partial file, and let RECORD work at once.
+
+### EDIT on a real session
+
+- [ ] With two saved sessions of the same channel count and stereo layout, open one, then the other, in EDIT: names, R I S M, routing and meters all follow the new session.
+- [ ] Patch a strip to In 7 / Out 7, arm it, choose → Master in EDIT, press RECORD: it records In 7, and the status line shows no auto-routing.
+- [ ] Pull the session drive during finalization with EDIT on screen: the window keeps responding and the take reports.
+- [ ] At the minimum window and on a micro row, right-click the channel name: the menu opens, and the MARKERS LANE tag is readable on a row set to Markers.
+- [ ] Eyeball the Fade tool's squares and the range band on a long take at fit zoom.
+
+### Desk read-back (X32 / M32)
+
+- [ ] **STAGE read-back.** SOUNDCHECK, then back to STAGE. The status says "confirmed by the desk" and the chip goes out. Confirm routing on the desk. Pull the network cable, press back to STAGE: within about 2 s it says the desk did not confirm, and the chip stays. Plug in, press again: it clears.
+- [ ] **Routing enum.** With show patches using AES50 A and B and the card, confirm SOUNDCHECK reaches the desk. A read-out-of-range value would read as a lost reply: a timeout on every SOUNDCHECK press means the desk reports a value past 19, and the profile needs it.
+- [ ] **Read straight after write.** Confirm STAGE never reports a wrong block on a healthy network. The query follows the writes in the same burst; if the desk answers before applying them, this reports a false failure, and a short wait belongs before the read.
+- [ ] **Head-amp read-back.** Capture gains, change two, Restore Gains. The status says confirmed. Confirm a restored value reads back within one 0.5 dB step.
+- [ ] **Put back by hand.** With the app on SOUNDCHECK, reload the show file on the desk. Console: check the desk's patch clears the chip and writes nothing.
+- [ ] **Relaunch.** Force-quit on SOUNDCHECK, relaunch, connect. The chip stays if the desk is on card returns and clears within a couple of seconds if it isn't.
+
+### Desk link health (each desk you have)
+
+- [ ] Connect. The menu says "desk answering" within 4 s, or "no answer from the desk yet" if the dialect's probe gets no reply. Note which, per desk: an SD5 that never answers its probe is a dialect finding, not a failure.
+- [ ] Pull the desk's network cable during a take. Within about 15 s, an amber CONSOLE NOT ANSWERING notice shows and the take is untouched. Plug it in: the notice clears and the status says it is answering again.
+- [ ] On the SD5, confirm no DESK ON SOUNDCHECK ever shows, before or after using the desk's own VSC, and pre-flight says the patch is not visible here.
 
 ## 2026-11-02 design pass — not yet performed
 
@@ -22,12 +105,12 @@ Tests and rendered images can't judge these. They need the real app on a real di
 | ☐ D.6 | Arm every channel, then roll. | Idle, the deep red R buttons sit back. They lift when the take rolls. | The armed column shouts, or armed and off look alike from your seat. |
 | ☐ D.7 | Force an alarm with a take rolling, with the mouse on a fader. | The banner rises along the top, loud enough from your seat, and nothing moves. | You miss it because it is at the top of the window, or a long alarm is cut off. |
 | ☐ D.8 | Press VSC on a session you can check. Say Repatch, then press VSC ON and Restore. Quit and reopen in between once. | It asks both ways, reads VSC ON between, and the old output patch comes back. | The outputs differ from before, or VSC ON is gone after the reopen. |
-| ☐ D.9 | With a console link on a disposable show file, go to the SOUNDCHECK patch. | DESK ON SOUNDCHECK shows beside the small clock and in pre-flight, and clears on the way back to STAGE. | Either place stays wrong after the desk moves. |
+| ☐ D.9 | With a console link on a disposable show file, go to the SOUNDCHECK patch. | DESK ON SOUNDCHECK shows beside the small clock and in pre-flight, and clears on the way back to STAGE (on `main`, once the desk has read the patch back). | Either place stays wrong after the desk moves. |
 | ☐ D.10 | Read the strip meters against the desk's meters with tone at -18 and -6 dBFS. | The meter's own scale agrees with the desk. | The scale is off, or its numbers are too small to use. |
 
 ## 2026-11-02 cut to recorder and virtual soundcheck — not yet performed
 
-None of this has been tried on real hardware, and it is not in the installed `281c6c0`: install a build from `main` on purpose before starting. Use disposable sessions.
+None of this has been tried on real hardware. It is in the development Mac's `d4a9a57`, not in the mini's `281c6c0`. Use disposable sessions.
 
 - [ ] Open Backup & Mirror Drives from File and from the BACKUP button. It is one dialog: backup first, with a format box, then the mirrors.
 - [ ] Set a FLAC backup on a WAV session and record, once locally and once in daemon mode. The backup is FLAC, the primary is WAV, and the format is still set after a relaunch. Pre-flight reports the backup as it did.
@@ -44,7 +127,7 @@ None of this has been tried on real hardware, and it is not in the installed `28
 
 ## 2026-11-01 fix-pass acceptance — not yet performed
 
-None of this has been tried on real hardware, and these fixes are not in the installed `281c6c0`: install a build from `main` on purpose before starting. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
+None of this has been tried on real hardware. These fixes are in the development Mac's `d4a9a57`, not in the mini's `281c6c0`. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
 
 ### Punch safety (needs the real app and a disposable session)
 
@@ -85,7 +168,7 @@ Force-killing can wedge an audio device, so keep a recovery plan and stop if the
 - [ ] **The same on a session never saved.** As above with a brand new session and no Save before RECORD. Same result. Confirm `session_mix.json` is in the take folder before the force-quit.
 - [ ] **Device loss.** Pull the interface during a punch on a long take: the UI stays alive and the button returns to RECORD when the take has closed.
 - [ ] **Long pre-roll.** 30 s pre-roll on 56 tracks with a slow USB backup and a NAS mirror: `missedSamples` 0 on the primary.
-- [ ] **Ring memory.** Watch RSS on a 64-channel take with 3 copies: at most about 200 MB of ring.
+- [ ] **Ring memory.** Watch RSS on a 64-channel take with 3 copies and no pre-roll: at most about 200 MB of ring. On `main` a long pre-roll adds to that, up to 1 GiB of ring in all.
 
 ### Sessions
 
