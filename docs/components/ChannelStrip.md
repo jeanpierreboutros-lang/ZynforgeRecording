@@ -40,7 +40,7 @@ ChannelStrip (int index, TrackState& state,
 | `onRename` | `std::function<void(String)>` | no | Fires when the inline name editor commits |
 | `onGainDb` | `std::function<void(float dB)>` | no | Fires on fader move. Host typically broadcasts to edit-group peers |
 | `onPan` / `onPanR` | `std::function<void(float)>` | no | Pan -1..+1 |
-| `onInputRouted` / `onOutputRouted` | `std::function<void(int)>` | no | Hardware channel index, or -1 for unrouted |
+| `onInputRouted` / `onOutputRouted` | `std::function<void(int)>` | no | Hardware channel index, or -1: no signal on an input, the master on an output |
 | `stereoPartner` | `TrackState*` | no | When set, treats this as a stereo pair |
 
 ## Public methods
