@@ -81,6 +81,7 @@ namespace
 
         void applyAll (const juce::var& v) const
         {
+            zynforge::mixersnapshot::restoreLinks (eng, v);
             if (auto* arr = v.getArray())
                 for (int i = 0; i < arr->size(); ++i)
                     restoreStrip (eng, i, (*arr)[i]);

@@ -4,6 +4,7 @@
 // scrolling past 5000 lines of menu / layout / setup code.
 
 #include "MainComponent.h"
+#include "AudioDeviceDialog.h"
 #include "../Audio/VirtualSoundcheck.h"
 #include "RecordPosition.h"
 
@@ -38,6 +39,7 @@ void MainComponent::timerCallback()
     syncFloatingPanelButtons();
     rebuildStripsIfLayoutChanged();
     updateStatusPills();
+    serviceChosenDevice();
     updatePunchPill();
     updateSoundcheckState();
     updateNextCueCountdown();
@@ -165,6 +167,52 @@ void MainComponent::rebuildStripsIfLayoutChanged()
         rebuildStrips();
 }
 
+void MainComponent::serviceChosenDevice()
+{
+    const auto now = juce::Time::getMillisecondCounter();
+    if ((juce::int32) (now - nextDeviceCheckMs) < 0) return;
+    nextDeviceCheckMs = now + 1000;
+
+    const auto state = engine.getDeviceState();
+    showDeviceState (state);
+
+    const bool transportQuiet = ! engine.isRecording() && ! engine.isCaptureFinalizing() && ! engine.isPlaying()
+                             && ! punchSessionActive && ! sessionIoBusy.load()
+                             && ! zynforge::AudioDeviceDialog::isOpen() && deviceRecordQuestion == nullptr;
+    if (! zynforge::devicechoice::shouldReopen (state, transportQuiet) || ! deviceReopenPacing.due (now)) return;
+
+    juce::String error;
+    if (engine.reopenChosenDevice (error))
+    {
+        deviceReopenPacing.reset();
+        showDeviceState (engine.getDeviceState());
+        showStatus ("Back on " + state.chosenNow);
+    }
+    else
+    {
+        deviceReopenPacing.failed (now);
+        showStatus (state.chosenNow + " is connected but would not open: " + error);
+    }
+}
+
+void MainComponent::showDeviceState (const zynforge::devicechoice::DeviceState& state)
+{
+    using namespace zynforge::devicechoice;
+    const bool wrong = isWrongDevice (state);
+    deviceLabel.setText (labelText (state), juce::dontSendNotification);
+    deviceLabel.setColour (juce::Label::textColourId, wrong ? brand::alertAmber : brand::textTertiary);
+    const auto line = wrongDeviceLine (state);
+    deviceLabel.setTooltip (line.isNotEmpty() ? line + ". RECORD asks before it rolls."
+                                              : state.active + " is the input device a take records from.");
+    // Said once, when it happens. A rig left unplugged during prep stays amber
+    // above, but it must not keep taking the status line away.
+    if (line != deviceLineShown)
+    {
+        deviceLineShown = line;
+        if (line.isNotEmpty()) showStatus (line);
+    }
+}
+
 void MainComponent::updateStatusPills()
 {
     // DANTE detection -- flag the active audio device when its name
@@ -199,8 +247,10 @@ void MainComponent::updatePunchPill()
         const auto pos     = manualRecordPosition (rolling, player.getPositionSamples(), cursor);
         if (player.isRangeArmed())
             text = "RECORD PUNCHES RANGE";
-        else if (manualRecordPunches (rolling, cursor, pos, engine.getCaptureLengthSamples(),
-                                      player.getTotalLengthSamples()))
+        // The timeline is never shorter than a take, so no take length is
+        // needed here. Reading one takes the lock the audio thread only tries,
+        // and a miss there is a block of silence on every output.
+        else if (manualRecordPunches (rolling, cursor, pos, 0, player.getTotalLengthSamples()))
             text = rolling ? "RECORD PUNCHES HERE" : "RECORD PUNCHES AT CURSOR";
     }
     if (punchPill.getText() == text) return;
@@ -513,11 +563,12 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int minutesLeft = rec ? status.minutesRemaining : 0;   // 0 = no estimate
         const bool timeRunningOut = minutesLeft > 0 && minutesLeft <= kRecordTimeDangerMinutes;
         const bool timeShort      = minutesLeft > kRecordTimeDangerMinutes && minutesLeft <= kRecordTimeNoticeMinutes;
+        const bool deviceStalled = status.deviceStalled || status.deviceStallMs > 0;
         // Only a desk that was answering. One that never did may simply not
         // answer probes, and a notice that is always up teaches nothing.
         const bool consoleSilent = consoleLink.isConnected()
                                 && consoleLink.getHealth() == zynforge::ConsoleLink::Health::Silent;
-        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || deviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
+        if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || deviceLost || deviceStalled || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
             || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort || consoleSilent)
         {
@@ -525,6 +576,9 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             // banner tells them apart, and a '!' is what makes one a danger.
             juce::String warn;
             if (deviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
+            if (status.deviceStalled) warn << "!! NO AUDIO FROM THE DEVICE -- the take is open but nothing is being captured; check the interface  ";
+            else if (deviceStalled)   warn << "! DEVICE STOPPED FOR " << juce::String (status.deviceStallMs / 1000.0, 1)
+                                           << " s -- that time is not in the take  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";

@@ -130,6 +130,14 @@ void MainComponent::servicePunch()
                 wasInsidePunch = inside;
                 return;
             }
+            // Rolling, so there is no asking. An answer already given stands.
+            const auto deviceQuestion = engine.getRecordDeviceQuestion (sessionDir.getFullPathName());
+            if (deviceQuestion.needed)
+            {
+                showStatus ("Punch-in refused -- " + deviceQuestion.refusal);
+                wasInsidePunch = inside;
+                return;
+            }
             // Multi-part takes (auto-split, or built up by continue-recording)
             // are fine now: the splice reads the whole take via ConcatReader and
             // flattens it on stop, so no refusal here.

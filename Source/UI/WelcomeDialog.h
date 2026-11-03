@@ -28,6 +28,7 @@ namespace zynforge
             double        sampleRate { 48000.0 };
             juce::String  inputDeviceName;   // chosen record-from input device ("" = unchanged)
             juce::String  outputDeviceName;  // chosen monitor output device  ("" = unchanged)
+            bool          devicePicked { false };   // a device picker was changed by hand
         };
 
         using OnCreateNew  = std::function<void (const NewResult&)>;
@@ -40,6 +41,7 @@ namespace zynforge
             juce::StringArray outputs;       // output device names
             juce::String      currentInput;  // pre-selected input
             juce::String      currentOutput; // pre-selected output
+            juce::String      chosenMissing; // the chosen input, when it is not connected
         };
 
         // Modal-async. The dialog shows the New panel by default.

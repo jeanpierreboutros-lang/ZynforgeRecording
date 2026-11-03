@@ -123,7 +123,7 @@ namespace zynforge
     }
     void OscRemote::setChannelGain (int idx1, float dB)
     {
-        engine.setTrackLiveInputGain (idx1 - 1, dB);
+        engine.setDeskChannelGain (idx1 - 1, dB);
     }
 
     // ── Argument-fetch helpers ──────────────────────────────────────────────

@@ -210,8 +210,14 @@ namespace zynforge
                 };
                 addAndMakeVisible (testButton);
 
-                statusLabel.setText ("Pick a device, sample rate and buffer -- then Apply.",
-                                     juce::dontSendNotification);
+                {
+                    // Apply is a choice, so it has to be clear what it replaces.
+                    const auto state = engine.getDeviceState();
+                    statusLabel.setText (state.verdict == devicechoice::Verdict::chosenMissing
+                                             ? state.chosen + " is not connected. Apply keeps this instead."
+                                             : juce::String ("Pick a device, sample rate and buffer -- then Apply."),
+                                         juce::dontSendNotification);
+                }
                 statusLabel.setJustificationType (juce::Justification::centredLeft);
                 statusLabel.setColour (juce::Label::textColourId, brand::textTertiary);
                 statusLabel.setFont (brand::type::statusBar());
@@ -612,7 +618,12 @@ namespace zynforge
                     else           dw->setVisible (false);   // reaper deletes it
                 }
             }
-            void applyAndClose()  { applied = true;  closeWindow(); }
+            void applyAndClose()
+            {
+                applied = true;
+                engine.noteChosenDevice();
+                closeWindow();
+            }
             void cancelAndClose() { applied = false; closeWindow(); }
 
             AudioEngine& engine;
@@ -652,6 +663,8 @@ namespace zynforge
     // fight over initialise(256,64,...)), so we allow only ONE. Auto-nulls when
     // the dialog is destroyed (SafePointer), covering both close paths.
     static juce::Component::SafePointer<DialogContent> s_liveDeviceDialog;
+
+    bool AudioDeviceDialog::isOpen() { return s_liveDeviceDialog.getComponent() != nullptr; }
 
     void AudioDeviceDialog::closeSelfOwned()
     {

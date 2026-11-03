@@ -239,7 +239,9 @@ namespace zynforge
                 // Input / Output device pickers -- choose what to record from
                 // and monitor through, right here when creating the session.
                 addAndMakeVisible (inputDevLabel);
-                inputDevLabel.setText ("Input Device (record from)", juce::dontSendNotification);
+                inputDevLabel.setText (dev.chosenMissing.isNotEmpty() ? dev.chosenMissing + " is not connected"
+                                                                      : juce::String ("Input Device (record from)"),
+                                       juce::dontSendNotification);
                 styleFieldLabel (inputDevLabel);
                 addAndMakeVisible (inputDevCombo);
                 dialog::styleCombo (inputDevCombo);
@@ -261,6 +263,8 @@ namespace zynforge
                     const int idx = dev.outputs.indexOf (dev.currentOutput);
                     outputDevCombo.setSelectedId (juce::jmax (1, idx + 1), juce::dontSendNotification);
                 }
+                inputDevCombo .onChange = [this] { devicePicked = true; };
+                outputDevCombo.onChange = [this] { devicePicked = true; };
             }
 
             juce::String  getName()        const { return nameEditor.getText().trim(); }
@@ -270,6 +274,7 @@ namespace zynforge
             double        getSampleRate() const { return hzFromSampleRateId (sampleRateCombo.getSelectedId()); }
             juce::String  getInputDevice()  const { return inputDevCombo.getNumItems()  > 0 ? inputDevCombo.getText()  : juce::String(); }
             juce::String  getOutputDevice() const { return outputDevCombo.getNumItems() > 0 ? outputDevCombo.getText() : juce::String(); }
+            bool          wasDevicePicked() const { return devicePicked; }
 
             void resized() override
             {
@@ -383,6 +388,7 @@ namespace zynforge
             juce::Label        bitDepthLabel;
             juce::ComboBox     bitDepthCombo;
             juce::Label        inputDevLabel;
+            bool               devicePicked { false };
             juce::ComboBox     inputDevCombo;
             juce::Label        outputDevLabel;
             juce::ComboBox     outputDevCombo;
@@ -619,6 +625,7 @@ namespace zynforge
                 r.sampleRate    = newPanel->getSampleRate();
                 r.inputDeviceName  = newPanel->getInputDevice();
                 r.outputDeviceName = newPanel->getOutputDevice();
+                r.devicePicked     = newPanel->wasDevicePicked();
                 onCreate (r);
                 dismiss();
             }

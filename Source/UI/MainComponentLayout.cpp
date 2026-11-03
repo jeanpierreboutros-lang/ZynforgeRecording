@@ -215,7 +215,13 @@ void MainComponent::resized()
     stripMButton .setToggleState (stripWidthPreset == StripWidth::M,  juce::dontSendNotification);
     stripLButton .setToggleState (stripWidthPreset == StripWidth::L,  juce::dontSendNotification);
     gridButton   .setToggleState (mixerGridView, juce::dontSendNotification);
-    transportLabel.setBounds (row2.removeFromLeft (140));
+    // Under the clock, which nothing on this row can squeeze: the session
+    // label beside it can be left with no room at all.
+    {
+        auto clockColumn = row2.removeFromLeft (140);
+        transportLabel.setBounds (clockColumn.removeFromTop (clockColumn.getHeight() - 18));
+        deviceLabel   .setBounds (clockColumn);
+    }
     // The two pills share one column and stack when both show. Each warns about
     // what happens next, so neither may squeeze the other out.
     const bool punchUp = punchPill.isVisible(), deskUp = soundcheckPill.isVisible();

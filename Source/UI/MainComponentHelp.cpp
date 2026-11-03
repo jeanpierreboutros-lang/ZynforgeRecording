@@ -405,6 +405,7 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
         // failure mode is bad enough to guard at the mutation itself.)
         if (changed && ! engine.isRecording())
             engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+        engine.noteChosenDevice (r.devicePicked);
     }
 
     // New session = clean slate. Wipe any per-strip persistence
@@ -503,6 +504,8 @@ void MainComponent::showStartupWelcome()
         const auto setup = dm.getAudioDeviceSetup();
         devices.currentInput  = setup.inputDeviceName;
         devices.currentOutput = setup.outputDeviceName;
+        const auto state = engine.getDeviceState();
+        if (state.verdict == zynforge::devicechoice::Verdict::chosenMissing) devices.chosenMissing = state.chosen;
     }
 
     zynforge::WelcomeDialog::launch (defaultRoot, curSr, curFormat, devices,

@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "ClockSource.h"
 #include "SettingsFile.h"
 #include "TrackFileTransaction.h"
 #include "AtomicFile.h"
@@ -135,6 +136,16 @@ namespace zynforge
         t.liveInputGainKnown.store (true, std::memory_order_relaxed);
         // The reference is fixed at capture start. Zero dB is a valid gain,
         // never a sentinel permitting a console update to rebaseline a take.
+    }
+
+    void AudioEngine::setDeskChannelGain (int deskChannel, float dB)
+    {
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        const int numInputs = getCurrentDeviceInputCount();
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+            if (listenedInput (i, recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed), numInputs)
+                == deskChannel)
+                setTrackLiveInputGain (i, dB);
     }
 
     void AudioEngine::snapshotCaptureInputGains()
@@ -301,7 +312,7 @@ namespace zynforge
         // These strips are what this take was recorded with, so from here on
         // they are this folder's mixer, whichever session they came from.
         claimMixerFor (sessionDir);
-        noteLastCapture (sessionDir);
+        noteLastCapture (sessionDir, recorder.getCaptureIdentity());
         invalidateExternalCaptureStatus();
         // A punch take's capture window and splice point are player positions:
         // hold the playhead (and loop) still until the take stops.
@@ -384,6 +395,7 @@ namespace zynforge
         // captured, so the next RECORD continues the take from here instead
         // of looking like it starts over from the beginning.
         const auto recordEnd = getRecordTimelineSamples();
+        const bool sameSession = clipsBelongTo (sessionDir);
         recorder.stopRecording();
         clearCaptureWindow();
         player.setSeekLocked (false);
@@ -407,7 +419,7 @@ namespace zynforge
             // during soundcheck. A stop after a punch or continue must not
             // wipe edits on OTHER tracks; only the just-captured track's
             // plain default clip is refreshed to the new take length.
-            seedDefaultClips (/*preserveEdits*/ true, /*appendRecordedAudio*/ true);
+            seedDefaultClips (/*preserveEdits*/ sameSession, /*appendRecordedAudio*/ sameSession);
             // loadSession() rewinds the player to 0; park the playhead back
             // at the take's end so the engineer can hit RECORD again and
             // continue seamlessly (or PLAY to review from this point).
@@ -415,6 +427,14 @@ namespace zynforge
                                                      player.getTotalLengthSamples(),
                                                      recordEnd));
         }
+    }
+
+    // The clips in memory are the session the player holds. A take's folder can
+    // be another one: with the session's drive gone, RECORD opens a new folder.
+    bool AudioEngine::clipsBelongTo (const juce::File& takeFolder) const
+    {
+        const auto loaded = player.getSessionDir();
+        return loaded == juce::File() || loaded == takeFolder;
     }
 
     bool AudioEngine::stopRecordingAsync (std::function<void (bool)> completion)
@@ -434,7 +454,8 @@ namespace zynforge
         job->external = externalSession != juce::File();
         job->directory = job->external ? externalSession : recorder.getActiveSessionDir();
         job->recordEnd = job->external ? externalEnd : getRecordTimelineSamples();
-        job->sameSession = ! job->external || player.getSessionDir() == externalSession;
+        job->sameSession = job->external ? player.getSessionDir() == externalSession
+                                         : clipsBelongTo (job->directory);
         job->playbackRate = deviceSampleRate.load();
         job->playbackBlock = deviceBlockSize.load();
         job->explicitReaders = player.snapshotExplicitReaderRequests();
@@ -1127,6 +1148,14 @@ namespace zynforge
         const juce::ScopedLock sl (recorder.getStructureLock());
         EngineStatus s;
         s.captureDeviceLost = recorder.hasCaptureDeviceLost();
+        // In tests a take can roll with no device behind it at all.
+        const bool watchCallback = recorder.isRecording() && deviceManager.getCurrentAudioDevice() != nullptr;
+        const auto nowMs = juce::Time::getMillisecondCounter();
+        s.deviceStalled = callbackWatchdog.update (watchCallback, callbackCount.load (std::memory_order_relaxed),
+                                                   nowMs, deviceErrorSeen.load (std::memory_order_relaxed));
+        if (! watchCallback) deviceErrorSeen.store (false, std::memory_order_relaxed);
+        else                 recorder.noteDeviceStall (callbackWatchdog.stalledMs (nowMs));
+        s.deviceStallMs = recorder.getDeviceStallMs();
         s.recording        = isRecording();
         if (s.recording)
             s.sessionPath = recorder.getActiveSessionDir().getFullPathName();
@@ -1701,6 +1730,7 @@ namespace zynforge
 
     bool AudioEngine::reorderTracks (const std::vector<int>& order)
     {
+        reorderRefusal.clear();
         if (isRecording() || isSessionTransitionActive()) return false;
         // Refused before any take file is renamed: the indices below describe
         // the strips in memory, which only match this folder's takes if they
@@ -1716,6 +1746,20 @@ namespace zynforge
             const int old = order[(size_t) i];
             if (old < 0 || old >= n || destination[(size_t) old] >= 0) return false;
             destination[(size_t) old] = i;
+        }
+        // The right half of one stereo file has no file of its own. Every
+        // reader finds it as the strip straight after its left half, so an
+        // unlinked pair can't be parted: the right channel would reach no strip,
+        // or the wrong one, and a mix render fails on it.
+        for (int old = 1; old < n; ++old)
+        {
+            const int left = destination[(size_t) old - 1], right = destination[(size_t) old];
+            if (left < 0 || right < 0 || right == left + 1) continue;
+            int channel = 0;
+            getTrackAudioFile (old, &channel);
+            if (channel != 1) continue;
+            reorderRefusal = "Those two strips share one stereo file, so they have to stay side by side";
+            return false;
         }
         player.stop();
         deviceManager.removeAudioCallback (this);
@@ -1985,18 +2029,157 @@ namespace zynforge
         masterStereo.store (appProps->getBoolValue ("masterStereo", true),
                             std::memory_order_release);
 
-        // Open with up to 256 inputs / 64 outputs by default -- adjust later from UI.
+        chosenDevice = devicechoice::load (*appProps);
         if (! s_testSkipAudioInit.load (std::memory_order_acquire))
         {
-            auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
-                                                 /*savedState*/ nullptr,
-                                                 /*selectDefault*/ true);
-            if (err.isNotEmpty())
-                DBG ("AudioDeviceManager init: " << err);
-        }
-
-        if (! s_testSkipAudioInit.load (std::memory_order_acquire))
+            openChosenDevice();
             deviceManager.addAudioCallback (this);
+        }
+    }
+
+    // Names only, so the device keeps the rate it is running. A daemon can be
+    // rolling on this interface while the window relaunches, and a saved rate
+    // would pull the clock out from under its take.
+    void AudioEngine::openChosenDevice()
+    {
+        // Open with up to 256 inputs / 64 outputs by default -- adjust later from UI.
+        std::unique_ptr<juce::XmlElement> state;
+        if (chosenDevice.saved)
+        {
+            deviceManager.getAvailableDeviceTypes();   // scans
+            if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+            {
+                const auto open = devicechoice::planOpen (
+                    chosenDevice, listDevices (true), listDevices (false),
+                    type->getDeviceNames (true)[type->getDefaultDeviceIndex (true)],
+                    type->getDeviceNames (false)[type->getDefaultDeviceIndex (false)]);
+                state = std::make_unique<juce::XmlElement> ("DEVICESETUP");
+                state->setAttribute ("deviceType", type->getTypeName());
+                state->setAttribute ("audioInputDeviceName", open.input);
+                state->setAttribute ("audioOutputDeviceName", open.output);
+            }
+        }
+        const auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64, state.get(),
+                                                   /*selectDefault*/ true);
+        if (err.isNotEmpty())
+            DBG ("AudioDeviceManager init: " << err);
+
+        // Found under a new name: from here on that is its name.
+        const auto now = devicechoice::nameNow (chosenDevice.input, chosenDevice.inputUid, listDevices (true));
+        if (chosenDevice.saved && now.isNotEmpty() && now != chosenDevice.input)
+        {
+            chosenDevice.input = now;
+            updateSettings (appProps.get(), [this] (juce::PropertiesFile& p) { devicechoice::save (p, chosenDevice); });
+        }
+    }
+
+    devicechoice::DeviceList AudioEngine::listDevices (bool inputs)
+    {
+        auto* type = deviceManager.getCurrentDeviceTypeObject();
+        if (type == nullptr) return {};
+        const auto names = type->getDeviceNames (inputs);
+        auto& known = listedIds[inputs ? 1 : 0];
+        // A device that changes under a take can wait: nothing here may touch
+        // the HAL then, and nothing reopens until the take is over.
+        if (names != known.names && ! isRecording())
+        {
+            known.names = names;
+            known.ids.clear();
+            if (deviceIdsForTests != nullptr)
+                known.ids = deviceIdsForTests (inputs);
+            else if (type->getTypeName() == "CoreAudio")
+                for (const auto& id : clocksource::readDeviceIds (inputs, 250))
+                    known.ids.push_back ({ id.name, id.uid });
+        }
+        devicechoice::DeviceList listed;
+        for (const auto& name : names)
+        {
+            devicechoice::Listed device { name, {} };
+            for (const auto& id : known.ids)
+                if (id.name == name) device.uid = id.uid;
+            listed.push_back (device);
+        }
+        return listed;
+    }
+
+    juce::String AudioEngine::openInputDevice()
+    {
+        return deviceManager.getCurrentAudioDevice() != nullptr ? deviceManager.getAudioDeviceSetup().inputDeviceName
+                                                                : juce::String();
+    }
+
+    void AudioEngine::noteChosenDevice (bool pickedByHand)
+    {
+        if (deviceManager.getCurrentAudioDevice() == nullptr) return;   // nothing is open to choose
+        const auto setup = deviceManager.getAudioDeviceSetup();
+        if (! pickedByHand && chosenDevice.saved && setup.inputDeviceName != chosenDevice.input) return;
+
+        const auto uidOf = [] (const juce::String& name, const devicechoice::DeviceList& list)
+        {
+            for (const auto& device : list)
+                if (device.name == name) return device.uid;
+            return juce::String();
+        };
+        chosenDevice.saved     = true;
+        chosenDevice.input     = setup.inputDeviceName;
+        chosenDevice.output    = setup.outputDeviceName;
+        chosenDevice.inputUid  = uidOf (setup.inputDeviceName, listDevices (true));
+        chosenDevice.outputUid = uidOf (setup.outputDeviceName, listDevices (false));
+        chosenDevice.inputs    = getCurrentDeviceInputCount();
+        updateSettings (appProps.get(), [this] (juce::PropertiesFile& p) { devicechoice::save (p, chosenDevice); });
+        deviceAnswers.clear();
+    }
+
+    devicechoice::DeviceState AudioEngine::getDeviceState()
+    {
+        return devicechoice::assess (chosenDevice, openInputDevice(), listDevices (true), getCurrentDeviceInputCount());
+    }
+
+    devicechoice::RecordQuestion AudioEngine::getRecordDeviceQuestion (const juce::String& session)
+    {
+        // With nothing open there is no device to ask about, and RECORD refuses by itself.
+        if (deviceManager.getCurrentAudioDevice() == nullptr) return {};
+        std::vector<devicechoice::ArmedStrip> armed;
+        {
+            const juce::ScopedLock sl (recorder.getStructureLock());
+            for (int i = 0; i < recorder.getNumTracks(); ++i)
+            {
+                const auto& t = recorder.getTrack (i);
+                if (t.armed.load (std::memory_order_relaxed))
+                    armed.push_back ({ i, t.inputRouting.load (std::memory_order_relaxed) });
+            }
+        }
+        const auto state = getDeviceState();
+        return devicechoice::recordQuestion (state, devicechoice::stripsThroughWrap (armed, state.liveInputs),
+                                             deviceAnswers, session);
+    }
+
+    bool AudioEngine::reopenChosenDevice (juce::String& error)
+    {
+        if (isRecording() || isSessionTransitionActive()) { error = "a take or a session change is running"; return false; }
+        const auto state = getDeviceState();
+        if (state.chosenNow.isEmpty()) { error = "it is not connected"; return false; }
+
+        const auto before = deviceManager.getAudioDeviceSetup();
+        auto setup = before;
+        setup.inputDeviceName = state.chosenNow;
+        setup.useDefaultInputChannels = true;
+        const auto output = devicechoice::nameNow (chosenDevice.output, chosenDevice.outputUid, listDevices (false));
+        if (output.isNotEmpty())
+        {
+            setup.outputDeviceName = output;
+            setup.useDefaultOutputChannels = true;
+        }
+        error = deviceManager.setAudioDeviceSetup (setup, true);
+        if (error.isEmpty() && deviceManager.getCurrentAudioDevice() != nullptr)
+        {
+            // The rig is back, so whatever was accepted while it was away is over.
+            deviceAnswers.clear();
+            return true;
+        }
+        // JUCE has already closed what was open.
+        deviceManager.setAudioDeviceSetup (before, false);
+        return false;
     }
 
     AudioEngine::~AudioEngine()
@@ -2102,13 +2285,19 @@ namespace zynforge
         return {};
     }
 
-    void AudioEngine::noteLastCapture (const juce::File& dir)
+    void AudioEngine::noteLastCapture (const juce::File& dir, const juce::String& captureId)
     {
-        updateSettings (appProps.get(), [&dir] (juce::PropertiesFile& props)
+        updateSettings (appProps.get(), [&dir, &captureId] (juce::PropertiesFile& props)
         {
             props.setValue ("lastCaptureDir", dir.getFullPathName());
-            props.setValue ("lastCaptureId", dir.getChildFile (".zynforge-capture-id").loadFileAsString().trim());
+            props.setValue ("lastCaptureId", captureId);
         });
+    }
+
+    void AudioEngine::noteLastCaptureId (const juce::File& dir)
+    {
+        if (appProps == nullptr || appProps->getValue ("lastCaptureDir") != dir.getFullPathName()) return;
+        noteLastCapture (dir, dir.getChildFile (".zynforge-capture-id").loadFileAsString().trim());
     }
 
     void AudioEngine::forgetLastCapture()
@@ -2505,11 +2694,19 @@ namespace zynforge
         }
     }
 
+    // Any failed HAL call lands here, and on a device pair JUCE's combiner
+    // stops the device and says nothing else. Which thread it comes from varies.
+    void AudioEngine::audioDeviceError (const juce::String&)
+    {
+        deviceErrorSeen.store (true, std::memory_order_relaxed);
+    }
+
     void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
                                                         float* const* outputs, int numOutputs,
                                                         int numSamples,
                                                         const juce::AudioIODeviceCallbackContext&)
     {
+        callbackCount.fetch_add (1, std::memory_order_relaxed);
         if (deferredDeviceAudio.load (std::memory_order_acquire))
         {
             for (int channel = 0; channel < numOutputs; ++channel)
@@ -2912,7 +3109,7 @@ const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxe
                                                     masterOutR.load (std::memory_order_relaxed),
                                                     numOutputs);
         const bool stereo = masterStereo.load (std::memory_order_relaxed)
-                         && masterPair.left != masterPair.right;
+                         && (masterPair.left != masterPair.right || masterPair.left < 0);
         if (! stereo)
         {
             for (int i = 0; i < blk; ++i)

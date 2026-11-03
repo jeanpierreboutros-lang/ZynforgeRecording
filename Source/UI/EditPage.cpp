@@ -1012,7 +1012,8 @@ namespace zynforge
         const auto playhead = engine.getPlayer().getPositionSamples();
         if (! engine.reorderTracks (order))
         {
-            report ("Strip move failed; check disk permissions and Session File Backups before retrying");
+            const auto why = engine.getReorderRefusal();
+            report (why.isNotEmpty() ? why : juce::String ("Strip move failed; check disk permissions and Session File Backups before retrying"));
             return false;
         }
         engine.getPlayer().setPositionSamples (playhead);

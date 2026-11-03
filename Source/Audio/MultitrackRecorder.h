@@ -258,6 +258,10 @@ namespace zynforge
         bool hasCaptureDeviceLost() const noexcept { return captureDeviceLost.load(); }
         void setMeterUnarmedInputs (bool on) noexcept { meterUnarmedInputs.store (on); }
         void markCaptureDeviceLost() noexcept { captureDeviceLost.store (true, std::memory_order_relaxed); }
+        // Wall time this take had no audio callback. It leaves no gap in the
+        // files, so the report is the only place it can be seen afterwards.
+        void noteDeviceStall (juce::int64 ms) noexcept { deviceStallMs.store (ms, std::memory_order_relaxed); }
+        juce::int64 getDeviceStallMs() const noexcept { return deviceStallMs.load (std::memory_order_relaxed); }
         int         getLastWriteMs()       const noexcept { return lastWriteMs      .load(std::memory_order_relaxed); }
 
         // Apple-Silicon scheduling: when the engine learns about a new
@@ -276,6 +280,8 @@ namespace zynforge
         float getDiskBytesPerSec() const noexcept;
         float getRingFillPct()     const noexcept;
         juce::File  getActiveSessionDir()  const          { return activeSessionDir; }
+        // Known once a take has started, with no read from the take's volume.
+        juce::String getCaptureIdentity()  const          { return captureIdentity; }
 
         // Free-space pre-flight + live "minutes remaining" estimate.
         //
@@ -918,12 +924,14 @@ namespace zynforge
         juce::String       clockDevice;
         clocksource::Probe clockProbe;
         std::atomic<bool>        captureDeviceLost  { false };
+        std::atomic<juce::int64> deviceStallMs      { 0 };
         std::atomic<int>         lastWriteMs        { 0 };
         CaptureFormat captureFormat        { CaptureFormat::Wav24 };
         CaptureFormat backupCaptureFormat  { CaptureFormat::Wav24 };
         int           preRollSeconds { 0 };  // 0 = disabled
 
         juce::File activeSessionDir;
+        juce::String captureIdentity;
         juce::File backupDir;
         std::atomic<bool> backupActive  { false };
         std::atomic<bool>& backupFailed  { latches->backupFailed };

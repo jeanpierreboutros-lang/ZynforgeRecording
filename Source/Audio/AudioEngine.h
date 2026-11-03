@@ -9,7 +9,9 @@
 #include <array>
 #include <functional>
 #include <map>
+#include "CallbackWatchdog.h"
 #include "ClipModel.h"
+#include "DeviceChoice.h"
 #include "DisplayText.h"
 #include "EngineStatus.h"
 #include "MultitrackRecorder.h"
@@ -96,8 +98,30 @@ namespace zynforge
         void setDeviceOutputCountForTests (int n) noexcept { testDeviceOutputs.store (n, std::memory_order_relaxed); }
 
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
+
+        // The device the engineer chose (DeviceChoice.h), kept in app settings.
+        // At launch it opens, each side on its own, or the Mac's default stands
+        // in and getDeviceState says so.
+        void openChosenDevice();
+        // On every explicit choice. `pickedByHand` is false for a picker that
+        // was only accepted as it stood: that keeps a choice that is merely
+        // away, or the stand-in would replace the interface for good.
+        void noteChosenDevice (bool pickedByHand = true);
+        const devicechoice::Chosen& getChosenDevice() const noexcept { return chosenDevice; }
+        devicechoice::DeviceState getDeviceState();
+        // What RECORD has to ask before this press rolls, for this session.
+        devicechoice::RecordQuestion getRecordDeviceQuestion (const juce::String& session);
+        devicechoice::Answers& getDeviceAnswers() noexcept { return deviceAnswers; }
+        // Opens the chosen device again. Refuses under a take, and any failure
+        // puts the stand-in back, so a bad attempt doesn't leave no device.
+        bool reopenChosenDevice (juce::String& error);
+        void setChosenDeviceForTests (const devicechoice::Chosen& chosen) { chosenDevice = chosen; }
+        // Test seam: what CoreAudio would say about the listed devices.
+        std::function<std::vector<devicechoice::Listed> (bool inputs)> deviceIdsForTests;
+
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
         SessionPlayer&            getPlayer()        noexcept { return player; }
+        bool                      isSessionLoaded()  const noexcept { return player.isLoaded(); }
         juce::PropertiesFile*     getAppProps()      noexcept       { return appProps.get(); }
         juce::PropertiesFile*     getAppProps() const noexcept       { return appProps.get(); }
         TimecodeChase&            getTimecodeChase() noexcept { return timecodeChase; }
@@ -423,6 +447,9 @@ namespace zynforge
         // strips don't dangle. Returns true on success.
         bool swapTracks (int a, int b);
         bool reorderTracks (const std::vector<int>& order);
+        // Why the last reorder was refused, when the engineer can do something
+        // about it. Empty for any other failure.
+        juce::String getReorderRefusal() const { return reorderRefusal; }
         std::function<void (const std::vector<int>&)> onTracksReordered;
 
         // Punch in/out -- the player auto-arms enabled punch tracks when
@@ -539,7 +566,10 @@ namespace zynforge
         // The folder of the last take that really started, kept with the take's
         // capture identity so a different folder moved to that path is not
         // mistaken for it. Survives a relaunch; verify_take.sh reads it too.
-        void noteLastCapture (const juce::File& dir);
+        // Called as a take rolls, so it touches only the settings file. A
+        // daemon's take has no id here until its files are final.
+        void noteLastCapture (const juce::File& dir, const juce::String& captureId);
+        void noteLastCaptureId (const juce::File& dir);
         void forgetLastCapture();
         juce::File getLastCapture() const;
         bool mixerBelongsTo (const juce::File& dir) const
@@ -908,6 +938,7 @@ namespace zynforge
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;
         void audioDeviceStopped() override;
+        void audioDeviceError (const juce::String&) override;
         void audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
                                                float* const* outputs, int numOutputs,
                                                int numSamples,
@@ -945,6 +976,23 @@ namespace zynforge
         juce::uint64 captureStopSequence = 0;
         AsyncHandle asyncHandle;
         juce::AudioDeviceManager deviceManager;
+        std::atomic<juce::uint32> callbackCount { 0 };       // bumped first in every callback
+        std::atomic<bool>         deviceErrorSeen { false };  // any thread
+        CallbackWatchdog          callbackWatchdog;           // under the structure lock
+        juce::String             reorderRefusal;
+        devicechoice::Chosen     chosenDevice;
+        devicechoice::Answers    deviceAnswers;
+        // The ids go with a device list; the list changes far less often than
+        // it is read, and reading them is a HAL call.
+        struct ListedIds
+        {
+            juce::StringArray names;
+            devicechoice::DeviceList ids;
+        };
+        ListedIds listedIds[2];
+        devicechoice::DeviceList listDevices (bool inputs);
+        bool clipsBelongTo (const juce::File& takeFolder) const;
+        juce::String openInputDevice();
         MultitrackRecorder       recorder;
         SessionPlayer            player;
         MarkersManager           markers;
@@ -1173,6 +1221,9 @@ namespace zynforge
         // message thread). Updates the live value only; the capture reference
         // is fixed when a take starts.
         void setTrackLiveInputGain (int channelIndex, float dB);
+        // A preamp value from the desk, for the strips that listen to that
+        // channel. A desk knows its channels and nothing about strip order.
+        void setDeskChannelGain (int deskChannel, float dB);
         // The offset playback gets: live - capture, limited, 0 with no reference.
         float getTrackTrimDelta (int channelIndex);
         // Take the desk's current reading as each armed strip's capture

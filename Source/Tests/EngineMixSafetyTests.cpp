@@ -287,6 +287,30 @@ namespace zynforge
                 e.setMasterOutputs (0, 1);
             }
 
+            beginTest ("Master output Off keeps the meters and loudness in stereo");
+            {
+                Rig r (1, 1, 4);
+                auto& e = r.engine;
+                e.getRecorder().getTrack (0).monitor.store (true);
+                e.setMasterStereo (true);
+                r.input (0, 0.5f);
+
+                const auto metered = [&e, &r] (int left, int right)
+                {
+                    e.setMasterOutputs (left, right);
+                    e.getMasterState().peak.store (0.0f);
+                    e.getMasterStateR().peak.store (0.0f);
+                    r.process();
+                    return std::pair<float, float> (e.getMasterState().peak.load(), e.getMasterStateR().peak.load());
+                };
+                const auto routed = metered (0, 1);
+                const auto off = metered (-1, -1);
+                expect (routed.second > 0.1f);
+                expectWithinAbsoluteError (off.first,  routed.first,  0.001f, "the left meter changed with the master Off");
+                expectWithinAbsoluteError (off.second, routed.second, 0.001f, "the right meter collapsed with the master Off");
+                e.setMasterOutputs (0, 1);
+            }
+
             beginTest ("A two-output device keeps its mix with strips patched there");
             {
                 Rig r (3, 3, 2);

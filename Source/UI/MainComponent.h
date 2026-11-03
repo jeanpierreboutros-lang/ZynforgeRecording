@@ -38,7 +38,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -96,6 +96,8 @@ private:
         int         numTracks { 0 }, armed { 0 }, autoRouted { 0 };
         bool        continueTake { false }, continueAppend { false };
         juce::int64 punchAt { -1 };
+        zynforge::devicechoice::RecordQuestion device;
+        juce::String deviceSession;   // the session a device answer is held under
     };
     bool handleRecordPressDuringTake();
     void endPunchSession();
@@ -106,6 +108,10 @@ private:
     bool cursorPunchNeedsAnswer (const RecordStartPlan&);
     void askBeforeCursorPunch (const RecordStartPlan&);
     void answerCursorPunch (int answer);
+    void askBeforeDeviceRecord (const RecordStartPlan&);
+    void answerDeviceRecord (int answer, const juce::String& session, const juce::String& device);
+    void serviceChosenDevice();
+    void showDeviceState (const zynforge::devicechoice::DeviceState&);
     void runRecordPlan (RecordStartPlan&);
     void applyRecordAutoRouting (RecordStartPlan&);
     void startDaemonTake (const RecordStartPlan&);
@@ -621,6 +627,7 @@ private:
     bool twinStopFollowsDaemon { false };  // a confirmed STOP waits on the daemon's reply
     bool remoteStartInFlight { false }; // this RECORD arrived from any remote surface
     bool remotePunchRefused { false };  // and it was refused because it would punch
+    juce::String remoteDeviceRefusal;   // or because nobody there can answer for the device
 
     friend class zynforge::CaptureDaemonLinkTests;
     friend class zynforge::MainTransportRegressionTests;
@@ -637,6 +644,7 @@ private:
     friend class zynforge::SessionFixTests;
     friend class zynforge::MainWindowGuardTests;
     friend class zynforge::MainWindowFixTests;
+    friend class zynforge::EngineFixTests;
     friend class zynforge::EditIntegrityTests;
     friend class zynforge::PunchRuleTests;
     friend class zynforge::EditDetailTests;
@@ -665,6 +673,7 @@ private:
     juce::Label  soundcheckPill    { {}, "DESK ON SOUNDCHECK" };   // the desk is hearing card returns, not the stage
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
+    juce::Label  deviceLabel;        // the input a take would record from
     // Header chrome -- IconButton paints a glyph next to each label so
     // the chrome reads as icons + words instead of monospace SHOUTING.
     zynforge::IconButton deviceButton  { zynforge::icons::Glyph::Device, "DEVICE" };
@@ -720,6 +729,10 @@ private:
     bool cursorPunchAnswered { false };   // true only around the press that "Replace From Cursor" makes
     juce::Component::SafePointer<juce::AlertWindow> cursorPunchQuestion;
     QuestionScope cursorPunchScope;
+    juce::Component::SafePointer<juce::AlertWindow> deviceRecordQuestion;
+    zynforge::devicechoice::ReopenPacing deviceReopenPacing;
+    juce::uint32 nextDeviceCheckMs { 0 };
+    juce::String deviceLineShown;    // the device trouble already on the status line
 
     // Per-session cue list -- populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.

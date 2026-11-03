@@ -81,5 +81,6 @@ inline void useSilentDevice (AudioEngine& engine, double rate = 48000.0, int inp
     setup.sampleRate = rate;
     setup.bufferSize = kSilentBlock;
     manager.setAudioDeviceSetup (setup, false);
+    engine.noteChosenDevice();
 }
 }

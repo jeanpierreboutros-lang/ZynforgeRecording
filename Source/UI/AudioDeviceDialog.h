@@ -26,5 +26,8 @@ namespace zynforge
         // Deletes a self-owned dialog still open. JUCE would otherwise delete
         // it at shutdown, after the engine its destructor uses has gone.
         static void closeSelfOwned();
+        // Devices are tried out live in this panel, so nothing else may change
+        // them while it is up.
+        static bool isOpen();
     };
 }

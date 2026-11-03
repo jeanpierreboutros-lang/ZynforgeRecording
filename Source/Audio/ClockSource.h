@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 // The device's clock source. A wrong clock is a classic way to ruin a MADI or
 // Dante recording, and it is a setting on the interface, so all we can do is
@@ -72,6 +73,16 @@ namespace zynforge::clocksource
     // Asks the HAL about the device JUCE calls `deviceName`. It talks to
     // coreaudiod and a driver, so it can stall: only ever call it through Probe.
     Reading readDevice (const juce::String& deviceName);
+
+    // Every device on one side as JUCE lists it, under the name JUCE gives it,
+    // with CoreAudio's id: the one thing that survives a rename. The read is
+    // the same risk as readDevice, so it has its own thread and waits at most
+    // `timeoutMs`; no answer in time is an empty list, and callers go by name.
+    struct DeviceId
+    {
+        juce::String name, uid;
+    };
+    std::vector<DeviceId> readDeviceIds (bool inputs, int timeoutMs);
 
     // Runs the read on its own thread and never makes a caller wait longer
     // than it asked to. One read at a time; a stalled driver holds that one
