@@ -1,6 +1,280 @@
 # Decisions Log
 
 
+## RECORD compares device identity, and asks — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** Every launch opened the macOS default, nothing stored the chosen device, and RECORD checked only that a device existed. A relaunch or a drop could record the built-in mic on every strip, with meters moving and no alarm. The wrap onto a smaller device, deliberate for laptop prep, hid it.
+
+**Decision:** The choice is saved and restored by names, with CoreAudio's UID as the stronger identity. RECORD asks whenever the open input is not the chosen one, nothing was ever chosen, the chosen device lost inputs, or an armed strip's patched input is not on this device. The answer holds for one session and device, in memory. A remote or twin press is refused. The chosen device is reopened as soon as nothing is rolling, and never during a take.
+
+Four cases the rule had to cover. A wrap counts even when it lands on an unused input: that strip still records the wrong channel. "Nothing chosen" asks too, since an upgrade from an earlier build has nothing saved and that is the very case this exists for. A lost-inputs check, because an aggregate that loses a member stays listed under its name and its remaining channels move down, with no wrap at all. Answers are cleared when the chosen device comes back, so prep's answer can't cover a drop at the show.
+
+**Alternatives considered:** Restoring the saved rate: it can pull the clock from under a rolling daemon. JUCE's `createStateXml` as the saved form: it carries the rate, and a missing output fails the input with it. A banner while idle: on a laptop in prep it would cover the status line for hours. Fuzzy name matching: a near match that is wrong is the failure itself. Saving the answer across launches: a relaunch is exactly when the device may have changed.
+
+**Consequences:** Laptop prep gets one extra click per session. Two same-name devices rest on the UID; if the HAL read times out they fall back to JUCE's numbered name. A spare unit of the same model with a different UID opens by name as the chosen device, on purpose: that is what swapping a dead interface looks like. Its channel count is still checked.
+
+## A session answer is not a choice, and the old New Session dialog saves nothing — 2026-11-02
+
+**Status:** Accepted.
+
+**Decision:** Only DEVICE Apply and the Welcome screen's New pane save a choice, because only they show a device. Answering Record at the question saves nothing: it accepts this session on this device, and a saved choice stays what the rig comes back to. The older File > New Session dialog has no device control, so creating a session there says nothing about the device. Apply on a device with the chosen one away does replace it, on purpose, and the panel says so first.
+
+## A stalled device alarms and never stops the take — 2026-11-02
+
+**Status:** Accepted.
+
+**Decision:** A wall-clock watchdog outside the callback alarms after about 2 s without one. It does not stop the take, because the device may come back and a stopped take can't. The time is added up and reported, because a stall leaves no gap in the files.
+
+## A punch happens only where the timeline is the file — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** A punch is an offline splice into the take file at a sample position. The position comes from the transport, which is a timeline position. They agree only while a clip sits at its file position.
+
+**Decision:** One rule, `AudioEngine::punchRefusal`, asked at `startRecording` for every armed punch and earlier by RECORD. The span is the capture window, or open to the end of the strip for a cursor or rolling punch, because that punch runs until STOP. A strip that has been edited refuses wherever the span finds no clip. Three cases needed settling: a clip anywhere that reads the same file audio at another timeline position refuses, since a duplicate or a cross-track paste would change somewhere else on the timeline, while one playing it in place does not; an open punch that begins on a clip may run off the strip's end, or a split strip could never punch; non-active takes are not checked, because nothing can play or select them, so a refusal could never be cleared.
+
+A stopped cursor is a special case. Nothing but the *Replace audio?* question clears the EDIT cursor, so refusing it outright would stop RECORD from working at all with a cursor parked on an edited strip. It asks instead, offering only Record After Take and Cancel.
+
+**Consequences:** After a Ripple or a Crop nothing on the moved strips can be punched: the engineer undoes the edit or records a new pass. An open punch refuses if anything later on the strip has moved, even if STOP would come first: a bounded selection is the way to punch before a later edit. Crop's promise that the recordings stay untouched holds.
+
+## Failure is detected at the stream — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** JUCE's WAV, AIFF and FLAC readers zero-fill short reads and return true; `FileInputStream` turns read errors into 0 bytes. So no consumer could see a failure, and the tests proved the path with a synthetic reader that returned false, which is why they passed.
+
+**Decision:** `CheckedInputStream` sits under the format reader and latches; `CheckedAudioReader` turns that into `false`, permanently, with silence in the buffer. `ConcatReader::create` is checked by default, so a new consumer is safe without knowing; `createUnchecked` is the explicit exception for playback and thumbnails. The invariants gate allow-lists both that and any direct `createReaderFor`, which may only read a file's format and length.
+
+WAV and AIFF differ from FLAC. A PCM reader asks only for what its header promised, so any short read counts, including a file cut short before it was opened. A streaming decoder asks for a full buffer and legitimately gets less at the end of the file, so there a short read counts only before the size at open. A FLAC file cut short before opening then gives no short read, so session FLAC has its frames counted from the tail on the first read. That check is limited to session media: a file from elsewhere may carry a tag after its frames, and would be refused while healthy.
+
+**Consequences:** A take whose header promises more than the file holds now fails export and QC where it used to finish with silence at the end. Playback still plays it. A FLAC frame that reads fine and fails its CRC still decodes to silence: JUCE ignores the decoder's error callback, and that is bit rot, not a failed read. It is not covered.
+
+## Consolidate renders 32-bit float — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** Clip gain can take a clip past full scale while its fader sits low. Before Consolidate that plays clean, and a 24-bit render would flat-top it, with only undo as a way back.
+
+**Decision:** `_consolidated_K.wav` files are float.
+
+**Consequences:** They are internal renders, every reader and DAW export handles float, and they are not `Track_NN` takes, so the rule that one session's takes share a format does not touch them.
+
+## A continue lands at the end of the arrangement — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** After a Crop or a Ripple the end of the arrangement and the end of the file differ. The alternative was to leave the clip at its file position and accept a gap, and that gap lands in every mix and DAW export.
+
+**Decision:** The recorder keeps a file-position base, because lead-ins and part numbering need one. The engine subtracts a per-take shift for everything that means a place on the timeline. A plain strip in such a take gets a clip like an edited one, so the strips of one take stay aligned.
+
+**Consequences:** A clip placed this way is not at its file position, so the punch rule refuses it. A crash during such a take gives its audio a clip at file position, as before: the shift is not saved.
+
+## Copies follow strip moves from a log, on their own threads — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** Take files are named by strip position. `reorderTracks` renamed the primary's only, so the next pass put a different channel under each name on every backup and mirror. Copy identity binds a folder to a session, not a file to a channel, and the punch check compares lengths, which match when every strip was armed.
+
+**Decision:** The session logs every strip move. Each copy records its place in that log and catches up on its own thread as it joins its next take, using the same `TrackFileTransaction`, one transaction a step, with the position written inside it. Copies are not moved inside `reorderTracks`.
+
+**Alternatives considered:** Moving the copies inside `reorderTracks`, as first planned. A strip move runs on the message thread and a copy's drive can hang, so the call would need a thread, a bounded wait and a guard against RECORD racing it. It would still need a way to catch up a copy that was offline, or configured later, or missed a move to a crash. The log is that way, so it is the one path: a copy that was reachable and a copy that was not do the same thing.
+
+**Consequences:** A copy's first take after a move does its renames with its ring holding the audio, so a very slow drive could cost that copy audio. A rename is a metadata operation, and a copy that does overrun loses audio on that copy alone, by name. Until that take the copy stays in the old order, consistent with its own bext names. A copy reordered by a build from before this log cannot be detected: its files were already out of step, and nothing records it.
+
+## The ring is sized for the pre-roll; no speed measurement decides anything — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** A copy dumps its pre-roll before its first live sample, so live audio waits in the ring. The ring held 5.46 s at most, and a 30 s pre-roll needs that copy's drive at 5.5 times real time or the oldest live audio is overwritten. The primary is a copy too. An early plan used a measured drive speed as the trigger for shortening.
+
+**Decision:** Each ring is its usual size plus the pre-roll, within the existing 1 GiB limit, which leaves room for 30 s at 56 channels on two copies and about 28 s on three. A drive that keeps real time takes no longer to write L frames than L frames last, so this ring cannot lose a live sample to the dump. Past the limit the pre-roll is shortened at the front before the take, keeping the newest seconds, with a notice.
+
+The decision comes before the take because files must stay aligned and history has to meet live audio at one seam: a dump abandoned part way would leave a jump just before the take, and writing the rest as silence costs the same bytes as writing the history.
+
+**Alternatives considered:** A speed measurement. Below real time no length of pre-roll saves the take, and above it the ring already does. A measurement could only add risk: the page cache flatters it, a 16 MB probe says little about 2 GB, and each copy would need its own. The measured speed is used where it is honest, as a warning in pre-flight. A separate file for the pre-roll, the deferred lead-in shape, would make the dump independent of live audio, but every take with pre-roll would become two files, and a raw `Track_01.wav` would hold only the pre-roll.
+
+## Live helper sessions are told by a kernel lock — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** Recovery asked window state whether a daemon was rolling, and the window knows nothing after a failed handshake, a crash during a long STOP, or daemon mode turned off with a take left rolling.
+
+**Decision:** The helper holds a flock on a per-session file in the private capture folder from before `recording.session` exists until the files are final. It lives in `/tmp`, not in the session, because a session may be on exFAT or a network volume where `flock` is not dependable, and the kernel releases it when the helper dies, however it dies. `openSessionFolder` refuses a claimed folder too, because auto-reopen and File > Open reach the same header repairs that Recover does.
+
+**Consequences:** Older helpers publish no claims, so a helper holding its port's key with no `<port>.claims` beside it holds recovery off everything until it answers that it is idle. Recovery waiting a launch is the cheap failure here; deleting a rolling take is not.
+
+## Only the desk ends a soundcheck — 2026-11-02
+
+**Status:** Accepted. Replaces part of *A console's show patch is saved before the desk moves* (2026-11-01): the consequence "Reopening session A after STAGE was restored under session B still says `soundcheck` in A's file" and the line "A file with no `deskPatch` behaves as before (Unknown plus a stash offers STAGE)".
+
+**Context:** STAGE set `patch = Stage`, cleared `deskOnCardReturns` and saved `deskPatch: stage` straight after sending up to four UDP datagrams. `guardWrite` passes on `dialectTrusted`, which is a claim about the address model, not about anything being at the other end. A wrong IP, a desk still booting or one lost packet gave the same all-clear, and every record that the desk was on card returns was gone. The state had also grown two flags, `patch` and `deskOnCardReturns`, plus a rule that Unknown with a saved patch meant soundcheck, and each path read a different combination.
+
+**Decision:** One value, `ConsoleLink::patch`, says where the desk was last known to be. Closing a link or changing session moves no desk, so neither changes it. `isOnSoundcheckPatch` is `canRepatch && patch == Soundcheck && hasStagePatch()`. STAGE and Restore Gains write, then query, and only a complete read-back that matches changes anything. A failed or partial read-back leaves the state and says so; the press is the retry. A saved SOUNDCHECK is put to the desk once per link, and `checkDeskPatch` (menu 987) asks on demand, writing nothing: that is the way out for a desk put back by hand. On a session change a SOUNDCHECK travels with the engineer and is saved into the new session's file, and every file that said it hears when it ends.
+
+**Alternatives considered:** Waiting for `dialectConfirmed` before STAGE: it proves a desk answered once, not that it took this write. A timed retry of the writes: a second automatic write to a desk that refused the first is a guess; the engineer presses again. Clearing the state on a timeout: silence proves nothing about where a desk is.
+
+**Consequences:** An X32 on a bad network stays on SOUNDCHECK until it answers, and the chip says so. On a read in which a value is outside `0 .. cardBlockFirst + numInBlocks` the patch read fails, and SOUNDCHECK refuses before the desk moves: if a real X32 reports a value past 19 in a block, that block's value must be added to the profile first (see FIELD-TEST.md). A stale `soundcheck` in a third session's file, one this run never loaded, is cleared by the check at the next connect. The check reads whichever desk is connected, so opening a session whose file names another desk and connecting to a desk on stage inputs clears that file. That is an accepted limit: the file holds a host, and a desk re-addressed between shows must not be stranded.
+
+## A cue holds the show patch — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** A cue stored the live output and wrote it back, so a recall during VSC moved every strip off its input channel with VSC still lit, and the master hold could let go onto desk channels 1-2.
+
+**Decision:** `snapshotStrip` stores `vsc::showOutput`. `vsc::recallOutput` writes a cue's output to `outputBeforeVsc` on a strip with a saved patch and leaves the strip on its input's channel. A strip added after the soundcheck has nothing saved and takes the cue as usual.
+
+**Consequences:** A session saved before this with a soundcheck patch in a cue can't be told from one with a real patch: such a cue still recalls the soundcheck patch as if it were the show's, until the cue is updated.
+
+## Chase obeys LOCK — 2026-11-02
+
+**Status:** Accepted. The owner may want this the other way: if a locked rig must keep chasing house timecode, this is the one line to change, in `serviceTimecodeChase`.
+
+**Decision:** LOCK stops chase from starting, locating and stopping the transport, which matches every other remote and Scene Follow. No earlier ADR said chase should run through LOCK. Playback chase already started keeps rolling under LOCK until unlock.
+
+## A desk's health comes from its probe — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** On UDP `isConnected` is true from connect to disconnect. TCP sees a clean close only, and these dialects send nothing after connect, so a pulled cable gives no FIN and no failed send.
+
+**Decision:** Re-send each dialect's existing probe every 4 s and treat its reply as the only proof a desk is there. No new protocol: every probe is already sent at connect, and *Network fixes* already refuses a probe that looks like a recall or a set. Silent needs a desk that answered before; a desk that never answered stays NotAnswered, with no banner, because an unverified dialect may not answer probes at all and an alarm that is always up teaches nothing.
+
+**Consequences:** Every connected dialect with a probe now sends it every 4 s for as long as the link is open. An unverified desk that ignores it costs nothing but the traffic.
+
+## Moving one half of a stereo file is refused — 2026-11-02
+
+**Status:** Accepted.
+
+**Decision:** Refuse rather than keep both halves reachable. Making R's clips explicit was enough for playback, but the strip now at L+1 would inherit the right channel through every implicit rule (`getTrackAudioFile`, the player's slot, a later reseed). Refusing is one rule in one place and the audio never moves. Link the strips or keep them side by side.
+
+## The master is not a channel — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** One setter wrote `-1` to both sides of a strip. On an output `-1` is the mix, the state every fresh strip is in; on an input it is no signal. So the natural way back after a soundcheck patch, choosing → Master, silenced the input, and RECORD's auto-routing treated the armed strip as a fault and assigned `i % numInputs`, in the saved patch too.
+
+**Decision:** `AudioEngine::sendStripToMaster` moves the output alone on both halves of a pair, with the same take and finalization refusal as the linked setter. MIXER, EDIT and PATCH's output clear call it. A real channel stays linked both ways. An input cleared by hand stays as it was: it clears both sides, because that is an explicit "this strip has no patch".
+
+**Consequences:** A strip can now sit on In 7 / → Master, which it always could from a fresh session. The linked setter also refuses during finalization, so neither path can land half a patch.
+
+## A session job freezes the arrangement at the engine — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** A job disabled the EDIT page, but JUCE delivers mouse events to a disabled component, and clip setters refused only takes. Stems rendered after a drag took the new arrangement, and an edit during Save As or Move vanished when the copy reopened.
+
+**Decision:** `isArrangementFrozen()` includes `sessionTransitionActive`, so every clip setter refuses for the length of a job. Rows also ask `isEnabled()`, and the host's read-only lock covers `sessionIoBusy`, because the page learns of a job only on the next 10 Hz tick.
+
+**Consequences:** Metadata saves set the same flag, so a clip setter refuses for their few milliseconds too. Every UI path already refused on `sessionIoBusy` through `canMutateTimeline`, and drags stopped at the read-only lock, so nothing the engineer could reach changed. Consolidate and track export hold only the reservation: Consolidate's publish uses these setters and checks the track generation, and track export reads raw files, not the arrangement.
+
+## A row's height and lane are saved with the session — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** Rows held these by position. A forced rebuild on every session swap would have reset them on every open, and they were never saved.
+
+**Decision:** Keyed by `stripId`, saved as `ui.editRows` in the `.zfproj`, default rows left out. Saved on the normal layout path when a gesture ends, so a resize drag writes once and a take writes nothing.
+
+**Consequences:** A session without `editRows` opens with default rows. An older build ignores the key.
+
+## Leaving a session whose drive is gone — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** Quit, Open, New and templates tested `isDirectory`, so a pulled drive read as "no session" and unsaved work went without a question. The work can be saved if the drive comes back, and Save As must stay refused because a copy would have no audio.
+
+**Decision:** One prompt, `offerLeaveMissingSession`, for every way out. It names the folder and says reconnecting keeps the work. Its buttons are "<Leave> Without Saving" and Cancel, and both Return and Esc cancel. There is no Save button, because there is nowhere to save. Close Session stays enabled in this state so that "get out" does not require opening something else.
+
+**Alternatives considered:** Writing the metadata somewhere else: a session's documents apart from its audio is a second session nobody asked for. Keeping the old "Save" dialog: it fails after the choice and says nothing about the drive.
+
+## What counts as a session folder — 2026-11-02
+
+**Status:** Accepted.
+
+**Decision:** `openSessionFolder` refuses a folder holding none of: take audio, a project, a mix, settings, markers, `Audio Files/`, `Session File Backups/`. Any one suffices, because a real session can have lost any of them.
+
+**Consequences:** An empty folder no longer opens as a session. New Session and Save As create their own structure first, so neither depends on this. A folder made into a session by an earlier build holds the files autosave wrote and still opens.
+
+## `verify_reaper_export.py` exits 2 when it could not check everything — 2026-11-02
+
+**Status:** Accepted.
+
+**Decision:** The `.dawproject` check stays optional because it needs schema files that are not in the repo. Without it the script exits 2, matching `verify_take.sh`'s "not everything could be checked", and the verdict says what was skipped.
+
+**Consequences:** A script calling it and testing for exit 0 now sees the skip.
+
+## The alarm banner keeps one colour while it takes turns — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** The banner lies over the twin state, the rate warning and the status line, and long alarm text ran out at an ellipsis. Showing everything means paging at least some of the time.
+
+**Decision:** The banner holds a list. Danger goes first, alarms share a page while they fit, and pages turn every 3 s from the 10 Hz tick. The fill is the worst alarm's colour for every page. A refused press jumps to its own page for 3 s, since the engineer is looking at it.
+
+**Consequences:** A quiet notice can appear on a red fill while a danger stands on another page; the count says there is more. A long take-threatening list takes several seconds to read through. Fit is estimated from string width against two lines at the 75% squeeze, less a wrapping allowance, and *Main window fixes* checks real glyph layout at four widths so nothing ends in an ellipsis.
+
+## The sample-rate warning is always a banner alarm — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** It had a red label under the banner, 105 px wide at the smallest window.
+
+**Decision:** The label is gone. The warning goes to the banner: amber at idle, because RECORD refuses and no take is hurt, red if a take is rolling.
+
+**Consequences:** A mismatch at idle now raises an amber banner over the wordmark and status line. It was already a modal and a red label.
+
+## Twin setup differences never raise the banner on their own — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** Twin trouble is danger while either Mac rolls. But two Macs can legitimately have different session names or arm counts, and red for a whole take would teach the engineer to ignore red.
+
+**Decision:** `Snapshot::setupWarnings` marks the warnings that only compare setups (rate, armed count, session name). They stay notices and only ride along on a banner already up. The rest (not recording, missed samples, write failures, backup, disk) are danger while either Mac rolls. Link state at level 2 is danger on the same terms.
+
+**Consequences:** A rate difference between the Macs is amber during a take. A dropped link can't report the peer, so the last state heard stands until the link returns or is turned off.
+
+## A held press drops when the transport moved — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** Rolling, RECORD punches. Stopped, it appends. A held press made in one state and run in the other would do something else, and a punch can't be undone.
+
+**Decision:** The hold records whether the transport rolled and drops the press if that changed, with a status line. STOP and a session change drop it too.
+
+**Consequences:** A press during a save is lost if playback stopped or started in those seconds. The engineer presses again.
+
+## Linking a pair past the device's end is allowed and reported — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** A link that runs off the device wraps R to another input. Refusing the link would break laptop prep, where a session built for the show rig sits on a 2-input Mac.
+
+**Decision:** The link goes through, the request stays as saved, the status line says what R hears, and PATCH draws R's dot where it really is, unjoined. A click on the last row is different: there the engineer is choosing a channel now, so the pair lands on the last two.
+
+**Consequences:** On the rig itself a pair linked on the last input records two inputs that aren't neighbours until someone re-patches it. The status line and PATCH show it.
+
+## The smallest window is 1210 wide — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** `d4a9a57` moved VSC into the top row (84 + 6 px) and added a pill to row 2 without moving the 1120 minimum.
+
+**Decision:** The minimum goes up by the 90 px the row lost. The two pills stack in one 176 px column rather than asking for another 182 px of width.
+
+**Consequences:** A window saved or dragged narrower no longer exists. Pills read at 20 px tall when both show.
+
+## The test tone is -20 dBFS under the master fader — 2026-11-02
+
+**Status:** Accepted.
+
+**Context:** The old tone was -6 dBFS on every output and past the fader.
+
+**Decision:** -20 dBFS, a line-up level, on the master pair through the master gain, with 5 ms ramps. Master Off, MUTE and a mix held off its outputs refuse with a reason in the panel.
+
+**Consequences:** With the master fader low the tone is low.
+
 ## Cut to recorder and virtual soundcheck — 2026-11-02
 
 **Status:** Accepted. The owner's call, after a feature census of everything the app had grown.
@@ -21,7 +295,7 @@ Details that follow from the cut:
 - **`referenceMedia` stays for the recorder only.** The take length skips such a strip. Without that, RECORD after STOP on a session with a generated click would start at the end of the bed and pad every take with silence, and this work must not change capture.
 - **Write soundcheck report keeps its band energies,** so the FFT feed in the recorder stays for that alone.
 - **Tab stays consumed with nothing behind it.** Left to JUCE it walks focus onto a routing combo or a transport button, where the next arrow or Return changes it mid-show.
-- **EDIT row routing joins the linked rule.** Its combos call `setTrackLinkedRouting` on both sides, like MIXER and PATCH, so the three views stay linked.
+- **EDIT row routing joins the linked rule, for real channels.** Its combos call `setTrackLinkedRouting` on both sides, like MIXER and PATCH, so the three views stay linked. The master is the exception; see *The master is not a channel*.
 - **A session from an earlier build keeps its originals.** Nothing loads the removed data, so the first save would drop it for good. On open, once, the session's documents are copied to `Session File Backups/Before Feature Removal/`, before anything can overwrite them. Detection reads values, not keys: earlier builds wrote these keys on every save at their defaults, so a key alone would flag a session that never used these features. A save is refused when the copy fails, because a failed copy followed by a save would lose the data the copy exists to keep.
 - **A session copy takes the session.** Save As, Move and Show Handoff skip writers' staging files, which can vanish at any moment, and a waveform cache that can't be read no longer fails a copy, since it costs only a rescan. Any other file that can't be copied still aborts, and the comparison in Show Handoff skips the same files.
 
@@ -88,6 +362,8 @@ Details that follow from the cut:
 **Consequences:** A scan can overlap up to about 100 ms of a starting take. A session job can start during a scan, which only reads. Leaving a session cancels any scan.
 
 ## Each copy of a take has its own thread and ring — 2026-11-01
+
+**Note, 2026-11-02:** Each ring now also holds the pre-roll, inside the same 1 GiB limit; see *The ring is sized for the pre-roll*.
 
 **Status:** Accepted (supersedes *Single writer thread for capture*)
 **Context:** All copies were written in sequence on one thread with one FIFO per channel. A NAS mirror or dying USB backup that blocked a write for about 5.5 s put silence on every channel of every copy, the healthy primary included, so a redundant copy could damage the copy it was added to protect. STOP blocked on the same call.
@@ -189,7 +465,7 @@ Details that follow from the cut:
 
 **Context:** `juce::ResamplingAudioSource` is linear interpolation plus a biquad. No new dependency is allowed.
 **Decision:** `SincResampler`: Kaiser window, 48 zero crossings a side, aliases about 100 dB down. The kernel is worked out once for 1024 positions between samples, each output blends the nearest two, and the sum runs through vDSP.
-**Consequences:** The phase table made it about 7.5 times faster than the first version, which computed every coefficient per sample. A 3-hour 56-channel file set still takes roughly 18 minutes under load. Same-rate exports are unaffected: they stay bit-exact.
+**Consequences:** The phase table made it about 7.5 times faster than the first version, which computed every coefficient per sample. A 3-hour 56-channel file set still takes roughly 18 minutes under load. Same-rate exports are unaffected: they stay bit-exact, and since 2026-11-02 so do two-mono pairs (`copySameRate`).
 
 ## EDIT clip commands resolve their targets in one place, and a selection follows the clip — 2026-11-01
 
@@ -221,6 +497,8 @@ Details that follow from the cut:
 **Consequences:** A job overtaken by a strip move fails with a status line and no undo step.
 
 ## A console's show patch is saved before the desk moves — 2026-11-01
+
+**Note, 2026-11-02:** *Only the desk ends a soundcheck* replaces two lines of the consequences below, and `exitSoundcheck` now confirms by reading back.
 
 **Context.** The stash lived in memory until someone captured gains, and reloading the session's file erased it. A crash in SOUNDCHECK stranded the desk on card returns, and the next SOUNDCHECK stashed those card returns as the show patch. The state also outlived the session, so Restore could write the last show's preamps to this one.
 
@@ -952,6 +1230,8 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 ---
 
 ## RF64 for WAV via JUCE + periodic header flush — 2026-06-05
+
+**Note, 2026-11-02:** "Header valid up to the last flush" no longer describes WAV: `WavRepair.h` restores the tail after a crash, as AIFF and FLAC repair do.
 
 **Status:** Accepted (supersedes the WAV half of *Auto-split on chunk-size ceiling*)
 **Context:** The original auto-split ADR rejected RF64 mainly on the premise that *"JUCE's `WavAudioFormat` does not natively support RF64 writing."* That premise is **false**: JUCE's `WavAudioFormatWriter` reserves the `ds64` chunk slot at file creation and, on `flush()` / close, rewrites the header as **RF64** once `bytesWritten >= 4 GiB` (else a normal RIFF) — and `WavAudioFormat`'s reader handles RF64. The only reason takes were splitting is that `maxBytesForContainer` returned 3.9 GiB for WAV, so the recorder's own roll fired *before* JUCE ever reached RF64. Multi-part files are a real workflow wart (re-import + consolidate in order) and modern DAWs (Pro Tools, Logic, Reaper, Nuendo) all read RF64.
