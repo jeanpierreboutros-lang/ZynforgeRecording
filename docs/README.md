@@ -3,7 +3,7 @@
 Reconciled on 2026-10-29 against source `281c6c0` and its verified
 installation. Later documentation commits do not change the installed binaries,
 and `main` is now ahead of both installed builds: see the status in the [README](../README.md).
-The development Mac has `d4a9a57`, and the Mac mini and the current DMG have
+The development Mac has `9a40f54`, and the Mac mini and the current DMG have
 `281c6c0`, all protocol 4. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
 rollback. Refer to the owning documents below instead of copying
 package hashes, test counts or acceptance claims into new guides.

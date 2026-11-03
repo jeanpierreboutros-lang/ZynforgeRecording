@@ -2,7 +2,7 @@
 
 ## Fix round after `d4a9a57` — 2026-11-03
 
-A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. None of it is in either installed build (`d4a9a57` on the development Mac, `281c6c0` on the mini), and none of it has run on real hardware.
+A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. It is in the development Mac's `9a40f54`, not on the mini, and none of it has run on real hardware.
 
 - [x] Device: the chosen device is saved, reopens at launch, shows under the clock, and RECORD asks before rolling on another. A device that stops calling back raises an alarm.
 - [x] Punch and reads: a punch runs only where the timeline is the take file. A failed read fails the job, on every consumer.
@@ -40,7 +40,7 @@ The owner cut the app to a recorder and virtual soundcheck after a feature censu
 
 ## Fix pass — 2026-11-01
 
-Everything below landed on `main` on 2026-11-01. It is in the development Mac's `d4a9a57`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
+Everything below landed on `main` on 2026-11-01. It is in the development Mac's `9a40f54`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
 
 - [x] Punch safety: only a range selected in this run punches, and once; Loop makes no region; a parked playhead appends; a stopped cursor asks first; PUNCH mode has no arm state; a remote RECORD never punches; the header pill.
 - [x] Main window: alarm banner, LOCK on custom mouse code and on quitting, report scans on their own runner, tracked Patch and Meterbridge windows, pre-roll control, OSC token in its panel, dead dialog controls removed.

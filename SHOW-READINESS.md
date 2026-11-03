@@ -2,7 +2,7 @@
 
 ## Decision as of 2026-11-03
 
-`main` now also carries a further round of fixes: which device a take records from, punch only where the timeline is the take file, failed reads treated as failures, backups and mirrors following strip moves, an alarm banner that shows every alarm, and the desk reading STAGE and Restore Gains back. **None of it is in either installed build, and none of it has run on real hardware.** The development Mac has `d4a9a57`, and the mini and the current DMG have `281c6c0` / protocol 4; everything below about those two builds stands.
+`main` now also carries a further round of fixes: which device a take records from, punch only where the timeline is the take file, failed reads treated as failures, backups and mirrors following strip moves, an alarm banner that shows every alarm, and the desk reading STAGE and Restore Gains back. **None of it has run on real hardware.** The development Mac has it as `9a40f54`. The mini and the current DMG have `281c6c0` / protocol 4, so everything below about that build stands.
 
 Do not take `main` to a show until it has been installed on purpose and has passed *2026-11-03 fix round* in [FIELD-TEST.md](FIELD-TEST.md), as well as the sections the decision below names. *Device identity*, *A device that stops*, *Copies after a strip move* and *Desk read-back* are the ones no automated test can stand in for. On an X32 / M32, the desk's real answers to the read-back are unproven: a wrong assumption there would show as SOUNDCHECK refusing, or STAGE reporting a false failure, so test both before a show depends on them.
 

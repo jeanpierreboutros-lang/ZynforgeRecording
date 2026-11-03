@@ -10,7 +10,7 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ## 2026-11-03 fix round — not yet performed
 
-None of this has been tried on real hardware, and these fixes are in neither installed build (`d4a9a57` on the development Mac, `281c6c0` on the mini): install a build from `main` on purpose before starting. Use disposable sessions. Automated coverage is in [testing.md](testing.md). A build updated from an earlier one has no saved device, so the first RECORD asks: that is expected.
+None of this has been tried on real hardware. These fixes are in the development Mac's `9a40f54`, not in the mini's `281c6c0`. Use disposable sessions.
 
 ### Device identity (only real hardware can prove this)
 
@@ -110,7 +110,7 @@ Tests and rendered images can't judge these. They need the real app on a real di
 
 ## 2026-11-02 cut to recorder and virtual soundcheck — not yet performed
 
-None of this has been tried on real hardware. It is in the development Mac's `d4a9a57`, not in the mini's `281c6c0`. Use disposable sessions.
+None of this has been tried on real hardware. It is in the development Mac's `9a40f54`, not in the mini's `281c6c0`. Use disposable sessions.
 
 - [ ] Open Backup & Mirror Drives from File and from the BACKUP button. It is one dialog: backup first, with a format box, then the mirrors.
 - [ ] Set a FLAC backup on a WAV session and record, once locally and once in daemon mode. The backup is FLAC, the primary is WAV, and the format is still set after a relaunch. Pre-flight reports the backup as it did.
@@ -127,7 +127,7 @@ None of this has been tried on real hardware. It is in the development Mac's `d4
 
 ## 2026-11-01 fix-pass acceptance — not yet performed
 
-None of this has been tried on real hardware. These fixes are in the development Mac's `d4a9a57`, not in the mini's `281c6c0`. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
+None of this has been tried on real hardware. These fixes are in the development Mac's `9a40f54`, not in the mini's `281c6c0`. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
 
 ### Punch safety (needs the real app and a disposable session)
 

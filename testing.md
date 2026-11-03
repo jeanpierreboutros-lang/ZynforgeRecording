@@ -2,9 +2,11 @@
 
 ## Current validation — 2026-11-03, the round after `d4a9a57`
 
-**Final pass on `main`:** <<COUNTS>>
+Three tests each failed once while seven branches shared the machine: *A hole in the primary reaches the window from the daemon*, *session.report.json includes SHA-256 per part file* and a *Capture supervisor* quit. The first was a race in the test: the audio FIFO can overflow before the copy's ring does, so it now waits for the copy's own report. The other two have not come back in any later run, and their cause was not proven.
 
-Nothing in this section has run on real hardware, and none of it is installed: the development Mac has `d4a9a57` and the Mac mini has `281c6c0`. The hardware steps are under *2026-11-03 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
+**Final pass on `main`, built at `7221295`:** **1586 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports. Release also passed three full runs in a row just before that. Both gates are clean, and `tools/test_notarize.py` and `tools/test_verify_tools.py` pass. The built app launched, quit by itself in 182 s (the rest is the microphone wait on a new ad-hoc build) and left no crash report.
+
+Nothing in this section has run on real hardware. The development Mac has this build as `9a40f54`, the Mac mini has `281c6c0`. The hardware steps are under *2026-11-03 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
 
 ### New suites
 

@@ -23,7 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03, after `d4a9a57`. None of it is in either installed build (the development Mac has `d4a9a57`, the Mac mini has `281c6c0`), and none of it has run on real hardware.
+Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03, after `d4a9a57`. It is in `9a40f54` on the development Mac, not in the Mac mini's `281c6c0`, and none of it has been tried on real hardware.
 
 ### Added — the device a take records from
 
@@ -156,7 +156,7 @@ Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03,
 
 ---
 
-The next nine sections came in on 2026-11-02 and are in `d4a9a57` on the development Mac, apart from the title bar's spelling. They are not in the mini's `281c6c0`. None of it has been tried on real hardware.
+The next nine sections came in on 2026-11-02 and are in `9a40f54` on the development Mac. They are not in the mini's `281c6c0`. None of it has been tried on real hardware.
 
 ### Changed — after the design critique
 

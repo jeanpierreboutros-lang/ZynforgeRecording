@@ -8,8 +8,8 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 `main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). The latest round is in **neither installed build**. Nothing since `281c6c0` has been tried on real hardware: not on a real interface, a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
-Installed builds: the development Mac has `d4a9a57` (2026-11-02), and `main` is
-ahead of it by that latest round, so its fixes do not apply there. `d4a9a57` passes **1236 test groups in Release,
+Installed builds: the development Mac has `9a40f54` (2026-11-03), which is this
+README apart from later changes in `main`. It passes **1586 test groups in Release,
 ASan/UBSan, TSan and CI**, and has not run on real hardware. The Mac mini and the
 [universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg) still have
 verified `281c6c0` and its matching protocol-4 helper. That older build contains
@@ -92,7 +92,7 @@ Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md);
 
 ## Feature highlights
 
-These describe `main`, which is ahead of both installed builds: see *Status*.
+These describe `main`. The development Mac has them, the Mac mini doesn't: see *Status*.
 
 ### Capture
 - Per-channel audio rings (up to 256 channels) feed a separate writer and buffer for each copy; bounded capture-boundary synchronization preserves exact audio/gap order on overflow

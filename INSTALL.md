@@ -2,11 +2,25 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-`main` is ahead of both installed builds below. Nothing from the round after `d4a9a57` is installed on either Mac or in a package, and none of it has run on real hardware. Two things to expect when it is installed: the window and helper must still go together, because a helper from an earlier build reports no device name, so daemon RECORD refuses until daemon mode is turned off; and the first RECORD asks about the device, because earlier builds saved no choice.
+## Development Mac update — 2026-11-03, the fix round
 
-## Development Mac update — 2026-11-02, design critique fixes
+The development Mac (MacBook Pro) now has `9a40f54`: every fix of the round after `d4a9a57`, on top of the build below. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
 
-The development Mac (MacBook Pro) now has `d4a9a57`, every fix from the design critique on top of the build below. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `156cc71a275c57da50393b3de32b0ffada796e246cdcaf8e48b814636ac4c028` |
+| Capture helper | `69818ba9957a04896a96dd51f7455faf0cd760662121600e034de5539941deff` |
+
+- **Tests before install:** 1586 groups / 0 failures in Release, ASan/UBSan and TSan, each launched through `open`, with no sanitizer reports. The built app launched, quit by itself and left no crash report. See [testing.md](testing.md).
+- **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Both executables are universal.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261103-032331-before-9a40f54` (`d4a9a57`).
+- **Signing:** ad-hoc, with no hardened runtime or entitlements, as `fffab44` was. `d4a9a57` had both; why builds differ was not looked into. macOS asks for the microphone again on this build.
+- **First launch:** no device has been saved yet, because this is the first build that saves one. Pick the interface in DEVICE and press Apply once. Until then a local RECORD asks first, and a remote or twin RECORD is refused.
+- **Not checked:** no recording was made and no interface was tried. Nothing here has run on real hardware.
+
+## Previous development Mac update — 2026-11-02, design critique fixes
+
+The development Mac (MacBook Pro) had `d4a9a57`, every fix from the design critique on top of the build below. The Mac mini kept `281c6c0`, described further down, and no DMG was made for this build.
 
 | Executable | SHA-256 |
 | --- | --- |
