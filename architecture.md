@@ -9,8 +9,8 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 ## Current baseline and owned STOP/persistence work
 
 The Mac mini and the current DMG run `281c6c0` with its matching protocol-v4
-helper (installed 2026-10-29); the development Mac runs `5c7a3e4` on JUCE 8.0.17-security, also protocol 4. Release, TSan and ASan/UBSan/float-cast-overflow
-each pass 689 groups at `281c6c0` and 1586 at `5c7a3e4`, with zero failures and no sanitizer reports; interactive and
+helper (installed 2026-10-29); the development Mac runs `577592c` on JUCE 8.0.17-security, also protocol 4. Release, TSan and ASan/UBSan/float-cast-overflow
+each pass 689 groups at `281c6c0` and 1588 at `577592c`, with zero failures and no sanitizer reports; interactive and
 physical capture acceptance remains open. [INSTALL.md](INSTALL.md) owns package
 identities; [the follow-up register](docs/history/REVIEW-REPAIRS-2026-10-05.md) and
 [earlier S6 audit](docs/history/AUDIT-2026-10-05.md) retain separate evidence.

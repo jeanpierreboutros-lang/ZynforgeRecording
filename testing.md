@@ -9,7 +9,9 @@ Two new groups in *EDIT integrity*:
 - *A stopped take keeps its live waveform until its own rescan finishes*: a held row with no source is painted after STOP has settled, then rescanned. With the old release condition it fails, as it should: the first paint dropped the hold.
 - *Waveform scans read through a buffer and keep their cache keys*: `scanio::FileSource` has `juce::FileInputSource`'s hash and a buffered stream, a buffered thumbnail draws the same peaks as a bare one, and `ConcatReader::createForScan` returns the same samples as `createUnchecked`.
 
-**Release:** 1588 test groups, 0 failures. **ASan/UBSan:** 1588 / 0, no sanitizer reports. Both launched through `open`. The tool checks pass and both gates are clean; the invariants gate now also keeps `scanio::` to the drawing code. Nothing here has run on the real take yet.
+**Release, ASan/UBSan and TSan:** 1588 test groups, 0 failures each, launched through `open`, with no sanitizer reports. The tool checks pass and both gates are clean; the invariants gate now also keeps `scanio::` to the drawing code. The built app launched with `--isolated-settings` and quit by itself after 35 s with no crash report.
+
+**On the real take, after install.** `577592c` reopened the session: the app read 3.06 GB/s from the drive while its WAV file offsets moved 18 MB/s (`5c7a3e4`: 2.7 GB/s and about 9 MB/s), and a sample found its threads waiting, not reading. So the buffer did not fix the waste. A plain Python reader on the take's files, with the app closed and at background priority, cost the drive 14.7–14.8× the bytes it read with 512 KiB reads (one, two or four threads), 11.0× with 4 MiB reads and 2.0× with 1.5 KB reads from four threads. The drive is exFAT mounted through FSKit (`mount` shows `fskit`).
 
 ## JUCE 8.0.17-security — 2026-11-03
 

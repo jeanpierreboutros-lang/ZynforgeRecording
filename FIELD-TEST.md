@@ -10,7 +10,7 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ## JUCE 8.0.17-security — not yet performed
 
-`main` moved from JUCE 8.0.4 to 8.0.17-security. The development Mac has it as `5c7a3e4`; the mini does not. The automated suite passes on it, but the framework sits under the device, files, text and network, so these checks are on the real rig. Compare against `9a40f54` on the same Mac where a step says so.
+`main` moved from JUCE 8.0.4 to 8.0.17-security. The development Mac has it, now as `577592c`; the mini does not. The automated suite passes on it, but the framework sits under the device, files, text and network, so these checks are on the real rig. Compare against `9a40f54` on the same Mac where a step says so.
 
 - [ ] 🟨 **Text.** Open MIXER, EDIT and PATCH at the smallest window and full screen, then the alarm banner with three alarms, the EDIT ruler at deep zoom, DEVICE and Export Audio. No label is cut off or overlaps where it didn't on `9a40f54`: text is now measured with fallback fonts and shaping.
 - [ ] 🟧 **Device.** Launch with the interface chosen. It opens at the same rate and buffer as before and the rate does not change at launch. Record 10 minutes on every input, STOP, and run `tools/verify_take.sh`.
@@ -19,13 +19,13 @@ Never force-quit, unplug hardware or delete sessions during production recording
 - [ ] 🟧 **Desk and remotes.** On an X32 / M32: names, Scene Follow, a desk macro and a remote RECORD all behave as on `9a40f54`. On the MIDI control surface, faders and banks.
 - [ ] 🟨 **Quit.** A normal quit leaves no crash report and the interface is not wedged on the next launch. macOS may ask for the microphone once after the install.
 
-**First long take, 2026-11-03 (partial).** 55 tracks for 4 h 10 min through Dante Virtual Soundcard on `5c7a3e4`, to an external exFAT SSD: 0 missed samples, 0 ms device stall, every file complete. Quit left no crash report. EDIT then showed only the start of the take on the rows on screen, and the post-STOP rescan, the report's hashes and quit were very slow; `main` fixes both. `tools/verify_take.sh` has not run yet, because quitting cancelled the hashes before any was saved. *Device* still needs its `verify_take.sh` pass, and the Dante path is not the SD5 / HDSPe rig.
+**First long take, 2026-11-03 (partial).** 55 tracks for 4 h 10 min through Dante Virtual Soundcard on `5c7a3e4`, to an external exFAT SSD: 0 missed samples, 0 ms device stall, every file complete. Quit left no crash report. EDIT then showed only the start of the take on the rows on screen, and the post-STOP rescan, the report's hashes and quit were very slow. `577592c` fixes the first; the second comes from that exFAT drive and is still open. `tools/verify_take.sh` has not run yet, because quitting cancelled the hashes before any was saved. *Device* still needs its `verify_take.sh` pass, and the Dante path is not the SD5 / HDSPe rig.
 
-- [ ] 🟧 **After a long take, with the fix.** Reopen that session. EDIT draws all 55 lanes in full within a few minutes, the report's hashes complete, and `tools/verify_take.sh` exits 0. Record a new take of at least 30 minutes, STOP: every lane keeps the whole take drawn from STOP until its rescan finishes, on screen and scrolled off. Quit and note how long it takes.
+- [ ] 🟧 **After a long take, with the fix.** On `577592c`, reopen that session and leave it open: note how long EDIT takes to draw all 55 lanes and the report's hashes take to finish, then run `tools/verify_take.sh` (exit 0). Record a new take of at least 30 minutes and STOP: every lane keeps the whole take drawn from STOP until its rescan finishes, on screen and scrolled off. Quit and note how long it takes. Repeat the new take on an APFS drive and compare the rescan and quit times.
 
 ## 2026-11-03 fix round — not yet performed
 
-None of this has been tried on real hardware. These fixes are in the development Mac's `5c7a3e4`, not in the mini's `281c6c0`. Use disposable sessions.
+None of this has been tried on real hardware. These fixes are in the development Mac's `577592c`, not in the mini's `281c6c0`. Use disposable sessions.
 
 ### Device identity (only real hardware can prove this)
 
@@ -125,7 +125,7 @@ Tests and rendered images can't judge these. They need the real app on a real di
 
 ## 2026-11-02 cut to recorder and virtual soundcheck — not yet performed
 
-None of this has been tried on real hardware. It is in the development Mac's `5c7a3e4`, not in the mini's `281c6c0`. Use disposable sessions.
+None of this has been tried on real hardware. It is in the development Mac's `577592c`, not in the mini's `281c6c0`. Use disposable sessions.
 
 - [ ] Open Backup & Mirror Drives from File and from the BACKUP button. It is one dialog: backup first, with a format box, then the mirrors.
 - [ ] Set a FLAC backup on a WAV session and record, once locally and once in daemon mode. The backup is FLAC, the primary is WAV, and the format is still set after a relaunch. Pre-flight reports the backup as it did.
@@ -142,7 +142,7 @@ None of this has been tried on real hardware. It is in the development Mac's `5c
 
 ## 2026-11-01 fix-pass acceptance — not yet performed
 
-None of this has been tried on real hardware. These fixes are in the development Mac's `5c7a3e4`, not in the mini's `281c6c0`. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
+None of this has been tried on real hardware. These fixes are in the development Mac's `577592c`, not in the mini's `281c6c0`. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
 
 ### Punch safety (needs the real app and a disposable session)
 

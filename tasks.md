@@ -5,17 +5,18 @@
 `5c7a3e4` on the development Mac: 55 tracks, 4 h 10 min, 48 kHz 24-bit WAV through Dante Virtual Soundcard, to an external exFAT SSD. The report shows 0 missed samples and 0 ms of device stall, and every file holds 720,204,800 samples. No backup drive was used.
 
 - [x] EDIT showed only the start of the take on the rows on screen after STOP: their live waveform was dropped before the rescan began. Fixed: only a scan issued after the hold releases it, and every holding row gets one.
-- [x] The rescan read one 512-sample column per `read()`; the app read 2.7 GB/s from the drive while the rescan moved under 2 MB/s and the hashes about 10 MB/s, and quit was slow. Fixed: scans read through 512 KiB buffers (`Source/Audio/ScanInput.h`).
-- [ ] Install the fix, reopen the session and measure: how long the rescan and the resumed hashes take, the app's disk read rate, and how long quit takes.
+- [ ] The post-STOP rescan, the hashes and quit crawl on that drive. Scans now read through 512 KiB buffers (`Source/Audio/ScanInput.h`): on reopening the take that doubled the audio moved per second (18 MB/s against 9) but the drive still read about 3 GB/s for the app. With the app closed, a plain reader wastes 11–15× on those files with 512 KiB–4 MiB reads, from one thread or four, and about 2× with 1.5 KB reads. Likely exFAT through FSKit on macOS 26 with 55 interleaved files; not proven. Next: the same take and rescan on an APFS drive, then, for exFAT, whether capture can keep each track's file in large contiguous runs.
+- [x] Installed `577592c` on the development Mac.
+- [ ] On `577592c`, reopen the session and leave it until the rescan and hashes finish; time both, and the quit.
 - [ ] Run `tools/verify_take.sh` on the session once its hashes are written. Quitting cancelled the first pass before any hash was saved; opening the session resumes it.
-- [ ] Why each small read cost a whole disk transfer for the app, and not for a test reader on the same files, is not proven.
+- [ ] Why the app's reads were wasted far more than a test reader's on the same files (about 300× against 2× with small reads) is not proven.
 - [ ] Setting a thumbnail source now reads 512 KiB on the message thread instead of the header alone. Time a 55-track session's open and STOP settle on a spinning drive.
 - [ ] A new session's `WaveCache.wfm` is written with the previous session's peaks: this one holds 57 entries (21.8 MB), none for its own files.
 - [ ] Owner: the take has 55 tracks where about 58 were expected. Check which strips were not armed.
 
 ## JUCE 8.0.17-security — 2026-11-03
 
-`main` moved from JUCE 8.0.4 to 8.0.17-security, pinned by commit (ADR at the top of [decisions.md](decisions.md), results in [testing.md](testing.md)). The development Mac has it as `5c7a3e4`; the mini does not.
+`main` moved from JUCE 8.0.4 to 8.0.17-security, pinned by commit (ADR at the top of [decisions.md](decisions.md), results in [testing.md](testing.md)). The development Mac has it, now as `577592c`; the mini does not.
 
 - [x] Pin 8.0.17-security; measure text with `GlyphArrangement::getStringWidth`; update the test audio format and the JSON depth-guard test for the new framework.
 - [x] Release and ASan/UBSan 1586 / 0; the LOCK menu test fixed after a TSan run; CI green.
@@ -36,7 +37,7 @@ Read in the source, not run or fixed.
 
 ## Fix round after `d4a9a57` — 2026-11-03
 
-A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. It is in the development Mac's `5c7a3e4`, not on the mini, and none of it has run on real hardware.
+A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. It is in the development Mac's `577592c`, not on the mini, and none of it has run on real hardware.
 
 - [x] Device: the chosen device is saved, reopens at launch, shows under the clock, and RECORD asks before rolling on another. A device that stops calling back raises an alarm.
 - [x] Punch and reads: a punch runs only where the timeline is the take file. A failed read fails the job, on every consumer.
@@ -74,7 +75,7 @@ The owner cut the app to a recorder and virtual soundcheck after a feature censu
 
 ## Fix pass — 2026-11-01
 
-Everything below landed on `main` on 2026-11-01. It is in the development Mac's `5c7a3e4`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
+Everything below landed on `main` on 2026-11-01. It is in the development Mac's `577592c`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
 
 - [x] Punch safety: only a range selected in this run punches, and once; Loop makes no region; a parked playhead appends; a stopped cursor asks first; PUNCH mode has no arm state; a remote RECORD never punches; the header pill.
 - [x] Main window: alarm banner, LOCK on custom mouse code and on quitting, report scans on their own runner, tracked Patch and Meterbridge windows, pre-roll control, OSC token in its panel, dead dialog controls removed.
@@ -126,7 +127,7 @@ Seven read-only reviewers covered capture, the real-time engine, editing/renders
 - [x] Editing: range edits split every crossing clip; **split inside a fade is exact** (user decision: clip fade-ramp fields); paste undo; strips above the last Track_NN; analysis main-take filter; CSV import; trims, Strip Silence, handoff CSV, Tab-to-transient.
 - [x] Session and main window: undo cleared on New Session; analysis refused during a take; crash recovery after daemon reattach; export stale indices; layout saves during jobs; stereo link/strip delete/patch/VCA/LOCK/DEVICE fixes; Welcome recents.
 - [x] Closed as not reproducible: the AppleDouble `._X.zfproj` lookup (macOS hides those files from directory listings; filter kept as defence in depth).
-- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)). The development Mac moved to `fffab44` on 2026-11-02, then `d4a9a57`, then `9a40f54` and `5c7a3e4` (JUCE 8.0.17-security) on 2026-11-03.
+- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)). The development Mac moved to `fffab44` on 2026-11-02, then `d4a9a57`, then `9a40f54`, `5c7a3e4` (JUCE 8.0.17-security) and `577592c` on 2026-11-03.
 - [ ] Physical checks on the installed build: see the October bug-hunt section in [FIELD-TEST.md](FIELD-TEST.md). Not launched on the mini yet.
 
 ## Handover back to Claude Code + structural-debt pass — 2026-10-29

@@ -2,9 +2,24 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-## Development Mac update — 2026-11-03, JUCE 8.0.17-security
+## Development Mac update — 2026-11-03, after the first long take
 
-The development Mac (MacBook Pro) now has `5c7a3e4`: the build below moved to JUCE 8.0.17-security, with one test, some comments and the docs changed since. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
+The development Mac (MacBook Pro) now has `577592c`: `5c7a3e4` plus the two post-STOP changes made after the first long take (*Fixed — after the first long take* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `b4aed815afc1e8a50d6dad137de136edd8e9d994c8c6b1adf7dda82019dee859` |
+| Capture helper | `7ac2a265f8343adc8d169fe14eae2e4e4eb8ab6063dab647b5e9d8a5f06ae4fc` (unchanged) |
+
+- **Tests before install:** 1588 groups / 0 failures in Release, ASan/UBSan and TSan, each launched through `open`, with no sanitizer reports. The built app launched with `--isolated-settings` and quit by itself after 35 s with no crash report. CI on the same commit was still running at install. See [testing.md](testing.md).
+- **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Both executables are universal.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261103-233742-before-577592c` (`5c7a3e4`).
+- **Signing:** ad-hoc with the hardened runtime and the audio-input entitlement, as `d4a9a57` had; `5c7a3e4` had neither. Why builds differ was not looked into. macOS may ask for the microphone again.
+- **After install:** it reopened the 4-hour session, and the drive still read about 3 GB/s for the app (see [testing.md](testing.md)). No take has been recorded on it.
+
+## Previous development Mac update — 2026-11-03, JUCE 8.0.17-security
+
+The development Mac (MacBook Pro) had `5c7a3e4`: the build below moved to JUCE 8.0.17-security, with one test, some comments and the docs changed since. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
 
 | Executable | SHA-256 |
 | --- | --- |
@@ -313,6 +328,7 @@ The October 5 two-Mac cleanup removed every app bundle older than `443c769` at t
 | Development | `fffab44` | `Zynforge Recording.app.backup-20261102-134207-before-d4a9a57` |
 | Development | `d4a9a57` | `Zynforge Recording.app.backup-20261103-032331-before-9a40f54` |
 | Development | `9a40f54` | `Zynforge Recording.app.backup-20261103-172758-before-5c7a3e4` |
+| Development | `5c7a3e4` | `Zynforge Recording.app.backup-20261103-233742-before-577592c` |
 | Mac mini | `443c769` | `Zynforge Recording.app.backup-20261029-221655-before-281c6c0` |
 
 The development Mac's list was checked on 2026-11-03; the mini's is from its installation record. Earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.
