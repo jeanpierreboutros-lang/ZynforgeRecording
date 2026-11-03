@@ -1012,10 +1012,11 @@ namespace zynforge
                     for (int b = 0; b < 200; ++b) rig.daemon.processTestBlock (inputs, 1, kBlock);
                     main.serviceCaptureDaemonLink();
                     const auto status = main.engine.captureStatus();
-                    return status.source == "daemon" && status.missedSamples > 0;
+                    // The audio FIFO can overflow before the copy's ring does, so a
+                    // missed sample alone doesn't mean the copy has said anything yet.
+                    return status.source == "daemon" && status.missedSamples > 0
+                        && status.copyProblems.joinIntoString ("|").contains ("no other copy has it");
                 }, 8000), "the daemon called a primary with a hole clean");
-                const auto problems = main.engine.captureStatus().copyProblems.joinIntoString ("|");
-                expect (problems.contains ("no other copy has it"), problems);
                 released.signal();
                 bool done = false;
                 main.stopActiveCaptureAsync (false, [&] (bool) { done = true; });
