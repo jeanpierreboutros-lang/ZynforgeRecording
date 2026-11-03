@@ -4,6 +4,7 @@
 
 #include "../Audio/CallbackWatchdog.h"
 #include "../Audio/MultitrackRecorder.h"
+#include "../Network/CaptureIdentity.h"
 #include "../Network/CaptureLink.h"
 
 #include <atomic>
@@ -12,6 +13,7 @@
 #include <thread>
 
 namespace zynforge { class EngineFixTests; }
+namespace zynforge { class CapturePathTests; }
 
 namespace zynforge::capture
 {
@@ -61,6 +63,8 @@ namespace zynforge::capture
         // synthetic input blocks as if the callback fired.
         void prepareForTests (double sampleRate, int blockSize, int numInputs);
         void dropLinkForTests() { server.dropClient(); }
+        void setDeviceNameForTests (const juce::String& name) { noteDevice (name); }
+        std::atomic<int> configuresForTests { 0 };
         std::function<void()> beforeStartForTests;
         void processTestBlock (const float* const* inputs, int numChannels, int numSamples);
 
@@ -78,11 +82,15 @@ namespace zynforge::capture
     private:
         friend class ReviewCaptureStartupTests;
         friend class zynforge::EngineFixTests;
+        friend class zynforge::CapturePathTests;
         std::function<void()> registerCallbackForTests;
         void handleCommand (const Command&);
         void statusLoop();
         EngineStatus buildStatus();
         bool watchCallback();
+        void releaseFinishedTake();
+        void noteDevice (const juce::String& name);
+        juce::String heldDevice() const;
 
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
@@ -101,6 +109,9 @@ namespace zynforge::capture
         std::atomic<bool>   deviceErrorSeen { false };
         CallbackWatchdog    callbackWatchdog;              // under commandLock
         double              lastDiskHealthUpdateMs { 0.0 }; // under commandLock
+        identity::TakeClaim takeClaim;                      // under commandLock
+        mutable std::mutex  deviceNameLock;   // JUCE owns the setup; the status thread may not read it
+        juce::String        deviceName;       // set while a device runs
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureDaemon)
     };

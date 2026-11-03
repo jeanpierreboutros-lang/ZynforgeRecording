@@ -2,6 +2,11 @@
 
 #include <juce_events/juce_events.h>
 
+#include <array>
+#include <libproc.h>
+#include <signal.h>
+#include <unistd.h>
+
 namespace zynforge::capture
 {
     CaptureSupervisor::~CaptureSupervisor()
@@ -30,6 +35,23 @@ namespace zynforge::capture
             if (dir.getParentDirectory() == dir) break;
         }
         return {};
+    }
+
+    // juce::ChildProcess::kill is SIGKILL, which can leave an audio driver wedged
+    // with the device still open. The helper closes its device on SIGTERM.
+    int CaptureSupervisor::askChildrenToExit (const juce::String& programName)
+    {
+        std::array<pid_t, 256> children {};
+        const int count = proc_listchildpids (::getpid(), children.data(), (int) sizeof (children));
+        int asked = 0;
+        for (int i = 0; i < count && i < (int) children.size(); ++i)
+        {
+            char name[64] {};
+            if (proc_name (children[(size_t) i], name, sizeof (name)) > 0 && programName == name
+                && ::kill (children[(size_t) i], SIGTERM) == 0)
+                ++asked;
+        }
+        return asked;
     }
 
     bool CaptureSupervisor::connectOrLaunch (int wantPort, const juce::StringArray& extraArgs)
@@ -105,7 +127,7 @@ namespace zynforge::capture
             }
             if (! process.isRunning()) break;   // crashed on startup
         }
-        process.kill();
+        askChildrenToExit (binaryPath.getFileName());
         launched = false;
         lastConnectError = "The capture daemon started but never answered; port "
                          + juce::String (port) + " may be busy.";
@@ -181,11 +203,11 @@ namespace zynforge::capture
 
             client.disconnect();
 
-            // Kill fallback fires ONLY when we know the daemon is idle -- either
-            // a fresh status said so, or the daemon acked the quit. It can never
-            // fire on a default/unknown status.
+            // Fires ONLY when we know the daemon is idle -- either a fresh status
+            // said so, or the daemon acked the quit. It can never fire on a
+            // default/unknown status.
             if (quitAccepted && process.isRunning())
-                process.kill();
+                askChildrenToExit (binaryPath.getFileName());
         }
         else
         {
@@ -210,7 +232,8 @@ namespace zynforge::capture
     bool CaptureSupervisor::startRecording (const juce::File& sessionDir, int trackCount,
                                             int captureFormat, const juce::BigInteger& armedTracks,
                                             const juce::var& timeHint,
-                                            juce::String* refusal, bool* unanswered)
+                                            juce::String* refusal, bool* unanswered,
+                                            const juce::String& expectedDevice)
     {
         if (! isAttached()) return false;
 
@@ -226,6 +249,11 @@ namespace zynforge::capture
         Command rec; rec.action = Action::StartRecording;
         rec.sessionDir = sessionDir.getFullPathName();
         rec.configuration = timeHint;
+        if (expectedDevice.isNotEmpty())
+        {
+            if (! rec.configuration.isObject()) rec.configuration = juce::var (new juce::DynamicObject());
+            rec.configuration.getDynamicObject()->setProperty ("expectedDevice", expectedDevice);
+        }
         // Await the daemon's reply (bounded): true ONLY when the daemon
         // confirms the recorder actually started. A socket-write success is
         // NOT proof the take is rolling, so we no longer light Record on it.
@@ -238,11 +266,40 @@ namespace zynforge::capture
         return reply.ok;
     }
 
+    // Only a fresh status can say so: a daemon busy elsewhere says nothing, and
+    // asking it again would only hold the window.
+    bool CaptureSupervisor::heldDeviceDiffers (const juce::String& wanted) const
+    {
+        const std::lock_guard<std::mutex> g (statusLock);
+        return statusSeen.load() && juce::Time::currentTimeMillis() - statusAtMs <= 2000
+            && status.captureDevice != wanted;
+    }
+
+    juce::String CaptureSupervisor::deviceMismatch (const juce::String& ownDevice) const
+    {
+        const auto held = lastStatus().captureDevice;
+        if (! hasStatus() || juce::Time::currentTimeMillis() - lastStatusAtMs() > 2000)
+            return "The capture daemon has not said which audio device it holds. Press RECORD again, "
+                   "or turn the capture daemon off to record in-process.";
+        if (held == ownDevice && held.isNotEmpty()) return {};
+        if (held.isEmpty())
+            return "The capture daemon holds no audio device, and has been sent " + ownDevice
+                 + ". Press RECORD again, or turn the capture daemon off to record in-process.";
+        return "The capture daemon holds " + held + ", not " + ownDevice
+             + ". It has been told to change. Press RECORD again.";
+    }
+
     bool CaptureSupervisor::configureCapture (const juce::var& config)
     {
         const auto text = juce::JSON::toString (config);
-        if (text == configuredCapture) return true;
-        if (text == failedCapture && juce::Time::currentTimeMillis() < retryCaptureAtMs) return false;
+        const auto wanted = config.getProperty ("captureDevice", {});
+        // Two processes each hold a device, and the daemon's can fall back or die
+        // by itself, leaving this text exactly what it last accepted.
+        const bool moved = text == configuredCapture && ! wanted.isVoid()
+                        && heldDeviceDiffers (wanted.toString());
+        if (text == configuredCapture && ! moved) return true;
+        const auto now = juce::Time::currentTimeMillis();
+        if ((text == failedCapture || moved) && now < retryCaptureAtMs) return false;
         if (! isAttached() || isDaemonRecording()) return false;
         Command c; c.action = Action::ConfigureCapture; c.configuration = config;
         if (! client.request (c, 5000).ok)
@@ -250,10 +307,15 @@ namespace zynforge::capture
             // The idle UI polls configuration for pre-roll. A missing device
             // must not cause a new blocking request on every UI timer tick.
             failedCapture = text; retryCaptureAtMs = juce::Time::currentTimeMillis() + 5000;
+            // A device the daemon refused can leave it holding none, so what it
+            // accepted before says nothing about it now.
+            configuredCapture.clear();
             return false;
         }
         failedCapture.clear();
         configuredCapture = text;
+        // Its next status still shows the old device.
+        retryCaptureAtMs = juce::Time::currentTimeMillis() + 5000;
         return true;
     }
 

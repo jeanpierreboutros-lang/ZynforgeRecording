@@ -34,11 +34,14 @@ namespace zynforge
         };
 
         using OpenCallback = std::function<void (const juce::File&)>;
+        // Removes the session, or says why it did not.
+        using RemoveCallback = std::function<juce::String (const juce::File&)>;
 
         SessionRecoveryDialog (juce::Array<juce::File> orphans,
                                OpenCallback onOpen,
+                               RemoveCallback onRemove = {},
                                std::function<void()> onClosedCb = {})
-            : openCb (std::move (onOpen)), onClosed (std::move (onClosedCb))
+            : openCb (std::move (onOpen)), removeCb (std::move (onRemove)), onClosed (std::move (onClosedCb))
         {
             rows.reserve ((size_t) orphans.size());
             for (auto& d : orphans)
@@ -139,12 +142,12 @@ namespace zynforge
 
         ~SessionRecoveryDialog() override { if (onClosed) onClosed(); }
 
-        static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen,
+        static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen, RemoveCallback onRemove,
                             std::function<void()> onClosed = {})
         {
             if (orphans.isEmpty()) return;   // no dialog -> onClosed only fires on an actual close
             auto* content = new SessionRecoveryDialog (std::move (orphans), std::move (onOpen),
-                                                       std::move (onClosed));
+                                                       std::move (onRemove), std::move (onClosed));
             juce::DialogWindow::LaunchOptions opts;
             opts.content.setOwned (content);
             opts.dialogTitle                  = "Recover sessions";
@@ -214,13 +217,11 @@ namespace zynforge
                     .withButton ("Cancel"),
                 [self, dir] (int chosen)
                 {
-                    if (chosen != 1 || self == nullptr) return;
-                    if (! dir.deleteRecursively())
+                    if (chosen != 1 || self == nullptr || self->removeCb == nullptr) return;
+                    if (const auto refusal = self->removeCb (dir); refusal.isNotEmpty())
                     {
-                        juce::AlertWindow::showMessageBoxAsync (
-                            juce::MessageBoxIconType::WarningIcon,
-                            "Delete failed",
-                            "The session could not be removed. Check permissions and try again.");
+                        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                                "Delete failed", refusal);
                         return;
                     }
                     // Drop the row from our local model so the table
@@ -320,6 +321,7 @@ namespace zynforge
         juce::TextButton      dismissButton;
         juce::Label           help;
         OpenCallback          openCb;
+        RemoveCallback        removeCb;
         // Fires from the destructor when the window closes by ANY path
         // (Recover, Delete-empties, Skip, Escape, red X) so the launch flow
         // can defer the Welcome/auto-reopen until AFTER recovery is resolved.

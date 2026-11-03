@@ -13,6 +13,19 @@ namespace zynforge::capture
         // first callback. The device may expose fewer physical inputs.
         recorder.setTrackCount (numInputs);
 
+        // The port first: a device can take seconds to open, and a window that
+        // hears nothing takes that for a helper that will never answer. The
+        // handshake is the server's own; commands and status wait on this lock.
+        std::unique_lock<std::mutex> opening (commandLock);
+        server.onCommand = [this] (const Command& c) { handleCommand (c); };
+        if (! server.listen (port))
+        {
+            juce::Logger::writeToLog ("[capture] listen failed on port " + juce::String (port));
+            return false;
+        }
+        running.store (true);
+        statusThread = std::thread ([this] { statusLoop(); });
+
         if (! testMode.load())
         {
             // Inputs only -- the daemon never plays back.
@@ -20,23 +33,14 @@ namespace zynforge::capture
             if (err.isNotEmpty())
             {
                 juce::Logger::writeToLog ("[capture] device init failed: " + err);
+                opening.unlock();
+                stop();
                 return false;
             }
             deviceManager.addAudioCallback (this);
         }
         else if (registerCallbackForTests)
             registerCallbackForTests();
-
-        server.onCommand = [this] (const Command& c) { handleCommand (c); };
-        if (! server.listen (port))
-        {
-            juce::Logger::writeToLog ("[capture] listen failed on port " + juce::String (port));
-            if (! testMode.load()) deviceManager.removeAudioCallback (this);
-            return false;
-        }
-
-        running.store (true);
-        statusThread = std::thread ([this] { statusLoop(); });
         return true;
     }
 
@@ -52,6 +56,7 @@ namespace zynforge::capture
         // stopped reading; join only after that write can return.
         server.stop();
         if (statusThread.joinable()) statusThread.join();
+        takeClaim.release();
         if (! testMode.load())
         {
             deviceManager.removeAudioCallback (this);
@@ -89,13 +94,27 @@ namespace zynforge::capture
         recorder.prepare (sr, block, recorder.getNumTracks() > 0 ? recorder.getNumTracks()
                                     : device->getActiveInputChannels().countNumberOfSetBits());
         recorder.setAudioWorkgroup (device->getWorkgroup());
+        noteDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
         deviceAvailable.store (true);
         audioLoadPct.store (0.0f);
+    }
+
+    void CaptureDaemon::noteDevice (const juce::String& name)
+    {
+        const std::lock_guard<std::mutex> g (deviceNameLock);
+        deviceName = name;
+    }
+
+    juce::String CaptureDaemon::heldDevice() const
+    {
+        const std::lock_guard<std::mutex> g (deviceNameLock);
+        return deviceName;
     }
 
     void CaptureDaemon::audioDeviceStopped()
     {
         deviceAvailable.store (false);
+        noteDevice ({});
         audioLoadPct.store (0.0f);
         // A stopped callback cannot deliver any more samples. Finalise now so
         // status never continues to claim a healthy, rolling take. Normal
@@ -173,10 +192,15 @@ namespace zynforge::capture
             {
                 Reply r; r.id = c.id;
                 const juce::File dir (c.sessionDir);
+                // The window checked its last status. Only here is the answer
+                // current: the device can fall back between that and this.
+                const auto wantedDevice = c.configuration.getProperty ("expectedDevice", "").toString();
                 if (recorder.isRecording())              { r.error = "capture is already recording"; }
                 else if (c.sessionDir.isEmpty())         { r.error = "no sessionDir"; }
                 else if (! testMode.load() && ! deviceAvailable.load())
                     { r.error = "capture audio device is stopped"; }
+                else if (wantedDevice.isNotEmpty() && wantedDevice != heldDevice())
+                    { r.error = "capture holds " + heldDevice() + ", not " + wantedDevice; }
                 else
                 {
                     if (beforeStartForTests) beforeStartForTests();
@@ -197,6 +221,7 @@ namespace zynforge::capture
                     else
                         recorder.clearTimeReferenceHint();
                     recorder.setClockDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
+                    takeClaim.hold (dir);   // before recording.session exists
                     if (recorder.startRecording (dir))
                     { captureDeviceLost.store (false); r.ok = true; }
                     else r.error = recorder.getStartError().isNotEmpty()
@@ -282,6 +307,7 @@ namespace zynforge::capture
             case Action::ConfigureCapture:
             {
                 Reply r; r.id = c.id;
+                configuresForTests.fetch_add (1);
                 if (recorder.isRecording()) { r.error = "stop recording before configuration"; sendReplyUnlocked (r); break; }
                 const auto& cfg = c.configuration;
                 auto* tracks = cfg["tracks"].getArray();
@@ -378,8 +404,18 @@ namespace zynforge::capture
         return stalled;
     }
 
+    // One place for every way a take ends: STOP, device loss, a device restart.
+    void CaptureDaemon::releaseFinishedTake()
+    {
+        if (! recorder.isRecording() && ! recorder.isFinalizing()) takeClaim.release();
+    }
+
     EngineStatus CaptureDaemon::buildStatus()
     {
+        // A device restart on the main thread clears the shards and can replace
+        // the tracks under everything read below.
+        const juce::ScopedLock structure (recorder.getStructureLock());
+        releaseFinishedTake();
         const auto nowMs = juce::Time::getMillisecondCounterHiRes();
         if (! recorder.isRecording())
         {
@@ -407,6 +443,7 @@ namespace zynforge::capture
         s.captureDeviceLost = captureDeviceLost.load();
         s.deviceStalled  = watchCallback();
         s.deviceStallMs  = recorder.getDeviceStallMs();
+        s.captureDevice  = heldDevice();
         s.diskMBPerSec   = bytesToMB (recorder.getDiskBytesPerSec());
         s.ringFillPct    = recorder.getRingFillPct();
         s.lastWriteMs    = recorder.getLastWriteMs();
@@ -423,6 +460,7 @@ namespace zynforge::capture
         s.diskStruggling = recorder.isDiskStruggling();
         s.channelAlarms  = recorder.evaluateChannelAlarms();
         s.copyProblems   = recorder.getCopyProblems();
+        s.preRollNotice  = recorder.isRecording() ? recorder.getPreRollNotice() : juce::String();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {
@@ -432,6 +470,7 @@ namespace zynforge::capture
             ts.peak  = t.peak .load (std::memory_order_relaxed);
             ts.rms   = t.rms  .load (std::memory_order_relaxed);
             ts.armed = t.armed.load (std::memory_order_relaxed);
+            ts.stereoLeft = t.isStereo.load (std::memory_order_relaxed);
             if (ts.armed) ++s.armedTracks;
             s.tracks.push_back (std::move (ts));
         }
@@ -461,6 +500,7 @@ namespace zynforge::capture
                 // A take outlives its GUI: keep watching, or a fault that comes
                 // and goes while nobody is attached never reaches the report.
                 const std::lock_guard<std::mutex> g (commandLock);
+                releaseFinishedTake();
                 recorder.evaluateChannelAlarms();
                 watchCallback();
             }

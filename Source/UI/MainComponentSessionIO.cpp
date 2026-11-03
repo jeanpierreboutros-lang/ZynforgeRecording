@@ -17,6 +17,7 @@
 #include "RecordPosition.h"
 #include "../Audio/AudioImport.h"
 #include "../Audio/AiffRepair.h"
+#include "../Audio/WavRepair.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/PathSafety.h"
@@ -148,6 +149,10 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (engine.isCaptureFinalizing())
     { showStatus ("Wait for recording finalization before switching sessions"); return -1; }
     if (! dir.isDirectory()) return 0;
+    // Everything below repairs and rewrites: nothing here may run under a helper
+    // that is writing this folder, adopted or not.
+    if (helperHoldsSession (dir))
+    { showStatus (dir.getFileName() + " is being written by the capture daemon. Reconnect to it, or wait for its take to end"); return -1; }
     if (! reload && isSessionOpen (dir))
     {
         showStatus (dir.getFileName() + " is already open");
@@ -158,12 +163,15 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
     int interruptedPunches = 0, repairedHeaders = 0, unrepairedHeaders = 0;
+    bool leadInsOwed = false;
     const auto audioDirForRecovery = dir.getChildFile ("Audio Files");
     zynforge::aiffrepair::repairTakeFolder (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
                                             &repairedHeaders, &unrepairedHeaders);
+    zynforge::wavrepair::repairTakeFolder (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
+                                           &repairedHeaders, &unrepairedHeaders);
     if (! zynforge::MultitrackRecorder::recoverInterruptedPunches (
             audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
-            &interruptedPunches))
+            &interruptedPunches, &leadInsOwed))
     {
         showStatus ("Interrupted punch could not be recovered; original sidecars were retained");
         return -1;
@@ -205,15 +213,19 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         warnIfSampleRateMismatch();
     }
     if (unrepairedHeaders > 0)
-        toast.show (zynforge::counted (unrepairedHeaders, "AIFF take file") + " from a crash could not be repaired;"
+        toast.show (zynforge::counted (unrepairedHeaders, "take file") + " from a crash could not be repaired;"
                     " they read short until the drive is writable", Toast::Kind::Warning);
     else if (repairedHeaders > 0)
-        toast.show ("Repaired " + zynforge::counted (repairedHeaders, "AIFF take file") + " a crash left unfinished",
+        toast.show ("Repaired " + zynforge::counted (repairedHeaders, "take file") + " a crash left unfinished",
                     Toast::Kind::Warning);
     if (interruptedPunches > 0)
         toast.show ("Recovered " + zynforge::counted (interruptedPunches, "interrupted punch file") + "; partial audio is in Session File Backups",
                     Toast::Kind::Warning);
+    if (leadInsOwed)
+        toast.show ("A track's silent lead-in could not be written; it plays early until the drive has room",
+                    Toast::Kind::Warning);
     if (! damaged.empty()) reportDamagedFiles (dir, damaged);
+    zynforge::MultitrackRecorder::resumeReportHashes (dir);
     return n;
 }
 

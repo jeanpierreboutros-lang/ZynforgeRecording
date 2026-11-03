@@ -3,6 +3,7 @@
 #include "SecureToken.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <array>
+#include <filesystem>
 #if JUCE_MAC || JUCE_LINUX
  #include <fcntl.h>
  #include <sys/file.h>
@@ -70,6 +71,10 @@ namespace zynforge::capture::identity
             if (! validNonce (key) || ::ftruncate (descriptor, 0) != 0
                 || ::pwrite (descriptor, key.toRawUTF8(), 64, 0) != 64)
             { reset(); return false; }
+            claimsName = juce::String (port) + ".claims";
+            const int claims = ::openat (directory, claimsName.toRawUTF8(),
+                                         O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+            if (claims >= 0) ::close (claims);
             return true;
            #else
             juce::ignoreUnused (port);
@@ -89,6 +94,7 @@ namespace zynforge::capture::identity
                     && ::fstatat (directory, filename.toRawUTF8(), &named, AT_SYMLINK_NOFOLLOW) == 0
                     && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino)
                     ::unlinkat (directory, filename.toRawUTF8(), 0);
+                ::unlinkat (directory, claimsName.toRawUTF8(), 0);
             }
             if (descriptor >= 0) ::close (descriptor);
             if (directory >= 0) ::close (directory);
@@ -100,18 +106,47 @@ namespace zynforge::capture::identity
 
         // A descriptor on a file in the same private folder, for a lock the
         // GUI and the daemon share. -1 if it can't be opened.
-        static int openSharedFile (const char* name)
+        static int openSharedFile (const char* name, bool create = true)
         {
            #if JUCE_MAC || JUCE_LINUX
-            const int folder = openDirectory (true);
+            const int folder = openDirectory (create);
             if (folder < 0) return -1;
-            const int file = ::openat (folder, name, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+            const int file = ::openat (folder, name, O_RDWR | (create ? O_CREAT : 0) | O_NOFOLLOW | O_CLOEXEC, 0600);
             ::close (folder);
             return file;
            #else
-            juce::ignoreUnused (name);
+            juce::ignoreUnused (name, create);
             return -1;
            #endif
+        }
+
+        // Someone holds this file's lock. The kernel drops one when its process
+        // ends, however it ends, so the answer needs nothing from that process.
+        static bool lockIsHeld (const char* name)
+        {
+           #if JUCE_MAC || JUCE_LINUX
+            const int file = openSharedFile (name, false);
+            if (file < 0) return false;
+            const bool held = ::flock (file, LOCK_SH | LOCK_NB) != 0 && errno == EWOULDBLOCK;
+            ::close (file);
+            return held;
+           #else
+            juce::ignoreUnused (name);
+            return false;
+           #endif
+        }
+
+        // A helper is alive on this port and publishes no TakeClaim: a build from
+        // before they existed, so nothing says which session it is writing.
+        static bool helperWithoutClaims (int port)
+        {
+            if (! lockIsHeld ((juce::String (port) + ".key").toRawUTF8())) return false;
+            const int claims = openSharedFile ((juce::String (port) + ".claims").toRawUTF8(), false);
+            if (claims < 0) return true;
+           #if JUCE_MAC || JUCE_LINUX
+            ::close (claims);
+           #endif
+            return false;
         }
 
         static juce::String load (int port)
@@ -157,7 +192,61 @@ namespace zynforge::capture::identity
        #endif
         int directory { -1 }, descriptor { -1 };
         bool ownsFile { false };
-        juce::String key, filename;
+        juce::String key, filename, claimsName;
         JUCE_DECLARE_NON_COPYABLE (Endpoint)
+    };
+
+    // A capture helper holds this from before it touches a session until that
+    // session's files are final. A window can then tell a live session from a
+    // crashed one with no help from the helper: a handshake can fail, or never
+    // be tried, while the helper goes on writing.
+    class TakeClaim final
+    {
+    public:
+        TakeClaim() = default;
+        ~TakeClaim() { release(); }
+
+        void hold (const juce::File& session)
+        {
+            release();
+           #if JUCE_MAC || JUCE_LINUX
+            descriptor = Endpoint::openSharedFile (nameFor (session).toRawUTF8());
+            // Only a probe holds it otherwise, for an instant.
+            for (int attempt = 0; descriptor >= 0 && attempt < 50; ++attempt)
+            {
+                if (::flock (descriptor, LOCK_EX | LOCK_NB) == 0) return;
+                juce::Thread::sleep (1);
+            }
+            release();
+           #else
+            juce::ignoreUnused (session);
+           #endif
+        }
+
+        void release()
+        {
+           #if JUCE_MAC || JUCE_LINUX
+            if (descriptor >= 0) ::close (descriptor);   // closing releases it
+           #endif
+            descriptor = -1;
+        }
+
+        static bool isHeld (const juce::File& session)
+        {
+            return Endpoint::lockIsHeld (nameFor (session).toRawUTF8());
+        }
+
+    private:
+        // One folder has one name here, however the path was spelled.
+        static juce::String nameFor (const juce::File& session)
+        {
+            std::error_code error;
+            const auto path = std::filesystem::weakly_canonical (session.getFullPathName().toStdString(), error);
+            const auto text = error ? session.getFullPathName() : juce::String (path.string());
+            return "take-" + juce::SHA256 (text.toUTF8()).toHexString().substring (0, 32) + ".lock";
+        }
+
+        int descriptor { -1 };
+        JUCE_DECLARE_NON_COPYABLE (TakeClaim)
     };
 }

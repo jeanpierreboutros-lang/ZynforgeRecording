@@ -1130,7 +1130,8 @@ namespace zynforge
         void  refreshDiskMinutesRemaining()
         {
             if (isTakeOnDisk()) return;
-            const auto sessionDir = recorder.getActiveSessionDir();
+            // The session open now. The recorder only knows the last take's.
+            const auto sessionDir = getActiveSessionDir();
             if (! sessionDir.isDirectory()) { diskMinutesRemaining.store (0); return; }
             diskMinutesRemaining.store (
                 recorder.estimateMinutesRemaining (sessionDir,

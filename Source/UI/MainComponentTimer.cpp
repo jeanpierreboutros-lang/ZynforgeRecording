@@ -117,11 +117,7 @@ void MainComponent::serviceCaptureDaemonLink()
                     // A status from before the daemon reached the START proves
                     // nothing, so only time settles this one.
                     if (juce::Time::getMillisecondCounter() - daemonStartUnansweredMs >= 10000)
-                    {
-                        daemonStartUnansweredMs = 0;
-                        engine.setExternalRecording (false);
-                        showStatus ("Daemon did not start the take");
-                    }
+                        giveUpOnUnansweredStart();
                 }
                 else if (engine.isExternalRecording() && ! captureMetadataPending)
                     // It ended without a STOP from here. Nothing else would load it.
@@ -570,7 +566,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                                 && consoleLink.getHealth() == zynforge::ConsoleLink::Health::Silent;
         if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || deviceLost || deviceStalled || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
-            || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort || consoleSilent)
+            || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort || consoleSilent || status.preRollNotice.isNotEmpty())
         {
             // Most serious first. Two spaces end each alarm: that is how the
             // banner tells them apart, and a '!' is what makes one a danger.
@@ -598,7 +594,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             if (status.copyDiskStale) warn << "! A COPY'S DRIVE IS NOT ANSWERING -- its free space is unknown  ";
             for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent  ";
-            if (consoleSilent) warn << "CONSOLE NOT ANSWERING -- scene markers have stopped";
+            if (consoleSilent) warn << "CONSOLE NOT ANSWERING -- scene markers have stopped  ";
+            warn << status.preRollNotice;
             activeCaptureWarning = warn.trim();
             statusLabel.setText (activeCaptureWarning, juce::dontSendNotification);
         }

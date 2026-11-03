@@ -177,8 +177,17 @@ namespace zynforge
         // Restore originals left in .punchbase sidecars by an interrupted
         // punch. Any partial new take is retained under Session File Backups.
         // Returns false without discarding either file when recovery fails.
+        // leadInsOwed: a track's silent lead-in could not be finished. That costs
+        // one track its alignment and no audio, so it is no failure here: the
+        // session opens, and a new pass into it is what has to wait.
         static bool recoverInterruptedPunches (const juce::File& audioDir,
-                                               int* recovered = nullptr);
+                                               int* recovered = nullptr,
+                                               bool* leadInsOwed = nullptr);
+
+        // A track still owes its silence. The marker names it by number, so its
+        // number has to stand until then: a marker that outlived a strip move
+        // would write that silence over another channel's file.
+        static bool leadInsPending (const juce::File& audioDir);
 
         // Next continuation file for a take: Track_NN.<ext> is part 1, then
         // Track_NN_part02, _part03 ... Returns the path to write next + its part
@@ -420,6 +429,10 @@ namespace zynforge
         // One line per copy that lost audio or stopped responding, naming it,
         // for the banner. Empty for a clean take.
         juce::StringArray getCopyProblems() const;
+        // Says so when this take wrote less pre-roll than was asked for.
+        juce::String getPreRollNotice() const;
+        // What a take with today's arms and copies could write, for pre-flight.
+        double preRollSecondsThatFit() const noexcept;
         bool hasPunchSpliceFailed() const noexcept
         {
             return punchSpliceFailed.load (std::memory_order_relaxed);
@@ -614,6 +627,8 @@ namespace zynforge
         // before its first live samples (see goLive).
         void preparePreRollDump();
         int  preRollHistorySamples { 0 };
+        int  preRollLimit { 0 };                       // the most this take's rings can carry
+        std::atomic<int> preRollCutFrames { 0 };       // history left out for want of ring
 
         // One destination of a take, with its own thread and ring (CaptureCopy.h).
         struct CaptureCopy;
@@ -659,6 +674,8 @@ namespace zynforge
         const CaptureCopy* copyAt (int copyIndex) const noexcept;
         bool isCopyOutOfTake (int copyIndex) const noexcept;
         int  copyRingFrames (int numCopies, int channels) const noexcept;
+        int  preRollFramesFitting (int numCopies, int channels, int wanted) const noexcept;
+        int  armedCaptureChannels() const noexcept;
         juce::StringArray describeCopyProblems() const;
         void finishCopies();
 
@@ -701,7 +718,7 @@ namespace zynforge
         bool validateTakeStart (const TakeStart&);
         bool createTakeFolders (TakeStart&);
         void resolveTakeMirrors (const TakeStart&);
-        enum class CopyClaim { claimed, conflict, unwritable };
+        enum class CopyClaim { claimed, conflict, unwritable, interrupted };
         bool claimTakeIdentity (TakeStart&);
         bool recoverPrimaryPunches (const TakeStart&);
         static bool adoptExistingTakeFormat (const juce::File& copyAudioDir, TakeFormat& selected,
@@ -809,6 +826,9 @@ namespace zynforge
 
         // Cancel obsolete report jobs and exclude their publication while a
         // caller removes an idle session. Caller must first guard active capture.
+        static void resumeReportHashes (const juce::File& sessionDir,
+                                        const std::function<void()>& finishedForTests = {},
+                                        const std::function<void()>& beforePublishForTests = {});
         static bool deleteSessionAfterCancellingReports (const juce::File& sessionDir);
         // Runs `remove` once no report for this session can still be published.
         static bool removeSessionAfterCancellingReports (const juce::File& sessionDir,
@@ -832,6 +852,7 @@ namespace zynforge
         friend class AsyncStopAuditTests;
         friend class ReviewCaptureRepairTests;
         friend class CaptureCopyTests;
+        friend class CapturePathTests;
         friend class CaptureFixTests;
         friend class CaptureDaemonLinkTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
@@ -842,7 +863,9 @@ namespace zynforge
         std::function<void()> afterFifoReservationForTests;
         std::function<void()> beforeStampForTests;
         std::function<void (CaptureCopy&)> beforeCopyWriteForTests;
+        std::function<bool (CaptureCopy&, bool finishing)> copyThreadRefusedForTests;
         int copyRingFramesForTests { 0 };
+        juce::int64 copyRingBytesForTests { 0 };
         // How long STOP waits on a copy that has stopped making progress, and on
         // a copy's drain altogether: a buffered write counts as progress, so a
         // dying drive could otherwise feed the first limit for hours.

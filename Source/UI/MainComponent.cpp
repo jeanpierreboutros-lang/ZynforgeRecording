@@ -558,7 +558,13 @@ bool MainComponent::saveMixerToTakeFolder (const juce::File& dir)
 void MainComponent::startDaemonTake (const RecordStartPlan& plan)
 {
     auto& recorder = engine.getRecorder();
-    if (! configureCaptureDaemon())
+    const bool configured = configureCaptureDaemon();
+    // This window's meters run from its own device, so nothing on screen would
+    // show a daemon recording some other one.
+    const auto ownDevice = engine.getDeviceManager().getAudioDeviceSetup().inputDeviceName;
+    if (const auto wrongDevice = captureSupervisor.deviceMismatch (ownDevice); wrongDevice.isNotEmpty())
+    { showRecordRefusal (wrongDevice); return; }
+    if (! configured)
     { showRecordRefusal ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
     const bool mixerInTakeFolder = saveMixerToTakeFolder (plan.dir);
     juce::BigInteger arms;
@@ -580,10 +586,13 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
     auto& markers = engine.getMarkers();
     const auto markerSession = markers.getSessionDir();
     const auto markerRate    = markers.getSampleRate();
+    const SessionPins pinsBefore { engine.getActiveSessionDir(), engine.getMixerSession(), engine.getLastCapture(),
+                                   markerSession, markerRate };
     markers.setContext (dir, rate);
     if (captureSupervisor.startRecording (dir, numTracks, (int) engine.getRecorder().getCaptureFormat(), arms,
                                           engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var(),
-                                          &refusal, &unanswered))
+                                          &refusal, &unanswered,
+                                          engine.getDeviceManager().getAudioDeviceSetup().inputDeviceName))
     {
         engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
                                          captureSupervisor.lastStatusAtMs());
@@ -604,6 +613,7 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         // Not a refusal. The window must not call this failed and move on while
         // the daemon rolls into a session it does not know about.
         lastCaptureFinalizationError.clear();
+        beforeUnansweredStart = pinsBefore;
         engine.beginExternalTake (dir, rate);
         engine.claimMixerFor (dir);
         engine.noteLastCapture (dir, {});
@@ -617,6 +627,21 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         showRecordRefusal (refusal.isNotEmpty() ? "Daemon refused RECORD: " + refusal
                                                 : juce::String ("Daemon record failed -- check Session > Capture daemon."));
     }
+}
+
+// Ten seconds of silence said no take rolled. The new folder stays on disk; it
+// holds a mixer and no audio, and nothing here deletes a session folder.
+void MainComponent::giveUpOnUnansweredStart()
+{
+    daemonStartUnansweredMs = 0;
+    engine.setExternalRecording (false);
+    const auto& before = beforeUnansweredStart;
+    engine.setActiveSessionDir (before.session);
+    engine.claimMixerFor (before.mixer);
+    if (before.lastCapture != juce::File()) engine.noteLastCapture (before.lastCapture);
+    else                                    engine.forgetLastCapture();
+    engine.getMarkers().setContext (before.markers, before.markerRate);
+    showStatus ("Daemon did not start the take");
 }
 
 bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
@@ -1432,7 +1457,7 @@ juce::String MainComponent::lastCapturePrompt (const juce::File& target)
 
 bool MainComponent::deleteCaptureSession (const juce::File& target)
 {
-    if (engine.isRecording() || sessionIoBusy.load())
+    if (engine.isRecording() || sessionIoBusy.load() || helperHoldsSession (target))
     { showStatus ("Stop recording and finish session operations before removing a capture"); return false; }
     const bool deletingActive = target == engine.getActiveSessionDir();
     const auto moveToTrash = [&target]
@@ -1870,6 +1895,8 @@ void MainComponent::showPreflightChecklist()
         rows.push_back ({ chk (gotMBps > needMBps * 1.5, gotMBps > needMBps), "Disk write speed (measured)",
                           measured.has_value() ? juce::String (juce::roundToInt (gotMBps)) + " MB/s (need " + needText + ")"
                                                : "did not finish in time (need " + needText + ")" });
+        if (const int preRoll = engine.getRecorder().getPreRollSeconds(); preRoll > 0 && measured.has_value())
+            rows.push_back (zynforge::preRollRow (preRoll, engine.getRecorder().preRollSecondsThatFit(), gotMBps, needMBps));
     }
 
     // Every configured mirror drive: mounted AND actually writable.

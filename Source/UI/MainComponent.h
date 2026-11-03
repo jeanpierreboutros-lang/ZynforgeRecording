@@ -38,7 +38,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; }
+namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -173,6 +173,13 @@ private:
     // case onClosed is NOT called -- the caller runs its own continuation. This
     // lets the launch flow avoid auto-reopening a session under the dialog.
     bool offerSessionRecovery (std::function<void()> onClosed = {});
+    juce::Array<juce::File> sessionsToRecover (const juce::File& sessionsRoot) const;
+    juce::String removeRecoveredSession (const juce::File& dir);
+    struct SessionPins { juce::File session, mixer, lastCapture, markers; double markerRate { 0.0 }; };
+    SessionPins beforeUnansweredStart;
+    void giveUpOnUnansweredStart();
+    bool helperHoldsSession (const juce::File& dir) const;
+    bool unprovenHelperAlive() const;
     void showStartupWelcome();
     void createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
     void openSessionFromWelcome (const juce::File&);
@@ -630,6 +637,7 @@ private:
     juce::String remoteDeviceRefusal;   // or because nobody there can answer for the device
 
     friend class zynforge::CaptureDaemonLinkTests;
+    friend class zynforge::CapturePathTests;
     friend class zynforge::MainTransportRegressionTests;
     friend class zynforge::TwinLinkHostTests;
     friend class zynforge::PunchSessionGuardTests;

@@ -2,6 +2,7 @@
 #include "ClockSource.h"
 #include "SettingsFile.h"
 #include "TrackFileTransaction.h"
+#include "TrackOrderLog.h"
 #include "AtomicFile.h"
 #include "SessionMixFile.h"
 #include "FastAccumulate.h"
@@ -367,6 +368,9 @@ namespace zynforge
                 mix.file = path;
                 mix.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
                                  (w, mixWriterThread, 32768);
+                // JUCE writes the header at open and close unless told, and a
+                // crash would leave all this audio behind a length of zero.
+                mix.writer->setFlushInterval ((int) (sr * 5.0));
             }
             else
             {
@@ -1191,6 +1195,7 @@ namespace zynforge
         s.captureFormat    = (int) recorder.getCaptureFormat();
         s.channelAlarms    = recorder.evaluateChannelAlarms();
         s.copyProblems     = recorder.getCopyProblems();
+        s.preRollNotice    = recorder.isRecording() ? recorder.getPreRollNotice() : juce::String();
 
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
@@ -1737,7 +1742,8 @@ namespace zynforge
         // are its mixer, and emptying a saved mixer is not a save we allow.
         if (activeSession.isDirectory()
             && (! mixerBelongsTo (activeSession)
-                || (order.empty() && sessionmix::stripCountIn (activeSession) > 0)))
+                || (order.empty() && sessionmix::stripCountIn (activeSession) > 0)
+                || MultitrackRecorder::leadInsPending (activeSession.getChildFile ("Audio Files"))))
             return false;
         const int n = recorder.getNumTracks();
         std::vector<int> destination ((size_t) n, -1);
@@ -1781,24 +1787,8 @@ namespace zynforge
         if (! audio.isDirectory()) audio = session;
         std::vector<TrackFileTransaction::Move> moves;
         const auto removedDir = session.getChildFile ("Removed Tracks").getChildFile (juce::Uuid().toString());
-        // Each track's complete take (all containers and continuation parts)
-        // moves together. Removed audio is archived, never deleted.
         if (session.isDirectory())
-            for (int old = 0; old < n; ++old)
-            {
-                const auto prefix = juce::String::formatted ("Track_%02d", old + 1);
-                for (const auto& f : audio.findChildFiles (juce::File::findFiles, false, prefix + ".*;" + prefix + "_part*"))
-                {
-                    if (f.getFileName().containsIgnoreCase (".punchbase")) continue;
-                    if (! f.hasFileExtension ("wav;flac;aif;aiff")) continue;
-                    const int dest = destination[(size_t) old];
-                    const auto target = dest >= 0
-                        ? audio.getChildFile (juce::String::formatted ("Track_%02d", dest + 1)
-                                               + f.getFileName().substring (prefix.length()))
-                        : removedDir.getChildFile (f.getFileName());
-                    if (target != f) moves.emplace_back (f, target);
-                }
-            }
+            moves = trackorder::takeMoves (audio, removedDir, destination);
         auto remapClip = [&] (Clip& c, int oldTrack)
         {
             // Make implicit references explicit before filenames move, so a
@@ -1825,7 +1815,7 @@ namespace zynforge
         }
         TrackFileTransaction files;
         const bool disk = session.isDirectory();
-        if (disk && ! files.begin (session, moves))
+        if (disk && (! trackorder::ensureLog (session) || ! files.begin (session, moves)))
         { deviceManager.addAudioCallback (this); return false; }
 
         trackClips.clear(); trackPlaylists.clear();
@@ -1883,6 +1873,8 @@ namespace zynforge
                 }
                 else saved = false;
             }
+            // Backups and mirrors follow this log before they next join a take.
+            if (saved) saved = trackorder::append (session, destination);
             if (saved) saved = files.commit();
         }
         if (! saved)

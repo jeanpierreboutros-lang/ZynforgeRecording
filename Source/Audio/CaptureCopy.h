@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CheckedFileStream.h"
 #include "FloatAiffWriter.h"
 #include "MultitrackRecorder.h"
 
@@ -37,6 +38,7 @@ namespace zynforge
             juce::int64  totalSamples { 0 };       // never resets
             juce::StringArray partFiles;
             bool         failed { false };
+            CheckedFileStream::Failed closeFailed { CheckedFileStream::makeFailedFlag() };
 
             juce::HeapBlock<float> ring;           // ringFrames per channel, planar
             juce::int64  head { 0 }, tail { 0 }, lostFrames { 0 }, countedLost { 0 };
@@ -53,6 +55,7 @@ namespace zynforge
         int          ringFrames { 0 };
         std::shared_ptr<CaptureLatches> latches;
         std::function<void (CaptureCopy&)> beforeWriteForTests;
+        std::function<bool (CaptureCopy&, bool finishing)> threadRefusedForTests;
 
         std::vector<Track> tracks;                 // aligned with the recorder's tracks
         std::vector<WriterChannel::StampedPart> stampedParts;
@@ -96,10 +99,18 @@ namespace zynforge
         // This track's file is finished, by choice or by failure.
         void stopTrack (Track& t)
         {
-            t.writer.reset();
+            closeWriter (t);
             const std::lock_guard<std::mutex> g (ringLock);
             if (t.accepting) liveChannels.fetch_sub (t.channels, std::memory_order_relaxed);
             t.accepting = false;
+        }
+
+        // The stream can only say a close came up short once the writer is gone.
+        void closeWriter (Track& t)
+        {
+            const bool wasOpen = t.writer != nullptr;
+            t.writer.reset();
+            if (wasOpen && t.closeFailed->load()) failTrack (t);
         }
 
         // Opens one file. framesBefore: what this pass already wrote to earlier
@@ -109,7 +120,7 @@ namespace zynforge
             // All callers choose a new part or stash a punch target first.
             // Never truncate an unexpected file, including a foreign backup.
             if (target.exists()) return nullptr;
-            auto* out = target.createOutputStream().release();
+            auto* out = CheckedFileStream::open (target, t.closeFailed).release();
             if (out == nullptr) return nullptr;
 
             const auto chans = (unsigned int) juce::jmax (1, t.channels);
@@ -214,6 +225,7 @@ namespace zynforge
             lastProgressMs.store (juce::Time::getMillisecondCounterHiRes());
             try
             {
+                refuseThreadForTests (false);
                 worker = std::thread ([self = std::move (self)] { self->run(); });
             }
             catch (const std::system_error&)
@@ -223,7 +235,7 @@ namespace zynforge
                 for (auto& t : tracks)
                     if (t.baseFile != juce::File()) t.failed = true;
                 latchFailure();
-                dropped.store (opening.exchange (false), std::memory_order_release);
+                if (opening.exchange (false)) leaveTake (label + " could not start; it is not in this take");
                 finished.store (true);
             }
         }
@@ -379,7 +391,7 @@ namespace zynforge
             if (projected < maxBytesForContainer (t.container)) return;
             // Closing finalises the header, so the file left behind is valid.
             if (! flushFloatAiffBeforeClose (t.writer.get())) failTrack (t);
-            t.writer.reset();
+            closeWriter (t);
             ++t.partNumber;
             const auto next = t.baseFile.getParentDirectory()
                 .getChildFile (t.baseFile.getFileName() + "_part"
@@ -437,9 +449,8 @@ namespace zynforge
         {
             for (auto& t : tracks)
             {
-                if (t.writer == nullptr) continue;
-                if (! flushFloatAiffBeforeClose (t.writer.get())) failTrack (t);
-                stopTrack (t);
+                if (t.writer != nullptr && ! flushFloatAiffBeforeClose (t.writer.get())) failTrack (t);
+                stopTrack (t);      // a copy still opening has a ring and no writer
             }
             const std::lock_guard<std::mutex> g (ringLock);
             for (auto& t : tracks) t.ring.free();
@@ -477,6 +488,7 @@ namespace zynforge
             noteProgress();
             try
             {
+                refuseThreadForTests (true);
                 worker = std::thread ([self = std::move (self), work = std::move (work)]
                 {
                     work (*self);
@@ -485,9 +497,18 @@ namespace zynforge
             }
             catch (const std::system_error&)
             {
+                // None of the work ran, so nothing it would report exists. Reads
+                // as a copy left behind, and its folder is recovered next take.
                 latchFailure();
+                abandoned.store (true, std::memory_order_release);
                 finished.store (true, std::memory_order_release);
             }
+        }
+
+        void refuseThreadForTests (bool finishing)
+        {
+            if (threadRefusedForTests != nullptr && threadRefusedForTests (*this, finishing))
+                throw std::system_error (std::make_error_code (std::errc::resource_unavailable_try_again));
         }
 
         void noteProgress() noexcept

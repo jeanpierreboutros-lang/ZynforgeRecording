@@ -603,9 +603,28 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
     });
 }
 
-bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
+// The helper's word, or the kernel's for a helper that is gone. Window state
+// cannot answer this: after a failed handshake, or with daemon mode turned off,
+// the window knows nothing and a take can still be rolling.
+bool MainComponent::helperHoldsSession (const juce::File& dir) const
 {
-    auto incomplete = zynforge::AudioEngine::findIncompleteSessions (getSessionsRoot());
+    return zynforge::capture::identity::TakeClaim::isHeld (dir);
+}
+
+// A helper too old to say what it holds could be writing anything, until it
+// answers that it is idle.
+bool MainComponent::unprovenHelperAlive() const
+{
+    return zynforge::capture::identity::Endpoint::helperWithoutClaims (captureDaemonPort)
+        && ! (captureSupervisor.isAttached() && captureSupervisor.hasStatus()
+              && ! captureSupervisor.isDaemonRecording());
+}
+
+juce::Array<juce::File> MainComponent::sessionsToRecover (const juce::File& sessionsRoot) const
+{
+    if (unprovenHelperAlive()) return {};
+    auto incomplete = zynforge::AudioEngine::findIncompleteSessions (sessionsRoot);
+    incomplete.removeIf ([this] (const juce::File& d) { return helperHoldsSession (d); });
     // A take that is still rolling (an adopted daemon take) is not a crash.
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     {
@@ -613,6 +632,25 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
             ? juce::File (captureSupervisor.lastStatus().sessionPath) : engine.getActiveSessionDir();
         incomplete.removeIf ([&live] (const juce::File& d) { return d == live; });
     }
+    return incomplete;
+}
+
+// Asked again here: the list can have sat open for as long as the engineer liked.
+juce::String MainComponent::removeRecoveredSession (const juce::File& dir)
+{
+    if (helperHoldsSession (dir) || unprovenHelperAlive()
+        || (engine.isRecording() && engine.getActiveSessionDir() == dir))
+        return "A take may still be writing to this session, so it was left alone.";
+    if (! zynforge::MultitrackRecorder::deleteSessionAfterCancellingReports (dir))
+        return "The session could not be removed. Check permissions and try again.";
+    return {};
+}
+
+bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
+{
+    if (unprovenHelperAlive())
+        showStatus ("A capture helper from another build is running, so session recovery waits for it");
+    const auto incomplete = sessionsToRecover (getSessionsRoot());
     // Nothing to recover -> no dialog, no onClosed; the caller runs its
     // continuation itself (return false means "I didn't show a dialog").
     if (incomplete.isEmpty()) return false;
@@ -648,6 +686,10 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
             dir.getChildFile ("recording.session").deleteFile();
             self->showStatus ("Recovered: " + dir.getFileName());
             self->updateTransportLabels();
+        },
+        [self] (const juce::File& dir)
+        {
+            return self != nullptr ? self->removeRecoveredSession (dir) : juce::String ("The app is closing.");
         },
         std::move (onClosed));
     return true;

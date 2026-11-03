@@ -214,6 +214,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/CaptureFixTests.cpp
     Source/Tests/CaptureLinkTests.cpp
     Source/Tests/CaptureMetaTests.cpp
+    Source/Tests/CapturePathTests.cpp
     Source/Tests/CaptureProtocolTests.cpp
     Source/Tests/CaptureSupervisorTests.cpp
     Source/Tests/ChannelAlarmTests.cpp

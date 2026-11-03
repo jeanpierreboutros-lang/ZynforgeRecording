@@ -104,11 +104,13 @@ namespace zynforge
         bool          captureDeviceLost { false }; // latched if a rolling daemon loses its audio callback
         bool          deviceStalled { false };     // no audio callback for ~2 s of a rolling take
         juce::int64   deviceStallMs { 0 };         // this take's time with no audio so far
+        juce::String  captureDevice;               // the input device a daemon holds now; empty = none
         int           captureFormat { 0 };     // CaptureFormat as int
         // Live dead-channel alarms. Additive on the daemon wire: a peer that
         // does not know the field ignores it.
         std::vector<channelalarm::Alarm> channelAlarms;
         juce::StringArray copyProblems;   // a line per copy that lost audio, naming it
+        juce::String  preRollNotice;      // a quiet line: this take wrote less pre-roll than asked
         std::vector<TrackStatus> tracks;
 
         juce::var toJson() const
@@ -149,11 +151,13 @@ namespace zynforge
             o->setProperty ("captureDeviceLost", captureDeviceLost);
             o->setProperty ("deviceStalled", deviceStalled);
             o->setProperty ("deviceStallMs", deviceStallMs);
+            o->setProperty ("captureDevice", captureDevice);
             o->setProperty ("captureFormat", captureFormat);
             juce::Array<juce::var> alarms;
             for (const auto& a : channelAlarms) alarms.add (a.toJson());
             o->setProperty ("channelAlarms", alarms);
             o->setProperty ("copyProblems", juce::var (copyProblems));
+            o->setProperty ("preRollNotice", preRollNotice);
             juce::Array<juce::var> arr;
             for (const auto& t : tracks) arr.add (t.toJson());
             o->setProperty ("tracks", arr);
@@ -198,7 +202,9 @@ namespace zynforge
             s.captureDeviceLost = (bool) v.getProperty ("captureDeviceLost", false);
             s.deviceStalled = (bool) v.getProperty ("deviceStalled", false);
             s.deviceStallMs = (juce::int64) v.getProperty ("deviceStallMs", 0);
+            s.captureDevice = v.getProperty ("captureDevice", "").toString();
             s.captureFormat = (int) v.getProperty ("captureFormat", 0);
+            s.preRollNotice = v.getProperty ("preRollNotice", "").toString();
             if (auto* problems = v.getProperty ("copyProblems", {}).getArray())
                 for (const auto& problem : *problems) s.copyProblems.add (problem.toString());
             if (auto* alarms = v.getProperty ("channelAlarms", {}).getArray())
