@@ -2,6 +2,8 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
+`main` is ahead of both installed builds below. Nothing from the round after `d4a9a57` is installed on either Mac or in a package, and none of it has run on real hardware. Two things to expect when it is installed: the window and helper must still go together, because a helper from an earlier build reports no device name, so daemon RECORD refuses until daemon mode is turned off; and the first RECORD asks about the device, because earlier builds saved no choice.
+
 ## Development Mac update — 2026-11-02, design critique fixes
 
 The development Mac (MacBook Pro) now has `d4a9a57`, every fix from the design critique on top of the build below. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
