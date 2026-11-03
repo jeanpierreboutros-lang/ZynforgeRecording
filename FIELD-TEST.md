@@ -10,18 +10,18 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ## JUCE 8.0.17-security — not yet performed
 
-`main` moved from JUCE 8.0.4 to 8.0.17-security. No Mac has this build yet. The automated suite passes on it, but the framework sits under the device, files, text and network, so these checks are on the real rig. Compare against `9a40f54` on the same Mac where a step says so.
+`main` moved from JUCE 8.0.4 to 8.0.17-security. The development Mac has it as `5c7a3e4`; the mini does not. The automated suite passes on it, but the framework sits under the device, files, text and network, so these checks are on the real rig. Compare against `9a40f54` on the same Mac where a step says so.
 
 - [ ] 🟨 **Text.** Open MIXER, EDIT and PATCH at the smallest window and full screen, then the alarm banner with three alarms, the EDIT ruler at deep zoom, DEVICE and Export Audio. No label is cut off or overlaps where it didn't on `9a40f54`: text is now measured with fallback fonts and shaping.
 - [ ] 🟧 **Device.** Launch with the interface chosen. It opens at the same rate and buffer as before and the rate does not change at launch. Record 10 minutes on every input, STOP, and run `tools/verify_take.sh`.
 - [ ] 🟥 **Older sessions.** Open a session recorded on `281c6c0` or `9a40f54`, with WAV, AIFF and FLAC takes. All play from start to end, and one export matches the same export from the older build.
 - [ ] 🟧 **Files from elsewhere.** Import a WAV and an AIFF written by other software, one of them carrying markers or loop metadata. Both import and play.
 - [ ] 🟧 **Desk and remotes.** On an X32 / M32: names, Scene Follow, a desk macro and a remote RECORD all behave as on `9a40f54`. On the MIDI control surface, faders and banks.
-- [ ] 🟨 **Quit.** A normal quit leaves no crash report and the interface is not wedged on the next launch. macOS asks for the microphone once after the install.
+- [ ] 🟨 **Quit.** A normal quit leaves no crash report and the interface is not wedged on the next launch. macOS may ask for the microphone once after the install.
 
 ## 2026-11-03 fix round — not yet performed
 
-None of this has been tried on real hardware. These fixes are in the development Mac's `9a40f54`, not in the mini's `281c6c0`. Use disposable sessions.
+None of this has been tried on real hardware. These fixes are in the development Mac's `5c7a3e4`, not in the mini's `281c6c0`. Use disposable sessions.
 
 ### Device identity (only real hardware can prove this)
 
@@ -121,7 +121,7 @@ Tests and rendered images can't judge these. They need the real app on a real di
 
 ## 2026-11-02 cut to recorder and virtual soundcheck — not yet performed
 
-None of this has been tried on real hardware. It is in the development Mac's `9a40f54`, not in the mini's `281c6c0`. Use disposable sessions.
+None of this has been tried on real hardware. It is in the development Mac's `5c7a3e4`, not in the mini's `281c6c0`. Use disposable sessions.
 
 - [ ] Open Backup & Mirror Drives from File and from the BACKUP button. It is one dialog: backup first, with a format box, then the mirrors.
 - [ ] Set a FLAC backup on a WAV session and record, once locally and once in daemon mode. The backup is FLAC, the primary is WAV, and the format is still set after a relaunch. Pre-flight reports the backup as it did.
@@ -138,7 +138,7 @@ None of this has been tried on real hardware. It is in the development Mac's `9a
 
 ## 2026-11-01 fix-pass acceptance — not yet performed
 
-None of this has been tried on real hardware. These fixes are in the development Mac's `9a40f54`, not in the mini's `281c6c0`. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
+None of this has been tried on real hardware. These fixes are in the development Mac's `5c7a3e4`, not in the mini's `281c6c0`. Use disposable sessions. Automated coverage is in [testing.md](testing.md).
 
 ### Punch safety (needs the real app and a disposable session)
 

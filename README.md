@@ -6,14 +6,12 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status — 2026-11-03
 
-`main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). Since `f9467d3` it builds on JUCE 8.0.17-security instead of 8.0.4; that update is in **neither installed build**. Nothing since `281c6c0` has been tried on real hardware: not on a real interface, a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
+`main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). Since `f9467d3` it builds on JUCE 8.0.17-security instead of 8.0.4; the development Mac has that update, the Mac mini does not. Nothing since `281c6c0` has been tried on real hardware: not on a real interface, a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
-Installed builds: the development Mac has `9a40f54` (2026-11-03), which is this
-README apart from the JUCE update and later changes in `main`. It passes **1586
-test groups in Release, ASan/UBSan, TSan and CI**, and has not run on real
-hardware. `main` on JUCE 8.0.17-security passes the same 1586 in Release,
-ASan/UBSan and CI; under TSan one test was fixed and its suite passes, but the
-full TSan run was not repeated (see [testing.md](testing.md)). The Mac mini and the
+Installed builds: the development Mac has `5c7a3e4` (2026-11-03), which is this
+README on JUCE 8.0.17-security. It passes **1586 test groups in Release,
+ASan/UBSan, TSan and CI**, and has not run on real hardware (see
+[testing.md](testing.md)). The Mac mini and the
 [universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg) still have
 verified `281c6c0` and its matching protocol-4 helper. That older build contains
 every fix from the October bug hunt (punch, capture and session safety, network

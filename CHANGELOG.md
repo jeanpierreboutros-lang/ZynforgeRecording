@@ -19,10 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Changed — framework
 
-- Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27, and in no installed build.
+- Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27. The development Mac has it as `5c7a3e4`; the mini does not.
 - THIRD-PARTY-NOTICES lists the HarfBuzz (10.1.0) and zlib copyright this JUCE carries.
 
-Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03, after `d4a9a57`. It is in `9a40f54` on the development Mac, not in the Mac mini's `281c6c0`, and none of it has been tried on real hardware.
+Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03, after `d4a9a57`. It is in `9a40f54` and `5c7a3e4` on the development Mac, not in the Mac mini's `281c6c0`, and none of it has been tried on real hardware.
 
 ### Added — the device a take records from
 
@@ -155,7 +155,7 @@ Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03,
 
 ---
 
-The next nine sections came in on 2026-11-02 and are in `9a40f54` on the development Mac. They are not in the mini's `281c6c0`. None of it has been tried on real hardware.
+The next nine sections came in on 2026-11-02 and are in `9a40f54` and `5c7a3e4` on the development Mac. They are not in the mini's `281c6c0`. None of it has been tried on real hardware.
 
 ### Changed — after the design critique
 

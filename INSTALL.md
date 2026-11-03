@@ -2,11 +2,25 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-`main` has since moved to JUCE 8.0.17-security (from `f9467d3`). No Mac has it: the installed app was open with an unsaved session when the build was ready, so it was left alone. Install it only after that session is saved or closed and the app has quit.
+## Development Mac update — 2026-11-03, JUCE 8.0.17-security
 
-## Development Mac update — 2026-11-03, the fix round
+The development Mac (MacBook Pro) now has `5c7a3e4`: the build below moved to JUCE 8.0.17-security, with one test, some comments and the docs changed since. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
 
-The development Mac (MacBook Pro) now has `9a40f54`: every fix of the round after `d4a9a57`, on top of the build below. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `ed03def1d666b920930ca0d3355fe9b888869e080504ae4cdc5c29fd53cc6bc9` |
+| Capture helper | `7ac2a265f8343adc8d169fe14eae2e4e4eb8ab6063dab647b5e9d8a5f06ae4fc` |
+
+- **Tests before install:** 1586 groups / 0 failures in Release, ASan/UBSan and TSan at `5c7a3e4`, each launched through `open`, with no sanitizer reports. CI passed Debug and Release on the same commit. The built app launched with `--isolated-settings`, stayed near 109 MiB and 2% CPU, quit by itself after 35 s and left no crash report. See [testing.md](testing.md).
+- **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Both executables are universal.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261103-172758-before-5c7a3e4` (`9a40f54`, JUCE 8.0.4).
+- **Signing:** ad-hoc, with no hardened runtime or entitlements, as `9a40f54` was. The smoke launch did not ask for the microphone; the installed copy may still ask once.
+- **First launch:** settings carry over from `9a40f54`. If the interface was never picked in DEVICE and applied there, do it once: until then a local RECORD asks first, and a remote or twin RECORD is refused.
+- **Not checked:** the installed app was not opened, no recording was made and no interface was tried. Nothing here has run on real hardware. The checks for this update are under *JUCE 8.0.17-security* in [FIELD-TEST.md](FIELD-TEST.md).
+
+## Previous development Mac update — 2026-11-03, the fix round
+
+The development Mac (MacBook Pro) had `9a40f54`: every fix of the round after `d4a9a57`, on top of the build below. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.
 
 | Executable | SHA-256 |
 | --- | --- |
@@ -298,6 +312,7 @@ The October 5 two-Mac cleanup removed every app bundle older than `443c769` at t
 | Development | `281c6c0` | `Zynforge Recording.app.backup-20261102-094838-before-fffab44` |
 | Development | `fffab44` | `Zynforge Recording.app.backup-20261102-134207-before-d4a9a57` |
 | Development | `d4a9a57` | `Zynforge Recording.app.backup-20261103-032331-before-9a40f54` |
+| Development | `9a40f54` | `Zynforge Recording.app.backup-20261103-172758-before-5c7a3e4` |
 | Mac mini | `443c769` | `Zynforge Recording.app.backup-20261029-221655-before-281c6c0` |
 
 The development Mac's list was checked on 2026-11-03; the mini's is from its installation record. Earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.

@@ -2,12 +2,13 @@
 
 ## JUCE 8.0.17-security — 2026-11-03
 
-`main` moved from JUCE 8.0.4 to 8.0.17-security, pinned by commit (ADR at the top of [decisions.md](decisions.md), results in [testing.md](testing.md)). No Mac has it yet.
+`main` moved from JUCE 8.0.4 to 8.0.17-security, pinned by commit (ADR at the top of [decisions.md](decisions.md), results in [testing.md](testing.md)). The development Mac has it as `5c7a3e4`; the mini does not.
 
 - [x] Pin 8.0.17-security; measure text with `GlyphArrangement::getStringWidth`; update the test audio format and the JSON depth-guard test for the new framework.
 - [x] Release and ASan/UBSan 1586 / 0; the LOCK menu test fixed after a TSan run; CI green.
-- [ ] Repeat the full TSan run after the LOCK menu test fix. Only *Main window guards* was rerun under TSan.
-- [ ] Owner: save or close the open session and quit the app, then install `main` and run *JUCE 8.0.17-security* in [FIELD-TEST.md](FIELD-TEST.md). Expect the microphone prompt once.
+- [x] Full TSan run repeated at `5c7a3e4`: 1586 / 0. The built app smoke-launched and quit cleanly.
+- [x] Installed `5c7a3e4` on the development Mac once the app had quit.
+- [ ] Owner: run *JUCE 8.0.17-security* in [FIELD-TEST.md](FIELD-TEST.md) on the development Mac. macOS may ask for the microphone once.
 - [ ] Owner: try the app on macOS 27 on a spare Apple-silicon Mac before any show Mac moves to it.
 - [ ] Move the writers from the deprecated `createWriterFor` overloads to `AudioFormatWriterOptions`. They work and only warn; it touches the capture path, so it gets its own careful pass.
 - [ ] libpng inside JUCE is still 1.6.37. It moves only with a JUCE release.
@@ -22,7 +23,7 @@ Read in the source, not run or fixed.
 
 ## Fix round after `d4a9a57` — 2026-11-03
 
-A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. It is in the development Mac's `9a40f54`, not on the mini, and none of it has run on real hardware.
+A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. It is in the development Mac's `5c7a3e4`, not on the mini, and none of it has run on real hardware.
 
 - [x] Device: the chosen device is saved, reopens at launch, shows under the clock, and RECORD asks before rolling on another. A device that stops calling back raises an alarm.
 - [x] Punch and reads: a punch runs only where the timeline is the take file. A failed read fails the job, on every consumer.
@@ -60,7 +61,7 @@ The owner cut the app to a recorder and virtual soundcheck after a feature censu
 
 ## Fix pass — 2026-11-01
 
-Everything below landed on `main` on 2026-11-01. It is in the development Mac's `9a40f54`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
+Everything below landed on `main` on 2026-11-01. It is in the development Mac's `5c7a3e4`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
 
 - [x] Punch safety: only a range selected in this run punches, and once; Loop makes no region; a parked playhead appends; a stopped cursor asks first; PUNCH mode has no arm state; a remote RECORD never punches; the header pill.
 - [x] Main window: alarm banner, LOCK on custom mouse code and on quitting, report scans on their own runner, tracked Patch and Meterbridge windows, pre-roll control, OSC token in its panel, dead dialog controls removed.
@@ -112,7 +113,7 @@ Seven read-only reviewers covered capture, the real-time engine, editing/renders
 - [x] Editing: range edits split every crossing clip; **split inside a fade is exact** (user decision: clip fade-ramp fields); paste undo; strips above the last Track_NN; analysis main-take filter; CSV import; trims, Strip Silence, handoff CSV, Tab-to-transient.
 - [x] Session and main window: undo cleared on New Session; analysis refused during a take; crash recovery after daemon reattach; export stale indices; layout saves during jobs; stereo link/strip delete/patch/VCA/LOCK/DEVICE fixes; Welcome recents.
 - [x] Closed as not reproducible: the AppleDouble `._X.zfproj` lookup (macOS hides those files from directory listings; filter kept as defence in depth).
-- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)). The development Mac moved to `fffab44` on 2026-11-02, then `d4a9a57`, then `9a40f54` on 2026-11-03.
+- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)). The development Mac moved to `fffab44` on 2026-11-02, then `d4a9a57`, then `9a40f54` and `5c7a3e4` (JUCE 8.0.17-security) on 2026-11-03.
 - [ ] Physical checks on the installed build: see the October bug-hunt section in [FIELD-TEST.md](FIELD-TEST.md). Not launched on the mini yet.
 
 ## Handover back to Claude Code + structural-debt pass — 2026-10-29
