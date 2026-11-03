@@ -2,6 +2,8 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
+`main` has since moved to JUCE 8.0.17-security. That build is not installed: the installed app was open with unsaved changes when it was ready.
+
 ## Development Mac update — 2026-11-03, the fix round
 
 The development Mac (MacBook Pro) now has `9a40f54`: every fix of the round after `d4a9a57`, on top of the build below. The Mac mini still has `281c6c0`, described further down, and no DMG was made for this build.

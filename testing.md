@@ -1,5 +1,11 @@
 # Testing Strategy — ZynForge Recording
 
+## JUCE 8.0.17-security — 2026-11-03
+
+On JUCE 8.0.17-security: **1586 test groups, 0 failures** in Release and under ASan/UBSan, each launched through `open`, with no sanitizer reports. Under TSan the full run had one failure, in *LOCK stops the right-click menus on strips and the setlist*: a menu from the check before it could still be closing on that slow run and counted as the strip's. The strip itself refuses a right-click under LOCK. The test now measures only its own click. After that change: Release 1586 / 0, and *Main window guards* 87 / 0 under TSan, four runs in all. The full TSan run was not repeated. The built app was not smoke-launched, because the installed app was open with unsaved changes, and it is not installed.
+
+Two tests changed with the framework. The test audio format overrides the new `createWriterFor`. The depth-guard test keeps its coverage floors on well-formed gaps, because since JUCE 8.0.16 a malformed UTF-8 byte between JSON tokens no longer decodes as a space; malformed gaps are still checked for the guard never under-counting.
+
 ## Current validation — 2026-11-03, the round after `d4a9a57`
 
 Three tests each failed once while seven branches shared the machine: *A hole in the primary reaches the window from the daemon*, *session.report.json includes SHA-256 per part file* and a *Capture supervisor* quit. The first was a race in the test: the audio FIFO can overflow before the copy's ring does, so it now waits for the copy's own report. The other two have not come back in any later run, and their cause was not proven.
