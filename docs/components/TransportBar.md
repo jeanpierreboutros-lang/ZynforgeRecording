@@ -4,16 +4,16 @@
 
 ## Description
 
-Hosts six `IconButton` instances (vector-drawn glyphs, no bitmaps). Polls the engine at 10 Hz to mirror transport state — RECORD reflects `engine.isRecording()` and PLAY lights its active state while playing. The host wires `onRequestRecord`, `onRequestPlay` and `onRequestStop` to its preflight/finalization paths; without host callbacks it may control playback, but RECORD does nothing and STOP refuses to end a live take.
+Hosts six `IconButton` instances (vector-drawn glyphs, no bitmaps). Polls the engine at 10 Hz to mirror transport state — RECORD reflects `engine.isRecording()` and blinks while a track is armed, PLAY lights its active state while playing, LOOP lights while loop-play is on, and STOP flashes whenever playback or recording stops, whatever stopped it. The host wires `onRequestRecord`, `onRequestPlay` and `onRequestStop` to its preflight/finalization paths; without host callbacks it may control playback, but RECORD does nothing and STOP refuses to end a live take.
 
 ## When to use
 
-Exactly one per `MainComponent`. Lives in row 2 of the header layout. RECORD action is owned by this bar (was previously duplicated on the top-row red pill, which now hides).
+Exactly one per `MainComponent`. Lives at the left of row 2 of the header layout, 340 px wide. The buttons are squares sized to the bar's height (40 px there) with 4 px gaps, centred horizontally. RECORD action is owned by this bar; there is no other on-screen RECORD button. The host disables the bar under session LOCK.
 
 ## Constructor
 
 ```cpp
-TransportBar (AudioEngine& engine);
+explicit TransportBar (AudioEngine& engine);
 ```
 
 | Param | Type | Notes |
@@ -28,7 +28,9 @@ TransportBar (AudioEngine& engine);
 | `onRequestPlay` | `void()` | Host play/pause handling |
 | `onRequestStop` | `void()` | Host normal two-tap guard and one-press punch stop |
 
-START, END and LOOP are wired inside the bar. There are no `onSkipBack`/`onSkipFwd` public callbacks. LOOP refuses to turn on while recording or in PUNCH mode (a loop wrap would keep a punch recording past its out point); START/END are inert while recording.
+START, END and LOOP are wired inside the bar. There are no `onSkipBack`/`onSkipFwd` public callbacks. START moves the player to 0, END to the session's total length; both are inert while recording. LOOP toggles loop-play: playback wraps within the selected range, or the whole take with no range. It never makes or clears a range. LOOP refuses to turn on while recording or in PUNCH mode (a loop wrap would keep a punch recording past its out point).
+
+Without a host callback, PLAY toggles playback of a loaded session, and STOP stops and rewinds playback but does nothing while recording.
 
 ## Capture-daemon host contract
 
@@ -48,11 +50,12 @@ Each transport button is an `IconButton` — a custom-painted button that draws 
 
 | State | Background and glyph |
 |---|---|
-| Idle | Themed control body and per-button accent glyph; RECORD retains its red outline |
-| Hover / pressed | `controlBgHover` / `controlBgDown` with the themed gradient finish |
-| Recording | Solid record-accent base with `onSignal(accentRecord)` glyph |
-| Armed, not recording | Alternates the record border/body pulse without claiming rolling capture |
-| PLAY / LOOP active | Their accent-coloured body and `onSignal(baseColour)` glyph |
+| Idle | Flat `controlBg` body, 1 px `edge` outline, per-button accent glyph; RECORD keeps a 2 px `accentRecord` outline at `alpha::prominent` instead |
+| Hover / pressed | Flat `controlBgHover` / `controlBgDown` |
+| Recording | Solid `accentRecord` body, opaque red outline, `onSignal(accentRecord)` glyph |
+| Armed, not recording | Blinks at 1 Hz (0.5 s on / 0.5 s off, off the 10 Hz timer): the on half is a `sink(accentRecord, 0.30)` body with an opaque red outline; the off half is idle. Armed means any track armed with the transport stopped, the same signal as the big clock's |
+| PLAY / LOOP active | Their accent-coloured body (`accentPlay`; `selectFill` for LOOP), a 2 px `lift(…, 0.20)` ring and `onSignal(baseColour)` glyph |
+| STOP flash | A `textSecondary` wash at up to 85 % over the button, decaying ×0.55 per tick |
 
 ## RECORD button shape distinctness
 
@@ -60,7 +63,8 @@ Per a 2026-05-23 UX audit, the RECORD button has a **permanent brand-red 2 px bo
 
 ## Tokens used
 
-- **Colours**: `brand::accentRecord` (RECORD base), `brand::accentPlay` (PLAY), `brand::textSecondary` (STOP), `brand::textPrimary` (START/END), `brand::brandOrange` (LOOP), `brand::controlBg` / `controlBgHover` / `controlBgDown` for the three hover states
+- **Colours**: `brand::accentRecord` (RECORD base), `brand::accentPlay` (PLAY), `brand::textSecondary` (STOP, and LOOP at rest), `brand::selectFill` (LOOP on), `brand::textPrimary` (START/END), `brand::controlBg` / `controlBgHover` / `controlBgDown` for the three hover states, `brand::edge` for idle outlines
+- **Alpha**: `brand::alpha::prominent` (idle RECORD outline)
 - **Typography**: none directly — buttons paint glyphs, not text
 - Geometry is defined in `TransportBar.cpp`; the current tile uses a 9 px radius. Do not infer token use from earlier specifications.
 
@@ -74,6 +78,9 @@ Per a 2026-05-23 UX audit, the RECORD button has a **permanent brand-red 2 px bo
 
 ## Accessibility
 
-The bar and each icon button have explicit spoken titles, descriptions/help and
-JUCE button actions. Native keyboard and VoiceOver interaction still require a
-manual pass; vector glyphs alone are not their accessible names.
+The bar is a focus container titled "Transport". Each icon button has a spoken
+title ("Go to start", "Go to end", "Play", "Stop", "Record", "Loop region"),
+its tooltip as help text and JUCE button actions, and is reachable with Tab. A
+mouse click does not leave keyboard focus on a button, so Return can't press it
+again (two Returns would end a take). Native keyboard and VoiceOver interaction
+still require a manual pass; vector glyphs alone are not their accessible names.

@@ -671,7 +671,7 @@ namespace zynforge
 
         // Pro Tools-style Min:Secs time ruler perched above the track
         // list. Reads session length + sample rate from the engine via
-        // its own 4 Hz timer.
+        // its own timer (4 Hz idle, 30 Hz while the transport moves).
         ruler = std::make_unique<EditTimeRuler> (engine);
         addAndMakeVisible (*ruler);
         recordingEditLabel.setFont (brand::type::ui (11.0f, true));

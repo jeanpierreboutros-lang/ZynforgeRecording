@@ -10,7 +10,7 @@
 
 namespace zynforge
 {
-    // Toast -- non-modal notification pill that slides in from the
+    // Toast -- non-modal notification pill that fades in at the
     // bottom-right of its host, holds for ~3 s, then fades out. Calls
     // are queued, so two toasts fired back-to-back display in order
     // rather than stomping each other.
@@ -69,7 +69,7 @@ namespace zynforge
             g.setColour (base);
             g.fillRoundedRectangle (r, brand::radius::lg);
 
-            // 6 px accent stripe down the left edge -- colour-coded by Kind.
+            // 4 px accent stripe down the left edge -- colour-coded by Kind.
             const auto accent = accentForKind (current.kind);
             g.setColour (accent);
             g.fillRoundedRectangle (juce::Rectangle<float> (r.getX(), r.getY(), 4.0f, r.getHeight()),

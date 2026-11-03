@@ -6,11 +6,14 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status — 2026-11-03
 
-`main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). The latest round is in **neither installed build**. Nothing since `281c6c0` has been tried on real hardware: not on a real interface, a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
+`main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). Since `f9467d3` it builds on JUCE 8.0.17-security instead of 8.0.4; that update is in **neither installed build**. Nothing since `281c6c0` has been tried on real hardware: not on a real interface, a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
 Installed builds: the development Mac has `9a40f54` (2026-11-03), which is this
-README apart from later changes in `main`. It passes **1586 test groups in Release,
-ASan/UBSan, TSan and CI**, and has not run on real hardware. The Mac mini and the
+README apart from the JUCE update and later changes in `main`. It passes **1586
+test groups in Release, ASan/UBSan, TSan and CI**, and has not run on real
+hardware. `main` on JUCE 8.0.17-security passes the same 1586 in Release,
+ASan/UBSan and CI; under TSan one test was fixed and its suite passes, but the
+full TSan run was not repeated (see [testing.md](testing.md)). The Mac mini and the
 [universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg) still have
 verified `281c6c0` and its matching protocol-4 helper. That older build contains
 every fix from the October bug hunt (punch, capture and session safety, network
@@ -47,13 +50,13 @@ cmake --build build --config Release
 open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 ```
 
-First configure fetches JUCE 8.0.17-security via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel).
+First configure fetches JUCE 8.0.17-security via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel). It is built and tested on macOS 26.6.2 with an Apple M1 Pro and Xcode 27.2. It has not been tried on macOS 27 or on an Intel Mac: try a new macOS on a spare Mac before a show Mac moves to it.
 
 For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contains both the GUI and matching `ZynforgeCapture` executable under `Contents/MacOS`. Stop all takes and quit both processes before replacement. Both Macs and the current DMG use protocol **4**, adding mutual authentication after a compatible Hello; always upgrade the matching GUI/helper together. No command is accepted before its required handshake completes.
 
 ## Documentation
 
-Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md); [testing.md](testing.md) records automated coverage, and [SHOW-READINESS.md](SHOW-READINESS.md) tracks physical acceptance. Dated audit and field reports retain their original evidence. Old installer/backup paths were removed during the October 4 and October 5 cleanups; no old app rollback bundle remains. The [documentation index](docs/README.md) distinguishes current guides from historical records.
+Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md); [testing.md](testing.md) records automated coverage, and [SHOW-READINESS.md](SHOW-READINESS.md) tracks physical acceptance. Dated audit and field reports retain their original evidence. Installer and backup paths from before October 29 were removed during the October 4 and October 5 cleanups; INSTALL.md lists the rollback bundles each Mac keeps now. The [documentation index](docs/README.md) distinguishes current guides from historical records.
 
 | Topic | File |
 |---|---|

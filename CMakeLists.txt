@@ -30,12 +30,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(JUCE)
 
-# JUCE 8.0.4 bundles a libFLAC revision that performs pointer arithmetic on
-# nullptr when escape coding is disabled. It normally happens to work, but is
-# undefined behaviour and is caught by UBSan during every FLAC write. Apply the
-# exact guard used by current upstream libFLAC until the next deliberate JUCE
-# upgrade, and fail configuration if the pinned dependency no longer matches
-# either the vulnerable or corrected form.
+# JUCE 8.0.4 through 8.0.17-security bundle a libFLAC revision that performs
+# pointer arithmetic on nullptr when escape coding is disabled. It normally
+# happens to work, but is undefined behaviour and is caught by UBSan during
+# every FLAC write. Apply the exact guard used by current upstream libFLAC until
+# a JUCE release carries it, and fail configuration if the pinned dependency no
+# longer matches either the vulnerable or corrected form.
 set(ZYNFORGE_JUCE_FLAC_ENCODER
     "${juce_SOURCE_DIR}/modules/juce_audio_formats/codecs/flac/libFLAC/stream_encoder.c")
 file(READ "${ZYNFORGE_JUCE_FLAC_ENCODER}" ZYNFORGE_JUCE_FLAC_SOURCE)

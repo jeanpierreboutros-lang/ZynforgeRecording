@@ -4,11 +4,11 @@
 
 ## Description
 
-A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` with `DialogChrome`-styled body. Presents a sortable table of orphan sessions, lets the engineer Recover (load + clear the marker), Delete (with confirm), or Skip (close and leave orphans for next launch).
+A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` (async, native title bar "Recover sessions", resizable, 640 × 440) with `DialogChrome`-styled body. Presents a sortable table of orphan sessions, lets the engineer Recover (load + clear the marker), Delete (with confirm), or Skip (close and leave orphans for next launch).
 
 ## When to use
 
-Called from `MainComponent::offerSessionRecovery()` during startup, after a capture-daemon take has been reattached; the live daemon session is never listed. Skips silently when `findIncompleteSessions()` returns empty.
+Called from `MainComponent::offerSessionRecovery()` during startup, after a capture-daemon take has been reattached. The host builds the list (`sessionsToRecover`): it drops any session a capture helper holds a take lock on, and the live take's session. While a helper too old to report its locks is running, it offers nothing and says so in the status bar. Skips silently when the list is empty.
 
 ## API
 
@@ -16,57 +16,58 @@ Called from `MainComponent::offerSessionRecovery()` during startup, after a capt
 struct Row {
     juce::File   dir;
     juce::String name;
-    juce::int64  sizeBytes;
-    juce::int64  modifiedMs;
-    int          trackCount;
+    juce::int64  sizeBytes  { 0 };
+    juce::int64  modifiedMs { 0 };
+    int          trackCount { 0 };
 };
 
-using OpenCallback = std::function<void (const juce::File&)>;
+using OpenCallback   = std::function<void (const juce::File&)>;
+using RemoveCallback = std::function<juce::String (const juce::File&)>;   // empty = removed, else why not
 
 static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen,
-                    std::function<void()> onClosed = {});
+                    RemoveCallback onRemove, std::function<void()> onClosed = {});
 ```
 
-The static `launch` instantiates the dialog and wires async modal behaviour. `onOpen` fires when the engineer picks Recover; the host owns session loading. `onClosed` fires when the actual dialog is destroyed and sequences the next startup step. An empty orphan list creates no dialog and does not call `onClosed`.
+The static `launch` instantiates the dialog and wires async modal behaviour. `onOpen` fires when the engineer picks Recover; the host owns session loading. `onRemove` fires when a Delete is confirmed; the host owns removal and returns a reason when it refuses. The public constructor takes the same callbacks, with `onRemove` optional. `onClosed` fires when the actual dialog is destroyed and sequences the next startup step. An empty orphan list creates no dialog and does not call `onClosed`.
 
 ## Layout
 
 ```
-┌─ SESSION RECOVERY ─────────────────────────────────┐
-│ 2 session(s) didn't shut down cleanly. The audio   │
-│ is on disk -- Recover loads, Delete removes, Skip  │
-│ closes this dialog and leaves them for next launch.│
-├─────────────────────────────────────────────────────┤
-│ Session              │ Tracks │ Size    │ Modified │
-│ ───────────────────  │ ────── │ ─────── │ ──────── │
-│ Show — 2026-05-24    │   12   │ 487 MB  │ today    │
-│ Rehearsal_2026-04-15 │    8   │  92 MB  │ 5w ago   │
-├─────────────────────────────────────────────────────┤
-│           [Recover selected] [Delete...] [Skip]     │
-└─────────────────────────────────────────────────────┘
+┌─ ◇ SESSION RECOVERY ───────────────────────────────────────┐
+│ 2 sessions didn't shut down cleanly. The audio is on disk  │
+│ -- Recover loads the session, Delete removes it, Skip      │
+│ closes this dialog and leaves them for next launch.        │
+├────────────────────────────────────────────────────────────┤
+│ Session              │ Tracks │ Size     │ Modified         │
+│ ──────────────────── │ ────── │ ──────── │ ──────────────── │
+│ Show — 2026-05-24    │     12 │ 487.0 MB │ 2026-05-24 22:41 │
+│ Rehearsal_2026-04-15 │      8 │  92.4 MB │ 2026-04-15 19:02 │
+├────────────────────────────────────────────────────────────┤
+│                  [Recover selected] [Delete...] [Skip]     │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ## Sort behaviour
 
-Track-file counts are taken from the session's `Audio Files` directory, with a legacy root-directory fallback. This is a media-file count, not necessarily the number of logical mixer strips (stereo and multipart layouts differ).
+Track-file counts are taken from the session's `Audio Files` directory, with a legacy root-directory fallback. They count `Track_*` WAV / FLAC / AIFF files and skip `_part` continuations, so a split take counts once. This is a media-file count, not necessarily the number of logical mixer strips (stereo layouts differ). Size is the whole session folder, recursive, in decimal KB / MB / GB.
 
 Recovery of an interrupted track-order transaction is handled by the session-open path through `TrackFileTransaction`, separately from this orphan-recording dialog. The session-open path also restores interrupted punch originals from `.punchbase` sidecars and archives any partial replacement under `Session File Backups/Interrupted Punch*`; configured backup/mirror copies are checked before another punch start. Preserve those folders, `Session File Backups/reorder_*` and `Removed Tracks` when diagnosing a failed recovery. Recover is not a guarantee that every recorded sample survived a crash.
 
-`juce::TableListBoxModel`-backed. Columns sort on click. Default sort is **modified-time, newest first** — engineers almost always want the session they just crashed out of, which is the most-recently-modified.
+`juce::TableListBoxModel`-backed. Columns sort on click; names sort naturally. Default sort is **modified-time, newest first** — engineers almost always want the session they just crashed out of, which is the most-recently-modified.
 
 ## Actions
 
 | Action | What it does |
 |---|---|
-| **Recover selected** | Calls `onOpen(dir)` so the host can load it; the host deletes the `recording.session` marker only after `openSessionFolder` succeeds (a failed open keeps the session listed and its error status). Closes the dialog with exit code 1. |
-| **Delete...** | Confirm-then-delete the entire session directory recursively. **Audio is lost** — the confirm dialog calls this out explicitly. Removes the row from the local model and refreshes. If the list empties, the dialog closes itself. |
+| **Recover selected** | Calls `onOpen(dir)` so the host can load it; the host deletes the `recording.session` marker only after `openSessionFolder` succeeds and the session state saves (a failed open or save keeps the session listed with its own status). Closes the dialog with exit code 1. |
+| **Delete...** | Confirm, then call `onRemove(dir)`. The host asks again whether a take may be writing there and refuses if so; otherwise it deletes the session directory. **Audio is lost** — the confirm dialog calls this out explicitly. A refusal shows a "Delete failed" alert with the reason and keeps the row. On success the row leaves the local model and the table refreshes; if the list empties, the dialog closes itself. With no `onRemove`, a confirmed Delete does nothing. |
 | **Skip** | Closes with exit code 0. Orphans stay on disk; they reappear in the dialog on next launch. |
 
 ## Tokens used
 
-- **Colours**: `brand::accentStatus` (Recover button accent), `brand::accentRecord` (Delete button + size column for empty dirs), `brand::bgPanel` (table background), `brand::controlBgHover` (selected row), `brand::textPrimary` / `textSecondary` / `textMuted` for cells
-- **Typography**: `brand::type::caption()` for the help text, `brand::fonts::body()` for cells (via the deprecated alias — TODO: migrate to `brand::type::uiBody()`)
-- **Spacing**: `brand::space::md` outer padding
+- **Colours**: `dialog::stylePrimary` (`selectFill`) on Recover, `brand::accentRecord` at 18 % alpha with `brand::textDanger` text on Delete, `brand::bgElevated` / `textPrimary` on Skip, `brand::accentRecord` for the size of an empty folder, `brand::bgPanel` (table background), `brand::controlBgHover` (selected row), `brand::textPrimary` for cells and `textTertiary` for a zero track count, `brand::textSecondary` for the help text, `brand::bgDeep` window background
+- **Typography**: `brand::type::caption()` for the help text, `brand::type::uiBody()` for cells
+- **Spacing**: 12 px body inset, 6 px under the help text, 8 px between footer buttons (literals); header 22 px, rows 24 px
 - **Chrome**: `dialog::paintChrome (g, host, "SESSION RECOVERY")` — same orange title stripe + flat solid body as every other dialog
 
 ## States

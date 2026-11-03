@@ -10,7 +10,7 @@ namespace zynforge
     //   |◀  go to start
     //   ▶|  go to end
     //   ▶   play / pause
-    //   ■   stop (hard -- kills both recording and playback)
+    //   ■   stop (a live take needs a second tap within 2 s)
     //   ●   record toggle
     //   ⟲   loop region toggle
     class TransportBar final : public juce::Component,

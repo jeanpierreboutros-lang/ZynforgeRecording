@@ -1127,7 +1127,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## JUCE 8 via FetchContent, not a vendored submodule — 2026-04-20
 
-**Status:** Accepted
+**Status:** Accepted. The version is superseded by *JUCE 8.0.17-security, not JUCE 9 — 2026-11-03*; FetchContent pinned by commit still stands.
 **Context:** The project depends on JUCE. Two distribution options: vendored git submodule (pinned to a commit) vs CMake `FetchContent` (pinned to a tag).
 **Decision:** Pull JUCE 8.0.4 via `FetchContent_Declare` in the top-level `CMakeLists.txt`. No submodule.
 **Rationale:** FetchContent is JUCE's officially recommended path on the modern CMake project. Avoids a ~200 MB submodule in the repo. Upgrading JUCE is a single-line edit. The cost — slower first-time configure — is acceptable.

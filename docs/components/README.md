@@ -6,11 +6,12 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
-References reconciled with the `443c769` source and current headers on
-2026-10-05. This pass corrects transport fallback/STOP contracts, protocol 4,
-clock pulse cadence, clip latching, guarded session opening and mixer/FFT
-ownership. Unchanged references remain in the index. These documents describe
-implementation; they do not establish field or accessibility acceptance.
+References are kept in line with the current headers. The 2026-11-03 pass
+checked `BigClockPanel`, `DialogChrome`, `EditTimeRuler`, `EditToolsBar`,
+`LedMeter`, `MasterStrip`, `SessionRecoveryDialog`, `Toast` and `TransportBar`
+against the `875521a` source; `ChannelStrip`, `EditPage::TrackRow`, `FineFader`
+and `WelcomeDialog` were updated on 2026-11-02 and 2026-11-03. These documents
+describe implementation; they do not establish field or accessibility acceptance.
 [Testing](../../testing.md), [installation](../../INSTALL.md),
 [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md)
 own validation and operating limits.
@@ -21,10 +22,10 @@ own validation and operating limits.
 - [`MasterStrip`](MasterStrip.md) — master fader + stereo/mono toggle
 - [`FineFader`](FineFader.md) — app-wide click-drag-only level fader (channel / master)
 - [`LedMeter`](LedMeter.md) — segmented forge-heat level meter (mixer + EDIT)
-- [`DialogChrome`](DialogChrome.md) — shared dialog chrome + control-styling helpers (title badge, fields, buttons)
+- [`DialogChrome`](DialogChrome.md) — shared dialog chrome + control-styling helpers (title badge, fields, buttons, check rows)
 - [`EditToolsBar`](EditToolsBar.md) — Smart / Selector / Trim / Grabber / Fade tool palette
 - [`BigClockPanel`](BigClockPanel.md) — transport state + timer + armed-ready indicator
-- [`TransportBar`](TransportBar.md) — record / play / stop / skip buttons
+- [`TransportBar`](TransportBar.md) — start / end / play / stop / record / loop buttons
 - [`EditTimeRuler`](EditTimeRuler.md) — two-strip ruler (markers / Min:Secs)
 - [`EditPage::TrackRow`](EditPageTrackRow.md) — the per-track EDIT row with waveform and clip-edit handles
 - [`Toast`](Toast.md) — non-modal feedback pill

@@ -155,8 +155,8 @@ namespace zynforge
             {
                 auto rect = getLocalBounds().toFloat().reduced (1.0f);
 
-                // Tool selection uses brand::toolActive() (cool-teal /
-                // featureEngaged) -- picked deliberately so it doesn't
+                // Tool selection uses brand::toolActive() (selectFill,
+                // the selection colour) -- picked deliberately so it doesn't
                 // collide with the record, mute or solo colours. Replaces a previous hardcoded blue literal.
                 const auto accent = brand::toolActive();
                 if (active)

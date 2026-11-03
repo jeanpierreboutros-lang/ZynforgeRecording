@@ -43,9 +43,9 @@ namespace zynforge
     void BigClockPanel::setDiskInfo (double gb, int ms, juce::int64 mis, double remainingSec,
                                      DiskReading reading)
     {
-        // Called at the MainComponent timer rate (24 Hz). Without
+        // Called at the MainComponent timer rate (10 Hz). Without
         // change detection, the unconditional repaint here drives
-        // the BigClock to repaint 24 times a second even when the
+        // the BigClock to repaint 10 times a second even when the
         // shown numbers haven't moved a single digit. Round each
         // value to the visible precision so trivial float jitter
         // doesn't defeat the check.

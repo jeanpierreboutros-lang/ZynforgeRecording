@@ -138,7 +138,7 @@ namespace zynforge::brand
     //   stream / send  → cool-teal  (featureEngaged)
     //   record danger  → red glow   (accentRecord)
     inline juce::Colour signalMute()        { return brandOrange;  }
-    // Armed-but-not-rolling: BigClock border, future "ready" states.
+    // Armed-but-not-rolling: the BigClock's ARMED lamp.
     // Maps to engagedAmber (the BYPASS / LIVE / LOCK token) -- it's
     // semantically a 'primed but not active' colour. Keeps brandOrange
     // free for its two documented uses (signalMute + brand assertion).

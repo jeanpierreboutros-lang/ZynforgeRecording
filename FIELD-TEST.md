@@ -1,12 +1,23 @@
 # ZynForge Recording — Field-Test Checklist (updated 2026-11-03)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak, which ends only when someone presses STOP twice: nothing stops it unattended. Tick boxes only after performing them; the failure column tells you when to stop and report. The development Mac has `d4a9a57`, the Mac mini and the current DMG have `281c6c0`, all protocol 4, and `main` is ahead of both: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak, which ends only when someone presses STOP twice: nothing stops it unattended. Tick boxes only after performing them; the failure column tells you when to stop and report. The development Mac has `9a40f54`, the Mac mini and the current DMG have `281c6c0`, all protocol 4, and `main` (now on JUCE 8.0.17-security) is ahead of both: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
 **Severity legend:** 🟥 = data-loss class (stop, report immediately) · 🟧 = audio-path class (stop if reproducible) · 🟨 = UX / stage-readiness · ⬜ = cosmetic.
 
 ---
+
+## JUCE 8.0.17-security — not yet performed
+
+`main` moved from JUCE 8.0.4 to 8.0.17-security. No Mac has this build yet. The automated suite passes on it, but the framework sits under the device, files, text and network, so these checks are on the real rig. Compare against `9a40f54` on the same Mac where a step says so.
+
+- [ ] 🟨 **Text.** Open MIXER, EDIT and PATCH at the smallest window and full screen, then the alarm banner with three alarms, the EDIT ruler at deep zoom, DEVICE and Export Audio. No label is cut off or overlaps where it didn't on `9a40f54`: text is now measured with fallback fonts and shaping.
+- [ ] 🟧 **Device.** Launch with the interface chosen. It opens at the same rate and buffer as before and the rate does not change at launch. Record 10 minutes on every input, STOP, and run `tools/verify_take.sh`.
+- [ ] 🟥 **Older sessions.** Open a session recorded on `281c6c0` or `9a40f54`, with WAV, AIFF and FLAC takes. All play from start to end, and one export matches the same export from the older build.
+- [ ] 🟧 **Files from elsewhere.** Import a WAV and an AIFF written by other software, one of them carrying markers or loop metadata. Both import and play.
+- [ ] 🟧 **Desk and remotes.** On an X32 / M32: names, Scene Follow, a desk macro and a remote RECORD all behave as on `9a40f54`. On the MIDI control surface, faders and banks.
+- [ ] 🟨 **Quit.** A normal quit leaves no crash report and the interface is not wedged on the next launch. macOS asks for the microphone once after the install.
 
 ## 2026-11-03 fix round — not yet performed
 

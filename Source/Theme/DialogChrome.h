@@ -17,8 +17,8 @@ namespace zynforge::dialog
     inline constexpr int btnSecond  = 90;
     inline constexpr int btnH       = 28;
 
-    // Background -- vertical gradient on bgPanel, identical to what
-    // AudioDeviceDialog paints. Call this first inside paint().
+    // Background -- flat bgElevated (verticalGradient is solid). Call
+    // this first inside paint().
     inline void paintBackground (juce::Graphics& g, juce::Component& host) noexcept
     {
         auto r = host.getLocalBounds().toFloat();

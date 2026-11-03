@@ -1,10 +1,10 @@
 # Documentation index
 
-Reconciled on 2026-10-29 against source `281c6c0` and its verified
-installation. Later documentation commits do not change the installed binaries,
-and `main` is now ahead of both installed builds: see the status in the [README](../README.md).
-The development Mac has `9a40f54`, and the Mac mini and the current DMG have
-`281c6c0`, all protocol 4. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
+Reconciled on 2026-11-03 against `main` on JUCE 8.0.17-security, which no Mac
+has installed yet. Documentation commits do not change the installed binaries,
+and `main` is ahead of both installed builds: see the status in the [README](../README.md).
+The development Mac has `9a40f54` (every fix, still on JUCE 8.0.4), and the Mac
+mini and the current DMG have `281c6c0`, all protocol 4. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
 rollback. Refer to the owning documents below instead of copying
 package hashes, test counts or acceptance claims into new guides.
 

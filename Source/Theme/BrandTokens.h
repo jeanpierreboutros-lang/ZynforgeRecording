@@ -28,7 +28,7 @@ namespace zynforge::brand
         // Hold for a one-shot clip indicator (PEAK tally bar, etc.)
         // after the last clip event.
         inline constexpr int  clipLatchMs   = forge::motion_clipLatchMs;
-        // Rate at which the BigClock pulses while recording / waiting.
+        // Rate at which the BigClock pulses while a take is rolling.
         inline constexpr float pulseHz      = forge::motion_pulseHz;
         // Cross-strip soft-takeover ramp on cue recall. Seconds, not
         // milliseconds, because the audio thread integrates per-sample.

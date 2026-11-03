@@ -9,13 +9,13 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 ## Current baseline and owned STOP/persistence work
 
 The Mac mini and the current DMG run `281c6c0` with its matching protocol-v4
-helper (installed 2026-10-29); the development Mac runs `d4a9a57`, also protocol 4. Release, TSan and ASan/UBSan/float-cast-overflow
-each pass 689 groups at `281c6c0` with zero failures and no sanitizer reports; interactive and
+helper (installed 2026-10-29); the development Mac runs `9a40f54`, also protocol 4. Release, TSan and ASan/UBSan/float-cast-overflow
+each pass 689 groups at `281c6c0` and 1586 at `9a40f54`, with zero failures and no sanitizer reports; interactive and
 physical capture acceptance remains open. [INSTALL.md](INSTALL.md) owns package
 identities; [the follow-up register](docs/history/REVIEW-REPAIRS-2026-10-05.md) and
 [earlier S6 audit](docs/history/AUDIT-2026-10-05.md) retain separate evidence.
-`main` is ahead of both builds; this document describes `main`, and
-[testing.md](testing.md) holds its results.
+`main` is ahead of both builds and is on JUCE 8.0.17-security, which neither has; this
+document describes `main`, and [testing.md](testing.md) holds its results.
 
 A local STOP crosses the recorder's capture boundary once, publishes recording=false and retains a finalization lease. `AudioEngine::stopRecordingAsync` owns the worker that drains queues, closes writers, splices punches, starts integrity reporting and prepares playback readers. Only the message thread installs prepared player/clip state, including refreshed explicit-source readers after a punch; edited clip state survives but stale source descriptors do not. The owned job retires old readers off that thread before invoking its completion. Deferred device configuration waits for the same ownership boundary. Repeated STOP/start/structural mutation cannot reuse finalizing writer state. The synchronous engine entry remains for legacy callers. A daemon STOP has its own owned thread (`CaptureSupervisor::stopRecordingAsync`) and loads its media on the same worker (`AudioEngine::finishExternalTakeAsync`), through `endDaemonTake`.
 
@@ -27,10 +27,12 @@ Snapshot retention uses chronological timestamp/numeric sequence ordering, recog
 
 ## 2. Technology Stack
 
-Validation uses macOS 26.6.2 / arm64, Xcode 27.0 / Apple Clang 21 and
-CMake 4.3.2. Both Release architecture slices build; execution and sanitizer
-results are arm64. JUCE is pinned by commit in CMake; its existing FLAC patch is
-applied during configuration. Historical field takes used earlier source.
+Validation uses macOS 26.6.2 on an Apple M1 Pro, Xcode 27.2 (macOS SDK 27.2) /
+Apple Clang 21 and CMake 4.3.2; CI builds and tests on GitHub's macOS 15 runner.
+Both Release architecture slices build; execution and sanitizer results are
+arm64. Nothing has run on macOS 27 or on an Intel Mac. JUCE is pinned by commit
+in CMake; its FLAC patch is still needed on 8.0.17-security and is applied during
+configuration. Historical field takes used earlier source.
 [testing.md](testing.md) records commands and limitations.
 
 | Component | Version / Notes |

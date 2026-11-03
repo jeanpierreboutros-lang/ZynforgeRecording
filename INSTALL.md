@@ -2,7 +2,7 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-`main` has since moved to JUCE 8.0.17-security. That build is not installed: the installed app was open with unsaved changes when it was ready.
+`main` has since moved to JUCE 8.0.17-security (from `f9467d3`). No Mac has it: the installed app was open with an unsaved session when the build was ready, so it was left alone. Install it only after that session is saved or closed and the app has quit.
 
 ## Development Mac update — 2026-11-03, the fix round
 
@@ -104,9 +104,10 @@ protocol-4 capture helper at `/Applications/Zynforge Recording.app`.
 
 ## Previous two-Mac installation and cleanup — 2026-10-05
 
-Both Macs now have source build `443c769` and its matching protocol-4 capture
-helper at `/Applications/Zynforge Recording.app`. The mini is currently at
-`192.168.68.81`; its SSH host key matches its previously trusted address.
+Historical: this describes the state on 2026-10-05. At that installation both
+Macs had source build `443c769` and its matching protocol-4 capture helper at
+`/Applications/Zynforge Recording.app`. The mini was then at `192.168.68.81`; its
+SSH host key matched its previously trusted address.
 The development installation already matched the latest tested build exactly;
 the mini was upgraded from `c563b00`. Later commits changed documentation only.
 
@@ -118,9 +119,9 @@ nor helper was running during replacement/cleanup. Mini settings hashes were
 unchanged during installation. Recordings, sessions, source and other ZynForge
 products were excluded from cleanup.
 
-The current [universal DMG](dist/Zynforge-Recording-443c769-macOS-universal.dmg)
-and [checksum](dist/Zynforge-Recording-443c769-macOS-universal.dmg.sha256) are in
-`dist/` and the mini's `~/Downloads/`. DMG SHA-256:
+That installation's universal DMG `Zynforge-Recording-443c769-macOS-universal.dmg`
+and its checksum were in `dist/` and the mini's `~/Downloads/`; they are no longer
+in `dist/`. DMG SHA-256:
 `01d61b56213a196fec40115ba886cc0729cb387f02f9807d1408e34f5d8fc2be`.
 Image verification passed on both Macs; the read-only mounted app matched the
 installed development bundle exactly and passed signature verification.
@@ -137,8 +138,9 @@ Mac (four app bundles and one ZIP); the mini had only current staging copies.
 The current Release
 and current sanitizer test builds remain available. Scans of Applications and
 the user's Applications, Desktop, Downloads, Documents and Zynforge-App-Backups
-found no superseded Recording packages remaining. **No old app rollback bundle
-is retained.** Historical backup paths below are no longer available.
+found no superseded Recording packages remaining. No old app rollback bundle was
+retained then; the bundles kept since 2026-10-29 are listed under *Rollback*.
+Historical backup paths below are no longer available.
 
 Both installed apps were launched with normal settings and remained running at
 the 40-second observation, with no new crash reports. The mini's subsequent
@@ -288,6 +290,16 @@ Not run yet: it needs the owner's Developer ID. Local installs above stay ad-hoc
 
 ## Rollback
 
-The October 5 two-Mac cleanup removed all inventoried older app bundles at the user's request. There is currently no local old-version rollback copy. Since 2026-10-29 each Mac keeps its `443c769` bundle as `/Applications/Zynforge Recording.app.backup-20261029-*-before-281c6c0`, and the development Mac also keeps `281c6c0` as `/Applications/Zynforge Recording.app.backup-20261102-094838-before-fffab44`; earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.
+The October 5 two-Mac cleanup removed every app bundle older than `443c769` at the user's request. Since then each install has kept the build it replaced:
+
+| Mac | Build | Path in `/Applications/` |
+| --- | --- | --- |
+| Development | `443c769` | `Zynforge Recording.app.backup-20261029-220944-before-281c6c0` |
+| Development | `281c6c0` | `Zynforge Recording.app.backup-20261102-094838-before-fffab44` |
+| Development | `fffab44` | `Zynforge Recording.app.backup-20261102-134207-before-d4a9a57` |
+| Development | `d4a9a57` | `Zynforge Recording.app.backup-20261103-032331-before-9a40f54` |
+| Mac mini | `443c769` | `Zynforge Recording.app.backup-20261029-221655-before-281c6c0` |
+
+The development Mac's list was checked on 2026-11-03; the mini's is from its installation record. Earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.

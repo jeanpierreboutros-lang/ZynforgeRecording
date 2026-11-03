@@ -1,11 +1,5 @@
 # Changelog
 
-## 2026-10-04 — STOP and save disk contention
-
-- Bound post-stop integrity scans to one background reader with cooperative disk yields; abandon superseded scans between reads.
-- Lower waveform scan priority so post-stop reads yield to saves, playback and capture.
-- Universal Release build, 440 passing test groups, both audit gates, strict signatures and affected-session UI/save smoke. Add hash equivalence and mid-file cancellation regressions. Diagnosed from a live stack sample on the development Mac's external ExFAT session drive.
-
 All notable user-facing changes to ZynForge Recording are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning targets [Semantic Versioning](https://semver.org/spec/v2.0.0.html), though the project is pre-1.0 and minor / patch boundaries are pragmatic.
@@ -25,7 +19,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Changed — framework
 
-- Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27.
+- Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27, and in no installed build.
+- THIRD-PARTY-NOTICES lists the HarfBuzz (10.1.0) and zlib copyright this JUCE carries.
 
 Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03, after `d4a9a57`. It is in `9a40f54` on the development Mac, not in the Mac mini's `281c6c0`, and none of it has been tried on real hardware.
 
@@ -641,6 +636,12 @@ Everything from here down to *Added — console and virtual soundcheck* came in 
 - Generate capabilities from OS entropy, redact OSC secrets and authenticate capture transport with protocol 4. Upgrade the GUI/helper together; recorded audio/project formats are unchanged.
 - Batch shared preference reloads/writes when clearing strips and remove both current and legacy persisted send fields. A deterministic red measured 1,537 full-reset reloads, 61 for ten slots and 36 surviving send fields; S4 targeted Release passes four groups with reset/range/growth reloads 5/5/10 and no surviving tested send fields.
 - Frozen S6 passed full optimized Release, TSan and ASan/UBSan/float-cast-overflow: 519 groups each, zero failures, no emitted sanitizer reports. Builds, signatures, static gates and final no-device TERM/INT probes pass. Final bounded disk-full tests pass (5/0). At that checkpoint the verified S6 protocol-4 GUI/helper pair was installed and left closed, with its prior bundle retained. Its normal startup smoke was consent-gated by macOS microphone permission; physical long-take acceptance remains pending. The Apple leak comparison retains nonzero framework cycles. See [the evidence register](docs/history/AUDIT-2026-10-05.md).
+
+### Fixed — 2026-10-04, STOP and save disk contention (`55d62eb`)
+
+- Bound post-stop integrity scans to one background reader with cooperative disk yields; abandon superseded scans between reads.
+- Lower waveform scan priority so post-stop reads yield to saves, playback and capture.
+- Universal Release build, 440 passing test groups, both audit gates, strict signatures and affected-session UI/save smoke. Add hash equivalence and mid-file cancellation regressions. Diagnosed from a live stack sample on the development Mac's external ExFAT session drive.
 
 ### Installed and cleaned up — 2026-10-04
 

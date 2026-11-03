@@ -1,5 +1,25 @@
 # Project Tasks
 
+## JUCE 8.0.17-security — 2026-11-03
+
+`main` moved from JUCE 8.0.4 to 8.0.17-security, pinned by commit (ADR at the top of [decisions.md](decisions.md), results in [testing.md](testing.md)). No Mac has it yet.
+
+- [x] Pin 8.0.17-security; measure text with `GlyphArrangement::getStringWidth`; update the test audio format and the JSON depth-guard test for the new framework.
+- [x] Release and ASan/UBSan 1586 / 0; the LOCK menu test fixed after a TSan run; CI green.
+- [ ] Repeat the full TSan run after the LOCK menu test fix. Only *Main window guards* was rerun under TSan.
+- [ ] Owner: save or close the open session and quit the app, then install `main` and run *JUCE 8.0.17-security* in [FIELD-TEST.md](FIELD-TEST.md). Expect the microphone prompt once.
+- [ ] Owner: try the app on macOS 27 on a spare Apple-silicon Mac before any show Mac moves to it.
+- [ ] Move the writers from the deprecated `createWriterFor` overloads to `AudioFormatWriterOptions`. They work and only warn; it touches the capture path, so it gets its own careful pass.
+- [ ] libpng inside JUCE is still 1.6.37. It moves only with a JUCE release.
+- [ ] JUCE 9: not taken. Check its licence terms before considering it.
+
+## Found while reconciling the docs — 2026-11-03
+
+Read in the source, not run or fixed.
+
+- [ ] `SessionRecoveryDialog` first sorts by Size (`sortIndicesBy (3, false)`) while its header shows Modified (`setSortColumnId (4, false)`). The header's sort callback puts the rows right a moment later, so it only shows as a flicker, if at all.
+- [ ] `EditTimeRuler` paints with `timelineRate()` (the session rate when idle), but `mouseDoubleClick` maps with the player's rate and a 48 kHz fallback. With no session loaded on a device at another rate, a double-click to rename can miss the flag it is drawn on. `pixelToSample` is unused and `setHeaderWidth` has no caller.
+
 ## Fix round after `d4a9a57` — 2026-11-03
 
 A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. It is in the development Mac's `9a40f54`, not on the mini, and none of it has run on real hardware.
@@ -56,7 +76,7 @@ Everything below landed on `main` on 2026-11-01. It is in the development Mac's 
 - [ ] Owner: check Yamaha SCP scene notifications on a CL/QL/RIVAGE. Whether a desk pushes them unasked is UNVERIFIED.
 - [ ] Decide: removing every strip from a saved session is refused, to keep the zero-strip rule without exceptions (see the ADR). Owner review welcome.
 - [ ] Time a real multitrack conversion export on the show Mac. The roughly 18 minutes for a 3-hour 56-channel file set was measured under load.
-- [ ] Help text (`MainComponentHelp.cpp`) does not yet mention the *Replace audio?* question at a stopped cursor.
+- [x] Help text (`MainComponentHelp.cpp`) covers the *Replace audio?* question at a stopped cursor (`23d066e`).
 
 ## Market moves — 2026-11-01
 
@@ -92,7 +112,7 @@ Seven read-only reviewers covered capture, the real-time engine, editing/renders
 - [x] Editing: range edits split every crossing clip; **split inside a fade is exact** (user decision: clip fade-ramp fields); paste undo; strips above the last Track_NN; analysis main-take filter; CSV import; trims, Strip Silence, handoff CSV, Tab-to-transient.
 - [x] Session and main window: undo cleared on New Session; analysis refused during a take; crash recovery after daemon reattach; export stale indices; layout saves during jobs; stereo link/strip delete/patch/VCA/LOCK/DEVICE fixes; Welcome recents.
 - [x] Closed as not reproducible: the AppleDouble `._X.zfproj` lookup (macOS hides those files from directory listings; filter kept as defence in depth).
-- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)). The development Mac moved to `fffab44` on 2026-11-02.
+- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)). The development Mac moved to `fffab44` on 2026-11-02, then `d4a9a57`, then `9a40f54` on 2026-11-03.
 - [ ] Physical checks on the installed build: see the October bug-hunt section in [FIELD-TEST.md](FIELD-TEST.md). Not launched on the mini yet.
 
 ## Handover back to Claude Code + structural-debt pass — 2026-10-29

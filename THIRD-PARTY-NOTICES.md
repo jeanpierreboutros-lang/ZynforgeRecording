@@ -14,7 +14,7 @@ each under its own licence. This file travels with every distributed build.
 | libjpeg (Independent JPEG Group) | 6b | IJG licence | inside JUCE |
 | libpng | 1.6.37 | libpng licence | inside JUCE |
 | zlib | 1.3.1 | zlib licence | inside JUCE |
-| HarfBuzz | 9.0.0 | Old MIT | inside JUCE |
+| HarfBuzz | 10.1.0 | Old MIT | inside JUCE |
 | SheenBidi | as vendored by JUCE 8.0.17 | Apache-2.0 | inside JUCE |
 | JetBrains Mono (Regular, Bold) | 2.305 | SIL Open Font License 1.1 | `Source/Theme/Fonts/` |
 
@@ -287,7 +287,7 @@ be appreciated.
 ### zlib
 
 ```text
-Copyright (C) 1995-2005 Jean-loup Gailly and Mark Adler
+Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
 
 This software is provided 'as-is', without any express or implied
 warranty.  In no event will the authors be held liable for any damages

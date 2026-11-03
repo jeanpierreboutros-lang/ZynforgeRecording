@@ -1,29 +1,29 @@
 # EditToolsBar
 
-`Source/UI/EditToolsBar.h` — edit-mode tool palette at the top of the EDIT view. Timeline and waveform zoom live on the EDIT view edge, not in this toolbar.
+`Source/UI/EditToolsBar.h` — edit-mode tool palette shown in the EDIT view's clock row. Header-only. Timeline and waveform zoom live on the EDIT view edge, not in this toolbar.
 
 ## Description
 
-A horizontal row of five tool-selection buttons with vector-painted glyphs and captions. The active tool biases hit-testing in `EditPage::TrackRow::mouseDown` — e.g. Selector treats clicks as range drags, Trim biases clip-edge zones, Grabber biases clip-body movement.
+A horizontal row of five tool-selection buttons with vector-painted glyphs and captions. The active tool biases hit-testing in `EditPage::TrackRow::mouseDown` — Selector places the playhead on a click and selects a range on a drag, Trim trims from the nearer edge on a body drag, Grabber always moves the clip body, Fade shows drag squares on each clip's top edge and opens the fade menu on a body click.
 
 ## When to use
 
-One instance per `EditPage`, owned by EditPage but laid out by MainComponent on its own 28 px row.
+One instance per `EditPage`, owned by EditPage but re-parented onto MainComponent, which lays it out 330 px wide (`kEditToolsW`) at the right of the clock row, between the big clock and the status panel. It is visible only in the EDIT view.
 
 ## Tool enum
 
 ```cpp
-enum class Tool {
-    None,        // no forced tool; automatic hit-testing
-    Smart,       // explicit Smart mode
-    Selector,    // Drag a range
-    Trim,        // Edge drag = trim, body click = no-op
-    Grabber,     // Body drag = move
-    Fade         // Click a clip = fade dialog
+enum class Tool : int {
+    None = -1,   // no forced tool; automatic hit-testing
+    Smart = 0,   // explicit Smart mode: edges trim, top edge = fade handle, body moves
+    Selector,    // click = playhead, drag = range (caption "Range")
+    Trim,        // body drag trims from the nearer edge
+    Grabber,     // body drag always moves (caption "Move")
+    Fade         // drag a top-edge square = fade; body click = fade menu
 };
 ```
 
-`None` is the default. Clicking an active tool again returns to `None`; Smart is an explicit selectable tool.
+`None` is the default. Clicking an active tool again returns to `None`; Smart is an explicit selectable tool. The host's single-letter keys (EDIT view, no modifier) select a tool without toggling: `S` Smart, `R` Range, `T` Trim, `G` Move, `F` Fade.
 
 ## API
 
@@ -34,26 +34,28 @@ std::function<void(Tool)>  onToolChanged;
 void setTool (Tool t);
 ```
 
-The bar owns the tool radio-group state. `EditPage` owns timeline/waveform zoom and the FOLLOW control.
+The bar owns the tool radio-group state. `setTool` is a no-op when the tool is unchanged; otherwise it updates the buttons and fires `onToolChanged`. `EditPage` owns timeline/waveform zoom and the FOLLOW control.
 
 ## Layout
 
 ```
 ┌─ Smart ─ Range ─ Trim ─ Move ─ Fade ─┐
-│ pointer  I-beam   ◀▶    hand     /\  │
+│ pointer  I-beam   |><|   hand    ◢   │
 └──────────────────────────────────────┘
 ```
 
-Tool buttons use `brand::toolActive()` (cool-teal `featureEngaged`) as the active accent — deliberately chosen so the tool selection doesn't collide with any signalRecord / signalMute / signalSolo claim. Replaces a previous hardcoded blue literal.
+Each button is 58 px wide with a 6 px gap, glyph above a short caption. The bar is a `bgPanel` plate with an `edge` outline, inset by `space::sm` / `space::xs`.
+
+Tool buttons use `brand::toolActive()` as the active accent. It maps to `selectFill`, the muted ember used for every selection, so the tool selection doesn't collide with any signalRecord / signalMute / signalSolo claim.
 
 ## States
 
 | State | Visual | Behaviour |
 |---|---|---|
-| Inactive | Bg `bgPanel`, glyph `textSecondary` | Click to select; radio group ensures one active |
+| Inactive | Bg `bgPanel`, `edge` outline, glyph `textSecondary`, caption `textTertiary` | Click to select; radio group ensures one active |
 | Hovered | Bg `controlBgHover` | `mouseEnter` flag set; reverts on `mouseExit` |
-| Active | Solid `toolActive()` fill, glyph via `onSignal(toolActive())` | Other tools deselect |
-| Disabled | Inherited disabled appearance | Host disables the tools under session LOCK. Recording independently refuses edit mutations while keeping navigation available |
+| Active | Solid `toolActive()` fill, `lift(toolActive(), 0.30)` outline, glyph + caption via `onSignal(toolActive())`; tooltip gains `-- ACTIVE` | Other tools deselect |
+| Disabled | No separate disabled paint | Host disables the bar under session LOCK. Recording independently refuses edit mutations while keeping navigation available |
 
 ## Zoom and live navigation (owned by EditPage)
 
@@ -61,10 +63,10 @@ The EDIT view overlays `H+ / H-` for reciprocal timeline zoom, `V+ / V-` for wav
 
 ## Tokens used
 
-- **Colours**: `brand::toolActive()` (active tool, = `featureEngaged`), `brand::bgPanel` / `controlBgHover` / `controlBg` for bg states, `brand::textSecondary` for inactive glyph, `brand::onSignal(toolActive())` for active glyph, `brand::edge` for button outlines
-- **Typography**: captions use the theme's UI text tokens
-- **Radius**: `brand::radius::md` on each button
-- **Spacing**: `brand::space::sm` between buttons; `brand::space::md` between tool block and zoom block
+- **Colours**: `brand::toolActive()` (active tool, = `selectFill`) with a `lift(…, 0.30)` outline, `brand::bgPanel` / `controlBgHover` for bar and button bg states, `brand::textSecondary` / `textTertiary` for inactive glyph / caption, `brand::onSignal(toolActive())` for active glyph + caption, `brand::edge` for bar and button outlines
+- **Typography**: `brand::type::label()` for captions
+- **Radius**: `brand::radius::md` on each button, `brand::radius::lg` on the bar
+- **Spacing**: `brand::space::sm` / `space::xs` bar inset; 6 px literal gap between buttons
 
 ## Do's and Don'ts
 
@@ -76,5 +78,6 @@ The EDIT view overlays `H+ / H-` for reciprocal timeline zoom, `V+ / V-` for wav
 
 ## Accessibility
 
-- Each button has a spoken title, description and press action, plus a tooltip describing its behaviour.
+- The bar is a focus container titled "Edit tools".
+- Each button has a spoken title, description and press action, plus a tooltip describing its behaviour, and takes keyboard focus.
 - Return and Space activate a focused tool button; tool shortcuts are handled by the host.

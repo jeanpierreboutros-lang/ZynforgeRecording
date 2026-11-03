@@ -14,7 +14,7 @@ namespace zynforge
 {
     // Surfaces every `recording.session` orphan the engine found at
     // launch as a sortable table. Each row shows the session's name,
-    // total size on disk, last modified date, and Track_NN.wav count
+    // total size on disk, last modified date, and track-file count
     // so the engineer can see at a glance which orphan is worth
     // recovering before opening it. Recover loads the session and
     // clears the marker; Delete removes the session directory (with

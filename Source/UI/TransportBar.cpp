@@ -24,8 +24,8 @@ namespace zynforge
 
         void paintButton (juce::Graphics& g, bool over, bool down) override
         {
-            // Square button body -- gradient fill, 1px border. Matches the
-            // ZynForge Live transport button finish.
+            // Square button body -- flat solid fill (verticalGradient is
+            // solid), 1px border.
             auto r = getLocalBounds().toFloat().reduced (2.0f);
             const float rad = 9.0f;   // mock: softly rounded square tiles
 
