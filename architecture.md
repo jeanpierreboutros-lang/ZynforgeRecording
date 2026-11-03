@@ -319,6 +319,7 @@ Edited tracks, Stereo mix (both reached from File ▸ Export ▸ Export Audio) a
 2. Engine arms a soft-takeover ramp per strip (`rampSamplesRemaining`).
 3. Audio thread's `tickRamps(numSamples)` advances `gainDb` / `pan` toward the cue's captured values block-by-block.
 4. Strip identity is resolved by `stripId` (UUID), not array index — survives a reorder.
+5. A cue holds the show patch (`vsc::showOutput`). During VSC `vsc::recallOutput` writes a recalled output to the saved patch and leaves the strip on its input's channel.
 
 ### Session persistence
 - Per-session (authoritative): `session_mix.json` carries the full per-strip mixer state — name, colour, gain, pan, mute/solo/monitor/arm, routing, stereo, edit group, output mute, stream send and the capture gain reference — plus the chase start and stream output pair. `.zfproj` carries setlist, cues (with strip UUIDs), playlists (Takes), media lengths, UI layout, and `formatVersion`. `markers.json` carries markers.

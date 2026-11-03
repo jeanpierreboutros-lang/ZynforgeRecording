@@ -132,7 +132,7 @@ None of this has been tried on real hardware. These fixes are in the development
 ### Punch safety (needs the real app and a disposable session)
 
 - [ ] With a take recorded, click Loop on and off, stop, press RECORD. RECORD must append (status says a new part), the transport must not roll, and the old take must be intact on primary, backup and mirror.
-- [ ] Open a session saved by the installed build after Loop was used. No range may be drawn on the ruler, and RECORD must append.
+- [ ] Open a session saved by `281c6c0` after Loop was used. No range may be drawn on the ruler, and RECORD must append.
 - [ ] Select a range, RECORD, let the punch finish, press RECORD again. The second press must append; the range stays drawn.
 - [ ] Place an EDIT cursor inside a take with the transport stopped and press RECORD. *Replace audio?* must appear. Return appends and clears the cursor. Replace From Cursor punches. Esc leaves everything as it was.
 - [ ] With that question open, start playback from a remote, then answer. Nothing may record, and the banner must ask for RECORD again.
@@ -161,7 +161,7 @@ Force-killing can wedge an audio device, so keep a recovery plan and stop if the
 - [ ] **Sleeping backup.** Let a USB hard drive spin down, then press RECORD. Expect the take to start at once on the primary, the backup to catch up in step, and silence with a named report line only if it took longer than its buffer lasts.
 - [ ] **Punch through a stall.** Stall the primary for over 6 s during a punch on a disposable take. Expect the original to stay on every copy, the punch audio in `Session File Backups/Unspliced Punch`, and the banner and report to say so.
 - [ ] **Dying drive at STOP.** Yank a USB backup during finalization. The primary must finish and the report must flag the backup.
-- [ ] **AIFF crash.** Record AIFF 24 for 10 minutes on the real rig, power-cut the Mac, reopen. Expect a whole take less at most the last 5 s, and on a drive with power-loss protection nothing missing. Check a take from the installed build the same way.
+- [ ] **AIFF crash.** Record AIFF 24 for 10 minutes on the real rig, power-cut the Mac, reopen. Expect a whole take less at most the last 5 s, and on a drive with power-loss protection nothing missing. Check a take from `281c6c0` the same way.
 - [ ] **FLAC crash.** Same with FLAC 24 on 56 tracks: session open should take seconds.
 - [ ] **Daemon kill.** `kill -9` the daemon mid-take in daemon mode: the window ends the take, says so, and RECORD brings a new daemon. Quit the GUI mid-take and relaunch: it reattaches with no dialog over it.
 - [ ] **GUI crash during a daemon take.** Daemon mode on. Open a session with named strips and a cue. RECORD. Force-quit the GUI only, never the daemon. Relaunch. Expect a REATTACHED status, with strips, names, routing and cue back while the take rolls. STOP twice. Reopen the session: all still there, and the audio is complete.
@@ -178,7 +178,7 @@ Force-killing can wedge an audio device, so keep a recovery plan and stop if the
 
 ### Editing and export
 
-- [ ] Export a long session at another sample rate and note the time per track; compare the file by ear and in a DAW against the same export from the installed build. For scale, a 3-hour 56-channel file set took roughly 18 minutes under load.
+- [ ] Export a long session at another sample rate and note the time per track; compare the file by ear and in a DAW against the same export from `281c6c0`. For scale, a 3-hour 56-channel file set took roughly 18 minutes under load.
 - [ ] Run Show Handoff to an exFAT destination with Finder open on it.
 - [ ] Fill a real disk during a bounce and confirm the status reports failure and no finished file appears. Only `RLIMIT_FSIZE` proved this; a full volume has not been tried.
 

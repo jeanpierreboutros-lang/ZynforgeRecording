@@ -53,7 +53,7 @@ static void launch (const juce::File& defaultLocation,
                     OnOpenExisting onOpen);
 ```
 
-Static `launch` constructs the dialog asynchronously. `DeviceChoices` supplies available input/output devices and the current selections; empty device names in `NewResult` mean unchanged. `onCreate` fires when the engineer commits a new session; `onOpen` when they pick an existing one. `MainComponent` owns replacement confirmation and filesystem creation: a failed create leaves the current session untouched, while a configured default template is applied and saved only after the new folder exists.
+Static `launch` constructs the dialog asynchronously. `DeviceChoices` supplies available input/output devices and the current selections, and creating a session saves that pair as the chosen device (`noteChosenDevice`); empty device names in `NewResult` mean unchanged. `onCreate` fires when the engineer commits a new session; `onOpen` when they pick an existing one. `MainComponent` owns replacement confirmation and filesystem creation: a failed create leaves the current session untouched, while a configured default template is applied and saved only after the new folder exists.
 
 ## Sidebar
 
