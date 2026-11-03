@@ -147,7 +147,7 @@ namespace zynforge
             const auto font = brand::type::headline();
             const auto fits = [&font, width] (const juce::String& s)
             {
-                return font.getStringWidthFloat (typeset (s)) <= width * kWidthsPerPage;
+                return juce::GlyphArrangement::getStringWidth (font, typeset (s)) <= width * kWidthsPerPage;
             };
 
             juce::String building;

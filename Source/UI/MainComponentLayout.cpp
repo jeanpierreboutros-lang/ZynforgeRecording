@@ -79,7 +79,7 @@ void MainComponent::paint (juce::Graphics& g)
             for (int i = 0; i < s.length(); ++i)
             {
                 const auto cs = s.substring (i, i + 1);
-                const float w = f.getStringWidthFloat (cs);
+                const float w = juce::GlyphArrangement::getStringWidth (f, cs);
                 g.drawText (cs, juce::Rectangle<float> (cx, cy - f.getHeight() * 0.5f,
                                                         w + 4.0f, f.getHeight()),
                             juce::Justification::centredLeft, false);

@@ -8,7 +8,7 @@
 
 JUCE 8 / C++20 / CMake, macOS-only (Universal; no Windows or Linux port, owner decision 2026-10-31) multitrack recording + playback application with virtual soundcheck. Sibling to the ZynForge Live plugin-insert host.
 
-**Stack:** JUCE 8.0.4 (via CMake FetchContent), C++20, CMake (Xcode generator), Apple Silicon + Intel universal build, macOS 12.0 deployment target. Native macOS sans-serif UI + bundled JetBrains Mono.
+**Stack:** JUCE 8.0.17-security (via CMake FetchContent, pinned by commit), C++20, CMake (Xcode generator), Apple Silicon + Intel universal build, macOS 12.0 deployment target. Native macOS sans-serif UI + bundled JetBrains Mono.
 
 ## Workflow rules — non-negotiable
 

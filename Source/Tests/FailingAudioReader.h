@@ -57,8 +57,8 @@ public:
     bool canDoMono() override { return true; }
     juce::AudioFormatReader* createReaderFor (juce::InputStream* input, bool) override
     { return new FailingReader (evidence, input); }
-    juce::AudioFormatWriter* createWriterFor (juce::OutputStream*, double, unsigned int,
-                                             int, const juce::StringPairArray&, int) override
+    std::unique_ptr<juce::AudioFormatWriter> createWriterFor (std::unique_ptr<juce::OutputStream>&,
+                                                              const juce::AudioFormatWriterOptions&) override
     { return nullptr; }
 
 private:

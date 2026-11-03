@@ -387,7 +387,7 @@ namespace zynforge
                     const auto label = formatTime ((double) headSample / sr,
                                                    pxPerSec > 120.0 ? 1 : 0);
                     g.setFont (brand::type::mono (brand::type::h_caption, true));
-                    const int bw = juce::jmax (38, g.getCurrentFont().getStringWidth (label) + 10);
+                    const int bw = juce::jmax (38, juce::roundToInt (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), label)) + 10);
                     const int bh = juce::jmin (14, rulerH - 2);
                     int bx = px + 2;
                     if (bx + bw > getWidth()) bx = px - bw - 2;   // flip to the left near the edge

@@ -47,7 +47,7 @@ cmake --build build --config Release
 open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 ```
 
-First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel).
+First configure fetches JUCE 8.0.17-security via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel).
 
 For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contains both the GUI and matching `ZynforgeCapture` executable under `Contents/MacOS`. Stop all takes and quit both processes before replacement. Both Macs and the current DMG use protocol **4**, adding mutual authentication after a compatible Hello; always upgrade the matching GUI/helper together. No command is accepted before its required handshake completes.
 

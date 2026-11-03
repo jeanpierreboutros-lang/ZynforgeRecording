@@ -36,7 +36,7 @@ applied during configuration. Historical field takes used earlier source.
 | Component | Version / Notes |
 |---|---|
 | Language | C++20 |
-| Framework | JUCE 8.0.4 (pulled via CMake `FetchContent` on first configure) |
+| Framework | JUCE 8.0.17-security (pulled via CMake `FetchContent` on first configure) |
 | Build system | CMake 3.22+, Xcode generator on macOS |
 | Platforms | macOS 12.0+, Universal (arm64 + x86_64) |
 | Audio backend | CoreAudio via `juce::AudioDeviceManager` |

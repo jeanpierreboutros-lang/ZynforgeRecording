@@ -1,6 +1,17 @@
 # Decisions Log
 
 
+
+## JUCE 8.0.17-security, not JUCE 9 — 2026-11-03
+
+**Context.** The app was on JUCE 8.0.4, from before macOS 26. The owner asked whether it is current for the newest macOS and hardware. JUCE 8.0.9 added building against the macOS 26 SDK, 8.0.11 more macOS 26 fixes, and 8.0.16 and 8.0.17 are security releases. JUCE 9 is out.
+
+**Decision:** Move to 8.0.17-security, pinned by commit, and stay on JUCE 8. Its security fixes reach this app directly: a crash reading WAV and AIFF files with malformed channel counts, hardened WAV and AIFF metadata parsing, nesting limits on received OSC bundles and parsed JSON, and malformed UTF-8 decoded as itself. The licence and the APIs the app uses stay the same. `Font::getStringWidth` went in 8.0.13, so text is measured with `GlyphArrangement::getStringWidth`, which accounts for fallback fonts and shaping.
+
+**Consequences.** The writers still use the `createWriterFor` overloads JUCE 8.0.9 deprecated: they behave as before and only warn. Moving the capture path to `AudioFormatWriterOptions` is a separate change, to be made with care. A malformed UTF-8 byte between JSON tokens no longer reads as a space, so the depth-guard test runs its coverage on well-formed gaps and checks the guard against malformed ones separately. Nothing here has been tried on macOS 27.
+
+**Alternatives considered:** JUCE 9 (a major version: more change than the macOS question needs, and its licence terms would need checking first). Staying on 8.0.4 (misses the security fixes above).
+
 ## RECORD compares device identity, and asks — 2026-11-02
 
 **Status:** Accepted.

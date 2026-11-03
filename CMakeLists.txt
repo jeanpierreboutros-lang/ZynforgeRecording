@@ -23,9 +23,9 @@ include(FetchContent)
 FetchContent_Declare(
     JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-    # Immutable commit for JUCE 8.0.4. A mutable release tag lets an upstream
-    # retag silently replace code in a clean build.
-    GIT_TAG        51d11a2be6d5c97ccf12b4e5e827006e19f0555a
+    # Immutable commit for JUCE 8.0.17-security. A mutable release tag lets an
+    # upstream retag silently replace code in a clean build.
+    GIT_TAG        dabd5ad13cd869cba41046947fffc8e5ce5cd662
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(JUCE)

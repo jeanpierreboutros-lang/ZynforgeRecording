@@ -5,7 +5,7 @@ Nothing here has been bought, signed or accepted for the owner.
 
 ## JUCE licence
 
-The app is built on JUCE 8.0.4, which is dual-licensed: AGPLv3 or the commercial JUCE 8 licence.
+The app is built on JUCE 8.0.17-security, which is dual-licensed: AGPLv3 or the commercial JUCE 8 licence.
 Sources: <https://juce.com/legal/juce-8-licence/> (EULA, last amended 17 July 2025) and
 <https://juce.com/get-juce/>.
 
@@ -44,5 +44,5 @@ IJG licence requires the sentence "this software is based in part on the work of
 
 ## Worth a look
 
-- JUCE 8.0.4 vendors zlib 1.2.3 (2005) and libpng 1.6.37. Both predate published CVEs. They are only reached by this app's own PNG and gzip use, but a JUCE update is the way to move them.
+- JUCE 8.0.17-security vendors zlib 1.3.1 and libpng 1.6.37. The libpng predates published CVEs. It is only reached by this app's own PNG use, and a JUCE update is the way to move it.
 - The app does not call `F_FULLFSYNC`. It goes through JUCE `FileOutputStream::flush`, which is plain `fsync`, and on macOS that does not force the drive's cache to the platter or flash. A power cut can therefore lose what `fsync` reported as written. This is an owner decision; nothing was changed.

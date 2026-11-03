@@ -107,15 +107,26 @@ namespace zynforge
             "\xF0\x80\xA0\"",
         };
 
+        // The same gaps without the malformed bytes. Since JUCE 8.0.16 a malformed
+        // sequence decodes as itself rather than as a space, so a document with
+        // one no longer parses, and the floors below need documents that do.
+        const char* const kPlainGaps[] = { "", "", "", " ", "\n", "\t", "\r\n" };
+        bool plainGaps { false };
+
         template <size_t N>
         const char* pick (juce::Random& random, const char* const (&options)[N])
         {
             return options[(size_t) random.nextInt ((int) N)];
         }
 
+        const char* gap (juce::Random& random)
+        {
+            return plainGaps ? pick (random, kPlainGaps) : pick (random, kGaps);
+        }
+
         void addValue (std::string& out, juce::Random& random, int levels)
         {
-            out += pick (random, kGaps);
+            out += gap (random);
             if (levels <= 0 || random.nextInt (12) == 0) { out += pick (random, kValues); return; }
 
             const bool array = random.nextBool();
@@ -125,11 +136,11 @@ namespace zynforge
             for (int i = 0; i < items; ++i)
             {
                 if (i > 0) out += ",";
-                out += pick (random, kGaps);
+                out += gap (random);
                 if (! array) out += "\"k" + std::to_string (i) + "\":";
                 if (i == nested) addValue (out, random, levels - 1);
                 else             out += pick (random, kValues);
-                out += pick (random, kGaps);
+                out += gap (random);
             }
             out += array ? "]" : "}";
         }
@@ -246,7 +257,11 @@ namespace zynforge
         void testJsonGuard()
         {
             beginTest ("The depth guard never counts less nesting than the parser builds");
+            // Malformed bytes in the gaps first, then plain gaps, which have to
+            // reach the parser often enough for the test to mean something.
+            for (const bool plain : { false, true })
             {
+                plainGaps = plain;
                 int accepted = 0, deep = 0;
                 bool underCounted = false;
                 for (int seed = 0; seed < 60000; ++seed)
@@ -271,9 +286,11 @@ namespace zynforge
                         break;
                     }
                 }
+                if (! plain) continue;
                 expect (underCounted || accepted > 20000, "the generator stopped producing parsable text");
                 expect (underCounted || deep > 1000, "the generator stopped producing deep text");
             }
+            plainGaps = false;
 
             beginTest ("Everything JUCE writes passes the guard at exactly its own depth");
             {

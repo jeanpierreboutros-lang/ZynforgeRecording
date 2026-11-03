@@ -8,14 +8,14 @@ each under its own licence. This file travels with every distributed build.
 
 | Component | Version | Licence | Where it comes from |
 | --- | --- | --- | --- |
-| JUCE framework | 8.0.4 | AGPLv3 or the JUCE 8 licence (dual-licensed) | CMake FetchContent, pinned commit `51d11a2` |
+| JUCE framework | 8.0.17-security | AGPLv3 or the JUCE 8 licence (dual-licensed) | CMake FetchContent, pinned commit `dabd5ad` |
 | libFLAC | 1.4.3 | BSD-3-Clause | inside JUCE |
 | Ogg Vorbis (libogg, libvorbis) | libVorbis 1.3.7 (20200704) | BSD-3-Clause | inside JUCE |
 | libjpeg (Independent JPEG Group) | 6b | IJG licence | inside JUCE |
 | libpng | 1.6.37 | libpng licence | inside JUCE |
-| zlib | 1.2.3 | zlib licence | inside JUCE |
+| zlib | 1.3.1 | zlib licence | inside JUCE |
 | HarfBuzz | 9.0.0 | Old MIT | inside JUCE |
-| SheenBidi | as vendored by JUCE 8.0.4 | Apache-2.0 | inside JUCE |
+| SheenBidi | as vendored by JUCE 8.0.17 | Apache-2.0 | inside JUCE |
 | JetBrains Mono (Regular, Bold) | 2.305 | SIL Open Font License 1.1 | `Source/Theme/Fonts/` |
 
 **This software is based in part on the work of the Independent JPEG Group.**
