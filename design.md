@@ -212,13 +212,27 @@ components:
 and local helpers. The frontmatter palette, spacing, radii and motion values
 above match that snapshot. Typography roles and component sketches are design
 references, not a generated manifest of every widget. The current type scale is
-9.5 / 10 / 11 / 13 / 14 / 18 / 22 / 28 / 44 px; actual role helpers and layouts
+10 / 11 / 13 / 14 / 18 / 22 / 28 / 48 px; actual role helpers and layouts
 in source determine each control's size.
 
 The disabled text tier is not a blanket WCAG-AA claim. The contrast handoff is a
 historical snapshot, and physical lighting/VoiceOver acceptance remains open.
 Update the upstream token source and regenerate for a visual change; editing
 this document alone does not recolour the app.
+
+## Alarm, device and row contracts — 2026-11-02
+
+These describe `main`, ahead of both installed builds, and none of them has been judged on a real display.
+
+The alarm banner holds every alarm at once. Danger goes first. What fits stays on screen, and the rest takes turns every 3 s with "1 of 3". The fill keeps the worst alarm's colour through all the turns, because a banner flashing between red and amber would say the trouble came and went. A refused press jumps to its own page. The banner still takes no clicks, moves nothing and has no row of its own. The sample-rate warning has no label of its own: it goes to the banner, amber at idle and red over a take.
+
+The input device a take records from reads `In: name` under the transport clock. A wrong device reads `! In: name` in amber, marked as well as coloured. It stays off the banner while idle, because a laptop in prep would have its status line covered for hours. RECORD asks instead, and Return cancels.
+
+DESK ON SOUNDCHECK clears only when the desk has read the patch back. Where the app can't see a desk's patch, pre-flight says so and shows no tick.
+
+The smallest window is 1210 wide. The punch and desk pills share one 176 px column and stack when both show, so neither can squeeze the other out.
+
+A row's lane and size live on one right-click menu, on the channel name, the bare header and any lane with no clip under the pointer, so a row never needs a control of its own for them. A Markers lane says so with a MARKERS LANE tag.
 
 ## October interaction contracts — 2026-10-04
 
@@ -569,7 +583,7 @@ Prompts prime their editor via `dialog::primeNameEditor` (focus + select-all
 
 
 ### TrackRow (EditPage.cpp — the EDIT lane)
-The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / I-R-S-M in the MIXER's order / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
+The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / I-R-S-M in the MIXER's order / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). Lane and size are on the row's right-click menu. **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
 
 **Live navigation:** the EDIT viewport follows a rolling playhead by default. A manual horizontal pan (trackpad, Shift+wheel, minimap) or timeline zoom switches to browse mode and must not be undone by the next UI timer tick. The small FOLLOW control restores live tracking; the next play/record pass starts following. During recording, row and ruler edits are locked while zoom, scrolling, minimap and FOLLOW remain usable. A fresh take starts with five minutes across the viewport; as it grows, the timeline widens at that same time scale so the waveform can keep scrolling. Vertical track scrolling and amplitude zoom never change horizontal follow. The ruler, pinned row headers and minimap all track the same viewport offset. The macOS window has a 1120 × 700 minimum so fixed recording controls remain accessible when resized.
 

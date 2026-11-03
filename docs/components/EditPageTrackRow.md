@@ -4,7 +4,7 @@
 
 ## Description
 
-Each row has a fixed-width header on the left (colour wash, name, R / MUTE / SOLO mirrors, lane-mode picker, size handle) and a scrollable content pane on the right (waveform, clip handles, fades, crossfades, edit cursor, playhead, marker ticks). Painted at 24 Hz when visible, gated off when neither visible nor recording.
+Each row has a fixed-width header on the left (colour wash, name, R / MUTE / SOLO mirrors, size handle) and a scrollable content pane on the right (waveform, clip handles, fades, crossfades, edit cursor, playhead, marker ticks). Painted at 24 Hz when visible, gated off when neither visible nor recording.
 
 The row and shared timeline mapping/constants were extracted from the former `EditPage.cpp` god file into `EditTrackRow.h`. It remains a nested class for access/layout compatibility, but its 4,000+ lines no longer obscure the owning page implementation.
 
@@ -36,9 +36,9 @@ The right pane's content adapts to a per-row `LaneMode`:
 | `Waveform` | Audio thumbnail + clip handles | Clip drag (Move / TrimL / TrimR / FadeIn / FadeOut / Crossfade-mid), Smart / Trim / Grabber / Fade / Selector tools |
 | `Markers` | Marker tick stripe | Read-only — markers live on the time ruler |
 
-Switching mode: per-row VIEW menu in the header.
+Switching mode: the row's right-click menu (`TrackRow::rowMenu`), on the channel name, the bare header or any lane with no clip under the pointer. It holds lane and size, and Delete Channel on the header only. Both stay with the strip and save as `ui.editRows`. A Markers lane draws MARKERS LANE and still shows a rolling take.
 
-Clip-menu actions apply to both halves of a stereo row and to each edit-group peer's OWN clip under the clicked one (`peerClipTargets`). The Input and Output combos call `setTrackLinkedRouting` on both sides, as MIXER and PATCH do. Waveforms are drawn through `drawThumbnailVisible`, which reads only the visible columns, so deep zoom stays responsive. Crossfades pair clips in timeline order. While the timeline is read-only (recording or finalizing), drags already in flight stop editing.
+Clip-menu actions apply to both halves of a stereo row and to each edit-group peer's OWN clip under the clicked one (`peerClipTargets`). A channel picked in the Input or Output combo goes through `setStripLinkedRouting` and sets both sides, as MIXER and PATCH do. → Master goes through `sendStripToMaster` and moves the output alone. Waveforms are drawn through `drawThumbnailVisible`, which reads only the visible columns, so deep zoom stays responsive. Crossfades pair clips in timeline order. Hit-tests walk a clip list top first (`topClipAt`, `clipHitOrder`), the reverse of paint. While the timeline is read-only (recording, finalizing or a session job), drags already in flight stop editing.
 
 ## Height presets
 
@@ -108,7 +108,6 @@ At long time scales, the overview combines a short-window median body with thin 
 
 ## Accessibility
 
-- Tooltips on the per-row VIEW menu
 - Edit cursor doubles as visual focus indicator when no audio is loaded (engineer can drop markers on an empty timeline)
 
 ## Known limits

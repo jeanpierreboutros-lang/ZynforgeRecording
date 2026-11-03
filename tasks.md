@@ -1,11 +1,29 @@
 # Project Tasks
 
+## Fix round after `d4a9a57` — 2026-11-03
+
+A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. None of it is in either installed build (`d4a9a57` on the development Mac, `281c6c0` on the mini), and none of it has run on real hardware.
+
+- [x] Device: the chosen device is saved, reopens at launch, shows under the clock, and RECORD asks before rolling on another. A device that stops calling back raises an alarm.
+- [x] Punch and reads: a punch runs only where the timeline is the take file. A failed read fails the job, on every consumer.
+- [x] Capture: copies follow strip moves from a log, pre-roll has room in the ring, a WAV tail survives a crash, the daemon's device is checked, and a helper's live session is told by a kernel lock.
+- [x] Sessions: leaving a session whose drive is gone asks, a folder must look like a session, backups are found after a rename, and a handoff says when its project files failed.
+- [x] Editing and export: exact same-rate exports, CLIPPED on any render over full scale, Consolidate in 32-bit float and cancellable, continues at the end of the arrangement, and Crop shortens the session.
+- [x] EDIT: condemned rows rebuild, → Master moves the output alone, the mouse takes the clip you can see, jobs freeze the arrangement, and row size and lane are saved by strip.
+- [x] Main window: the banner holds every alarm and takes turns, nothing modal opens over a take, the test tone is the engine's, and a stereo pair at the last channel follows one rule in all three views.
+- [x] Console and remotes: only the desk ends SOUNDCHECK, cues hold the show patch, desk health comes from its probe, no remote can start a punch or land in one, and chase obeys LOCK.
+- [ ] Owner: install a build from `main` on purpose, then run *2026-11-03 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig.
+- [ ] Decide: should a locked rig keep chasing house timecode? Today LOCK stops chase from starting, locating and stopping. It is one line in `serviceTimecodeChase` (ADR *Chase obeys LOCK*).
+- [ ] Owner: measure how long a copy's first take after a strip move holds its ring on the slowest real drive. Its renames happen then, with the ring holding audio, so a very slow drive could cost that copy audio.
+- [ ] Owner: on a real X32 / M32, prove the routing range and that a read straight after a write answers with the new patch. Either could need a code change: a value past 19 in a block, or a short wait before the read.
+- [ ] Owner: on the SD5, note whether its probe is answered. A desk that never answers is a dialect finding, not a failure.
+
 ## Design critique fixes — 2026-11-02
 
 Every finding of the critique of the design pass is fixed on `main`. See *Changed — after the design critique* in [CHANGELOG.md](CHANGELOG.md).
 
 - [ ] Owner: run D.6 to D.10 in [FIELD-TEST.md](FIELD-TEST.md). A banner at the top of the window is the one to judge first: the old one sat directly above the strips and was larger.
-- [ ] Decide: long alarm lists have less room now, and the end of a very long one can be cut off, the most serious trouble first. Nothing has shown this yet.
+- [x] Long alarm lists: the banner now takes turns, so the end of a long list is never cut off. See the round above.
 
 ## Cut to recorder and virtual soundcheck — 2026-11-02
 
@@ -22,7 +40,7 @@ The owner cut the app to a recorder and virtual soundcheck after a feature censu
 
 ## Fix pass — 2026-11-01
 
-Everything below landed on `main` on 2026-11-01. None of it is installed on either Mac, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
+Everything below landed on `main` on 2026-11-01. It is in the development Mac's `d4a9a57`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
 
 - [x] Punch safety: only a range selected in this run punches, and once; Loop makes no region; a parked playhead appends; a stopped cursor asks first; PUNCH mode has no arm state; a remote RECORD never punches; the header pill.
 - [x] Main window: alarm banner, LOCK on custom mouse code and on quitting, report scans on their own runner, tracked Patch and Meterbridge windows, pre-roll control, OSC token in its panel, dead dialog controls removed.
