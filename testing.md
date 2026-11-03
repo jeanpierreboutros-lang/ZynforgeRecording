@@ -1,5 +1,16 @@
 # Testing Strategy — ZynForge Recording
 
+## After the first long take — 2026-11-03
+
+The take is described under *First long take* in [FIELD-TEST.md](FIELD-TEST.md). What was measured on it, on `5c7a3e4`: five minutes after STOP the rows on screen showed the first 155 s of the take, and the drawn shape matched the first 155 s of `Track_02.wav` (correlation 0.87) rather than its last 155 s (0.19). The lanes then grew slowly. The app read 2.7 GB/s from the drive while its file offsets moved about 9 MB/s, and a sample showed all four scan threads in `read()` under `readMaxLevels`. A test reader making the same 1.5 KB reads on the same files, at background priority and across 14 files in turn, cost only 1.3–2.1× the bytes it asked for.
+
+Two new groups in *EDIT integrity*:
+
+- *A stopped take keeps its live waveform until its own rescan finishes*: a held row with no source is painted after STOP has settled, then rescanned. With the old release condition it fails, as it should: the first paint dropped the hold.
+- *Waveform scans read through a buffer and keep their cache keys*: `scanio::FileSource` has `juce::FileInputSource`'s hash and a buffered stream, a buffered thumbnail draws the same peaks as a bare one, and `ConcatReader::createForScan` returns the same samples as `createUnchecked`.
+
+**Release:** 1588 test groups, 0 failures. **ASan/UBSan:** 1588 / 0, no sanitizer reports. Both launched through `open`. The tool checks pass and both gates are clean; the invariants gate now also keeps `scanio::` to the drawing code. Nothing here has run on the real take yet.
+
 ## JUCE 8.0.17-security — 2026-11-03
 
 On JUCE 8.0.17-security: **1586 test groups, 0 failures** in Release and under ASan/UBSan, each launched through `open`, with no sanitizer reports. Under TSan the full run had one failure, in *LOCK stops the right-click menus on strips and the setlist*: a menu from the check before it could still be closing on that slow run and counted as the strip's. The strip itself refuses a right-click under LOCK. The test now measures only its own click. After that change: Release 1586 / 0, and *Main window guards* 87 / 0 under TSan, four runs in all.

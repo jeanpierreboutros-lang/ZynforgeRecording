@@ -6,11 +6,11 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status — 2026-11-03
 
-`main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). Since `f9467d3` it builds on JUCE 8.0.17-security instead of 8.0.4; the development Mac has that update, the Mac mini does not. Nothing since `281c6c0` has been tried on real hardware: not on a real interface, a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
+`main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). Since `f9467d3` it builds on JUCE 8.0.17-security instead of 8.0.4; the development Mac has that update, the Mac mini does not. Since `281c6c0` one take has run on real hardware: on 2026-11-03 `5c7a3e4` recorded 55 tracks for 4 h 10 min through Dante Virtual Soundcard at 48 kHz on the development Mac, with no missed samples. After it, EDIT drew only the first minutes of the take on the rows on screen, and the waveform rescan kept the drive so busy that the report's hashes and quitting crawled; `main` fixes both (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). Nothing has been tried on a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
 Installed builds: the development Mac has `5c7a3e4` (2026-11-03), which is this
 README on JUCE 8.0.17-security. It passes **1586 test groups in Release,
-ASan/UBSan, TSan and CI**, and has not run on real hardware (see
+ASan/UBSan, TSan and CI**, and has run the one take above (see
 [testing.md](testing.md)). The Mac mini and the
 [universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg) still have
 verified `281c6c0` and its matching protocol-4 helper. That older build contains
@@ -214,7 +214,7 @@ Bidirectional **Mackie Control / FaderPort (MCU)** surface: motor **faders ↔ c
 ### Workflow polish
 - Every text / number prompt (rename track, marker name, cue name, clip gain, +CH, New Session, …) opens with its field focused + text selected; **Enter** confirms the primary action without reaching for the mouse
 - The smallest window is 1210 wide. At that width the punch and desk pills stack, and GRID keeps a fader and Mute
-- Waveform cache builds in the background on import / record and is flushed to `WaveCache.wfm` as soon as the post-STOP scan finishes; a cache older than its audio is discarded on reopen
+- Waveform cache builds in the background on import / record and is flushed to `WaveCache.wfm` as soon as the post-STOP scan finishes; a cache older than its audio is discarded on reopen. Scans read takes in 512 KiB blocks, and after STOP each lane keeps the waveform it drew live until its own rescan is done
 
 ### Session integrity
 - New, Open, New from CSV, New from Console, Finder `.zfproj` opens, and template-based session creation all offer **Save & Continue / Continue Without Saving / Cancel** before replacing the current session. A failed save cancels the switch, close, or quit instead of discarding the current state

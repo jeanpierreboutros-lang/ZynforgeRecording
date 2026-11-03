@@ -22,6 +22,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27. The development Mac has it as `5c7a3e4`; the mini does not.
 - THIRD-PARTY-NOTICES lists the HarfBuzz (10.1.0) and zlib copyright this JUCE carries.
 
+### Fixed — after the first long take, 2026-11-03
+
+Found on `5c7a3e4` after a 4 h 10 min, 55-track take on an external exFAT drive. The take itself recorded with no missed samples.
+
+- After STOP, every EDIT row keeps the waveform it drew live until its own rescan of the finished file is done. The rows on screen could drop it at once and show the take only as fast as the rescan read it: the first two and a half minutes of a four-hour take, five minutes after STOP.
+- The waveform rescan reads the take in large blocks. It made one tiny read per waveform column, and on that drive the app read 2.7 GB/s while moving under 2 MB/s of audio: the rescan would have taken hours, the report's SHA-256 pass slowed to about 10 MB/s behind it, and quitting waited on it.
+
 Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03, after `d4a9a57`. It is in `9a40f54` and `5c7a3e4` on the development Mac, not in the Mac mini's `281c6c0`, and none of it has been tried on real hardware.
 
 ### Added — the device a take records from

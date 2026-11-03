@@ -1,5 +1,18 @@
 # Project Tasks
 
+## First long take — 2026-11-03
+
+`5c7a3e4` on the development Mac: 55 tracks, 4 h 10 min, 48 kHz 24-bit WAV through Dante Virtual Soundcard, to an external exFAT SSD. The report shows 0 missed samples and 0 ms of device stall, and every file holds 720,204,800 samples. No backup drive was used.
+
+- [x] EDIT showed only the start of the take on the rows on screen after STOP: their live waveform was dropped before the rescan began. Fixed: only a scan issued after the hold releases it, and every holding row gets one.
+- [x] The rescan read one 512-sample column per `read()`; the app read 2.7 GB/s from the drive while the rescan moved under 2 MB/s and the hashes about 10 MB/s, and quit was slow. Fixed: scans read through 512 KiB buffers (`Source/Audio/ScanInput.h`).
+- [ ] Install the fix, reopen the session and measure: how long the rescan and the resumed hashes take, the app's disk read rate, and how long quit takes.
+- [ ] Run `tools/verify_take.sh` on the session once its hashes are written. Quitting cancelled the first pass before any hash was saved; opening the session resumes it.
+- [ ] Why each small read cost a whole disk transfer for the app, and not for a test reader on the same files, is not proven.
+- [ ] Setting a thumbnail source now reads 512 KiB on the message thread instead of the header alone. Time a 55-track session's open and STOP settle on a spinning drive.
+- [ ] A new session's `WaveCache.wfm` is written with the previous session's peaks: this one holds 57 entries (21.8 MB), none for its own files.
+- [ ] Owner: the take has 55 tracks where about 58 were expected. Check which strips were not armed.
+
 ## JUCE 8.0.17-security — 2026-11-03
 
 `main` moved from JUCE 8.0.4 to 8.0.17-security, pinned by commit (ADR at the top of [decisions.md](decisions.md), results in [testing.md](testing.md)). The development Mac has it as `5c7a3e4`; the mini does not.

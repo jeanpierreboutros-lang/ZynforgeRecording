@@ -2,6 +2,16 @@
 
 
 
+## Waveform scans read through a 512 KiB buffer — 2026-11-03
+
+**Context.** After the first long take on real hardware (55 tracks, 4 h 10 min, external exFAT SSD), the post-STOP rescan moved under 2 MB/s of audio while the app read 2.7 GB/s from the drive. JUCE's `AudioThumbnail` reads one 512-sample column per `readMaxLevels`, and the WAV reader passed each to a bare `FileInputStream`: one 1.5 KB `read()` per column, each costing about a full disk transfer there. The four scan threads sat in `read()`, the report's SHA-256 pass fell to about 10 MB/s, and quit waited on the scan threads. A test reader with the same small reads on the same files did not see the amplification, so the kernel-side cause is not proven.
+
+**Decision:** Every thumbnail source goes through `Source/Audio/ScanInput.h`: `scanio::FileSource` for a single file and `ConcatReader::createForScan` for a multi-part take, both on a 512 KiB `BufferedInputStream`. FLAC parts keep the playback reader, whose decoder already reads whole frames. `FileSource::hashCode()` equals `juce::FileInputSource`'s, so cached and saved peaks still match.
+
+**Consequences.** One buffer per open scan reader: about 28 MB for 55 tracks while they scan, freed three seconds after each finishes. JUCE opens a thumbnail's reader on the message thread when its source is set, so that first read is now 512 KiB rather than the header alone: about 28 MB for 55 tracks at STOP and at session open. Scans stay on background-priority threads and still yield to the recorder. Playback keeps `openPlaybackReader`.
+
+**Alternatives considered:** Raising the scan threads' priority (would compete with capture writes, which the background priority exists to protect). Fewer shards (does not change the read size). Reading the file in a bespoke reducer (more code for what a buffer fixes).
+
 ## JUCE 8.0.17-security, not JUCE 9 — 2026-11-03
 
 **Context.** The app was on JUCE 8.0.4, from before macOS 26. The owner asked whether it is current for the newest macOS and hardware. JUCE 8.0.9 added building against the macOS 26 SDK, 8.0.11 more macOS 26 fixes, and 8.0.16 and 8.0.17 are security releases. JUCE 9 is out.

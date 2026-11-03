@@ -524,11 +524,14 @@ report "the device test goes through the engine" \
 # dropping drive reported success over digital silence. Only ConcatReader::create
 # and openCheckedReader can see that. Playback and drawing may go without: a bad
 # block plays as silence there. The direct opens allowed below read only a file's
-# format and length, never its samples.
+# format and length, never its samples, except ScanInput.h, which only draws: its
+# readers stay inside MultiPartReader.h and EditTrackRow.h.
 HITS=$(grep -rn 'createUnchecked' $SCOPE 2>/dev/null \
        | grep -vE 'Source/Audio/(MultiPartReader\.h|SessionPlayer\.cpp)|Source/UI/EditTrackRow\.h')
+HITS+=$(grep -rnE 'scanio::|createForScan' $SCOPE 2>/dev/null \
+       | grep -vE 'Source/Audio/(MultiPartReader|ScanInput)\.h|Source/UI/EditTrackRow\.h')
 HITS+=$(grep -rnE '\.createReaderFor \(' $SCOPE 2>/dev/null \
-       | grep -vE 'Source/Audio/(CheckedAudioReader\.h|MultiPartReader\.h|MultitrackRecorder\.cpp|SessionInterchange\.h)|Source/UI/MainComponentSessionIO\.cpp|^[^:]+:[0-9]+:[[:space:]]*//')
+       | grep -vE 'Source/Audio/(CheckedAudioReader\.h|MultiPartReader\.h|MultitrackRecorder\.cpp|SessionInterchange\.h|ScanInput\.h)|Source/UI/MainComponentSessionIO\.cpp|^[^:]+:[0-9]+:[[:space:]]*//')
 report "whatever writes or reports from audio opens it checked" \
        "use ConcatReader::create or openCheckedReader; a length or format probe joins the allow-list here" \
        "$HITS"

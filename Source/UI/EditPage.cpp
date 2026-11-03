@@ -337,11 +337,13 @@ namespace zynforge
 
         // After a take only the rows it wrote change on disk. The others keep
         // their peaks: rescanning them blanks lanes that are already right,
-        // for longer the bigger the session.
+        // for longer the bigger the session. A row still holding its live
+        // envelope rescans too: only its own rescan releases that hold.
         void refreshWaveformsOf (const std::set<int>& tracks)
         {
             for (auto& r : rows)
-                if (tracks.count (r->getTrackIndex()) > 0) r->reloadCurrentWaveformFiles();
+                if (tracks.count (r->getTrackIndex()) > 0 || r->isHoldingLiveEnvelope())
+                    r->reloadCurrentWaveformFiles();
         }
 
         // Live capture envelope: arm / disarm every row's live draw, and

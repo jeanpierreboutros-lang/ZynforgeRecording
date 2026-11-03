@@ -13,6 +13,7 @@
 #include "WaveCacheFile.h"
 #include "WaveformOverview.h"
 #include "../Audio/MultiPartReader.h"
+#include "../Audio/ScanInput.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
@@ -483,12 +484,13 @@ namespace zynforge
             repaint();
         }
 
-        // Point a thumbnail at a take. A single file -> FileInputSource (cached
+        // Point a thumbnail at a take. A single file -> scanio::FileSource (cached
         // by file hash, as before). A MULTI-PART take (Track_NN + its
         // Track_NN_partXX continuations from auto-split / continue-recording) ->
         // a ConcatReader spanning ALL parts, so the whole take draws instead of
         // only part 1. force=true drops the cached thumb first (post-stop, to
-        // re-scan a take that just grew a new part).
+        // re-scan a take that just grew a new part). Both read through a large
+        // buffer: a bare file stream made the scan one small read() per column.
         void applyThumbSource (juce::AudioThumbnail& thumb, const juce::File& main, bool force)
         {
             if (! main.existsAsFile()) { thumb.setSource (nullptr); return; }
@@ -496,17 +498,17 @@ namespace zynforge
             if (parts.size() <= 1)
             {
                 if (force) thumbCache.removeThumb (main.hashCode());
-                thumb.setSource (new juce::FileInputSource (main));
+                thumb.setSource (new scanio::FileSource (main));
                 return;
             }
             // Stable combined hash so the multi-part thumb caches across reopen
             // without colliding with the single-file entry.
             const juce::int64 h = main.hashCode() ^ ((juce::int64) parts.size() << 48) ^ 0x5bd1e995LL;
             if (force) thumbCache.removeThumb (h);
-            if (auto r = ConcatReader::createUnchecked (formats, parts))
+            if (auto r = ConcatReader::createForScan (formats, parts))
                 thumb.setReader (r.release(), h);
             else
-                thumb.setSource (new juce::FileInputSource (main));
+                thumb.setSource (new scanio::FileSource (main));
         }
 
         // What one lane of one clip draws. Row thumbnails hold the strip's own
@@ -738,12 +740,16 @@ namespace zynforge
             // the envelope left over from an earlier take.
             const bool captured = liveRecording;
             liveRecording = false;
-            // Set unconditionally on captured rows: the post-stop re-scan
-            // (refreshWaveformsOf) re-issues the source right after this, so
-            // waveformsLoaded() goes false and paint() only releases the hold
-            // once the FRESH scan completes. Checking it here would race that.
+            // Released only by a scan issued after this point. During the take
+            // the row had no source (which counts as loaded), and an async STOP
+            // clears isCaptureFinalizing() a tick before the settle rescan:
+            // a visible row that repainted in that gap dropped its 4-hour
+            // envelope for a scan that had not started, and drew the take as
+            // it trickled in. Rows off screen never painted, so kept theirs.
             liveHold = captured && ! recPeakL.empty();
+            reloadsAtHold = waveformReloads;
         }
+        bool isHoldingLiveEnvelope() const noexcept { return liveHold; }
 
         // Append one column to the live envelope. Called once per UI tick
         // while recording; values are 0..1 input peaks. Caps the history
@@ -1103,7 +1109,11 @@ namespace zynforge
             // is never blank while the background scan runs.
             // Not while an async STOP still finalizes: the armed rows have no
             // file yet (the settle rescan attaches it), so "loaded" is vacuous.
-            if (liveHold && waveformsLoaded() && ! engine.isCaptureFinalizing()) liveHold = false;
+            // And only for the scan of the finished file: see
+            // holdLiveEnvelopeUntilScanned.
+            if (liveHold && waveformReloads != reloadsAtHold && waveformsLoaded()
+                && ! engine.isCaptureFinalizing())
+                liveHold = false;
             const bool showLive = liveRecording || liveHold;
             // While CAPTURING (or holding the just-captured envelope), the live
             // forge-orange overlay OWNS the lane -- even on a take that already
@@ -3195,6 +3205,7 @@ namespace zynforge
         // thumbnail isFullyLoaded(). This is what makes the waveform appear
         // INSTANTLY on stop instead of "building" for a beat.
         bool                      liveHold              { false };
+        int                       reloadsAtHold         { 0 };   // waveformReloads when the hold began
         int                       lastInputDeviceCount  { -1 };
         int                       lastOutputDeviceCount { -1 };
         unsigned int              lastColourArgb        { 0 };

@@ -222,7 +222,8 @@ The host intercepts all remote RECORD and STOP actions in `MainComponent::handle
 
 - `Source/Audio/DeviceChoice.h`: the rules for which device is the chosen one, what opens at launch, and when RECORD asks. `AudioEngine::noteChosenDevice`, `openChosenDevice` and `reopenChosenDevice` act on them; `serviceChosenDevice` is the 1 Hz watch.
 - `Source/Audio/CallbackWatchdog.h`: compares `callbackCount` with wall time from outside the callback, in the app and in the daemon.
-- `Source/Audio/CheckedAudioReader.h`: `CheckedInputStream` and `CheckedAudioReader` turn a short or failed read into a failure, behind `ConcatReader::create`. `openPlaybackReader` is the path for playback and drawing.
+- `Source/Audio/CheckedAudioReader.h`: `CheckedInputStream` and `CheckedAudioReader` turn a short or failed read into a failure, behind `ConcatReader::create`. `openPlaybackReader` is the path for playback.
+- `Source/Audio/ScanInput.h`: `scanio::FileSource` and `scanio::openReader`, the 512 KiB buffered input every waveform scan reads through (`ConcatReader::createForScan` for a multi-part take). Its `hashCode()` equals `juce::FileInputSource`'s, so cached peaks keep their keys.
 - `Source/Audio/TrackOrderLog.h`: `.zynforge-track-order.json`, the session's record of every strip move, which copies follow on their own threads.
 - `Source/Audio/WavRepair.h`: restores a WAV's tail after a crash, beside `AiffRepair.h` and `FlacRepair.h`.
 - `identity::TakeClaim`: a flock per session in the private capture folder, which says a helper still holds that session.

@@ -886,6 +886,81 @@ namespace zynforge
                 }
             }
 
+            beginTest ("A stopped take keeps its live waveform until its own rescan finishes");
+            {
+                // The gap an async STOP leaves: finalization has ended, the
+                // settle rescan has not been issued, and the armed row still
+                // has no source -- which counts as loaded.
+                Show s (1, { 48000 * 20 });
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                row.setLiveRecording (true);
+                for (int i = 0; i < 48000 * 20 / TrackState::kLiveBinSamples; ++i) row.appendLivePeakL (0.5f);
+                row.holdLiveEnvelopeUntilScanned();
+                expect (row.waveformsLoaded(), "setup: a row with no source counts as loaded");
+                expect (! s.engine.isCaptureFinalizing(), "setup: STOP has settled");
+                juce::Image image (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                const auto paintRow = [&] { juce::Graphics g (image); row.paint (g); };
+                paintRow();
+                expect (row.isHoldingLiveEnvelope(),
+                        "a repaint before the rescan dropped the take's waveform for a scan that had not started");
+                row.setWaveformFiles (s.take (1), {});   // the settle tick: refresh, then the rescan
+                row.reloadCurrentWaveformFiles();
+                expect (pumpUntil ([&] { paintRow(); return ! row.isHoldingLiveEnvelope(); }, 20000),
+                        "the finished rescan must release the hold");
+                expect (row.waveformsLoaded(), "released before its scan finished");
+            }
+
+            beginTest ("Waveform scans read through a buffer and keep their cache keys");
+            {
+                Show s (1, { 48000 * 30 });
+                const auto file = s.take (1);
+                scanio::FileSource source (file);
+                expectEquals (source.hashCode(), juce::FileInputSource (file).hashCode(),
+                              "saved peaks and removeThumb would stop matching");
+                std::unique_ptr<juce::InputStream> in (source.createInputStream());
+                expect (dynamic_cast<juce::BufferedInputStream*> (in.get()) != nullptr,
+                        "a bare file stream reads one 512-sample column per read()");
+
+                juce::AudioThumbnailCache cacheA { 2 }, cacheB { 2 };
+                juce::AudioThumbnail bare (512, s.formats, cacheA), buffered (512, s.formats, cacheB);
+                bare.setSource (new juce::FileInputSource (file));
+                buffered.setSource (new scanio::FileSource (file));
+                expect (pumpUntil ([&] { return bare.isFullyLoaded() && buffered.isFullyLoaded(); }, 20000),
+                        "both scans finish");
+                expectWithinAbsoluteError (buffered.getTotalLength(), bare.getTotalLength(), 1.0e-9);
+                int differing = 0;
+                for (double t = 0.0; t < 29.0; t += 0.37)
+                {
+                    float minA = 0, maxA = 0, minB = 0, maxB = 0;
+                    bare.getApproximateMinMax (t, t + 0.37, 0, minA, maxA);
+                    buffered.getApproximateMinMax (t, t + 0.37, 0, minB, maxB);
+                    if (minA != minB || maxA != maxB) ++differing;
+                }
+                expectEquals (differing, 0, "the buffered scan drew different peaks");
+
+                // A multi-part take reads the same samples either way.
+                const auto part = s.dir.getChildFile ("Audio Files/Track_01_part02.wav");
+                expect (writeWav (part, 48000 * 5, 1, 0.3f), "setup: second part");
+                auto a = ConcatReader::createUnchecked (s.formats, { file, part });
+                auto b = ConcatReader::createForScan   (s.formats, { file, part });
+                expect (a != nullptr && b != nullptr, "setup: both readers open");
+                if (a != nullptr && b != nullptr)
+                {
+                    expectEquals (b->lengthInSamples, a->lengthInSamples);
+                    juce::AudioBuffer<float> bufA (1, 4096), bufB (1, 4096);
+                    bool same = true;
+                    for (juce::int64 at : { (juce::int64) 0, (juce::int64) 48000 * 29 + 3000, a->lengthInSamples - 4096 })
+                    {
+                        a->read (&bufA, 0, 4096, at, true, false);
+                        b->read (&bufB, 0, 4096, at, true, false);
+                        for (int i = 0; i < 4096; ++i)
+                            same = same && bufA.getSample (0, i) == bufB.getSample (0, i);
+                    }
+                    expect (same, "the buffered multi-part reader returned other samples");
+                }
+            }
+
             beginTest ("Repaints reuse the zoomed-out overview of every clip on a row");
             {
                 Show s (1, { 48000 * 60 });

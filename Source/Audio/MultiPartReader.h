@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "CheckedAudioReader.h"
+#include "ScanInput.h"
 
 namespace zynforge
 {
@@ -132,6 +133,14 @@ namespace zynforge
             juce::AudioFormatManager& fm, const std::vector<juce::File>& files)
         {
             return join (files, [&fm] (const juce::File& file) { return openPlaybackReader (fm, file); });
+        }
+
+        // For waveform scans: createUnchecked, read through a large buffer
+        // (see ScanInput.h).
+        static std::unique_ptr<juce::AudioFormatReader> createForScan (
+            juce::AudioFormatManager& fm, const std::vector<juce::File>& files)
+        {
+            return join (files, [&fm] (const juce::File& file) { return scanio::openReader (fm, file); });
         }
 
         bool readSamples (int* const* dest, int numDest, int destOffset,
