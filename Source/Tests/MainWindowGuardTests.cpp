@@ -245,7 +245,10 @@ namespace zynforge
         // True when a right-click on `target` opened a menu.
         static bool rightClickOpensMenu (juce::Component& target)
         {
-            juce::PopupMenu::dismissAllActiveMenus();
+            // A menu from an earlier check can take a moment to go on a slow
+            // run, and would count as this click's. Only the click is measured.
+            for (int tries = 0; tries < 100 && juce::PopupMenu::dismissAllActiveMenus(); ++tries)
+                pumpUntil ([] { return false; }, 10);
             target.mouseDown (rightClick (target));
             const bool opened = juce::PopupMenu::dismissAllActiveMenus();
             pumpUntil ([] { return false; }, 30);
