@@ -1,6 +1,45 @@
 # Testing Strategy — ZynForge Recording
 
-## Current validation — 2026-11-02, design critique fixes
+## Current validation — 2026-11-03, the round after `d4a9a57`
+
+**Final pass on `main`:** <<COUNTS>>
+
+Nothing in this section has run on real hardware, and none of it is installed: the development Mac has `d4a9a57` and the Mac mini has `281c6c0`. The hardware steps are under *2026-11-03 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
+
+### New suites
+
+- *Main window fixes* (`Source/Tests/MainWindowFixTests.cpp`), on the shared silent device (`Source/Tests/SilentAudioDevice.h`).
+- *Capture path* (`Source/Tests/CapturePathTests.cpp`): daemon device, copies following strip moves (offline, crash mid-move, rollback), pre-roll ring, live helper sessions, crash remains, helper lifecycle, disk figures, refused threads. *A helper asked to exit closes down cleanly* needs the built `ZynforgeCapture` binary beside the test app and is skipped without it. *A take past 4 GiB* writes a sparse file, so its temp volume must support sparse files (APFS does; exFAT would write 4 GiB of zeros).
+- *Session fixes* (`Source/Tests/SessionFixTests.cpp`). It drives the handoff, Save As, Move, Close, Quit and replacement paths on a real `MainComponent`, with a folder rename standing in for a pulled drive. A real short write comes from `RLIMIT_FSIZE`, as in *Session safety*: a session file under the stream's 32 KiB buffer goes out in the flush whose result the stream ignores.
+- `Source/Tests/TakeSafetyTests.cpp` holds three suites. *Punch only where the timeline is the file* runs the rule, then every way a punch starts on a real session: stopped cursor, answered cursor, rolling, selection, PUNCH mode, the engine's own door, remote, twin and daemon. *A failed read is a failure* gets its failures from real short reads, by cutting real files with truncate(2) both before and while they are open, and from a real errno with read(2) on a directory; it covers each consumer. *Edits and exports keep their word* covers strip paste, continues, session length, exact exports, overs and job cancellation.
+- *EDIT row fixes* (`Source/Tests/EditRowFixTests.cpp`): real session swaps and a refused delete through `MainComponent`, the MIXER and PATCH routing clicks, and the row's mouse gestures. *A strip's routing holds through a take and its finalization* is in *EDIT view audit 2026-10-29*, which can reach the recorder's finalization hook.
+- *Network state* (`Source/Tests/NetworkStateTests.cpp`): cues through VSC, every profile's soundcheck state, read-backs (the fake desk answers later, loses single writes, ignores writes, or says nothing), the state across links, sessions and relaunches, the check, damaged files, reads landing under a take, the punch range for every remote, desk health, and the small remote fixes.
+- *Engine fixes* (`Source/Tests/EngineFixTests.cpp`) runs the real `AudioDeviceManager` and RECORD's whole path on a fake rig (`Rig`, `FakeType`, `FakeDevice`), and the device rules as pure data.
+- `tools/test_verify_tools.py` now covers `verify_take.sh` on real WAV files (needs ffprobe, jq, xxd, shasum), `soak_monitor.sh` with a private HOME and a fake daemon in a fake bundle, and `verify_reaper_export.py`'s verdict. The soak tests skip themselves if the real app is running, because `pgrep -x` would find it.
+
+### Gate changes
+
+`tools/invariants_audit.sh` now has 38 rules. New: "the 10 Hz tick reads no take length", "noting a capture reads nothing back from the take's volume", "the device test goes through the engine" and "whatever writes or reports from audio opens it checked". "a take's status path reads no disk" now also covers `EditPage::timerCallback`, red-checked by putting the old stat back there.
+
+### Changed tests
+
+- Tests that pinned STAGE or Restore Gains as finished on the send now answer the read-back, and the count of messages each sends doubled.
+- `useSilentDevice` in `Source/Tests/SilentAudioDevice.h` calls `noteChosenDevice`, because a fixture device is a chosen one.
+
+### Writing tests here
+
+- Never put a side effect inside `jassertquiet`: it is not evaluated in a Release build, which is how a first version of the truncate fixture quietly cut nothing.
+- Under heavy machine load a `MainComponent` teardown can take minutes: the waveform scan threads run at background priority and `~EditPage` waits for them. Sample the process before calling it a hang.
+- *Capture supervisor* uses port 49745 in every worktree, so two suites running at once may answer each other's daemon. It failed once on "quit send failed" with seven branches loading the machine and passed on every later full run. The shared port is the likely cause, not a proven one.
+- Test hooks: `MainComponent::leaveMissingSessionPromptForTests` answers the missing-folder prompt, and `templatesDirForTests` points the template list at a test folder.
+
+### Not covered headless
+
+- PATCH's dot drawing (the real-R dot, parted dots) and the banner's "1 of 3" counter are paint and need an eye. Pagination, order, turns and glyph fit are tested. Pills and GRID are tested through bounds.
+- `ScanRepaint` is tested as logic, not as a real paint. The MARKERS LANE tag and the grid during a take were read, not rendered.
+- A real EIO from a pulled drive: truncated files and a read on a directory stand in for it.
+
+## `d4a9a57` — 2026-11-02, design critique fixes
 
 `d4a9a57`: **1236 test groups, 0 failures** in Release, under ASan/UBSan and under TSan, each launched through `open`, with no sanitizer reports. CI passed Debug and Release on the same commit. Both gates are clean. The built app launched, quit by itself in 87 s and left no crash report. The commit after it changes only the window title and these docs: it passed CI, was not smoke-tested and is not installed.
 
@@ -36,7 +75,7 @@ Nothing in this section has run on real hardware, and it is installed on the dev
 ### New suites
 
 - *Capture copies* also pins, each seen failing on the old code: a drive that stops answering costs only its own reading; a punch with a hole keeps the original on every copy; a copy that keeps writing slowly still has a total limit at STOP; a copy stuck in post-take work costs the primary nothing; a hole in the primary reads as missed samples; RECORD waits for no copy; a copy that opens later than its ring pads silence in step; a dead mount can hang neither RECORD nor STOP. Stalls come from test seams: no real hung NAS or sleeping drive has been tried. A one-off interposer logging every main-thread `stat`, `statfs`, `open` and `rename` on a take's folders, across a daemon take and a local take with backup and mirror, logged no call on a destination while the take rolled or finalized.
-- *Main window guards* (`Source/Tests/MainWindowGuardTests.cpp`) runs RECORD's whole path, pre-flight included, on `SilentDevice`, a fake `AudioIODevice` registered with the engine's device manager. It never reaches CoreAudio, so there is no consent prompt and no real interface is touched. Use it for anything that needs `prepareRecordStart`. It shares one `MainComponent` across its groups.
+- *Main window guards* (`Source/Tests/MainWindowGuardTests.cpp`) runs RECORD's whole path, pre-flight included, on `SilentDevice` (now in `Source/Tests/SilentAudioDevice.h`), a fake `AudioIODevice` registered with the engine's device manager. It never reaches CoreAudio, so there is no consent prompt and no real interface is touched. Use it for anything that needs `prepareRecordStart`. It shares one `MainComponent` across its groups.
 - *Capture fixes*, *Capture daemon link* and *Capture copies* (`Source/Tests/CaptureFixTests.cpp`). *Capture daemon link* is a real `MainComponent` over a real socket to an in-process `CaptureDaemon`, on a random port, so branches can run it side by side; `MainComponent::captureDaemonPort` is the seam and the default is still 17890. *Capture copies* holds one copy's thread in a write through `beforeCopyWriteForTests`. Run *Capture copies* under TSan after touching `CaptureCopy.h`.
 - *Session safety* (`Source/Tests/SessionSafetyTests.cpp`) covers mixer ownership on every save path, reattach, retention and failed reopen.
 - *Timeline edits* (`Source/Tests/TimelineEditTests.cpp`) covers undo across a take, Crop and Ripple Delete, cues, render warnings, the final-flush check, the size refusal, sample-rate conversion, song detection on the timeline, marker types, Heal and QC, including its noise floor.
@@ -336,7 +375,7 @@ tail -1 /private/tmp/zynforge-tests.log   # "[zynforge tests] N test groups, 0 f
 
 ```bash
 tools/design_audit.sh       # 7 brand rules   -- raw colours/fonts/alphas/radii/tints, spacing ratchet
-tools/invariants_audit.sh   # 37 correctness rules -- recurring bug classes
+tools/invariants_audit.sh   # 38 correctness rules -- recurring bug classes
 tools/install_hooks.sh      # once per clone: wires both as a pre-commit hook (hooks aren't in git)
 ```
 
