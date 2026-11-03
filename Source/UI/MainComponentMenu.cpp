@@ -478,7 +478,12 @@ void MainComponent::registerMenuCommands()
     m.add (50,  [this] { openPatchWindow(); });
     m.add (51,  [this] { openMetersWindow(); });
     m.add (52,  [this] { onVscClicked(); });
-    m.add (53,  [this] { zynforge::MarkerListDialog::launch (engine); });
+    m.add (53,  [this]
+    {
+        // It is modal, and STOP has to stay under the mouse during a take.
+        if (engine.isRecording()) { showStatus ("Memory Locations waits until the take has stopped"); return; }
+        zynforge::MarkerListDialog::launch (engine);
+    });
     m.add (54,  [this] { showPreflightChecklist(); });
     m.add (56,  [this] { dropMarkerAndPromptName(); });
     m.add (62,  [this]

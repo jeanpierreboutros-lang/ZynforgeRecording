@@ -1324,7 +1324,7 @@ namespace zynforge
                 before.createDirectory();
                 main.engine.setActiveSessionDir (before);
                 main.engine.claimMixerFor (before);
-                main.engine.noteLastCapture (before);
+                main.engine.noteLastCapture (before, {});
                 main.engine.getMarkers().setContext (before, kRate);
 
                 std::atomic<bool> releaseStart { false };

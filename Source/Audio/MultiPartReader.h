@@ -131,8 +131,7 @@ namespace zynforge
         static std::unique_ptr<juce::AudioFormatReader> createUnchecked (
             juce::AudioFormatManager& fm, const std::vector<juce::File>& files)
         {
-            return join (files, [&fm] (const juce::File& file)
-                         { return std::unique_ptr<juce::AudioFormatReader> (fm.createReaderFor (file)); });
+            return join (files, [&fm] (const juce::File& file) { return openPlaybackReader (fm, file); });
         }
 
         bool readSamples (int* const* dest, int numDest, int destOffset,

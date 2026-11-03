@@ -78,8 +78,12 @@ namespace zynforge::mixersnapshot
         eng.setTrackColour(physical, juce::Colour ((juce::uint32) (int) obj->getProperty ("colour")));
         eng.setTrackGainDb(physical, (float) (double) obj->getProperty ("gainDb"));
         eng.setTrackPan   (physical, (float) (double) obj->getProperty ("pan"));
-        eng.setTrackInputRouting  (physical, (int) obj->getProperty ("in"));
-        eng.setTrackOutputRouting (physical, (int) obj->getProperty ("out"));
+        // -2 is the default patch, which the setters would clamp to -1: an undo
+        // of anything at all would unpatch the strip.
+        const int in  = (int) obj->getProperty ("in");
+        const int out = (int) obj->getProperty ("out");
+        eng.setTrackInputRouting  (physical, in  == -2 ? physical : in);
+        eng.setTrackOutputRouting (physical, out == -2 ? -1 : out);
         t.outputBeforeVsc.store (obj->hasProperty ("vscOut") ? (int) obj->getProperty ("vscOut")
                                                              : TrackState::kNoSavedOutput,
                                  std::memory_order_relaxed);

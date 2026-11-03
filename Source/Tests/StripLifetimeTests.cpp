@@ -58,6 +58,19 @@ namespace zynforge
                 expect (standalone.weak_from_this().expired());
             }
 
+            beginTest ("An undo leaves a strip on its default patch where it was");
+            {
+                AudioEngine eng;
+                eng.setStripCount (2);
+                auto& t = eng.getRecorder().getTrack (1);
+                t.inputRouting.store (-2);
+                t.outputRouting.store (-2);
+                const auto snapshot = mixersnapshot::snapshotStrip (eng, 1);
+                mixersnapshot::restoreStrip (eng, 1, snapshot);
+                expectEquals (t.inputRouting.load(), 1, "the strip lost its own input");
+                expectEquals (t.outputRouting.load(), -1, "the strip left the master");
+            }
+
             beginTest ("The fingerprint covers every field the undo snapshot records");
             {
                 AudioEngine eng;

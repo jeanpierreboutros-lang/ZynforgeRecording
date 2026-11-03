@@ -162,4 +162,18 @@ namespace zynforge
         }
         return nullptr;
     }
+
+    // For playback and drawing, where a bad block plays or draws as silence and
+    // there is nothing to refuse. A FLAC take still goes through the stream,
+    // because JUCE's reader can't seek past 2 GiB on its own and a part can reach
+    // 3.9 GiB.
+    inline std::unique_ptr<juce::AudioFormatReader> openPlaybackReader (juce::AudioFormatManager& formats,
+                                                                        const juce::File& file)
+    {
+        if (file.hasFileExtension ("flac"))
+            if (auto* format = formats.findFormatForFileExtension (".flac"))
+                if (auto stream = CheckedInputStream::open (file))
+                    return std::unique_ptr<juce::AudioFormatReader> (format->createReaderFor (stream.release(), true));
+        return std::unique_ptr<juce::AudioFormatReader> (formats.createReaderFor (file));
+    }
 }

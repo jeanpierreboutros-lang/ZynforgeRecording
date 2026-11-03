@@ -638,8 +638,15 @@ void MainComponent::giveUpOnUnansweredStart()
     const auto& before = beforeUnansweredStart;
     engine.setActiveSessionDir (before.session);
     engine.claimMixerFor (before.mixer);
-    if (before.lastCapture != juce::File()) engine.noteLastCapture (before.lastCapture);
-    else                                    engine.forgetLastCapture();
+    if (before.lastCapture != juce::File())
+    {
+        engine.noteLastCapture (before.lastCapture, {});
+        engine.noteLastCaptureId (before.lastCapture);
+    }
+    else
+    {
+        engine.forgetLastCapture();
+    }
     engine.getMarkers().setContext (before.markers, before.markerRate);
     showStatus ("Daemon did not start the take");
 }
@@ -1830,7 +1837,8 @@ void MainComponent::showPreflightChecklist()
 
     if (device != nullptr)
     {
-        const auto dn = device->getName();
+        const auto input = engine.getDeviceManager().getAudioDeviceSetup().inputDeviceName;
+        const auto dn = input.isNotEmpty() ? input : device->getName();
         if (dn.containsIgnoreCase ("Dante") || dn.containsIgnoreCase ("DVS"))
             rows.push_back ({ Row::Status::ok, "Dante network", "active (" + dn + ")" });
     }

@@ -613,7 +613,7 @@ void MainComponent::editCropToLoopRange()
     if (! canMutateTimeline ("cropping")) return;
 
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory())      { showStatus ("No active session to crop"); return; }
+    if (! dir.isDirectory())      { showStatus (noFolderText ("No active session to crop", "cropping")); return; }
 
     const juce::int64 a = player.getLoopStart();
     const juce::int64 b = player.getLoopEnd();
@@ -705,7 +705,8 @@ void MainComponent::dropMarkerAndPromptName()
     const int newCount = engine.dropMarkerAtCurrentPosition();
     if (newCount < 0)
     {
-        showStatus ("No active session -- create or open one before dropping markers");
+        showStatus (noFolderText ("No active session -- create or open one before dropping markers",
+                                  "dropping markers"));
         return;
     }
 

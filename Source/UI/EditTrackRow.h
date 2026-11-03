@@ -300,19 +300,16 @@ namespace zynforge
             // One patch in three views: a channel picked in either combo sets
             // both sides, as the MIXER strip and PATCH do, and on both halves of
             // a stereo row. "-> Master" is not a channel: it moves the output.
-            const auto patchFrom = [this] (const juce::ComboBox& combo)
+            const auto patchFrom = [this] (const juce::ComboBox& combo, int numChannels)
             {
                 const int id = combo.getSelectedId();
-                const int dev = (id <= 1) ? -1 : id - 2;
-                engine.setTrackLinkedRouting (index, dev);
-                if (stereo)
-                    engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
+                engine.setStripLinkedRouting (index, stereo, (id <= 1) ? -1 : id - 2, numChannels);
             };
-            inputCombo.onChange  = [this, patchFrom] { patchFrom (inputCombo); };
+            inputCombo.onChange  = [this, patchFrom] { patchFrom (inputCombo, engine.getCurrentDeviceInputCount()); };
             outputCombo.onChange = [this, patchFrom]
             {
                 if (outputCombo.getSelectedId() <= 1) engine.sendStripToMaster (index, stereo);
-                else                                  patchFrom (outputCombo);
+                else                                  patchFrom (outputCombo, engine.getCurrentDeviceOutputCount());
             };
             addAndMakeVisible (inputCombo);
             addAndMakeVisible (outputCombo);

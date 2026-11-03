@@ -286,7 +286,7 @@ void MainComponent::addCueAtTransport()
 {
     if (! engine.hasSessionFolder())
     {
-        showStatus ("Open or create a session before adding cues");
+        showStatus (noFolderText ("Open or create a session before adding cues", "adding cues"));
         return;
     }
     const auto pos = currentPlayheadSamples (engine);

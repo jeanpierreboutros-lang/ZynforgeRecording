@@ -217,7 +217,10 @@ void MainComponent::updateStatusPills()
         juce::String txt;
         if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
         {
-            const auto deviceName = d->getName();
+            // On a device pair the active device goes by the output's name, and
+            // what matters for a recorder is what it records from.
+            const auto input = engine.getDeviceManager().getAudioDeviceSetup().inputDeviceName;
+            const auto deviceName = input.isNotEmpty() ? input : d->getName();
             if (deviceName.containsIgnoreCase ("Dante") || deviceName.containsIgnoreCase ("DVS"))
                 txt = "DANTE * " + deviceName;
         }
