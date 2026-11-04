@@ -9,6 +9,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 
 namespace zynforge
 {
@@ -105,6 +106,8 @@ namespace zynforge
             setSize (kWidth, height);
         }
 
+        const std::vector<PreflightRow>& getRows() const noexcept { return rows; }
+
         static void launch (std::vector<PreflightRow> rows)
         {
             juce::DialogWindow::LaunchOptions options;
@@ -114,7 +117,7 @@ namespace zynforge
             options.escapeKeyTriggersCloseButton = true;
             options.useNativeTitleBar            = true;
             options.resizable                    = false;
-            options.launchAsync();
+            launchClosesForTake (options);
         }
 
         void paint (juce::Graphics& g) override

@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 
 #include "../Audio/QcAnalyzer.h"
 #include "../Theme/BrandColors.h"
@@ -67,7 +68,7 @@ namespace zynforge
             opts.escapeKeyTriggersCloseButton = true;
             opts.useNativeTitleBar            = true;
             opts.resizable                    = true;
-            opts.launchAsync();
+            launchClosesForTake (opts);
         }
 
     private:

@@ -58,7 +58,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (2, "Save\tCmd+S", ! sessionLocked && ! captureMetadataPending
                       && (! sessionIoBusy.load() || pendingMetadataSaves != 0));
         menu.addItem (3, "Save As...", ! sessionIoBusy.load());
-        menu.addItem (951, "Auto-Save & Backup...");
+        menu.addItem (951, "Auto-Save & Backup...", ! engine.isRecording());
         menu.addSeparator();
         // Close the session back to the Welcome screen WITHOUT quitting --
         // so the engineer can start/open another session between sets.
@@ -190,7 +190,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Batch ops -- sweep a range of channels in one dialog instead of
         // renaming / recolouring 24 strips by hand.
         menu.addItem (320, "Batch Rename Channels...",  engine.getRecorder().getNumTracks() > 0);
-        menu.addItem (322, "Import Channel Names from CSV...", engine.getRecorder().getNumTracks() > 0);
+        menu.addItem (322, "Import Channel Names from CSV...", engine.getRecorder().getNumTracks() > 0
+                                                                && ! engine.isRecording());
         menu.addItem (321, "Batch Colour Channels...",  engine.getRecorder().getNumTracks() > 0);
         menu.addSeparator();
         juce::PopupMenu sel;
@@ -213,6 +214,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // menu-state signature keep working untouched.
         menu.addItem (54, "Show pre-flight checklist...");
         menu.addSeparator();
+        // Nothing modal opens over a rolling take: it swallows the click on STOP
+        // and takes Space. The items below that open one grey while it rolls.
+        const bool rolling = engine.isRecording();
         menu.addItem (50, "Patch...");
         menu.addItem (52, zynforge::vsc::hasSavedPatch (engine)
                               ? "Restore Outputs From Before Virtual Soundcheck..."
@@ -243,11 +247,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addItem (990, engine.getStreamOutputL() >= 0
                                ? "Stream Bus Output (Out " + juce::String (engine.getStreamOutputL() + 1) + "-"
                                      + juce::String (engine.getStreamOutputR() + 1) + ")..."
-                               : juce::String ("Stream Bus Output (off)..."));
+                               : juce::String ("Stream Bus Output (off)..."),
+                       ! rolling);
             // Transport Sync -- chase MTC / LTC with live status.
             m.addItem (600, engine.getChaseMode() != zynforge::AudioEngine::ChaseMode::Off
                                ? juce::String ("Transport Sync (chasing)...")
-                               : juce::String ("Transport Sync (MTC / LTC)..."));
+                               : juce::String ("Transport Sync (MTC / LTC)..."),
+                       ! rolling);
             m.addSeparator();
             m.addItem (958, useCaptureDaemon
                                ? (lostDaemonTakeUnknown()
@@ -265,7 +271,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         {
             juce::PopupMenu m;
             // Control Surfaces hub -- OSC + every console/surface protocol.
-            m.addItem (720, "Control Surfaces...");
+            m.addItem (720, "Control Surfaces...", ! rolling);
 
             m.addSeparator();
             m.addItem (968, "Twin Recorder...", true, twinLink.isEnabled());
@@ -277,7 +283,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             juce::PopupMenu m;
             m.addItem (954, consoleLink.isConnected()
                                ? "Console: disconnect " + consoleLink.getHost() + " (" + consoleLink.healthText() + ")"
-                               : juce::String ("Console: connect..."));
+                               : juce::String ("Console: connect..."),
+                       consoleLink.isConnected() || ! rolling);
             // Repatch + gain items only light up for a desk we drive over OSC.
             // Write-tier items also require a TRUSTWORTHY dialect: either the
             // address model is one we trust (the X32 reference) or the console
@@ -301,7 +308,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addItem (963, "Console: follow scenes to markers (virtual soundcheck)",
                        true, engine.isSceneFollowEnabled());
             m.addItem (964, "Console: desk macro control...",
-                       true, engine.getRemotes().isDeskMacroListening());
+                       ! rolling, engine.getRemotes().isDeskMacroListening());
             m.addItem (969, "Console: Save Console Log...", ! engine.isRecording());
             menu.addSubMenu ("Console", m);
         }
@@ -323,11 +330,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     }
     else if (topLevelIndex == 4)  // Help
     {
-        menu.addItem (900, "Keyboard Shortcuts...");
-        menu.addItem (903, "User Guide (panel tips)...");
-        menu.addItem (901, "Quick Start (replay tutorial)");
+        // Each opens a modal, so none over a rolling take.
+        const bool idle = ! engine.isRecording();
+        menu.addItem (900, "Keyboard Shortcuts...", idle);
+        menu.addItem (903, "User Guide (panel tips)...", idle);
+        menu.addItem (901, "Quick Start (replay tutorial)", idle);
         menu.addSeparator();
-        menu.addItem (902, "About ZynForge Recording");
+        menu.addItem (902, "About ZynForge Recording", idle);
     }
 
     // macOS draws the menu bar itself, so the look-and-feel never sees these.
@@ -515,11 +524,12 @@ void MainComponent::registerMenuCommands()
         showStatus (allowed ? "The mix now sums onto outputs that strips are patched to. Do not use this with console returns"
                             : "The mix stays off outputs that strips are patched to");
     });
-    m.add (990, [this] { promptStreamOutputs(); });
+    m.add (990, [this] { if (! waitsForTake ("Stream Bus Output")) promptStreamOutputs(); });
     m.add (281, [this] { writeSoundcheckReport(); });
-    m.add (600, [this] { zynforge::TimecodeSyncDialog::launch (engine); });
+    m.add (600, [this] { if (! waitsForTake ("Transport Sync")) zynforge::TimecodeSyncDialog::launch (engine); });
     m.add (720, [this]
     {
+        if (waitsForTake ("Control Surfaces")) return;
         juce::Component::SafePointer<MainComponent> self (this);
         zynforge::ControlSurfacesDialog::launch (engine, [self]
         {
@@ -531,7 +541,7 @@ void MainComponent::registerMenuCommands()
         [self] { return self != nullptr && self->consoleLink.isConnected()
                      && self->consoleLink.getProfile().canReadNames; });
     });
-    m.add (951, [this] { showAutosaveSettings(); });
+    m.add (951, [this] { if (! waitsForTake ("Auto-Save & Backup")) showAutosaveSettings(); });
     m.add (952, [this] { runQcAnalysis(); });
     m.add (953, [this] { detectSongsToMarkers(); });
     m.add (954, [this] { promptConsoleConnect(); });
@@ -548,15 +558,15 @@ void MainComponent::registerMenuCommands()
         showStatus (on ? "Scene Follow ON -- outside a take, a console scene jumps to the marker of that name"
                        : "Scene Follow OFF -- console scenes leave the playhead alone");
     });
-    m.add (964, [this] { zynforge::DeskMacroDialog::launch (engine); });
+    m.add (964, [this] { if (! waitsForTake ("Desk macro control")) zynforge::DeskMacroDialog::launch (engine); });
     m.add (969, [this] { saveConsoleLog(); });
     m.add (968, [this] { showTwinRecorderDialog(); });
 
     // Help
-    m.add (900, [this] { showKeyboardShortcuts(); });
-    m.add (901, [this] { showFirstRunTutorial(); });   // the tour -- NOT showStartupWelcome (which reloads the session + discards unsaved changes)
-    m.add (902, [this] { showAboutDialog(); });
-    m.add (903, [this] { showUserGuide(); });
+    m.add (900, [this] { if (! waitsForTake ("Keyboard Shortcuts")) showKeyboardShortcuts(); });
+    m.add (901, [this] { if (! waitsForTake ("The tour")) showFirstRunTutorial(); });   // the tour -- NOT showStartupWelcome (which reloads the session + discards unsaved changes)
+    m.add (902, [this] { if (! waitsForTake ("About")) showAboutDialog(); });
+    m.add (903, [this] { if (! waitsForTake ("The user guide")) showUserGuide(); });
 
     // Edit
     m.add (300, [this] { editUndo(); });
@@ -596,6 +606,15 @@ void MainComponent::registerMenuCommands()
     m.add (333, [this] { confirmDeleteChannels ([this] { deleteSelectedStrips(); }); });
     m.add (334, [this] { clearStripSelection(); });
     m.add (335, [this] { selectAllStrips(); });
+}
+
+// Nothing modal opens over a rolling take: it swallows the click on STOP and
+// takes Space. A take can still start behind one; see serviceModalsAroundTakes.
+bool MainComponent::waitsForTake (const juce::String& what)
+{
+    if (! engine.isRecording()) return false;
+    showStatus (what + " waits until the take has stopped");
+    return true;
 }
 
 void MainComponent::saveConsoleLog()

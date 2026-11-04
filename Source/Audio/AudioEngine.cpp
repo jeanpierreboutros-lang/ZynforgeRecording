@@ -736,7 +736,9 @@ namespace zynforge
     void AudioEngine::setLtcSourceStrip (int oneBasedIndex) noexcept
     {
         ltcSourceStrip.store (oneBasedIndex - 1, std::memory_order_release);
-        if (oneBasedIndex <= 0) timecodeChase.reset();
+        // Only the atomics: the callback may be inside feedLtc with the old
+        // source, and the decoder's scratch is its own (TimecodeChase.h).
+        if (oneBasedIndex <= 0) timecodeChase.clearFreewheel();
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();

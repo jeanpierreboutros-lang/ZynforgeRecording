@@ -1,4 +1,5 @@
 #include "AddTracksDialog.h"
+#include "FloatingLaunch.h"
 #include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -193,7 +194,7 @@ namespace zynforge
                                 .reduced (12, 0);
 
                 const int rowH = 44;
-                for (auto* r : rowComponents)
+                for (auto& r : rowComponents)
                 {
                     r->setBounds (rows.removeFromTop (rowH));
                     rows.removeFromTop (brand::space::xs);
@@ -214,12 +215,10 @@ namespace zynforge
                 r->onRemoveRow = [this] (TrackRow* who)
                 {
                     for (auto it = rowComponents.begin(); it != rowComponents.end(); ++it)
-                        if (*it == who)
+                        if (it->get() == who)
                         {
                             removeChildComponent (who);
-                            auto* deleted = *it;
                             rowComponents.erase (it);
-                            delete deleted;
                             // Re-flag the first row in case it was removed.
                             for (size_t i = 0; i < rowComponents.size(); ++i)
                                 rowComponents[i]->isFirstRow = (i == 0);
@@ -229,7 +228,7 @@ namespace zynforge
                 };
                 r->setSubmitAction ([this] { commit(); });   // Enter in a field = Create
                 addAndMakeVisible (*r);
-                rowComponents.push_back (r.release());
+                rowComponents.push_back (std::move (r));
                 resizeFor (rowComponents.size());
             }
 
@@ -253,7 +252,7 @@ namespace zynforge
             void commit()
             {
                 std::vector<AddTracksDialog::Entry> entries;
-                for (auto* r : rowComponents)
+                for (auto& r : rowComponents)
                 {
                     AddTracksDialog::Entry e;
                     e.count    = r->count();
@@ -272,7 +271,8 @@ namespace zynforge
             }
 
             juce::Label title;
-            std::vector<TrackRow*> rowComponents;
+            // Owned here: a Component never deletes its children.
+            std::vector<std::unique_ptr<TrackRow>> rowComponents;
             juce::TextButton createButton, cancelButton;
             AddTracksDialog::ResultCallback callback;
 
@@ -292,7 +292,7 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
-        opts.launchAsync();
+        launchClosesForTake (opts);   // adds nothing: the engine refuses new strips under a take
 
         // After the window is on screen, focus the name field (select-all) so
         // the engineer can type a name immediately.

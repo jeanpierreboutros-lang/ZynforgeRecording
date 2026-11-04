@@ -142,10 +142,10 @@ namespace zynforge
 
         ~SessionRecoveryDialog() override { if (onClosed) onClosed(); }
 
-        static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen, RemoveCallback onRemove,
-                            std::function<void()> onClosed = {})
+        static juce::DialogWindow* launch (juce::Array<juce::File> orphans, OpenCallback onOpen, RemoveCallback onRemove,
+                                           std::function<void()> onClosed = {})
         {
-            if (orphans.isEmpty()) return;   // no dialog -> onClosed only fires on an actual close
+            if (orphans.isEmpty()) return nullptr;   // no dialog -> onClosed only fires on an actual close
             auto* content = new SessionRecoveryDialog (std::move (orphans), std::move (onOpen),
                                                        std::move (onRemove), std::move (onClosed));
             juce::DialogWindow::LaunchOptions opts;
@@ -155,7 +155,7 @@ namespace zynforge
             opts.escapeKeyTriggersCloseButton = true;
             opts.useNativeTitleBar            = true;
             opts.resizable                    = true;
-            opts.launchAsync();
+            return opts.launchAsync();
         }
 
     private:

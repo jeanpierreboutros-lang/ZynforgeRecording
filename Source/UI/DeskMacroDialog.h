@@ -8,6 +8,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 
 namespace zynforge
 {
@@ -20,6 +21,8 @@ namespace zynforge
     public:
         static void launch (AudioEngine& engine);
     };
+
+    class MixerFixTests;
 
     namespace deskmacro_detail
     {
@@ -138,6 +141,7 @@ namespace zynforge
             }
 
         private:
+            friend class zynforge::MixerFixTests;
             void timerCallback() override { refresh(); }
 
             int port() const { return portEd.getText().getIntValue(); }
@@ -205,7 +209,7 @@ namespace zynforge
                 {
                     stateL.setText (state, juce::dontSendNotification);
                     stateL.setColour (juce::Label::textColourId,
-                                      problem.isNotEmpty() && ! listening ? brand::accentRecord
+                                      problem.isNotEmpty() && ! listening ? brand::textDanger
                                       : listening                         ? brand::accentStatus
                                                                           : brand::textTertiary);
                 }
@@ -229,6 +233,6 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
-        opts.launchAsync();
+        launchClosesForTake (opts);
     }
 }

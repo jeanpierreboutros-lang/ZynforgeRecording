@@ -5,6 +5,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 
 namespace zynforge
 {
@@ -155,7 +156,7 @@ namespace zynforge
             o.content.setOwned (new OscLogContent (e));
             o.dialogBackgroundColour = brand::bgPanel;
             o.escapeKeyTriggersCloseButton = true; o.useNativeTitleBar = true; o.resizable = true;
-            o.launchAsync();
+            launchClosesForTake (o);
         }
 
         // ── OSC-family settings ──────────────────────────────────────────
@@ -571,7 +572,7 @@ namespace zynforge
                 opts.escapeKeyTriggersCloseButton = true;
                 opts.useNativeTitleBar            = true;
                 opts.resizable                    = false;
-                opts.launchAsync();
+                launchClosesForTake (opts);
             }
 
             AudioEngine& engine;
@@ -593,6 +594,6 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
-        opts.launchAsync();
+        launchClosesForTake (opts);
     }
 }

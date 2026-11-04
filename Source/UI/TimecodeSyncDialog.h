@@ -5,6 +5,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 
 namespace zynforge
 {
@@ -70,13 +71,26 @@ namespace zynforge
                 mtcSource.onChange = [this] { onMtcSource(); };
                 addAndMakeVisible (mtcSource);
 
-                // LTC source = an audio input strip.
+                // LTC source = the strip that hears the timecode line. It is a
+                // strip, not a hardware input: each item says which strip, by
+                // the number every view shows, and the input it listens to. A
+                // stereo pair is one strip, so its R half is not listed.
                 dialog::styleCombo (ltcSource);
                 ltcSource.addItem ("Disconnected", 1);
                 {
-                    const int nt = engine.getRecorder().getNumTracks();
-                    for (int i = 0; i < nt; ++i) ltcSource.addItem ("Input " + juce::String (i + 1), i + 2);
+                    auto& rec = engine.getRecorder();
+                    const int nt = rec.getNumTracks();
                     const int cur = engine.getLtcSourceStrip();   // 1-based, 0 = none
+                    for (int i = 0; i < nt; ++i)
+                    {
+                        const bool rightHalf = i > 0 && rec.getTrack (i - 1).isStereo.load (std::memory_order_relaxed);
+                        if (rightHalf && cur != i + 1) continue;
+                        const int input = listenedInput (i, rec.getTrack (i).inputRouting.load (std::memory_order_relaxed),
+                                                         engine.getCurrentDeviceInputCount());
+                        ltcSource.addItem ("Strip " + juce::String (i + 1) + " - " + rec.getTrack (i).getNameThreadSafe()
+                                               + " - " + (input >= 0 ? "In " + juce::String (input + 1) : juce::String ("no input")),
+                                           i + 2);
+                    }
                     ltcSource.setSelectedId (cur >= 1 ? cur + 1 : 1, juce::dontSendNotification);
                 }
                 ltcSource.onChange = [this] { onLtcSource(); };
@@ -260,6 +274,6 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
-        opts.launchAsync();
+        launchClosesForTake (opts);
     }
 }
