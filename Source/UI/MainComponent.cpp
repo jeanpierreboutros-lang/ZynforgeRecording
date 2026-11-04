@@ -1526,6 +1526,10 @@ void MainComponent::confirmAndQuit()
     { showStatus ("LOCKED -- click UNLOCK before quitting"); return; }
     if (pendingMetadataSaves != 0 || captureMetadataPending)
     { showStatus ("Session saving is still finishing -- quit again after completion"); return; }
+    // A take its device ended is closed on the STOP worker, and quitting now
+    // would wait for every file on this thread, with the take's own save lost.
+    if (engine.isCaptureFinalizing())
+    { showStatus ("The take is still closing its files -- quit again when it has finished"); return; }
     if (sessionIoBusy.load())
     {
         sessionJobs.cancel();
@@ -1631,7 +1635,8 @@ void MainComponent::confirmAndQuit()
                 // A remote RECORD may have started behind this dialog; that
                 // take gets the proper Stop & Quit, not a bare teardown.
                 if (self != nullptr
-                    && (self->engine.isRecording() || self->captureSupervisor.isDaemonRecording()))
+                    && (self->engine.isRecording() || self->engine.isCaptureFinalizing()
+                        || self->captureSupervisor.isDaemonRecording()))
                 {
                     self->confirmAndQuit();
                     return;
@@ -1677,7 +1682,7 @@ void MainComponent::confirmAndQuit()
             if (result == kCancel || self == nullptr)
                 return;                              // abort the quit, stay in app
 
-            if (self->pendingMetadataSaves != 0 || self->engine.isRecording())
+            if (self->pendingMetadataSaves != 0 || self->engine.isRecording() || self->engine.isCaptureFinalizing())
             { self->showStatus ("Quit cancelled -- recording or saving began while the dialog was open"); return; }
             if (result == kSave)
             {

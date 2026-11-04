@@ -185,10 +185,15 @@ namespace zynforge
         // dispatch seam omits that envelope deliberately.
         const int payloadCount = m.size() - (testDispatch ? 0 : 1);
 
+        // A tablet's push button sends on press AND on release, so a 0 here is
+        // a release and means nothing, as on the desk macro port: a press and
+        // its release must never be two taps of the two-tap STOP, and letting
+        // go of RECORD must never be one. STOP is /zynforge/stop. A held or
+        // bouncing STOP repeats; repeats are counted from the last one seen.
         if (path == "/zynforge/record")
         {
             if (payloadCount < 1) return false;
-            if (! toBool (m[0])) recordStop(); else recordStart();
+            if (toBool (m[0])) recordStart();
             return true;
         }
         if (path == "/zynforge/play")
@@ -197,7 +202,14 @@ namespace zynforge
             if (! toBool (m[0])) playStop(); else playStart();
             return true;
         }
-        if (path == "/zynforge/stop") { playStop(); recordStop(); return true; }
+        if (path == "/zynforge/stop")
+        {
+            if (payloadCount >= 1 && ! toBool (m[0])) return true;   // the release
+            const double nowMs = testNowMs >= 0.0 ? testNowMs : juce::Time::getMillisecondCounterHiRes();
+            if (! stopDebouncer.admit ({ deskmacro::Command::Stop, 1 }, nowMs)) return true;
+            playStop(); recordStop();
+            return true;
+        }
 
         if (path == "/zynforge/marker")
         {

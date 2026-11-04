@@ -58,6 +58,11 @@ class VerifyTakeSessionChoice(unittest.TestCase):
         _, output, real, _ = self.run_with(lambda real: settings_xml(activeSessionDir=str(real)))
         self.assertIn("Session: %s" % real, output)
 
+    def test_the_fallback_says_it_is_the_open_session_not_the_recorded_one(self):
+        _, output, _, _ = self.run_with(lambda real: settings_xml(activeSessionDir=str(real)))
+        self.assertNotIn("the one the app last recorded", output)
+        self.assertIn("last had open", output)
+
     def test_no_argument_refuses_to_guess(self):
         for settings in (None, settings_xml(), "not xml"):
             status, output, _, stale = self.run_with(settings)
@@ -81,7 +86,7 @@ def write_wav(path, frames=4800):
 @unittest.skipUnless(all(shutil.which(tool) for tool in ("ffprobe", "jq", "xxd", "shasum")),
                      "verify_take.sh needs ffprobe, jq, xxd and shasum")
 class VerifyTakeFiles(unittest.TestCase):
-    def run_on(self, build):
+    def run_on(self, build, edit_report=None):
         with tempfile.TemporaryDirectory(prefix="zf-verify-take-") as raw:
             session = pathlib.Path(raw) / "Show"
             audio = session / "Audio Files"
@@ -91,6 +96,8 @@ class VerifyTakeFiles(unittest.TestCase):
             report = {"numTracks": 1, "missedSamples": 0, "sha256Pending": False, "sampleRate": 48000,
                       "tracks": [{"files": [take.name], "totalSamplesPrimary": 4800,
                                   "sha256": [hashlib.sha256(take.read_bytes()).hexdigest()]}]}
+            if edit_report:
+                edit_report(report)
             (session / "session.report.json").write_text(json.dumps(report))
             build(audio)
             done = subprocess.run(["/bin/bash", str(TOOLS / "verify_take.sh"), str(session)],
@@ -117,6 +124,34 @@ class VerifyTakeFiles(unittest.TestCase):
         status, output = self.run_on(lambda audio: write_wav(audio / "Track_02.wav"))
         self.assertEqual(status, 1, output)
         self.assertIn("unlisted take file: Track_02.wav", output)
+
+    def test_a_report_still_pending_says_how_to_finish_it(self):
+        status, output = self.run_on(lambda audio: None, lambda report: report.update(sha256Pending=True))
+        self.assertEqual(status, 1, output)
+        self.assertNotIn("re-run after it finishes", output)
+        self.assertIn("open it in the app", output)
+
+    def test_a_copy_that_could_not_be_hashed_is_a_note_for_a_whole_primary(self):
+        def copy_failed(report):
+            report["sha256Failed"] = True
+            report["tracks"][0]["backupFiles"] = ["Track_01.wav"]
+            report["tracks"][0]["backupSha256"] = [""]
+        status, output = self.run_on(lambda audio: None, copy_failed)
+        self.assertEqual(status, 0, output)
+        self.assertIn("backup or mirror", output)
+
+    def test_a_copy_flagged_on_its_own_is_a_note(self):
+        status, output = self.run_on(lambda audio: None, lambda report: report.update(copySha256Failed=True))
+        self.assertEqual(status, 0, output)
+        self.assertIn("backup or mirror", output)
+
+    def test_a_primary_that_could_not_be_hashed_still_fails(self):
+        def primary_failed(report):
+            report["sha256Failed"] = True
+            report["tracks"][0]["sha256"] = [""]
+        status, output = self.run_on(lambda audio: None, primary_failed)
+        self.assertEqual(status, 1, output)
+        self.assertIn("report hashing failed", output)
 
     def test_a_session_with_only_renders_has_no_take(self):
         def only_renders(audio):

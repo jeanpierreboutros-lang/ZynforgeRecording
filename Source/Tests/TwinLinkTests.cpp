@@ -33,12 +33,27 @@ namespace zynforge
         public:
             MacStatus status;
             bool refuse { false }, holdStop { false };
+            // A daemon take: this Mac still reads as recording until its helper
+            // has closed every file.
+            bool daemonStop { false };
             juce::String refusalText { "Arm at least one track" };
             int startCalls { 0 }, stopCalls { 0 };
             juce::StringArray markers, notices;
             std::function<void (bool, juce::String)> heldStop;
+            juce::String linkedTake;
+            juce::File linkedDir;
 
             MacStatus twinStatus() override { return status; }
+
+            void twinRememberLinkedTake (const juce::String& takeId, const juce::File& dir) override
+            {
+                linkedTake = takeId;
+                linkedDir = takeId.isEmpty() ? juce::File() : dir;
+            }
+            juce::String twinLinkedTakeIn (const juce::File& dir) override
+            {
+                return dir != juce::File() && dir == linkedDir ? linkedTake : juce::String();
+            }
 
             bool twinStartRecord (juce::String& refusal) override
             {
@@ -51,6 +66,7 @@ namespace zynforge
             void twinStopRecord (std::function<void (bool, juce::String)> done) override
             {
                 ++stopCalls;
+                if (daemonStop) { status.finalizing = true; heldStop = std::move (done); return; }
                 status.recording = false;
                 if (holdStop) { status.finalizing = true; heldStop = std::move (done); return; }
                 done (true, {});
@@ -934,6 +950,78 @@ namespace zynforge
                 expect (settle (pair.both, [&] { return pair.leaderHost.noticed ("nothing is rolling"); }));
                 expectEquals (pair.followerHost.startCalls, 0, "reconnecting started a take");
                 expect (! pair.followerHost.status.recording);
+            }
+
+            beginTest ("A follower still closing its last take refuses the next RECORD, and says why");
+            {
+                Pair pair;
+                if (! bring (pair)) return;
+                pair.followerHost.daemonStop = true;
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.followerHost.status.recording; }));
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (settle (pair.both, [&] { return pair.followerHost.stopCalls == 1; }), "stop never arrived");
+
+                // The next song, while the follower's helper is still closing files.
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.leaderHost.noticed ("FOLLOWER REFUSED RECORD"); }),
+                        "the leader was not told the follower is not recording this take");
+                expect (pair.leaderHost.noticed ("closing its last take"));
+                expect (! pair.leaderHost.noticed ("now linked"),
+                        "a take that is ending was linked to the new one");
+                expectEquals (pair.followerHost.startCalls, 1);
+                pair.followerHost.status.recording = false;
+                pair.followerHost.status.finalizing = false;
+                pair.followerHost.heldStop (true, {});
+                run (pair.both, 100);
+            }
+
+            beginTest ("A follower whose window restarted during a linked daemon take still stops with the leader");
+            {
+                Pair pair;
+                if (! bring (pair)) return;
+                const auto session = tempSession ("follower-relaunch");
+                pair.followerHost.status.sessionDir = session;
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.followerHost.status.recording; }));
+                expect (pair.followerHost.linkedTake.isNotEmpty(), "the follower kept no note of the linked take");
+
+                // The follower's window restarts; its helper keeps the take rolling.
+                // The window adopts the take, then the link is set up again.
+                pair.follower = std::make_unique<TwinLink> (pair.followerHost);
+                pair.both[1] = pair.follower.get();
+                pair.follower->noteLocalTakeAdopted();
+                juce::String error;
+                expect (pair.follower->start (fastConfig (Role::Follower, 0), error), error);
+                expect (settle (pair.both, [&] { return pair.follower->getBoundPort() > 0; }));
+                expect (pair.leader->start (fastConfig (Role::Leader, pair.follower->getBoundPort()), error), error);
+                expect (settle (pair.both, [&] { return pair.linked(); }), "the link never came back");
+
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (settle (pair.both, [&] { return pair.followerHost.stopCalls == 1; }),
+                        "the leader's STOP did not reach the take the link started");
+                expect (! pair.leaderHost.noticed ("started on the follower"));
+                pair.follower->stop();
+                pair.leader->stop();
+                session.deleteRecursively();
+            }
+
+            beginTest ("A take a restarted follower cannot tie to the link is refused with the real reason");
+            {
+                Pair pair;
+                if (! bring (pair)) return;
+                pair.followerHost.status.recording = true;   // rolling, and nothing says the link started it
+                pair.follower->noteLocalTakeAdopted();
+                run (pair.both, 60);
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.leaderHost.noticed ("will not end it"); }));
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (settle (pair.both, [&] { return pair.leaderHost.noticed ("FOLLOWER STOP PROBLEM"); }));
+                expect (pair.leaderHost.noticed ("restarted"), "the refusal blamed the wrong thing");
+                expectEquals (pair.followerHost.stopCalls, 0);
             }
 
             beginTest ("The follower never ends a take the link did not start");

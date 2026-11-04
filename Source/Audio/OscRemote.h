@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_osc/juce_osc.h>
+#include "../Network/DeskMacro.h"
 #include "../Network/OscPacketReceiver.h"
 #include <functional>
 
@@ -50,6 +51,9 @@ namespace zynforge
         // message loop.
         void dispatchForTest (const juce::OSCMessage& m, const Source& from = {})
         { testDispatch = true; deliverForTests (juce::OSCBundle::Element (m), from); testDispatch = false; }
+        // The same, arriving at a chosen time (milliseconds).
+        void dispatchForTest (const juce::OSCMessage& m, double nowMs)
+        { testNowMs = nowMs; dispatchForTest (m); testNowMs = -1.0; }
         juce::String getAccessToken() const { return accessToken; }
 
     private:
@@ -93,5 +97,7 @@ namespace zynforge
         bool         listening  { false };
         juce::String accessToken;
         bool testDispatch { false };
+        double testNowMs { -1.0 };
+        deskmacro::Debouncer stopDebouncer;   // /zynforge/stop presses
     };
 }

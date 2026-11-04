@@ -3478,6 +3478,11 @@ namespace zynforge
                 {
                     if (testHooks && testHooks->finished) testHooks->finished();
                 } };
+                // Says so to a window that opens this session from another
+                // process meanwhile, so it reads nothing twice. This pass runs
+                // whether or not it got it: it is the one STOP owes the take.
+                capture::identity::ScanClaim scanning;
+                scanning.hold (sessionDir);
                #if JUCE_MAC
                 pthread_set_qos_class_self_np (QOS_CLASS_BACKGROUND, 0);
                #endif
@@ -3591,6 +3596,9 @@ namespace zynforge
         const auto state = sessionReportState (sessionDir);
         const auto file = sessionDir.getChildFile ("session.report.json");
         if (state->runningScans.load (std::memory_order_acquire) > 0 || ! file.existsAsFile()) return;
+        // A helper hashes in its own process after STOP, where the count above
+        // cannot see it, and two passes would read the whole take twice.
+        if (capture::identity::ScanClaim::isHeld (sessionDir)) return;
         const auto report = juce::JSON::parse (file);
         // Owed copy hashes alone (their drive was gone) leave the primary's
         // final, and only the copies are read again.
@@ -3609,13 +3617,18 @@ namespace zynforge
                 state->runningScans.fetch_sub (1, std::memory_order_acq_rel);
                 if (finishedForTests) finishedForTests();
             } };
+            capture::identity::ScanClaim scanning;
+            if (! scanning.hold (sessionDir)) return;   // another process got there first
            #if JUCE_MAC
             pthread_set_qos_class_self_np (QOS_CLASS_BACKGROUND, 0);
            #endif
             const auto current = [&] { return token->load (std::memory_order_acquire) == generation; };
             hashing::ReadPolicy policy { current, 50 };
             std::map<juce::String, juce::String> hashes;
-            bool failed = false, copyFailed = false, copyMissing = false;
+            // The primary and the copies fail apart: a backup that is gone or
+            // will not read says nothing about the take on the primary. A copy
+            // whose drive went (unplugged at load-out) is owed, not failed.
+            bool primaryFailed = false, copyFailed = false, copyMissing = false;
             const auto hashFolder = [&] (const juce::File& folder, const juce::var& names, bool areCopies)
             {
                 if (auto* list = names.getArray())
@@ -3626,7 +3639,7 @@ namespace zynforge
                         const auto sha = hashing::fileSha256 (target, nullptr, policy);
                         hashes[target.getFullPathName()] = sha;
                         if (sha.isNotEmpty()) continue;
-                        if (! areCopies)                failed = true;
+                        if (! areCopies)                primaryFailed = true;
                         else if (target.existsAsFile()) copyFailed = true;
                         else                            copyMissing = true;
                     }
@@ -3635,20 +3648,7 @@ namespace zynforge
             { return root.getChildFile (sessionDir.getFileName()).getChildFile ("Audio Files"); };
             const auto backupRoot = report.getProperty ("backupRoot", "").toString();
             auto* tracks = report.getProperty ("tracks", {}).getArray();
-            if (tracks != nullptr)
-                for (const auto& track : *tracks)
-                {
-                    if (! primaryDone)
-                        hashFolder (sessionDir.getChildFile ("Audio Files"), track.getProperty ("files", {}), false);
-                    if (backupRoot.isNotEmpty())
-                        hashFolder (copyAudio (juce::File (backupRoot)), track.getProperty ("backupFiles", {}), true);
-                    if (auto* mirrors = track.getProperty ("mirrors", {}).getArray())
-                        for (const auto& mirror : *mirrors)
-                            hashFolder (copyAudio (juce::File (mirror.getProperty ("root", "").toString())),
-                                        mirror.getProperty ("files", {}), true);
-                }
-            if (! current() || tracks == nullptr) return;
-            if (beforePublishForTests) beforePublishForTests();
+            if (tracks == nullptr) return;
 
             const auto fill = [&] (juce::DynamicObject& owner, const juce::File& folder, const char* names, const char* shas)
             {
@@ -3658,26 +3658,60 @@ namespace zynforge
                         filled.add (hashes[folder.getChildFile (name.toString()).getFullPathName()]);
                 owner.setProperty (shas, filled);
             };
-            editSessionReport (sessionDir, [&] (juce::DynamicObject& live)
+            const auto publish = [&] (bool copiesDone)
             {
-                if (live.getProperty ("stoppedAt").toString() != stoppedAt) return;
-                if (auto* liveTracks = live.getProperty ("tracks").getArray())
-                    for (auto& track : *liveTracks)
+                editSessionReport (sessionDir, [&] (juce::DynamicObject& live)
+                {
+                    if (! current() || live.getProperty ("stoppedAt").toString() != stoppedAt) return;
+                    if (auto* liveTracks = live.getProperty ("tracks").getArray())
+                        for (auto& track : *liveTracks)
+                        {
+                            auto* t = track.getDynamicObject();
+                            if (t == nullptr) continue;
+                            if (! primaryDone) fill (*t, sessionDir.getChildFile ("Audio Files"), "files", "sha256");
+                            if (! copiesDone) continue;
+                            if (backupRoot.isNotEmpty()) fill (*t, copyAudio (juce::File (backupRoot)), "backupFiles", "backupSha256");
+                            if (auto* mirrors = t->getProperty ("mirrors").getArray())
+                                for (auto& mirror : *mirrors)
+                                    if (auto* m = mirror.getDynamicObject())
+                                        fill (*m, copyAudio (juce::File (m->getProperty ("root").toString())), "files", "sha256");
+                        }
+                    live.setProperty ("sha256Pending", ! copiesDone);
+                    if (! primaryDone) live.setProperty ("sha256Failed", primaryFailed);
+                    if (copiesDone)
                     {
-                        auto* t = track.getDynamicObject();
-                        if (t == nullptr) continue;
-                        if (! primaryDone) fill (*t, sessionDir.getChildFile ("Audio Files"), "files", "sha256");
-                        if (backupRoot.isNotEmpty()) fill (*t, copyAudio (juce::File (backupRoot)), "backupFiles", "backupSha256");
-                        if (auto* mirrors = t->getProperty ("mirrors").getArray())
-                            for (auto& mirror : *mirrors)
-                                if (auto* m = mirror.getDynamicObject())
-                                    fill (*m, copyAudio (juce::File (m->getProperty ("root").toString())), "files", "sha256");
+                        live.setProperty ("copySha256Failed", copyFailed);
+                        live.setProperty ("copySha256Missing", copyMissing);
                     }
-                live.setProperty ("sha256Pending", false);
-                if (! primaryDone) live.setProperty ("sha256Failed", failed);
-                live.setProperty ("copySha256Failed", copyFailed);
-                live.setProperty ("copySha256Missing", copyMissing);
-            });
+                });
+            };
+
+            // The primary first, published on its own, as at STOP: a read on a
+            // copy whose drive is gone or hung can block for good, and the
+            // primary's hashes must not wait on it. A primary already final
+            // (only copies owed) is not read again.
+            bool anyCopy = false;
+            for (const auto& track : *tracks)
+            {
+                if (! primaryDone)
+                    hashFolder (sessionDir.getChildFile ("Audio Files"), track.getProperty ("files", {}), false);
+                anyCopy = anyCopy || (backupRoot.isNotEmpty() && track.getProperty ("backupFiles", {}).size() > 0)
+                                  || track.getProperty ("mirrors", {}).size() > 0;
+            }
+            if (! current()) return;
+            if (anyCopy && ! primaryDone) publish (false);
+            for (const auto& track : *tracks)
+            {
+                if (backupRoot.isNotEmpty())
+                    hashFolder (copyAudio (juce::File (backupRoot)), track.getProperty ("backupFiles", {}), true);
+                if (auto* mirrors = track.getProperty ("mirrors", {}).getArray())
+                    for (const auto& mirror : *mirrors)
+                        hashFolder (copyAudio (juce::File (mirror.getProperty ("root", "").toString())),
+                                    mirror.getProperty ("files", {}), true);
+            }
+            if (! current()) return;
+            if (beforePublishForTests) beforePublishForTests();
+            publish (true);
         });
     }
 

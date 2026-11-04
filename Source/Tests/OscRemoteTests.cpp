@@ -4,6 +4,7 @@
 #include "../Audio/OscRemote.h"
 #include "../Network/ConsoleLink.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #if JUCE_MAC
@@ -151,15 +152,74 @@ namespace zynforge
                 osc.setDialect (OscRemote::Dialect::Generic);
 
                 osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 1));
-                osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 0));
-                expectEquals ((int) actions.size(), 2);
-                if (actions.size() == 2)
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop"));
+                expectEquals ((int) actions.size(), 3);
+                if (actions.size() == 3)
                 {
                     expect (actions[0] == AudioEngine::RemoteTransportAction::StartRecord);
-                    expect (actions[1] == AudioEngine::RemoteTransportAction::StopRecord);
+                    expect (actions[1] == AudioEngine::RemoteTransportAction::StopPlay);
+                    expect (actions[2] == AudioEngine::RemoteTransportAction::StopRecord);
                 }
                 expect (! engine.getRecorder().isRecording(),
                         "OSC bypassed the host and started the local recorder");
+            }
+
+            // What reached the host as a STOP tap.
+            const auto stopTaps = [] (const std::vector<AudioEngine::RemoteTransportAction>& actions)
+            {
+                return (int) std::count (actions.begin(), actions.end(), AudioEngine::RemoteTransportAction::StopRecord);
+            };
+
+            beginTest ("A momentary OSC STOP button gives one STOP tap per press, so one brush cannot end a take");
+            {
+                AudioEngine engine;
+                std::vector<AudioEngine::RemoteTransportAction> actions;
+                engine.setRemoteTransportHandler ([&] (auto action, juce::String&) -> std::optional<bool>
+                {
+                    actions.push_back (action);
+                    return true;
+                });
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::Generic);
+                // Press and release, 150 ms apart: a push button on a tablet.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop", (juce::int32) 1), 10000.0);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop", (juce::int32) 0), 10150.0);
+                expectEquals (stopTaps (actions), 1, "a press and its release were two STOP taps");
+                // A float release, as TouchOSC sends it.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop", 0.0f), 10200.0);
+                expectEquals (stopTaps (actions), 1, "a float release was a STOP tap");
+                // A contact that bounces or a client that repeats a held button.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop", (juce::int32) 1), 10100.0 + 120.0);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop", (juce::int32) 1), 10100.0 + 240.0);
+                expectEquals (stopTaps (actions), 1, "a repeat of one press was a second STOP tap");
+                // A second, deliberate press is the second tap.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop", (juce::int32) 1), 11200.0);
+                expectEquals (stopTaps (actions), 2, "a second press was not a STOP tap");
+                // An address with no argument is a press.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop"), 13000.0);
+                expectEquals (stopTaps (actions), 3);
+            }
+
+            beginTest ("A momentary OSC RECORD button never stops a take, however often it is pressed");
+            {
+                AudioEngine engine;
+                std::vector<AudioEngine::RemoteTransportAction> actions;
+                engine.setRemoteTransportHandler ([&] (auto action, juce::String&) -> std::optional<bool>
+                {
+                    actions.push_back (action);
+                    return true;
+                });
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::Generic);
+                double now = 20000.0;
+                for (int press = 0; press < 3; ++press)
+                {
+                    osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 1), now);
+                    osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 0), now + 120.0);
+                    now += 600.0;
+                }
+                expectEquals (stopTaps (actions), 0, "releasing RECORD reached the host as a STOP tap");
+                expect (! actions.empty() && actions.front() == AudioEngine::RemoteTransportAction::StartRecord);
             }
 
             beginTest ("A rolling take is not stopped by a repeated OSC RECORD");

@@ -1,5 +1,9 @@
 #include "CaptureDaemon.h"
+#include "DeviceState.h"
 #include "../Audio/DisplayText.h"
+
+#include <chrono>
+#include <condition_variable>
 
 namespace zynforge::capture
 {
@@ -62,6 +66,104 @@ namespace zynforge::capture
             deviceManager.removeAudioCallback (this);
             deviceManager.closeAudioDevice();
         }
+    }
+
+    // JUCE's device manager belongs to the message thread: CoreAudio's device
+    // list and rate changes reach it there, from CaptureMain's run loop. A
+    // command arrives on the reader thread, so its device work is handed over
+    // and waited for. Abandoned only when the helper is stopping, which is the
+    // message thread's own work, so the two never overlap.
+    bool CaptureDaemon::runDeviceWork (const std::function<void()>& work)
+    {
+        auto* messages = juce::MessageManager::getInstanceWithoutCreating();
+        if (messages == nullptr) return false;
+        if (messages->isThisTheMessageThread()) { work(); return true; }
+
+        struct Job
+        {
+            std::mutex lock;
+            std::condition_variable done;
+            bool finished { false }, abandoned { false };
+        };
+        auto job = std::make_shared<Job>();
+        if (! juce::MessageManager::callAsync ([job, &work]
+            {
+                const std::lock_guard<std::mutex> g (job->lock);
+                if (job->abandoned) return;
+                work();
+                job->finished = true;
+                job->done.notify_all();
+            }))
+            return false;
+
+        std::unique_lock<std::mutex> g (job->lock);
+        while (! job->finished)
+        {
+            if (! running.load())
+            {
+                job->abandoned = true;
+                return false;
+            }
+            job->done.wait_for (g, std::chrono::milliseconds (50));
+        }
+        return true;
+    }
+
+    // Message thread. Opening a device restarts it, and a restart starts the
+    // pre-roll history over, so a configure that changes only names, arms,
+    // routes or copies leaves the running device alone.
+    juce::String CaptureDaemon::reopenDevice (const juce::XmlElement& state, double wantedRate, int trackCount,
+                                              const std::function<void()>& applyTracks)
+    {
+        // A reopened device stops the recorder. The command refused this
+        // already; the device work must not depend on that.
+        if (recorder.isRecording()) return "stop recording before configuration";
+        const auto wanted = state.toString();
+        const bool sameDevice = deviceAvailable.load() && deviceManager.getCurrentAudioDevice() != nullptr
+                             && wanted == appliedDeviceState
+                             && deviceManager.getAudioDeviceSetup().inputDeviceName
+                                    == state.getStringAttribute ("audioInputDeviceName");
+        const bool resize = trackCount != recorder.getNumTracks();
+        if (sameDevice && ! resize)
+        {
+            applyTracks();
+            return {};
+        }
+
+        // removeAudioCallback waits out any callback in flight, so the resize
+        // below has the recorder's track vectors to itself.
+        deviceManager.removeAudioCallback (this);
+        if (! sameDevice)
+        {
+            appliedDeviceState.clear();
+            const auto error = deviceManager.initialise (256, 0, &state, false);
+            if (error.isNotEmpty())
+            {
+                // Keep the previously usable callback alive after a rejected
+                // reconfiguration. The device manager may have retained or
+                // recovered its old device.
+                deviceManager.addAudioCallback (this);
+                return error;
+            }
+            auto* device = deviceManager.getCurrentAudioDevice();
+            if (device == nullptr || std::abs (device->getCurrentSampleRate() - wantedRate) > 0.5)
+            {
+                deviceManager.addAudioCallback (this);
+                return "requested capture sample rate unavailable";
+            }
+            appliedDeviceState = wanted;
+        }
+        recorder.setTrackCount (trackCount);
+        applyTracks();
+        deviceManager.addAudioCallback (this);
+        return {};
+    }
+
+    void CaptureDaemon::useDeviceTypeForTests (std::unique_ptr<juce::AudioIODeviceType> type)
+    {
+        const auto name = type->getTypeName();
+        deviceManager.addAudioDeviceType (std::move (type));
+        deviceManager.setCurrentAudioDeviceType (name, false);
     }
 
     void CaptureDaemon::prepareForTests (double sampleRate, int blockSize, int numInputs)
@@ -220,7 +322,9 @@ namespace zynforge::capture
                         recorder.setTimeReferenceHint (timecode);
                     else
                         recorder.clearTimeReferenceHint();
-                    recorder.setClockDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
+                    // The name the running device started under: the setup
+                    // itself belongs to the message thread.
+                    recorder.setClockDevice (heldDevice());
                     takeClaim.hold (dir);   // before recording.session exists
                     if (recorder.startRecording (dir))
                     { captureDeviceLost.store (false); r.ok = true; }
@@ -234,6 +338,10 @@ namespace zynforge::capture
 
             case Action::StopRecording:
             {
+                // Counted until this command returns: its reply goes out after
+                // the files close, and the helper must not exit in between.
+                stopsInFlight.fetch_add (1);
+                const juce::ScopeGuard stopAnswered { [this] { stopsInFlight.fetch_sub (1); } };
                 recorder.stopRecording();
                 const bool clean = ! recorder.hasPrimaryFailed()
                                 && ! captureDeviceLost.load()
@@ -255,6 +363,7 @@ namespace zynforge::capture
                     if (recorder.hasReportWriteFailed()) failures.add ("integrity report failed");
                     r.error = "recording stopped, but finalisation failed: " + failures.joinIntoString (", ");
                 }
+                if (beforeStopReplyForTests) beforeStopReplyForTests();
                 sendStatusUnlocked (buildStatus());
                 sendReplyUnlocked (r);
                 break;
@@ -284,16 +393,21 @@ namespace zynforge::capture
                     break;
                 }
                 // setTrackCount ADDS/REMOVES entries in the recorder's tracks +
-                // fifos vectors. We're on the socket reader thread, and the
-                // CoreAudio callback reads those same vectors every block --
-                // resizing under it is a use-after-free on the audio thread.
-                // Detach the callback for the resize, exactly like
-                // AudioEngine::setStripCount does on the GUI side.
+                // fifos vectors, and the CoreAudio callback reads those same
+                // vectors every block -- resizing under it is a use-after-free
+                // on the audio thread. Detach the callback for the resize,
+                // exactly like AudioEngine::setStripCount does on the GUI side.
                 // (removeAudioCallback blocks until any in-flight callback
-                // returns, so after it we're the sole owner.)
-                if (! testMode.load()) deviceManager.removeAudioCallback (this);
-                recorder.setTrackCount (juce::jlimit (1, 256, c.intValue));
-                if (! testMode.load()) deviceManager.addAudioCallback (this);
+                // returns, so after it we're the sole owner.) The device
+                // manager is the message thread's, so that is where it runs.
+                const auto resize = [this, count = juce::jlimit (1, 256, c.intValue)]
+                {
+                    if (! testMode.load()) deviceManager.removeAudioCallback (this);
+                    recorder.setTrackCount (count);
+                    if (! testMode.load()) deviceManager.addAudioCallback (this);
+                };
+                if (testMode.load()) resize();
+                else if (! runDeviceWork (resize)) { r.error = "capture helper is stopping"; sendReplyUnlocked (r); break; }
                 r.ok = true;
                 sendReplyUnlocked (r);
                 break;
@@ -313,44 +427,40 @@ namespace zynforge::capture
                 auto* tracks = cfg["tracks"].getArray();
                 if (tracks == nullptr || tracks->isEmpty() || tracks->size() > 256)
                 { r.error = "invalid track configuration"; sendReplyUnlocked (r); break; }
-                if (! testMode.load())
+                // Names, arms, routes, pre-roll and copies: none of it needs the
+                // device stopped, and all of it lands in one go.
+                const auto applyTracks = [&]
                 {
-                    auto xml = juce::parseXML (cfg["deviceState"].toString());
-                    if (xml == nullptr) { r.error = "missing device configuration"; sendReplyUnlocked (r); break; }
-                    deviceManager.removeAudioCallback (this);
-                    const auto error = deviceManager.initialise (256, 0, xml.get(), false);
-                    if (error.isNotEmpty())
+                    for (int i = 0; i < tracks->size(); ++i)
                     {
-                        // Keep the previously usable callback alive after a
-                        // rejected reconfiguration. The device manager may
-                        // have retained/recovered its old device.
-                        deviceManager.addAudioCallback (this);
-                        r.error = error; sendReplyUnlocked (r); break;
+                        auto& t = recorder.getTrack (i); const auto& v = (*tracks)[i];
+                        t.setNameThreadSafe (v["name"].toString()); t.stripId = v["uid"].toString();
+                        t.inputRouting.store ((int) v["input"]); t.armed.store ((bool) v["armed"]);
+                        t.isStereo.store ((bool) v["stereo"]);
                     }
-                    auto* device = deviceManager.getCurrentAudioDevice();
-                    if (device == nullptr || std::abs (device->getCurrentSampleRate() - (double) cfg["sampleRate"]) > 0.5)
-                    {
-                        deviceManager.addAudioCallback (this);
-                        r.error = "requested capture sample rate unavailable"; sendReplyUnlocked (r); break;
-                    }
-                }
-                recorder.setTrackCount (tracks->size());
-                for (int i = 0; i < tracks->size(); ++i)
+                    recorder.setPreRollSeconds (juce::jlimit (0, 30, (int) cfg["preRoll"]));
+                    recorder.setBackupDirectory (juce::File (cfg["backup"].toString()));
+                    recorder.setBackupCaptureFormat ((CaptureFormat) (int) cfg["backupFormat"]);
+                    std::vector<MultitrackRecorder::MirrorConfig> mirrors;
+                    if (auto* ms = cfg["mirrors"].getArray())
+                        for (const auto& m : *ms)
+                            mirrors.push_back ({ juce::File (m["root"].toString()), (CaptureFormat) (int) m["format"] });
+                    recorder.setMirrors (mirrors);
+                };
+                if (testMode.load())
                 {
-                    auto& t = recorder.getTrack (i); const auto& v = (*tracks)[i];
-                    t.setNameThreadSafe (v["name"].toString()); t.stripId = v["uid"].toString();
-                    t.inputRouting.store ((int) v["input"]); t.armed.store ((bool) v["armed"]);
-                    t.isStereo.store ((bool) v["stereo"]);
+                    recorder.setTrackCount (tracks->size());
+                    applyTracks();
+                    r.ok = true; sendReplyUnlocked (r); break;
                 }
-                recorder.setPreRollSeconds (juce::jlimit (0, 30, (int) cfg["preRoll"]));
-                recorder.setBackupDirectory (juce::File (cfg["backup"].toString()));
-                recorder.setBackupCaptureFormat ((CaptureFormat) (int) cfg["backupFormat"]);
-                std::vector<MultitrackRecorder::MirrorConfig> mirrors;
-                if (auto* ms = cfg["mirrors"].getArray())
-                    for (const auto& m : *ms)
-                        mirrors.push_back ({ juce::File (m["root"].toString()), (CaptureFormat) (int) m["format"] });
-                recorder.setMirrors (mirrors);
-                if (! testMode.load()) deviceManager.addAudioCallback (this);
+                auto xml = juce::parseXML (cfg["deviceState"].toString());
+                if (xml == nullptr) { r.error = "missing device configuration"; sendReplyUnlocked (r); break; }
+                keepInputsOnly (*xml);
+                juce::String error;
+                const double wantedRate = cfg["sampleRate"];
+                if (! runDeviceWork ([&] { error = reopenDevice (*xml, wantedRate, tracks->size(), applyTracks); }))
+                    error = "capture helper is stopping";
+                if (error.isNotEmpty()) { r.error = error; sendReplyUnlocked (r); break; }
                 r.ok = true; sendReplyUnlocked (r); break;
             }
 

@@ -14,6 +14,7 @@
 
 namespace zynforge { class EngineFixTests; }
 namespace zynforge { class CapturePathTests; }
+namespace zynforge { class CaptureHelperTests; }
 
 namespace zynforge::capture
 {
@@ -28,10 +29,12 @@ namespace zynforge::capture
     // Threading: commands are handled inline on the CaptureServer reader
     // thread (exactly one exists at a time), serialised against the status
     // ticker by `commandLock`. The audio callback touches only the
-    // recorder's RT-safe path. No message thread required, so the daemon
-    // runs as a plain console process and the class is testable headlessly
-    // (test mode skips the device; tests feed blocks via processTestBlock,
-    // mirroring the GUI suite's CallbackFixture).
+    // recorder's RT-safe path. The device manager is the exception: JUCE
+    // runs its own device-change handling on the message thread (CaptureMain's
+    // main loop), so every command that opens, changes or detaches the device
+    // hands that work to the message thread and waits (runDeviceWork). Test
+    // mode skips the device; tests feed blocks via processTestBlock,
+    // mirroring the GUI suite's CallbackFixture.
     class CaptureDaemon final : public juce::AudioIODeviceCallback
     {
     public:
@@ -49,6 +52,14 @@ namespace zynforge::capture
         bool isRunning() const noexcept   { return running.load(); }
         int  getPort() const noexcept     { return server.getPort(); }
         bool isRecording() const noexcept { return recorder.isRecording(); }
+        // The take still needs this process: rolling, closing its files, or a
+        // STOP whose reply has not gone out yet. CaptureMain waits on this
+        // before it tears the server down, or STOP's reply is lost and the
+        // window takes a clean STOP for a dead helper.
+        bool holdsTake() const noexcept
+        {
+            return recorder.isRecording() || recorder.isFinalizing() || stopsInFlight.load() > 0;
+        }
 
         MultitrackRecorder& getRecorder() noexcept { return recorder; }
 
@@ -64,8 +75,12 @@ namespace zynforge::capture
         void prepareForTests (double sampleRate, int blockSize, int numInputs);
         void dropLinkForTests() { server.dropClient(); }
         void setDeviceNameForTests (const juce::String& name) { noteDevice (name); }
+        // Opens devices of this type instead of the system's: the real device
+        // paths run with nothing reaching CoreAudio. Call before start().
+        void useDeviceTypeForTests (std::unique_ptr<juce::AudioIODeviceType> type);
         std::atomic<int> configuresForTests { 0 };
         std::function<void()> beforeStartForTests;
+        std::function<void()> beforeStopReplyForTests;
         void processTestBlock (const float* const* inputs, int numChannels, int numSamples);
 
         // juce::AudioIODeviceCallback
@@ -83,8 +98,12 @@ namespace zynforge::capture
         friend class ReviewCaptureStartupTests;
         friend class zynforge::EngineFixTests;
         friend class zynforge::CapturePathTests;
+        friend class zynforge::CaptureHelperTests;
         std::function<void()> registerCallbackForTests;
         void handleCommand (const Command&);
+        bool runDeviceWork (const std::function<void()>& work);
+        juce::String reopenDevice (const juce::XmlElement& state, double wantedRate, int trackCount,
+                                   const std::function<void()>& applyTracks);
         void statusLoop();
         EngineStatus buildStatus();
         bool watchCallback();
@@ -112,6 +131,8 @@ namespace zynforge::capture
         identity::TakeClaim takeClaim;                      // under commandLock
         mutable std::mutex  deviceNameLock;   // JUCE owns the setup; the status thread may not read it
         juce::String        deviceName;       // set while a device runs
+        juce::String        appliedDeviceState; // message thread: the setup the last configure opened
+        std::atomic<int>    stopsInFlight { 0 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureDaemon)
     };

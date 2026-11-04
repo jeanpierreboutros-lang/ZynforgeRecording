@@ -618,9 +618,20 @@ MainComponent::LostDaemon MainComponent::resolveLostDaemon()
             daemonTakeAdopted = false;   // the next fresh status says what it is doing
             return LostDaemon::back;
         case Reattach::nothingThere:
+        {
+            // Nothing listening proves nothing while a helper still holds the
+            // take's claim: one that is exiting closes its port first and its
+            // files last. Calling it gone would start recovery on files it is
+            // still closing.
+            const auto status = captureSupervisor.lastStatus();
+            const auto session = status.sessionPath.isNotEmpty() ? juce::File (status.sessionPath)
+                                                                 : engine.getActiveSessionDir();
+            if (session != juce::File() && zynforge::capture::identity::TakeClaim::isHeld (session))
+                break;
             daemonLinkLost = false;
             captureSupervisor.forgetRollingTake();
             return LostDaemon::gone;
+        }
         case Reattach::noAnswer:
             break;
     }

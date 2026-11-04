@@ -27,4 +27,22 @@ namespace zynforge::capture
             state->setAttribute ("audioDeviceOutChans", setup.outputChannels.toString (2));
         return state;
     }
+
+    // The same setup with its outputs taken out. The helper records and never
+    // plays, so the window's monitor output is nothing to it. Named, it would
+    // be the device the helper holds (CoreAudio names an input/output pair
+    // after the output), and that output going away (headphones pulled, a
+    // display asleep) would close the helper's device and end its take.
+    inline void keepInputsOnly (juce::XmlElement& state)
+    {
+        // A single name means both directions: keep it as the input alone.
+        if (state.hasAttribute ("audioDeviceName"))
+        {
+            if (! state.hasAttribute ("audioInputDeviceName"))
+                state.setAttribute ("audioInputDeviceName", state.getStringAttribute ("audioDeviceName"));
+            state.removeAttribute ("audioDeviceName");
+        }
+        state.removeAttribute ("audioOutputDeviceName");
+        state.removeAttribute ("audioDeviceOutChans");
+    }
 }

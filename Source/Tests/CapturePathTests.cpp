@@ -1514,6 +1514,204 @@ namespace zynforge
             testCopiesFollowStrips();
             testLiveHelperSessions();
             testPreRoll();
+            testHelperStopAndQuit();
+            testResumedHashes();
+        }
+
+        // A take with a backup and a mirror, hashed, then left as a quit
+        // leaves it: pending, every hash empty. Returns the primary's hash.
+        juce::String pendingHashedTake (const juce::File& session, const juce::File& backup, const juce::File& mirror)
+        {
+            {
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (backup);
+                expect (rec.setMirrors ({ { mirror, CaptureFormat::Wav24 } }));
+                expect (rec.startRecording (session));
+                rec.waitForCopiesOpenForTests();
+                Ramp ramp { rec };
+                for (int b = 0; b < 8; ++b) { ramp.block(); rec.drainPendingForTests(); }
+                rec.stopRecording();
+            }
+            std::atomic<bool> stop { false };
+            expect (MultitrackRecorder::waitForReportHashes (session, stop, true));
+            const auto finished = juce::JSON::parse (session.getChildFile ("session.report.json"))
+                                      ["tracks"][0]["sha256"][0].toString();
+            expect (MultitrackRecorder::editSessionReport (session, [] (juce::DynamicObject& live)
+            {
+                live.setProperty ("sha256Pending", true);
+                if (auto* tracks = live.getProperty ("tracks").getArray())
+                    for (auto& track : *tracks)
+                    {
+                        track.getDynamicObject()->setProperty ("sha256", juce::Array<juce::var>());
+                        track.getDynamicObject()->setProperty ("backupSha256", juce::Array<juce::var>());
+                        if (auto* mirrors = track.getProperty ("mirrors", {}).getArray())
+                            for (auto& one : *mirrors)
+                                one.getDynamicObject()->setProperty ("sha256", juce::Array<juce::var>());
+                    }
+            }));
+            return finished;
+        }
+
+        // The first hash a report lists at `path` (track 0, then fields and
+        // first entries), empty where any step is missing: an empty array must
+        // not be indexed.
+        static juce::String firstHash (const juce::var& report, std::initializer_list<const char*> path)
+        {
+            auto at = report;
+            const auto first = [] (const juce::var& list)
+            {
+                auto* items = list.getArray();
+                return items != nullptr && ! items->isEmpty() ? items->getReference (0) : juce::var();
+            };
+            at = first (at.getProperty ("tracks", {}));
+            for (const auto* field : path)
+                at = first (at.getProperty (field, {}));
+            return at.toString();
+        }
+
+        void testResumedHashes()
+        {
+            beginTest ("Resumed hashes reach the primary first, and a backup that is gone fails only the backup");
+            {
+                const auto root = tempDir ("resume-order");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                const auto backup = root.getChildFile ("backup");
+                const auto finished = pendingHashedTake (session, backup, root.getChildFile ("mirror"));
+                expect (finished.isNotEmpty());
+                expect (backup.deleteRecursively());   // the backup drive was unplugged
+                const auto file = session.getChildFile ("session.report.json");
+
+                juce::var beforeCopies;
+                auto done = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder::resumeReportHashes (session, [done] { done->signal(); },
+                                                        [&] { beforeCopies = juce::JSON::parse (file); });
+                expect (done->wait (10000), "the hashes never finished");
+                expectEquals (firstHash (beforeCopies, { "sha256" }), finished,
+                              "the primary waited for every copy to be read");
+                const auto report = juce::JSON::parse (file);
+                expect (! (bool) report["sha256Pending"]);
+                expectEquals (firstHash (report, { "sha256" }), finished);
+                expect (! (bool) report["sha256Failed"], "a missing backup failed the primary's hashes");
+                expect ((bool) report["copySha256Failed"], "the backup that could not be read was not named");
+                expect (firstHash (report, { "mirrors", "sha256" }).isNotEmpty());
+            }
+
+            beginTest ("A session another process is hashing is not hashed a second time");
+            {
+                const auto root = tempDir ("resume-elsewhere");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                const auto finished = pendingHashedTake (session, root.getChildFile ("backup"), root.getChildFile ("mirror"));
+                const auto file = session.getChildFile ("session.report.json");
+
+                capture::identity::ScanClaim helperHashing;   // as the helper's pass after STOP holds it
+                expect (helperHashing.hold (session));
+                auto done = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder::resumeReportHashes (session, [done] { done->signal(); });
+                done->wait (1500);
+                expect ((bool) juce::JSON::parse (file)["sha256Pending"],
+                        "a second hash pass ran beside the one already reading the take");
+                helperHashing.release();
+                done->reset();
+                MultitrackRecorder::resumeReportHashes (session, [done] { done->signal(); });
+                expect (done->wait (10000), "the hashes never finished once the other pass had gone");
+                expectEquals (firstHash (juce::JSON::parse (file), { "sha256" }), finished);
+            }
+        }
+
+        void testHelperStopAndQuit()
+        {
+            beginTest ("A lost helper that still holds its take is not taken for gone");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                rig.session.createDirectory();
+                main.engine.beginExternalTake (rig.session, kRate);
+                // The helper is still closing the take's files, and has stopped listening.
+                capture::identity::TakeClaim stillClosing;
+                stillClosing.hold (rig.session);
+                rig.daemon.stop();
+                expect (pumpUntil ([&] { return ! main.captureSupervisor.isAttached(); }, 3000));
+                main.daemonLinkLost = true;
+                expect (main.resolveLostDaemon() == MainComponent::LostDaemon::unknown,
+                        "a helper still writing the take was called gone");
+                expect (main.engine.isExternalRecording(), "the window stopped guarding a take still being closed");
+                stillClosing.release();
+                expect (main.resolveLostDaemon() == MainComponent::LostDaemon::gone);
+                main.leaveLostDaemon();
+            }
+
+            beginTest ("A helper told to quit mid-take stays up for STOP and answers it");
+            {
+                const auto binary = capture::CaptureSupervisor::discoverBinary();
+                if (binary.existsAsFile())
+                {
+                    const int port = 50000 + juce::Random::getSystemRandom().nextInt (9000);
+                    const auto session = tempDir ("signal-stop");
+                    juce::ChildProcess child;
+                    expect (child.start (juce::StringArray { binary.getFullPathName(), "--port", juce::String (port),
+                                                             "--inputs", "1", "--no-device" }));
+                    capture::CaptureClient client;
+                    expect (pumpUntil ([&] { return client.connect ("127.0.0.1", port); }, 5000), "the helper never listened");
+                    expect (client.hello (2000).ok);
+                    capture::Command arm; arm.action = capture::Action::ArmTrack; arm.trackIndex = 0; arm.boolValue = true;
+                    expect (client.send (arm));
+                    capture::Command start; start.action = capture::Action::StartRecording;
+                    start.sessionDir = session.getFullPathName();
+                    expect (client.request (start, 3000).ok);
+                    expectGreaterOrEqual (capture::CaptureSupervisor::askChildrenToExit (binary.getFileName()), 1);
+                    juce::Thread::sleep (300);
+                    expect (child.isRunning(), "one signal ended a rolling take");
+                    capture::Command stop; stop.action = capture::Action::StopRecording;
+                    expect (client.request (stop, 10000).completed, "STOP's reply was lost to the exit");
+                    client.disconnect();
+                    expect (child.waitForProcessToFinish (5000), "the helper never exited after STOP");
+                    expect (child.readAllProcessOutput().contains ("stopped cleanly"));
+                    session.deleteRecursively();
+                }
+            }
+
+            beginTest ("Quit waits while a take its device ended is still closing its files");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                MainComponent::s_testConstruct = true;
+                const auto root = tempDir ("quit-finalizing");
+                {
+                    MainComponent main;
+                    auto& engine = main.engine;
+                    engine.clearAllStripOverrides();
+                    engine.setStripCount (1);
+                    engine.prepareForTests (kRate, kBlock);
+                    engine.setActiveSessionDir (root);
+                    engine.claimMixerFor (root);
+                    engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (engine.startRecording (root), engine.getRecorder().getStartError());
+                    juce::AudioBuffer<float> in (1, kBlock), out (2, kBlock);
+                    in.clear(); out.clear();
+                    for (int b = 0; b < 4; ++b)
+                        engine.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), 1,
+                                                                 out.getArrayOfWritePointers(), 2, kBlock, {});
+                    engine.audioDeviceStopped();   // the interface dropped mid-take
+                    expect (engine.isCaptureFinalizing());
+                    auto* modal = juce::ModalComponentManager::getInstance();
+                    const int before = modal->getNumModalComponents();
+                    main.confirmAndQuit();
+                    expectEquals (modal->getNumModalComponents(), before,
+                                  "a quit dialog opened while the take was still being closed");
+                    expect (main.statusLabel.getText().containsIgnoreCase ("closing"), main.statusLabel.getText());
+                    expect (pumpUntil ([&] { return ! engine.isCaptureFinalizing(); }, 10000));
+                    for (int i = modal->getNumModalComponents(); --i >= before;)
+                        if (auto* c = modal->getModalComponent (i)) c->exitModalState (0);
+                    pumpUntil ([&] { return modal->getNumModalComponents() <= before; }, 2000);
+                    engine.clearAllStripOverrides();
+                }
+                MainComponent::s_testConstruct = false;
+                MultitrackRecorder::deleteSessionAfterCancellingReports (root);
+            }
         }
     };
 

@@ -139,6 +139,8 @@ private:
     void twinStopRecord (std::function<void (bool, juce::String)> done) override;
     void twinDropMarker (const juce::String& name) override;
     void twinNotify (const juce::String& text) override;
+    void twinRememberLinkedTake (const juce::String& takeId, const juce::File& sessionDir) override;
+    juce::String twinLinkedTakeIn (const juce::File& sessionDir) override;
     void noteTwinStopIfEnded();
     void showTwinRecorderDialog();
     void updateTwinStatusLabel();

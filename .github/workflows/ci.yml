@@ -76,12 +76,59 @@ jobs:
         run: |
           "build/ZynforgeRecordingTests_artefacts/${{ matrix.config }}/Zynforge Recording Tests.app/Contents/MacOS/Zynforge Recording Tests"
 
+      # The universal build's Intel slice is otherwise never run. Rosetta is
+      # installed when missing; a runner that cannot have it says so.
+      - name: Headless tests under Rosetta (x86_64)
+        if: matrix.config == 'Release'
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+          fi
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            arch -x86_64 "build/ZynforgeRecordingTests_artefacts/Release/Zynforge Recording Tests.app/Contents/MacOS/Zynforge Recording Tests"
+          else
+            echo "::warning::Rosetta is not available on this runner; the x86_64 slice was not run"
+          fi
+
+      # verify_take.sh and notarize.sh judge what ships. ffprobe is the one
+      # tool the verify_take checks need that the runner does not carry.
+      - name: Tool tests (verify_take, notarize, soak monitor)
+        if: matrix.config == 'Release'
+        run: |
+          command -v ffprobe >/dev/null || brew install ffmpeg
+          python3 -I tools/test_verify_tools.py
+          python3 -I tools/test_notarize.py
+
+      # Launch the shipping app and let it quit through its normal shutdown
+      # path, with settings kept away from the runner's own.
+      - name: Smoke launch and quit (Release app)
+        if: matrix.config == 'Release'
+        run: |
+          app="build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording"
+          "$app" --isolated-settings --smoke-quit-after=5 &
+          pid=$!
+          for _ in $(seq 1 90); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "::error::the app did not quit within 90 s"
+            kill -TERM "$pid"
+            exit 1
+          fi
+          wait "$pid"
+
       - name: Verify bundled capture daemon
         if: matrix.config == 'Release'
         run: |
           test -x "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/ZynforgeCapture"
           codesign --verify --deep --strict "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
           lipo -archs "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" | grep -q 'x86_64 arm64\|arm64 x86_64'
+          lipo -archs "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/ZynforgeCapture" | grep -q 'x86_64 arm64\|arm64 x86_64'
+          # Sealed as notarize.sh ships them: hardened, with the audio-input entitlement.
+          for code in "Zynforge Recording.app" "Zynforge Recording.app/Contents/MacOS/ZynforgeCapture"; do
+            signature=$(codesign -dv "build/ZynforgeRecording_artefacts/Release/$code" 2>&1)
+            grep -q 'flags=.*runtime' <<<"$signature"
+            entitlements=$(codesign -d --entitlements - "build/ZynforgeRecording_artefacts/Release/$code" 2>/dev/null)
+            grep -q 'com.apple.security.device.audio-input' <<<"$entitlements"
+          done
           # The shipping binary must not contain the test suites.
           ! nm "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" | grep -q 'Tests7runTestEv'
 

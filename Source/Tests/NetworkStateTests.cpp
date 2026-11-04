@@ -13,6 +13,7 @@
 #include "../Audio/VirtualSoundcheck.h"
 #include "../Network/ConsoleLink.h"
 #include "../Network/DeskMacro.h"
+#include "LtcTestSignal.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <cstring>
@@ -441,7 +442,7 @@ namespace zynforge
                 auto& e = b.engine();
                 e.setChaseMode (AudioEngine::ChaseMode::Mtc);
                 e.setChaseStartTimecode ("00:00:00:00");
-                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 12, 25.0f);
+                for (const auto qf : ltctest::mtcQuarterFrames ({ 0, 0, 0, 12 }, 1)) e.getTimecodeChase().feedMtcQuarterFrame (qf);
                 expect (e.isChaseLive(), "fixture: chase is not live");
                 main.serviceTimecodeChase();
                 expect (! e.isPlaying(), "chase rolled toward a punch");
@@ -753,7 +754,7 @@ namespace zynforge
                 player.setPositionSamples (1000);
                 e.setChaseMode (AudioEngine::ChaseMode::Mtc);
                 e.setChaseStartTimecode ("00:00:00:00");
-                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 12, 25.0f);
+                for (const auto qf : ltctest::mtcQuarterFrames ({ 0, 0, 0, 12 }, 1)) e.getTimecodeChase().feedMtcQuarterFrame (qf);
                 expect (e.isChaseLive(), "fixture: chase is not live");
 
                 main.onLockToggled();
@@ -776,13 +777,13 @@ namespace zynforge
                 auto& e = b.engine();
                 e.setChaseMode (AudioEngine::ChaseMode::Mtc);
                 e.setChaseStartTimecode ("00:00:00:00");
-                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 12, 25.0f);
+                for (const auto qf : ltctest::mtcQuarterFrames ({ 0, 0, 0, 12 }, 1)) e.getTimecodeChase().feedMtcQuarterFrame (qf);
                 main.serviceTimecodeChase();
                 expect (e.isPlaying());
                 main.chaseParked = false;
                 main.onLockToggled();
                 // An hour past the session: unlocked, this parks and stops what chase started.
-                e.getTimecodeChase().feedMtcFullFrame (1, 0, 0, 0, 25.0f);
+                for (const auto qf : ltctest::mtcQuarterFrames ({ 1, 0, 0, 0 }, 1)) e.getTimecodeChase().feedMtcQuarterFrame (qf);
                 main.serviceTimecodeChase();
                 expect (e.isPlaying(), "chase stopped a locked transport");
                 main.onLockToggled();
@@ -798,7 +799,7 @@ namespace zynforge
                 e.getPlayer().setPositionSamples (1000);
                 e.setChaseMode (AudioEngine::ChaseMode::Mtc);
                 e.setChaseStartTimecode ("00:00:00:00");
-                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 12, 25.0f);
+                for (const auto qf : ltctest::mtcQuarterFrames ({ 0, 0, 0, 12 }, 1)) e.getTimecodeChase().feedMtcQuarterFrame (qf);
                 main.sessionIoBusy.store (true);
                 main.serviceTimecodeChase();
                 main.sessionIoBusy.store (false);

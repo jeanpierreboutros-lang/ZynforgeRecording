@@ -146,6 +146,13 @@ namespace zynforge::twin
         virtual void twinStopRecord (std::function<void (bool ok, juce::String text)> done) = 0;
         virtual void twinDropMarker (const juce::String& name) = 0;
         virtual void twinNotify (const juce::String& text) = 0;
+        // A take the link started here, kept where this window finds it after
+        // a restart, while a capture helper goes on rolling it. An empty id
+        // forgets it. Both keep nothing unless the host overrides them.
+        virtual void twinRememberLinkedTake (const juce::String& takeId, const juce::File& sessionDir)
+        { juce::ignoreUnused (takeId, sessionDir); }
+        virtual juce::String twinLinkedTakeIn (const juce::File& sessionDir)
+        { juce::ignoreUnused (sessionDir); return {}; }
     };
 
     struct Config
@@ -323,6 +330,7 @@ namespace zynforge::twin
         bool         leaderTakeActive { false };
         bool         adoptedTake { false };
         juce::String followerTakeId;     // the take the link started here
+        bool         adoptedUnlinked { false };   // a rolling take this window found, with no link record
         juce::String lastSummaryBody;
         std::deque<TakeRecord> records;
         juce::uint64 nextRecordId { 1 };

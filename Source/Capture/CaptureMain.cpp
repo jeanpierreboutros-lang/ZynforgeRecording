@@ -11,6 +11,7 @@
 #include <juce_events/juce_events.h>
 
 #include "CaptureDaemon.h"
+#include "HelperExit.h"
 
 #include <atomic>
 #include <csignal>
@@ -20,9 +21,16 @@
 
 namespace
 {
-    std::atomic<bool> shouldQuit  { false };
-    std::atomic<int>  signalCount { 0 };
-    void onSignal (int) { shouldQuit.store (true); signalCount.fetch_add (1); }
+    std::atomic<bool> shouldQuit   { false };
+    std::atomic<int>  signalCount  { 0 };
+    std::atomic<bool> systemEnding { false };
+    void onSignal (int, siginfo_t* info, void*)
+    {
+        if (info != nullptr && zynforge::capture::helperexit::fromSystem (info->si_pid))
+            systemEnding.store (true);
+        shouldQuit.store (true);
+        signalCount.fetch_add (1);
+    }
 
     // Run the message loop for ~100 ms rather than sleeping. JUCE's CoreAudio
     // device reports an unplugged interface or a nominal-rate change through
@@ -56,8 +64,13 @@ int main (int argc, char* argv[])
 
     // A dropped GUI socket must fail the write, not kill the take.
     std::signal (SIGPIPE, SIG_IGN);
-    std::signal (SIGTERM, onSignal);
-    std::signal (SIGINT,  onSignal);
+    // SA_SIGINFO says who sent it: launchd ending the session must not wait.
+    struct sigaction action {};
+    action.sa_sigaction = onSignal;
+    action.sa_flags = SA_SIGINFO;
+    sigemptyset (&action.sa_mask);
+    sigaction (SIGTERM, &action, nullptr);
+    sigaction (SIGINT,  &action, nullptr);
 
     zynforge::capture::CaptureDaemon daemon;
     daemon.onQuitRequest = [] { shouldQuit.store (true); };   // wire Quit command
@@ -77,11 +90,16 @@ int main (int argc, char* argv[])
 
     // Take-safety: a SIGTERM/SIGINT must not truncate a rolling take, matching
     // the daemon's "Quit refused mid-take" rule. Wait for the take to finish
-    // (a StopRecording from the GUI) before tearing down. A Quit command only
-    // ever sets the flag while idle, so it exits this wait immediately. A
-    // SECOND signal (operator insists) forces the stop -- which still finalises
-    // the take cleanly (files + manifest), so it is never data loss.
-    while (daemon.isRecording() && signalCount.load() < 2)
+    // (a StopRecording from the GUI) before tearing down, and for STOP's reply
+    // to go out: the recorder stops calling itself recording as soon as STOP
+    // begins, and a server torn down then loses the reply, so the window takes
+    // a clean STOP for a dead helper and starts recovery on files still being
+    // closed. A Quit command only ever sets the flag while idle, so it exits
+    // this wait immediately. A SECOND signal (operator insists), or launchd's
+    // one before its SIGKILL, forces the stop -- which still finalises the take
+    // cleanly (files + manifest), so it is never data loss.
+    while (daemon.holdsTake()
+           && ! zynforge::capture::helperexit::finishTakeNow (signalCount.load(), systemEnding.load()))
         pumpMessages();
 
     // Clean stop: closes the take (files + manifest) before comms/device.
