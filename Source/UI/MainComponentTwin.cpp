@@ -82,6 +82,26 @@ void MainComponent::twinNotify (const juce::String& text)
     showStatus (text);
 }
 
+// Kept in the app's settings, beside the link's role and port: a crash of this
+// window leaves the capture helper rolling the take, and the relaunched window
+// has nothing else that says the link started it.
+void MainComponent::twinRememberLinkedTake (const juce::String& takeId, const juce::File& sessionDir)
+{
+    zynforge::updateSettings (engine.getAppProps(), [&] (juce::PropertiesFile& p)
+    {
+        p.setValue ("twinLinkedTake", takeId);
+        p.setValue ("twinLinkedTakeDir", takeId.isEmpty() ? juce::String() : sessionDir.getFullPathName());
+    });
+}
+
+juce::String MainComponent::twinLinkedTakeIn (const juce::File& sessionDir)
+{
+    auto* props = engine.getAppProps();
+    if (props == nullptr || sessionDir == juce::File()) return {};
+    const auto kept = props->getValue ("twinLinkedTakeDir");
+    return kept.isNotEmpty() && juce::File (kept) == sessionDir ? props->getValue ("twinLinkedTake") : juce::String();
+}
+
 void MainComponent::noteTwinStopIfEnded()
 {
     // Only a take that has really ended counts: a first tap, or a daemon that

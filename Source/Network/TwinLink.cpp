@@ -944,6 +944,16 @@ namespace zynforge::twin
         };
 
         const auto status = host.twinStatus();
+        // A daemon take reads as recording until its helper has closed every
+        // file. That take is ending: it is no take to link the new one to, and
+        // nothing will start the new one here once it has ended.
+        if (status.recording && status.finalizing)
+        {
+            const bool relink = (bool) body.getProperty ("relink", false);
+            reply (relink, relink ? "this Mac is closing its last take, so the leader's take has no follower"
+                                  : "this Mac is still closing its last take; press RECORD there once it has finished");
+            return;
+        }
         if (status.recording)
         {
             // The leader restarted while this Mac kept rolling its linked take
@@ -951,6 +961,8 @@ namespace zynforge::twin
             if (followerTakeId.isNotEmpty())
             {
                 followerTakeId = take;
+                adoptedUnlinked = false;
+                host.twinRememberLinkedTake (take, status.sessionDir);
                 if (auto* record = openRecordOrNull()) record->takeId = take;
                 reply (true, "already recording; the take it kept rolling is now linked to this one");
             }
@@ -970,9 +982,13 @@ namespace zynforge::twin
             return;
         }
         followerTakeId = take;
+        adoptedUnlinked = false;
         localRolling = true;
         rollingChangedAtMs = juce::Time::getMillisecondCounter();
         const auto started = host.twinStatus();
+        // A restart of this window must still know the link started it: a
+        // capture helper keeps it rolling, and the leader's STOP has to land.
+        host.twinRememberLinkedTake (take, started.sessionDir);
         if (auto* record = openRecordOrNull()) record->takeId = take;
         else openRecord (take, started);
         reply (true, {});
@@ -989,7 +1005,9 @@ namespace zynforge::twin
         if (! host.twinStatus().recording) { reply (true, {}); return; }
         if (take.isEmpty() || take != followerTakeId)
         {
-            reply (false, "this take was started on the follower; stop it there");
+            reply (false, adoptedUnlinked
+                ? "this Mac restarted during the take and nothing ties it to the link; stop it there"
+                : "this take was started on the follower; stop it there");
             return;
         }
         host.twinStopRecord ([reply, guard = std::weak_ptr<bool> (alive)] (bool ok, juce::String text)
@@ -1003,7 +1021,9 @@ namespace zynforge::twin
         localRolling = false;
         localFinishing = true;
         rollingChangedAtMs = juce::Time::getMillisecondCounter();
+        if (followerTakeId.isNotEmpty()) host.twinRememberLinkedTake ({}, {});
         followerTakeId.clear();
+        adoptedUnlinked = false;
         if (config.role == Role::Leader && leaderTakeActive)
         {
             // This take ended without a confirmed STOP: the interface died, or
@@ -1181,7 +1201,7 @@ namespace zynforge::twin
             localRolling = true;
             rollingChangedAtMs = juce::Time::getMillisecondCounter();
             if (enabled && openRecordOrNull() == nullptr)
-                openRecord (juce::Uuid().toString(), status);
+                openRecord (followerTakeId.isNotEmpty() ? followerTakeId : juce::Uuid().toString(), status);
         }
         else if (! status.recording && localRolling)
             onLocalTakeEnded();
@@ -1205,6 +1225,13 @@ namespace zynforge::twin
 
     void TwinLink::noteLocalTakeAdopted()
     {
+        // A follower's window restarted under a take its helper kept rolling.
+        // If the link started that take, this window was told so before.
+        if (followerTakeId.isEmpty())
+        {
+            followerTakeId = host.twinLinkedTakeIn (host.twinStatus().sessionDir);
+            adoptedUnlinked = followerTakeId.isEmpty();
+        }
         if (leaderTakeActive) return;
         adoptedTake = true;
         offerAdoptedTake();
