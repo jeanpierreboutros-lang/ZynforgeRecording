@@ -70,7 +70,21 @@ namespace zynforge
             return true;
         }
 
+        // The periodic flush: header only, no fsync, like the WAV and integer
+        // AIFF paths. Every open file on every copy pays for it every 5 s.
         bool flush() override
+        {
+            const bool headerOk = ! headerDirty || writeHeader();
+            if (auto* file = dynamic_cast<juce::FileOutputStream*> (output))
+                healthy = healthy && file->getStatus().wasOk();
+            healthy = healthy && headerOk;
+            if (healthy) headerDirty = false;
+            return healthy && ! failFlushForTests;
+        }
+
+        // The last chance to hear about a failed write: header, then fsync.
+        // Safe to follow with the destructor.
+        bool finishBeforeClose()
         {
             const bool headerOk = ! headerDirty || writeHeader();
             output->flush();
@@ -265,6 +279,6 @@ namespace zynforge
     {
         if (auto* pcm = dynamic_cast<PcmAiffWriter*> (writer)) return pcm->finishBeforeClose();
         auto* floating = dynamic_cast<FloatAiffWriter*> (writer);
-        return floating == nullptr || floating->flush();
+        return floating == nullptr || floating->finishBeforeClose();
     }
 }
