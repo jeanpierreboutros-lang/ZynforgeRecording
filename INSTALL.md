@@ -330,7 +330,14 @@ If copying or verification fails, do not launch the partial installation. Preser
 
 Not run yet: it needs the owner's Developer ID. Local installs above stay ad-hoc signed.
 
+`tools/notarize.sh` signs a private copy of the built app (the helper first, then the app), submits it, staples it and packages a DMG. The build tree keeps its ad-hoc seal. `--identity` takes the name or SHA-1 hash that `security find-identity -v -p codesigning` lists; `--profile` is a keychain profile made once with `xcrun notarytool store-credentials`.
+
 ```bash
+app="build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
+identity="Developer ID Application: <name> (<team id>)"
+tools/notarize.sh --app "$app" --identity "$identity" --profile <profile> --check   # validates everything, changes nothing
+tools/notarize.sh --app "$app" --identity "$identity" --profile <profile>           # sign, notarize, staple, DMG into build/release
+```
 
 ## Rollback
 

@@ -42,20 +42,33 @@ if [[ -z "$SESSION" ]]; then
     settings="$HOME/Library/Application Support/Zynforge Recording/Zynforge Recording.settings"
     # The first key that has a value decides: a recorded capture that has since
     # gone must stop here, not fall through to some other session.
-    SESSION=$(python3 -I - "$settings" 2>/dev/null <<'PY'
+    # Which key it was comes first, then a tab: the open session is no proof
+    # of a recording.
+    chosen=$(python3 -I - "$settings" 2>/dev/null <<'PY'
 import sys
 import xml.etree.ElementTree as ElementTree
 
 values = {row.get("name"): row.get("val", "") for row in ElementTree.parse(sys.argv[1]).getroot().iter("VALUE")}
-print(values.get("lastCaptureDir") or values.get("activeSessionDir") or "")
+if values.get("lastCaptureDir"):
+    print("capture\t" + values["lastCaptureDir"])
+elif values.get("activeSessionDir"):
+    print("open\t" + values["activeSessionDir"])
 PY
 )
-    if [[ -z "$SESSION" ]]; then
+    SESSION="${chosen#*$'\t'}"
+    if [[ -z "$chosen" || -z "$SESSION" ]]; then
         red "no session given and the app's settings name no recorded session"
         red "pass the session folder: tools/verify_take.sh \"/path/to/session\""
         exit 2
     fi
-    ylw "No session given; verifying the one the app last recorded."
+    if [[ "${chosen%%$'\t'*}" == "capture" ]]; then
+        ylw "No session given; verifying the one the app last recorded."
+    else
+        # No recorded capture is named after Remove Last Capture, or after a
+        # RECORD the capture helper never answered.
+        ylw "No session given, and the app's settings name no recorded capture; verifying the session it"
+        ylw "last had open instead. That may not be the show: pass the take's folder to be sure."
+    fi
 fi
 SESSION="${SESSION%/}"
 [[ -d "$SESSION" ]] || { red "not a directory: $SESSION"; exit 2; }
@@ -169,9 +182,22 @@ else
     [[ "$deviceLost" == "false" ]] || { red "  capture audio device stopped during the take"; fail=1; }
     stallMs=$(jq -r '.deviceStallMs // 0' "$REPORT")
     [[ "$stallMs" == "0" ]] || { red "  no audio from the device for $stallMs ms during the take"; fail=1; }
+    # Only the primary is verified here, and step 5 re-hashes every file of it.
+    # A copy whose drive was gone or hung when its hashes were made is that
+    # copy's problem, not this take's: a note, unless a primary hash is missing.
+    primaryUnhashed=$(jq -r '[.tracks[] | select(((.files // []) | length) != ((.sha256 // []) | length)
+                              or ([(.sha256 // [])[] | select(type != "string" or (test("^[0-9a-fA-F]{64}$") | not))]
+                                  | length > 0))] | length' "$REPORT")
     if [[ "$(jq -r '.sha256Failed // false' "$REPORT")" == "true" ]]; then
-        red "  report hashing failed"
-        fail=1
+        if [[ "$pending" != "true" && "$primaryUnhashed" == "0" ]]; then
+            ylw "  hashing failed on a backup or mirror; every primary file has its hash (checked in step 5)"
+        else
+            red "  report hashing failed"
+            fail=1
+        fi
+    fi
+    if [[ "$(jq -r '.copySha256Failed // false' "$REPORT")" == "true" ]]; then
+        ylw "  a backup or mirror could not be hashed: check that copy on its own drive"
     fi
     for field in primaryFailed backupFailed mirrorFailed punchSpliceFailed; do
         if [[ "$(jq -r --arg field "$field" '.[$field] // false' "$REPORT")" == "true" ]]; then
@@ -275,7 +301,10 @@ PY
     fi
 
     if [[ "$pending" == "true" ]]; then
-        red "  sha256 still hashing — verification is incomplete; re-run after it finishes."
+        # Hashes are made only inside the app: a quit stops them and opening
+        # the session starts them again, so re-running this alone never helps.
+        red "  sha256 not finished — verification is incomplete. Hashes are made only while the app has"
+        red "  this session open: open it in the app, leave it open until hashing finishes, then re-run."
         fail=1
     else
         # Re-hash each listed primary file and compare to the manifest.
