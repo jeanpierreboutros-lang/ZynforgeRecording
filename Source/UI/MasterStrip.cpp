@@ -1,4 +1,5 @@
 #include "MasterStrip.h"
+#include "../Audio/MixKernel.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -31,6 +32,9 @@ namespace zynforge
 
     // No interface has this many output channels.
     static constexpr int kOutputOffId = 100000;
+    // The pair the mix really plays on when the saved one is not on this device.
+    // It is shown, not offered: picking it changes nothing.
+    static constexpr int kOutputMovedId = 100001;
     static const char* const kOutputTooltip = "Master output device channels -- pair like 'Out 1-2' "
                                               "in stereo mode, single 'Out N' in mono. Off sends the mix "
                                               "to no output, for a rig whose outputs are all console returns.";
@@ -61,7 +65,7 @@ namespace zynforge
         outputCombo.onChange = [this]
         {
             const int id = outputCombo.getSelectedId();
-            if (id < 1) return;
+            if (id < 1 || id == kOutputMovedId) return;
             if (id == kOutputOffId) { engine.setMasterOutputs (-1, -1); return; }
             const int devL = id - 1;
             if (engine.getMasterStereo())
@@ -91,6 +95,11 @@ namespace zynforge
         modeButton.onClick = [this]
         {
             const bool stereo = modeButton.getToggleState();
+            // Mono stores the one output as (L, L). Kept into stereo, that pair
+            // folded the mix to mono on one output under a strip that said ST.
+            const auto [left, right] = outputsForMode (stereo, engine.getMasterOutputL(), engine.getMasterOutputR());
+            if (left != engine.getMasterOutputL() || right != engine.getMasterOutputR())
+                engine.setMasterOutputs (left, right);
             engine.setMasterStereo (stereo);
             modeButton.setButtonText (stereo ? "ST" : "MONO");
             meter.setStereoPartner (stereo ? &engine.getMasterStateR() : nullptr);
@@ -154,20 +163,43 @@ namespace zynforge
 
     MasterStrip::~MasterStrip() { stopTimer(); }
 
+    std::pair<int, int> MasterStrip::outputsForMode (bool stereo, int left, int right) noexcept
+    {
+        if (left < 0) return { -1, -1 };
+        if (! stereo) return { left, left };
+        if (right != left) return { left, right };
+        const int pairLeft = left - left % 2;
+        return { pairLeft, pairLeft + 1 };
+    }
+
     void MasterStrip::refreshOutputs()
     {
-        int dev = 0;
-        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
-            dev = d->getActiveOutputChannels().countNumberOfSetBits();
+        const int dev = engine.getCurrentDeviceOutputCount();
         const bool stereo = engine.getMasterStereo();
+        const int savedL = engine.getMasterOutputL(), savedR = engine.getMasterOutputR();
 
-        // Rebuild only on stereo-mode change OR device-count change -- this
-        // is called from the 10 Hz timer, and unconditionally clearing +
+        // Where the callback really plays the mix (mix::masterOutputs). A
+        // device smaller than the saved pair gets its last pair, and the list
+        // says so rather than showing the saved pair as off.
+        const auto playing = mix::masterOutputs (savedL, savedR, dev);
+        const bool moved = savedL >= 0 && dev > 0
+                        && (stereo ? playing.left != savedL || playing.right != savedR : playing.left != savedL);
+        const int selectedId = moved ? kOutputMovedId : outputComboId (savedL);
+
+        // Rebuild only on stereo-mode, device-count or saved-pair change --
+        // this is called from the 10 Hz timer, and unconditionally clearing +
         // re-adding the items rebuilt the combo (and dirtied it for repaint)
         // every tick at idle. A mode flip forces a rebuild by resetting
-        // lastNumOutputs to -1; the selected-id sync stays in timerCallback.
-        if (dev == lastNumOutputs && stereo == lastComboStereo) return;
+        // lastNumOutputs to -1.
+        if (dev == lastNumOutputs && stereo == lastComboStereo && savedL == lastComboLeft && savedR == lastComboRight)
+        {
+            if (outputCombo.getSelectedId() != selectedId)
+                outputCombo.setSelectedId (selectedId, juce::dontSendNotification);
+            return;
+        }
         lastComboStereo = stereo;
+        lastComboLeft = savedL;
+        lastComboRight = savedR;
 
         outputCombo.clear (juce::dontSendNotification);
         const int visible = juce::jmax (dev, stereo ? 16 : 8);
@@ -181,7 +213,18 @@ namespace zynforge
             outputCombo.addItem (live ? label : (label + " (off)"), i + 1);
         }
         outputCombo.addItem ("Off (no output)", kOutputOffId);
-        outputCombo.setSelectedId (outputComboId (engine.getMasterOutputL()), juce::dontSendNotification);
+        const auto outs = [stereo] (int l, int r)
+        {
+            return "Out " + juce::String (l + 1) + (stereo && r != l ? "-" + juce::String (r + 1) : juce::String());
+        };
+        if (moved)
+            outputCombo.addItem (outs (playing.left, playing.right) + " (saved " + outs (savedL, savedR) + ")", kOutputMovedId);
+        outputCombo.setSelectedId (selectedId, juce::dontSendNotification);
+        outputMovedTooltip = moved ? "This device has no " + outs (savedL, savedR) + ", so the mix plays on "
+                                         + outs (playing.left, playing.right) + ". Pick a pair to move it."
+                                   : juce::String();
+        if (! cachedHeldOff)
+            outputCombo.setTooltip (moved ? outputMovedTooltip : juce::String (kOutputTooltip));
         lastNumOutputs = dev;
     }
 
@@ -196,9 +239,6 @@ namespace zynforge
         gainLabel.setText (juce::String (dB, 1) + " dB", juce::dontSendNotification);
         if (muteButton.getToggleState() != engine.getMasterMuted())
             muteButton.setToggleState (engine.getMasterMuted(), juce::dontSendNotification);
-        const int outputId = outputComboId (engine.getMasterOutputL());
-        if (outputCombo.getSelectedId() != outputId)
-            outputCombo.setSelectedId (outputId, juce::dontSendNotification);
 
         const bool held = engine.isMasterHeldOff();
         if (held != cachedHeldOff)
@@ -208,7 +248,8 @@ namespace zynforge
             outputCombo.setColour (juce::ComboBox::outlineColourId, held ? brand::accentRecord : brand::edge);
             outputCombo.setTooltip (held ? juce::String ("The mix is off this pair: a strip is patched to one of "
                                                          "its outputs. Pick a spare pair or Off.")
-                                         : juce::String (kOutputTooltip));
+                                  : outputMovedTooltip.isNotEmpty() ? outputMovedTooltip
+                                                                    : juce::String (kOutputTooltip));
         }
 
         const bool stereo = engine.getMasterStereo();
