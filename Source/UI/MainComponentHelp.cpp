@@ -523,9 +523,11 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
 
     juce::Component::SafePointer<MainComponent> self (this);
     zynforge::NewSessionDialog::launch (defaultRoot, curSr, curFormat,
-        [self, templateFile] (const zynforge::NewSessionDialog::Result& r)
+        [self, templateFile, scope = questionScope()] (const zynforge::NewSessionDialog::Result& r)
     {
-        if (self == nullptr) return;
+        // Replacing was confirmed for the session open when the dialog opened,
+        // not for one a Finder open put there behind it.
+        if (self == nullptr || ! self->stillInScope (scope)) return;
 
         // Build the named session folder right away (Pro Tools-style):
         //   <Local Storage>/<Name>/

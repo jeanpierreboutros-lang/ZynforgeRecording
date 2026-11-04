@@ -207,6 +207,7 @@ namespace zynforge
     void ExportSongsDialog::launch (const std::vector<songexport::Range>& songs, double sessionRate,
                                     ExportSongsContent::ResultCallback onResult)
     {
+        if (launchForTests) { launchForTests (std::move (onResult)); return; }
         // Wrap so the callback can only fire once.
         auto shared = std::make_shared<ExportSongsContent::ResultCallback> (std::move (onResult));
         auto fireOnce = [shared] (std::optional<songexport::Choice> result)

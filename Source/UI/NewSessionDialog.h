@@ -30,5 +30,7 @@ namespace zynforge
                             double            lastSampleRate,
                             CaptureFormat     lastCaptureFormat,
                             ResultCallback    onCreate);
+        // Tests answer in place of the window.
+        inline static std::function<void (ResultCallback)> launchForTests;
     };
 }

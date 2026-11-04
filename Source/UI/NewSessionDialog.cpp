@@ -332,6 +332,7 @@ namespace zynforge
                                    CaptureFormat     lastCaptureFormat,
                                    ResultCallback    onCreate)
     {
+        if (launchForTests) { launchForTests (std::move (onCreate)); return; }
         auto* content = new Content (defaultLocation, lastSampleRate, lastCaptureFormat, std::move (onCreate));
 
         juce::DialogWindow::LaunchOptions opts;

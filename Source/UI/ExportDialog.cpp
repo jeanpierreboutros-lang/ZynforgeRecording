@@ -332,6 +332,7 @@ namespace zynforge
                                     const std::vector<juce::String>& trackNames,
                                     ExportAudioContent::ResultCallback onResult)
     {
+        if (launchForTests) { launchForTests (std::move (onResult)); return; }
         // We wrap the callback so the dialog can only fire it once.
         auto shared = std::make_shared<ExportAudioContent::ResultCallback> (std::move (onResult));
         auto fireOnce = [shared] (std::optional<ExportAudioContent::Result> result)

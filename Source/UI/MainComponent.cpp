@@ -418,6 +418,12 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
 
     planRecordPosition (plan);
     plan.dir = plan.continueTake ? engine.getActiveSessionDir() : makeNewSessionDir();
+    if (plan.dir == juce::File())
+    {
+        showRecordRefusal ("Local Storage is not connected: " + missingLocalStorage()
+                           + " -- connect its drive, or choose another in File > New Session");
+        return false;
+    }
     plan.numTracks = numTracks;
     plan.armed = armed;
 

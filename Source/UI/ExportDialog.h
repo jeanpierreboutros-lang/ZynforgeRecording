@@ -103,5 +103,7 @@ namespace zynforge
         static void launch (double sessionSampleRate,
                             const std::vector<juce::String>& trackNames,
                             ExportAudioContent::ResultCallback onResult);
+        // Tests answer in place of the window.
+        inline static std::function<void (ExportAudioContent::ResultCallback)> launchForTests;
     };
 }
