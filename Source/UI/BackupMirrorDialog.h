@@ -5,9 +5,11 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Audio/PreflightProbes.h"
+#include "../Audio/VolumeProbe.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 
 namespace zynforge
 {
@@ -62,6 +64,7 @@ namespace zynforge
     };
 
     class DialogAuditTests;
+    class MixerFixTests;
 
     namespace backupdlg
     {
@@ -69,10 +72,23 @@ namespace zynforge
         // past that rather than silently dropping the tail on save.
         inline constexpr int kMaxMirrors = 16;
 
+        // Runs where a dead drive would block the folder check.
+        inline std::function<void()> rootCheckStallForTests;
+
+        // What one row's folder is. Worked out off the message thread, in one
+        // wait with a limit for every row (Content::recheckRoots): checking a
+        // root asks its disk, and a dead mount may never answer.
+        struct RootCheck
+        {
+            juce::String rejection;            // why the recorder would refuse it
+            bool         onSessionDrive { false };
+        };
+
         // One row per destination: path label + format combo + remove button.
-        // The backup row has no remove button, and may refuse a picked folder
-        // through acceptPick. The owning Content rebuilds the mirror rows on
-        // every mutation so the list always reflects the working state.
+        // The backup row's remove button turns the backup off, and the row may
+        // refuse a picked folder through acceptPick. The owning Content rebuilds
+        // the mirror rows on every mutation so the list always reflects the
+        // working state.
         class DriveRow final : public juce::Component
         {
         public:
@@ -81,10 +97,11 @@ namespace zynforge
                       std::function<void(int)> onRemove,
                       std::function<void()>    onChanged,
                       std::function<juce::String (const juce::File&, int)> validateRoot,
-                      std::function<bool (const juce::File&)> acceptPick = {})
+                      std::function<bool (const juce::File&)> acceptPick = {},
+                      std::function<juce::String (int)> noteFor = {})
                 : index (idx), cfg (config), removeCb (std::move (onRemove)),
                   changedCb (std::move (onChanged)), validateCb (std::move (validateRoot)),
-                  acceptCb (std::move (acceptPick))
+                  acceptCb (std::move (acceptPick)), noteCb (std::move (noteFor))
             {
                 pathLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 pathLabel.setColour (juce::Label::backgroundColourId, brand::bgDeep);
@@ -135,20 +152,27 @@ namespace zynforge
 
             // A row whose root the recorder would refuse is shown in the record
             // colour with the reason, so it's obvious BEFORE Apply which row is
-            // the problem -- not just that "something" is wrong.
+            // the problem -- not just that "something" is wrong. A row it would
+            // take but that is no second copy (on the session's drive), or
+            // whose drive did not answer, says so in amber.
             void refreshPathDisplay()
             {
                 const auto reason = validateCb ? validateCb (cfg.root, index) : juce::String();
                 const bool blank  = (cfg.root == juce::File());
+                const auto note   = reason.isEmpty() && ! blank && noteCb ? noteCb (index) : juce::String();
+                const auto shown  = reason.isNotEmpty() ? reason : note;
 
                 pathLabel.setText (blank ? "(no folder chosen)"
                                          : cfg.root.getFullPathName()
-                                           + (reason.isNotEmpty() ? "   --  " + reason : juce::String()),
+                                           + (shown.isNotEmpty() ? "   --  " + shown : juce::String()),
                                    juce::dontSendNotification);
                 pathLabel.setColour (juce::Label::textColourId,
                                      reason.isNotEmpty() && ! blank ? brand::accentRecord
+                                     : note.isNotEmpty()            ? brand::alertAmber
                                      : blank                        ? brand::textTertiary
                                                                     : brand::textPrimary);
+                // The backup row has nothing to remove once it is off.
+                removeBtn.setVisible ((bool) removeCb && (index >= 0 || ! blank));
             }
 
             void resized() override
@@ -164,6 +188,7 @@ namespace zynforge
             }
 
         private:
+            friend class zynforge::MixerFixTests;
             void pickFolder()
             {
                 chooser = std::make_unique<juce::FileChooser> (
@@ -195,6 +220,7 @@ namespace zynforge
             std::function<void()>                changedCb;
             std::function<juce::String (const juce::File&, int)> validateCb;
             std::function<bool (const juce::File&)> acceptCb;
+            std::function<juce::String (int)>    noteCb;
             juce::Label                          pathLabel;
             juce::TextButton                     chooseBtn;
             juce::ComboBox                       formatBox;
@@ -221,12 +247,17 @@ namespace zynforge
                 titleHint.setMinimumHorizontalScale (1.0f);
                 addAndMakeVisible (titleHint);
 
+                recheckRoots (false);
+                // Its remove button turns the backup off: a drive used at one
+                // gig is not there at the next, and without a way back the
+                // whole show ran under BACKUP WRITE FAILED.
                 backupRow = std::make_unique<DriveRow> (
-                    -1, backup, std::function<void(int)>(),
+                    -1, backup,
+                    [this] (int) { backup.root = juce::File(); refreshAllRows(); },
                     [this] { refreshAllRows(); },
-                    [this] (const juce::File& f, int)
-                    { return MultitrackRecorder::mirrorRootRejection (f, engine.getActiveSessionDir(), {}, {}); },
-                    [this] (const juce::File& f) { return acceptBackup (f); });
+                    [this] (const juce::File& f, int) { return f == juce::File() ? juce::String() : checkFor (-1).rejection; },
+                    [this] (const juce::File& f) { return acceptBackup (f); },
+                    [this] (int) { return noteFor (-1); });
                 addAndMakeVisible (*backupRow);
 
                 for (auto* caption : { &backupCaption, &mirrorCaption })
@@ -245,7 +276,6 @@ namespace zynforge
                 rowHolder.setInterceptsMouseClicks (false, true);
                 rowView.setViewedComponent (&rowHolder, false);
                 rowView.setScrollBarsShown (true, false);
-                rowView.setColour (juce::ScrollBar::thumbColourId, brand::edge);
                 addAndMakeVisible (rowView);
 
                 addBtn.setButtonText ("+ Add mirror drive...");
@@ -315,6 +345,7 @@ namespace zynforge
 
         private:
             friend class zynforge::DialogAuditTests;
+            friend class zynforge::MixerFixTests;
             static constexpr int kRowH = 36;
 
             void timerCallback() override
@@ -339,17 +370,75 @@ namespace zynforge
                     status.setText ({}, juce::dontSendNotification);
             }
 
-            // Would the recorder refuse this root? `selfIdx` is excluded from the
-            // duplicate check so a row never conflicts with itself.
-            juce::String rejectionFor (const juce::File& root, int selfIdx) const
+            // Would the recorder refuse these roots, and which share the
+            // session's drive? Every check stats or canonicalizes a root, which
+            // blocks as long as a dead mount does, so they all run on a thread
+            // of their own in one wait with a limit (preflight::withinTime),
+            // never on the message thread. Index 0 is the backup, then each
+            // mirror. Empty when the drives did not answer in time.
+            static std::optional<std::vector<RootCheck>> checkRoots (const juce::File& session,
+                                                                     const juce::File& backupRoot,
+                                                                     std::vector<juce::File> mirrorRoots)
             {
-                if (root == juce::File()) return {};      // blank rows are just dropped
-                std::vector<juce::File> others;
-                for (int i = 0; i < (int) working.size(); ++i)
-                    if (i != selfIdx && working[(size_t) i].root != juce::File())
-                        others.push_back (working[(size_t) i].root);
-                return MultitrackRecorder::mirrorRootRejection (
-                           root, engine.getActiveSessionDir(), backup.root, others);
+                return preflight::withinTime (preflight::kDriveWaitMs,
+                    [session, backupRoot, mirrorRoots, stall = rootCheckStallForTests]
+                {
+                    if (stall) stall();
+                    const auto sessionVolume = session != juce::File() ? VolumeProbe::readVolume (session).volumeId : 0;
+                    const auto onSessionDrive = [sessionVolume] (const juce::File& root)
+                    { return sessionVolume != 0 && VolumeProbe::readVolume (root).volumeId == sessionVolume; };
+
+                    std::vector<RootCheck> found;
+                    RootCheck backupCheck;
+                    if (backupRoot != juce::File())
+                    {
+                        backupCheck.rejection = MultitrackRecorder::mirrorRootRejection (backupRoot, session, {}, {});
+                        backupCheck.onSessionDrive = onSessionDrive (backupRoot);
+                    }
+                    found.push_back (backupCheck);
+                    for (size_t i = 0; i < mirrorRoots.size(); ++i)
+                    {
+                        RootCheck check;
+                        if (mirrorRoots[i] != juce::File())   // blank rows are just dropped
+                        {
+                            // A row never conflicts with itself.
+                            std::vector<juce::File> others;
+                            for (size_t j = 0; j < mirrorRoots.size(); ++j)
+                                if (j != i && mirrorRoots[j] != juce::File()) others.push_back (mirrorRoots[j]);
+                            check.rejection = MultitrackRecorder::mirrorRootRejection (mirrorRoots[i], session, backupRoot, others);
+                            check.onSessionDrive = onSessionDrive (mirrorRoots[i]);
+                        }
+                        found.push_back (check);
+                    }
+                    return found;
+                });
+            }
+
+            // Re-run the checks when a root changed (a format change moves none),
+            // or always when `force`d, as Apply does.
+            void recheckRoots (bool force)
+            {
+                const auto session = engine.getActiveSessionDir();
+                std::vector<juce::File> mirrorRoots;
+                juce::String key = session.getFullPathName() + "|" + backup.root.getFullPathName();
+                for (const auto& m : working) { mirrorRoots.push_back (m.root); key << "|" << m.root.getFullPathName(); }
+                if (! force && key == checkedRoots) return;
+                checkedRoots = key;
+                checks = checkRoots (session, backup.root, std::move (mirrorRoots));
+            }
+
+            // -1 is the backup, then the mirrors by index.
+            RootCheck checkFor (int index) const
+            {
+                const auto slot = (size_t) (index + 1);
+                return checks.has_value() && slot < checks->size() ? (*checks)[slot] : RootCheck {};
+            }
+
+            juce::String noteFor (int index) const
+            {
+                if (! checks.has_value()) return "drive not answering -- not checked yet";
+                return checkFor (index).onSessionDrive ? "on the same drive as the session -- not an independent copy"
+                                                       : juce::String();
             }
 
             // The refusals a backup folder has always had, at the moment of
@@ -377,6 +466,7 @@ namespace zynforge
 
             void rebuildRows()
             {
+                recheckRoots (false);
                 rows.clear();
                 for (size_t i = 0; i < working.size(); ++i)
                 {
@@ -384,7 +474,9 @@ namespace zynforge
                         (int) i, working[i],
                         [this] (int idx) { removeRow (idx); },
                         [this] { refreshAllRows(); },
-                        [this] (const juce::File& f, int selfIdx) { return rejectionFor (f, selfIdx); });
+                        [this] (const juce::File& f, int selfIdx) { return f == juce::File() ? juce::String() : checkFor (selfIdx).rejection; },
+                        std::function<bool (const juce::File&)>(),
+                        [this] (int idx) { return noteFor (idx); });
                     row->setRowEnabled (! lastRecording);
                     rowHolder.addAndMakeVisible (*row);
                     rows.push_back (std::move (row));
@@ -396,6 +488,7 @@ namespace zynforge
             // so re-run every row's display, not just the one that moved.
             void refreshAllRows()
             {
+                recheckRoots (false);
                 backupRow->refreshPathDisplay();
                 for (auto& r : rows) r->refreshPathDisplay();
             }
@@ -449,13 +542,18 @@ namespace zynforge
                 // A root the recorder would REFUSE is a different case entirely:
                 // it can't be written to safely at all, so refuse it here rather
                 // than let the recorder silently skip it on the night.
+                // Asked again, fresh, in the same bounded wait. A drive that does
+                // not answer is kept: the recorder checks every copy again on
+                // that copy's own thread when the take opens, and the banner
+                // reports one it skips.
+                recheckRoots (true);
                 std::vector<MultitrackRecorder::MirrorConfig> cleaned;
                 for (int i = 0; i < (int) working.size(); ++i)
                 {
                     const auto& m = working[(size_t) i];
                     if (m.root == juce::File()) continue;     // never picked a folder -> drop
 
-                    const auto reason = rejectionFor (m.root, i);
+                    const auto reason = checkFor (i).rejection;
                     if (reason.isNotEmpty())
                     {
                         status.setText ("Mirror " + juce::String (i + 1) + ": " + reason,
@@ -503,6 +601,8 @@ namespace zynforge
             juce::TextButton                                 applyBtn;
             juce::TextButton                                 cancelBtn;
             bool                                             lastRecording { false };
+            std::optional<std::vector<RootCheck>>            checks;          // see checkRoots
+            juce::String                                     checkedRoots;    // the roots `checks` describe
         };
     }
 
@@ -516,6 +616,6 @@ namespace zynforge
         opts.useNativeTitleBar       = false;
         opts.resizable               = false;
         opts.content.setOwned (content.release());
-        return opts.launchAsync();
+        return launchClosesForTake (opts);   // as Cancel: the recorder refuses these under a take
     }
 }

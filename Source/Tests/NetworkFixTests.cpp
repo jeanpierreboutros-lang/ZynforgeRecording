@@ -937,6 +937,7 @@ namespace zynforge
                 expect (link.isEnabled());
                 content.refresh();
                 expect (! content.codeEditable(), "the code stayed editable under a live link");
+                content.pressEnable();   // under a take Disconnect takes a second press
                 content.pressEnable();
                 expect (! link.isEnabled());
             }

@@ -11,6 +11,8 @@
 
 namespace zynforge
 {
+    class MixerFixTests;
+
     // Session > Network & Surfaces > Twin Recorder. A floating panel that can
     // sit open while a show runs, so everything it enables comes from a timer
     // reading live state, never from what was true when it opened.
@@ -162,7 +164,10 @@ namespace zynforge
                     if (address.getText() != mine) address.setText (mine, false);
                 }
 
-                enable.setButtonText (enabled ? "Disconnect" : follower ? "Listen for leader" : "Connect");
+                if (disconnectArmedMs != 0 && (! enabled || armedOut())) disconnectArmedMs = 0;
+                enable.setButtonText (! enabled             ? (follower ? "Listen for leader" : "Connect")
+                                      : disconnectArmedMs != 0 ? "Press again"
+                                                               : "Disconnect");
                 enable.setEnabled (true);
                 if (enabled) dialog::styleSecondary (enable); else dialog::stylePrimary (enable);
 
@@ -190,6 +195,7 @@ namespace zynforge
             void pressRegenerate()            { onRegenerate(); }
 
         private:
+            friend class zynforge::MixerFixTests;
             void timerCallback() override { refresh(); }
 
             void loadFields()
@@ -229,12 +235,32 @@ namespace zynforge
                 refresh();
             }
 
+            // While either Mac rolls, Disconnect beside Close takes a second press
+            // within 2 s, as STOP does: the follower would roll on with no STOP
+            // to reach it.
             void onEnableClicked()
             {
                 error.clear();
-                if (link.isEnabled()) link.stop();
+                if (link.isEnabled())
+                {
+                    const auto peer = link.snapshot().peer;
+                    const bool takeRolling = isRolling() || (peer.has_value() && peer->recording);
+                    if (takeRolling && (disconnectArmedMs == 0 || armedOut()))
+                        disconnectArmedMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
+                    else
+                    {
+                        disconnectArmedMs = 0;
+                        link.stop();
+                    }
+                }
                 else startLink();
                 refresh();
+            }
+
+            bool armedOut() const
+            {
+                constexpr juce::uint32 kArmWindowMs = 2000;
+                return juce::Time::getMillisecondCounter() - disconnectArmedMs > kArmWindowMs;
             }
 
             void startLink()
@@ -287,9 +313,9 @@ namespace zynforge
                         return { s.role == twin::Role::Follower ? "WAITING for the leader"
                                                                 : "CONNECTING to the follower",
                                  brand::alertAmber };
-                    case S::Lost:    return { "TWIN LOST", brand::accentRecord };
+                    case S::Lost:    return { "TWIN LOST", brand::textDanger };
                     case S::Refused:
-                    case S::Failed:  return { "NOT LINKED", brand::accentRecord };
+                    case S::Failed:  return { "NOT LINKED", brand::textDanger };
                     case S::Off:     break;
                 }
                 return { "Off", brand::textSecondary };
@@ -326,6 +352,7 @@ namespace zynforge
 
             twin::TwinLink& link;
             std::function<bool()> isRolling;
+            juce::uint32 disconnectArmedMs { 0 };   // the first press of a Disconnect under a take
             std::function<juce::PropertiesFile*()> getSettings;
             std::function<void()> prepareSettingsWrite;
             juce::String error;
