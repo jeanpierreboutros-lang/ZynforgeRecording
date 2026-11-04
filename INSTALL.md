@@ -2,9 +2,24 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-## Development Mac update — 2026-11-03, after the first long take
+## Development Mac update — 2026-11-04, one waveform shape
 
-The development Mac (MacBook Pro) now has `577592c`: `5c7a3e4` plus the two post-STOP changes made after the first long take (*Fixed — after the first long take* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
+The development Mac (MacBook Pro) now has `eca170e`: `577592c` plus the one-shape zoomed-out waveform (*Fixed — after the three-hour take* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `53baf442b3e1e44f369877fc552de4b319dec3140eda647a3cc1b81251d6c0a3` |
+| Capture helper | `7ac2a265f8343adc8d169fe14eae2e4e4eb8ab6063dab647b5e9d8a5f06ae4fc` (unchanged) |
+
+- **Tests before install:** 1588 groups / 0 failures in Release, launched through `open`; ASan/UBSan and TSan were not re-run for this display-only change. CI passed on the same commit. See [testing.md](testing.md).
+- **Install:** after the owner answered the app's save prompt and it quit, neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Both executables are universal.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261104-104037-before-eca170e` (`577592c`).
+- **Signing:** ad-hoc with the hardened runtime and the audio-input entitlement, as `577592c`.
+- **After install:** it reopened the three-hour session from its saved waveform cache within about 20 s, with one waveform shape per lane.
+
+## Previous development Mac update — 2026-11-03, after the first long take
+
+The development Mac (MacBook Pro) had `577592c`: `5c7a3e4` plus the two post-STOP changes made after the first long take (*Fixed — after the first long take* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
 
 | Executable | SHA-256 |
 | --- | --- |
@@ -329,6 +344,7 @@ The October 5 two-Mac cleanup removed every app bundle older than `443c769` at t
 | Development | `d4a9a57` | `Zynforge Recording.app.backup-20261103-032331-before-9a40f54` |
 | Development | `9a40f54` | `Zynforge Recording.app.backup-20261103-172758-before-5c7a3e4` |
 | Development | `5c7a3e4` | `Zynforge Recording.app.backup-20261103-233742-before-577592c` |
+| Development | `577592c` | `Zynforge Recording.app.backup-20261104-104037-before-eca170e` |
 | Mac mini | `443c769` | `Zynforge Recording.app.backup-20261029-221655-before-281c6c0` |
 
 The development Mac's list was checked on 2026-11-03; the mini's is from its installation record. Earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.

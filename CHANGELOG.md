@@ -19,7 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Changed — framework
 
-- Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27. The development Mac has it, now as `577592c`; the mini does not.
+- Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27. The development Mac has it, now as `eca170e`; the mini does not.
 - THIRD-PARTY-NOTICES lists the HarfBuzz (10.1.0) and zlib copyright this JUCE carries.
 
 ### Fixed — after the three-hour take, 2026-11-04
@@ -35,7 +35,7 @@ Found on `5c7a3e4` after a 4 h 10 min, 55-track take on an external exFAT drive.
 - After STOP, every EDIT row keeps the waveform it drew live until its own rescan of the finished file is done. The rows on screen could drop it at once and show the take only as fast as the rescan read it: the first two and a half minutes of a four-hour take, five minutes after STOP.
 - The waveform rescan reads through 512 KiB buffers instead of one tiny read per waveform column. That did **not** fix the slow rescan on that drive. With the take reopened, `577592c` still read about 3 GB/s from it while moving about 18 MB/s of audio (`5c7a3e4`: 2.7 GB/s for about 9 MB/s), so the rescan, the report's SHA-256 pass and quitting stay slow there. With the app closed, a plain test reader wastes 11–15× on those files with large reads, so the waste comes from the drive, not the app: likely exFAT as macOS 26 serves it (FSKit), holding 55 files that grew side by side. Not proven, and still open: see *First long take* in [tasks.md](tasks.md).
 
-Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03, after `d4a9a57`. It is in `9a40f54` and every later build on the development Mac (now `577592c`), not in the Mac mini's `281c6c0`, and none of it has been tried on real hardware.
+Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03, after `d4a9a57`. It is in `9a40f54` and every later build on the development Mac (now `eca170e`), not in the Mac mini's `281c6c0`, and none of it has been tried on real hardware.
 
 ### Added — the device a take records from
 
@@ -168,7 +168,7 @@ Everything from here down to the next rule came in on 2026-11-02 and 2026-11-03,
 
 ---
 
-The next nine sections came in on 2026-11-02 and are in `9a40f54` and every later build on the development Mac (now `577592c`). They are not in the mini's `281c6c0`. None of it has been tried on real hardware.
+The next nine sections came in on 2026-11-02 and are in `9a40f54` and every later build on the development Mac (now `eca170e`). They are not in the mini's `281c6c0`. None of it has been tried on real hardware.
 
 ### Changed — after the design critique
 
