@@ -5,6 +5,10 @@
 
 #include <juce_cryptography/juce_cryptography.h>
 #include "../Audio/FastHash.h"
+#include "../Audio/ScanInput.h"
+#include "../Audio/UncachedFileInput.h"
+
+#include <cstring>
 
 namespace zynforge
 {
@@ -86,6 +90,76 @@ namespace zynforge
             beginTest ("Missing file hashes to empty string");
             {
                 expect (hashing::fileSha256 (juce::File ("/no/such/file_zynforge.bin")).isEmpty());
+            }
+
+            beginTest ("Whole-file passes read past the page cache and see every byte");
+            {
+                juce::Random rng (777);
+                const int size = (3 << 20) + 777;
+                juce::MemoryBlock data ((size_t) size);
+                auto* bytes = static_cast<juce::uint8*> (data.getData());
+                for (int i = 0; i < size; ++i) bytes[i] = (juce::uint8) rng.nextInt (256);
+                auto f = writeTemp (data.getData(), data.getSize());
+
+                auto in = uncached::FileInput::open (f);
+                expect (in != nullptr, "the file did not open");
+                if (in != nullptr)
+                {
+                   #if JUCE_MAC
+                    expect (in->bypassesCache() || in->readAheadOff(),
+                            "the read-ahead of a session's takes is thrown away before use");
+                   #endif
+                    expectEquals (in->getTotalLength(), (juce::int64) size);
+                    juce::HeapBlock<juce::uint8> got ((size_t) size);
+                    int at = 0;
+                    for (int chunk : { 1, 1535, 4096, 1 << 19, 3, 1 << 20, 1 << 22 })
+                    {
+                        const int n = in->read (got.getData() + at, juce::jmin (chunk, size - at));
+                        at += n;
+                        expectEquals (in->getPosition(), (juce::int64) at);
+                    }
+                    expectEquals (at, size, "a whole read came up short");
+                    expect (std::memcmp (got.getData(), bytes, (size_t) size) == 0, "other bytes came back");
+                    expect (in->isExhausted());
+                    expectEquals (in->read (got.getData(), 16), 0, "a read past the end");
+                    expect (! in->hasFailed(), "the end of a file is not a failure");
+
+                    expect (in->setPosition (size / 2));
+                    expectEquals (in->read (got.getData(), 4096), 4096);
+                    expect (std::memcmp (got.getData(), bytes + size / 2, 4096) == 0, "a seek read other bytes");
+                    in->setPosition (-5);
+                    expectEquals (in->getPosition(), (juce::int64) 0);
+
+                    // A file still growing reports its new length, and the new bytes
+                    // read back at once: no stale page from before the write.
+                    {
+                        juce::FileOutputStream out (f);
+                        expect (out.openedOk());
+                        out.setPosition (size);
+                        out.writeRepeatedByte (0x5a, 1000);
+                        out.flush();
+                    }
+                    expectEquals (in->getTotalLength(), (juce::int64) size + 1000);
+                    in->setPosition (size);
+                    expect (! in->isExhausted());
+                    expectEquals (in->read (got.getData(), 2000), 1000);
+                    expect (got[0] == 0x5a && got[999] == 0x5a, "an appended block read stale");
+                }
+
+                // The scan's buffered stream over it reads the same bytes.
+                {
+                    auto scan = scanio::openStream (f);
+                    expect (scan != nullptr);
+                    juce::MemoryBlock all;
+                    if (scan != nullptr) scan->readIntoMemoryBlock (all);
+                    expectEquals ((int) all.getSize(), size + 1000);
+                    expect (all.getSize() >= (size_t) size && std::memcmp (all.getData(), bytes, (size_t) size) == 0,
+                            "the scan stream read other bytes");
+                }
+
+                expect (uncached::FileInput::open (f.getParentDirectory()) == nullptr, "a folder opened as a file");
+                expect (uncached::FileInput::open (juce::File ("/no/such/file_zynforge.bin")) == nullptr);
+                f.deleteFile();
             }
         }
     };

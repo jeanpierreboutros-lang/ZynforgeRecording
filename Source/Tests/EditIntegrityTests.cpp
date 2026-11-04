@@ -17,6 +17,8 @@
 #include <functional>
 #include <set>
 #include <CoreFoundation/CoreFoundation.h>
+#include <pthread/qos.h>
+#include <sys/resource.h>
 
 namespace zynforge
 {
@@ -959,6 +961,40 @@ namespace zynforge
                     }
                     expect (same, "the buffered multi-part reader returned other samples");
                 }
+            }
+
+            beginTest ("Waveform scan threads run at utility priority, not background");
+            {
+                // At background priority a 1 ms wait between thumbnail passes slept
+                // ~64 ms, and a 55-track rescan ran at about 75 MiB/s in all.
+                struct Probe final : juce::TimeSliceClient
+                {
+                    std::atomic<bool> ran { false };
+                    std::atomic<int>  qos { -1 }, diskPolicy { -1 };
+                    int useTimeSlice() override
+                    {
+                       #if JUCE_MAC
+                        qos.store ((int) qos_class_self());
+                        diskPolicy.store (::getiopolicy_np (IOPOL_TYPE_DISK, IOPOL_SCOPE_THREAD));
+                       #endif
+                        ran.store (true);
+                        return -1;
+                    }
+                } probe;
+                juce::TimeSliceThread thread ("scan priority test");
+                scanio::startScanThread (thread);
+                thread.addTimeSliceClient (&probe);
+                const auto until = juce::Time::getMillisecondCounter() + 5000;
+                while (! probe.ran.load() && juce::Time::getMillisecondCounter() < until)
+                    juce::Thread::sleep (5);
+                expect (probe.ran.load(), "the scan thread never ran a slice");
+               #if JUCE_MAC
+                expectEquals (probe.qos.load(), (int) QOS_CLASS_UTILITY,
+                              "background priority stretches the scan's waits");
+                expectEquals (probe.diskPolicy.load(), (int) IOPOL_DEFAULT,
+                              "an explicit disk policy takes the thread out of QoS");
+               #endif
+                thread.stopThread (2000);
             }
 
             beginTest ("Repaints reuse the zoomed-out overview of every clip on a row");

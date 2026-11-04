@@ -26,6 +26,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 Found on `577592c` after a 3 h 01 min, 54-track take on the same exFAT drive. The take recorded with no missed samples.
 
+- The post-STOP waveform rebuild on an external exFAT drive takes minutes, not hours. Two causes, both measured on that drive:
+  - **Read-ahead thrown away.** macOS read ahead for every take the scans had open, more than memory holds, and dropped most of it unread: the drive read up to 66× what the scans asked for, about 2.7 GB/s for a few MB/s of audio. Waveform scans and the report's SHA-256 pass now read takes past the page cache (`Source/Audio/UncachedFileInput.h`). How the files lie on the disk made no difference: files written side by side, preallocated or alone all read back the same.
+  - **Sleeping scan threads.** At background priority macOS lets a thread's timers fire up to about 64 ms late, and JUCE's thumbnail threads wait 1 ms after every pass over their files, so they slept about 90% of the time. They now run at utility priority, whose reads still sit in a low-priority disk tier below recording, playback and saves.
+
+  On the 4 h 10 min, 55-track take (114 GB), every waveform was drawn in 3 min 9 s after the session opened, with the drive reading what the app asked for. With the first fix alone it took 24 min 16 s; the old build needed 3 h 10 min for the smaller three-hour take. The report's hash pass is unchanged (about 15 MiB/s; see *Three-hour take* in [tasks.md](tasks.md)).
 - A zoomed-out EDIT lane draws one waveform. It drew a bright shape for the typical level with a dim peak shape behind it, which read as two waveforms on top of each other. The single shape is the quadratic mean of 16 short peak windows per screen column: sustained and dense passages keep their height, and a lone transient lifts its column a little instead of filling it with a solid block. Closer in, the native waveform draws as before. Display only; the audio is untouched.
 
 ### Fixed — after the first long take, 2026-11-03

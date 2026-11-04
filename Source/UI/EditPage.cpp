@@ -9,6 +9,7 @@
 #include "RenameLabel.h"
 #include "EditTrackRow.h"
 #include "../Audio/TrackOrder.h"
+#include "../Audio/ScanInput.h"
 
 #include <algorithm>
 #include <map>
@@ -569,14 +570,12 @@ namespace zynforge
         toolsBar = std::make_unique<EditToolsBar>();
 
         // Waveform scans must yield disk access to recording, playback and
-        // metadata saves. Keep the existing shard/cache layout, but never run
-        // whole-take scans at user-initiated priority on an external volume.
+        // metadata saves: utility priority keeps their reads in a throttled
+        // disk tier. Not background: see scanio::startScanThread.
         for (int s = 0; s < kNumScanShards; ++s)
         {
             auto cache = std::make_unique<juce::AudioThumbnailCache> (256);
-            auto& scanThread = cache->getTimeSliceThread();
-            scanThread.stopThread (-1);
-            scanThread.startThread (juce::Thread::Priority::background);
+            scanio::startScanThread (cache->getTimeSliceThread());
             thumbnailCaches.push_back (std::move (cache));
         }
 

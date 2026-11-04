@@ -7,7 +7,10 @@
 - [x] After STOP the rows on screen kept the whole take drawn (rows 1–5, one minute after STOP).
 - [x] The owner found the zoomed-out waveform doubled: a bright level shape over a dim peak shape. It now draws one shape (*Fixed — after the three-hour take* in [CHANGELOG.md](CHANGELOG.md)).
 - [x] Installed `eca170e` on the development Mac; it reopened this session with one shape per lane.
-- [ ] The read storm again: the drive read about 2.6 GB/s after STOP. The report's hashes finished 2 h 30 min after STOP and the waveform cache was saved 3 h 10 min after STOP, with the app left open. Same open item as below.
+- [x] The read storm again: the drive read about 2.6 GB/s after STOP. The report's hashes finished 2 h 30 min after STOP and the waveform cache was saved 3 h 10 min after STOP, with the app left open. Found and fixed: the kernel's read-ahead for the 55 files scanned side by side outgrew memory and was dropped unread, and the scan threads slept at background priority. On the 4 h 10 min take every waveform now draws in 3 min 9 s after the session opens (ADR at the top of [decisions.md](decisions.md)).
+- [ ] Owner: 55-track playback from that drive. Read at real-time speed through the cache, as playback reads, it cost the drive 195× (63 GB in one minute, 7 of 88 rounds late). With read-ahead off: 1.08×, none late. Playback is unchanged; changing it needs a listening test, and a slower drive would likely drop out.
+- [ ] The report's hash pass runs at about 15 MiB/s on any drive: its 50 ms pause per 4 MiB lasts about 250 ms at background priority. 114 GB takes about 2 h.
+- [ ] FLAC parts still scan through the cached playback reader.
 - [ ] Rows scrolled off screen were not watched during the rescan; they showed the whole take once it finished.
 - [ ] Run `tools/verify_take.sh` on this session (its hashes are written).
 
@@ -16,11 +19,11 @@
 `5c7a3e4` on the development Mac: 55 tracks, 4 h 10 min, 48 kHz 24-bit WAV through Dante Virtual Soundcard, to an external exFAT SSD. The report shows 0 missed samples and 0 ms of device stall, and every file holds 720,204,800 samples. No backup drive was used.
 
 - [x] EDIT showed only the start of the take on the rows on screen after STOP: their live waveform was dropped before the rescan began. Fixed: only a scan issued after the hold releases it, and every holding row gets one.
-- [ ] The post-STOP rescan, the hashes and quit crawl on that drive. Scans now read through 512 KiB buffers (`Source/Audio/ScanInput.h`): on reopening the take that doubled the audio moved per second (18 MB/s against 9) but the drive still read about 3 GB/s for the app. With the app closed, a plain reader wastes 11–15× on those files with 512 KiB–4 MiB reads, from one thread or four, and about 2× with 1.5 KB reads. Likely exFAT through FSKit on macOS 26 with 55 interleaved files; not proven. Next: the same take and rescan on an APFS drive, then, for exFAT, whether capture can keep each track's file in large contiguous runs.
+- [x] The post-STOP rescan, the hashes and quit crawl on that drive. Fixed 2026-11-04 for the rescan (see *Three-hour take* above); the hashes stay paced. Scans now read through 512 KiB buffers (`Source/Audio/ScanInput.h`): on reopening the take that doubled the audio moved per second (18 MB/s against 9) but the drive still read about 3 GB/s for the app. With the app closed, a plain reader wastes 11–15× on those files with 512 KiB–4 MiB reads, from one thread or four, and about 2× with 1.5 KB reads. Likely exFAT through FSKit on macOS 26 with 55 interleaved files; not proven. Next: the same take and rescan on an APFS drive, then, for exFAT, whether capture can keep each track's file in large contiguous runs.
 - [x] Installed `577592c` on the development Mac.
 - [ ] On `577592c`, reopen the session and leave it until the rescan and hashes finish; time both, and the quit.
 - [ ] Run `tools/verify_take.sh` on the session once its hashes are written. Quitting cancelled the first pass before any hash was saved; opening the session resumes it.
-- [ ] Why the app's reads were wasted far more than a test reader's on the same files (about 300× against 2× with small reads) is not proven.
+- [x] Why the app's reads were wasted far more than a test reader's on the same files: the app read 55 files side by side, and the kernel's read-ahead for that many outgrew memory. A reader doing the same cost 66×.
 - [ ] Setting a thumbnail source now reads 512 KiB on the message thread instead of the header alone. Time a 55-track session's open and STOP settle on a spinning drive.
 - [ ] A new session's `WaveCache.wfm` is written with the previous session's peaks: this one holds 57 entries (21.8 MB), none for its own files.
 - [ ] Owner: the take has 55 tracks where about 58 were expected. Check which strips were not armed.

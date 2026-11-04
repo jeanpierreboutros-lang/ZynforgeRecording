@@ -1,5 +1,20 @@
 # Testing Strategy — ZynForge Recording
 
+## Post-STOP rescan on the exFAT drive — 2026-11-04
+
+Measured on the external exFAT SSD (FSKit, 128 KiB clusters, macOS 26.6.2), by the drive's own *Bytes (Read)* (`ioreg`) against the bytes asked for, and the app's reads by `proc_pid_rusage`.
+
+- **Layout:** 16 files of 384 MiB written side by side in 32 KiB writes, the same preallocated in 64 MiB steps (`F_PREALLOCATE` works on that volume), extended by `ftruncate`, and one written alone: all read back uncached at 1.00× (512 KiB reads, one file or four at once). Ruled out.
+- **One file at a time:** cached 512 KiB reads cost 1.65–1.75× (read-ahead past where the reader stopped), uncached 1.00×, read-ahead off 1.00×.
+- **55 files in turn, four threads, 512 KiB cached reads (the thumbnail pattern):** 66.3×, 39 MiB/s of data. Read-ahead off: 0.96×, 1537 MiB/s. Uncached: 1.00×, 1675 MiB/s.
+- **The app (`eca170e`) on that take:** its own reads matched the drive's 2.7 GB/s, with the four thumbnail threads in `read()`.
+- **Timers:** a 1 ms sleep took 1.5 ms normally, 7.5 ms under a utility clamp and 64 ms under a background clamp; a 50 ms sleep took 60, 116 and 249 ms.
+- **Uncached reads see fresh writes:** a file written through a buffered stream and read back uncached before and after a header-style rewrite, on that drive and on the internal APFS disk: identical.
+- **Real take, 4 h 10 min, 55 tracks, 114 GB, cache moved aside, the built app in `--isolated-settings`:** uncached reads at background priority: all waveforms in 24 min 16 s, the drive at 1.00× and 85–170 MiB/s. Uncached with an explicit throttled disk policy (the thread then left QoS): 1 min 48 s at about 1.28 GiB/s. Shipped, uncached at utility priority: in 3 min 9 s. The old build took 3 h 10 min after STOP for the 85 GB three-hour take. Quit took about a second in each run.
+- **Playback pattern (not changed):** 55 streams read at real-time speed through the cache cost 195× (7 of 88 rounds late); with read-ahead off 1.08×, uncached 1.16×, none late.
+
+New groups: *Whole-file passes read past the page cache and see every byte* (*Fast hash*: byte-exact reads across odd chunk sizes, seeks, the end of the file, a file still growing, the scan's buffered stream, no folder or missing file) and *Waveform scan threads run at utility priority, not background* (*EDIT integrity*: the thread's QoS is utility and it has no explicit disk policy). The invariants gate fails if a scan or hash opens a cached stream, if the scan threads stop starting through `scanio::startScanThread`, or if those files call `setiopolicy_np`. **Release: 1590 test groups, 0 failures**, launched through `open`; ASan/UBSan and TSan were not re-run.
+
 ## One waveform shape — 2026-11-04
 
 *Zoomed-out waveform is one shape* (in *EDIT view fixes*) replaces the median-and-peak check. `buildWaveformOverview` now returns one level per column: a lone loud window among quiet ones gives 0.28 after smoothing, not its 0.95 peak; a sustained 0.70 stays 0.70; alternating 0.8 / 0.1 windows give their quadratic mean, 0.57. **Release: 1588 test groups, 0 failures**, launched through `open`; the invariants gate is clean and the build adds no new kind of warning. ASan/UBSan and TSan were not re-run for this display-only change. The look itself is checked by eye (*One waveform* in [FIELD-TEST.md](FIELD-TEST.md)).

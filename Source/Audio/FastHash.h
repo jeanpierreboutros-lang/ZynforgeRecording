@@ -3,6 +3,8 @@
 #include <juce_core/juce_core.h>
 #include <atomic>
 #include <functional>
+
+#include "UncachedFileInput.h"
 #if JUCE_MAC
  #include <CommonCrypto/CommonDigest.h>
 #endif
@@ -13,7 +15,9 @@
 // becomes disk-bound instead of CPU-bound. Output is lowercase 64-hex,
 // identical to `shasum -a 256` and to juce::SHA256::toHexString(), so the
 // manifest stays verifiable with standard tools. Falls back to juce::SHA256
-// off macOS.
+// off macOS. Files are read past the page cache (UncachedFileInput.h): a
+// session's worth of takes does not fit in it, and on an external exFAT drive
+// the read-ahead for them was thrown away before use.
 namespace zynforge::hashing
 {
     // Optional cooperative read policy for whole-session background scans.
@@ -28,7 +32,7 @@ namespace zynforge::hashing
     class HashInputStream final : public juce::InputStream
     {
     public:
-        HashInputStream (juce::FileInputStream& sourceIn, const std::atomic<bool>* cancelIn,
+        HashInputStream (uncached::FileInput& sourceIn, const std::atomic<bool>* cancelIn,
                          const ReadPolicy& policyIn)
             : source (sourceIn), cancel (cancelIn), policy (policyIn) {}
 
@@ -48,7 +52,7 @@ namespace zynforge::hashing
                 if (! canContinue()) { failed = true; return 0; }
             }
             const int n = source.read (dest, count);
-            if (n < 0 || (n == 0 && ! source.isExhausted()))
+            if (n < 0 || source.hasFailed() || (n == 0 && ! source.isExhausted()))
             { failed = true; return 0; }
             bytesSinceYield += n;
             return n;
@@ -62,7 +66,7 @@ namespace zynforge::hashing
             return (cancel == nullptr || ! cancel->load (std::memory_order_relaxed))
                 && (! policy.shouldContinue || policy.shouldContinue());
         }
-        juce::FileInputStream& source;
+        uncached::FileInput& source;
         const std::atomic<bool>* cancel;
         const ReadPolicy& policy;
         juce::int64 bytesSinceYield = 0;
@@ -74,9 +78,9 @@ namespace zynforge::hashing
                                   const ReadPolicy& policy = {})
     {
         if (! f.existsAsFile()) return {};
-        juce::FileInputStream source (f);
-        if (! source.openedOk()) return {};
-        HashInputStream in (source, cancel, policy);
+        auto source = uncached::FileInput::open (f);
+        if (source == nullptr) return {};
+        HashInputStream in (*source, cancel, policy);
 
        #if JUCE_MAC
         CC_SHA256_CTX ctx;

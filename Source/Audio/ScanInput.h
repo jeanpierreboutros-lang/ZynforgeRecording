@@ -4,22 +4,24 @@
 #include <memory>
 
 #include "CheckedAudioReader.h"
+#include "UncachedFileInput.h"
 
 // Input for waveform scans. JUCE's AudioThumbnail asks its reader for one
 // thumbnail column (512 samples) at a time, and a WAV/AIFF reader passes each
-// request straight to its stream. On a bare file stream that is a 1.5 KB read()
-// per column of a mono 24-bit track. After a 4-hour, 55-track take on an
-// external exFAT drive, each of those cost about a full disk transfer: the
-// post-STOP rescan moved under 2 MB/s of audio while the drive ran at 2.7 GB/s,
-// and the report's SHA-256 pass crawled behind it. A large buffer turns each
-// stretch of columns into one sequential read.
+// request straight to its stream: a 1.5 KB read() per column of a mono 24-bit
+// track. A 512 KiB buffer turns each stretch of columns into one read.
+//
+// The buffer alone did not fix the slow post-STOP rescan on an external exFAT
+// drive: the kernel's read-ahead for 55 files scanned side by side was thrown
+// away before use, so the drive read 2.7 GB/s for a few MB/s of audio. Under
+// the buffer the file is now read past the page cache (UncachedFileInput.h).
 namespace zynforge::scanio
 {
     inline constexpr int kReadBufferBytes = 1 << 19;   // 512 KiB
 
     inline std::unique_ptr<juce::InputStream> openStream (const juce::File& file)
     {
-        auto in = file.createInputStream();
+        auto in = uncached::FileInput::open (file);
         if (in == nullptr) return {};
         return std::make_unique<juce::BufferedInputStream> (in.release(), kReadBufferBytes, true);
     }
@@ -45,7 +47,9 @@ namespace zynforge::scanio
     };
 
     // A reader for drawing a part of a multi-part take. FLAC keeps the
-    // playback reader: its decoder reads whole frames, not one column.
+    // playback reader, and with it the page cache: its decoder reads whole
+    // frames, not one column, and that stream also carries JUCE's FLAC seeks
+    // past 2 GiB, which a BufferedInputStream would clamp to 0.
     inline std::unique_ptr<juce::AudioFormatReader> openReader (juce::AudioFormatManager& formats,
                                                                const juce::File& file)
     {
@@ -53,5 +57,20 @@ namespace zynforge::scanio
         auto in = openStream (file);
         if (in == nullptr) return {};
         return std::unique_ptr<juce::AudioFormatReader> (formats.createReaderFor (std::move (in)));
+    }
+
+    // Waveform scan threads run at utility priority. Background priority
+    // throttled their reads, but macOS lets a background thread's timers fire
+    // up to ~64 ms late, and JUCE's TimeSliceThread waits 1 ms after every pass
+    // over its thumbnails: on a 55-track take each scan thread slept about 90%
+    // of the time. Utility still puts the reads in a throttled, low-priority
+    // disk tier below recording, playback and session saves, and leaves the
+    // CPU to them. Never call setiopolicy_np or a legacy priority call on
+    // these threads: it takes a thread out of QoS for good (measured: the QoS
+    // class reads back unspecified and can not be set again).
+    inline void startScanThread (juce::TimeSliceThread& thread)
+    {
+        thread.stopThread (-1);
+        thread.startThread (juce::Thread::Priority::low);
     }
 }
