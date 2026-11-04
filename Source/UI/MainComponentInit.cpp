@@ -261,9 +261,10 @@ MainComponent::MainComponent()
             showStatus ("Wait for the session operation to finish");
             return;
         }
-        if (engine.isRecording())
+        if (engine.isTakeOnDisk())
         {
-            showStatus ("Stop recording before changing channel count");
+            showStatus (engine.isRecording() ? "Stop recording before changing channel count"
+                                             : "Wait for the take to finish saving before adding tracks");
             return;
         }
 
@@ -659,16 +660,17 @@ void MainComponent::rebuildStrips()
         const int  step = stereo ? 2 : 1;
 
         juce::Component::SafePointer<MainComponent> colourOwner (this);
-        auto colourCb = [colourOwner, i, step] (juce::Colour chosen)
+        const int logical = (int) strips.size();   // this strip's place in the selection
+        auto colourCb = [colourOwner, i, step, logical] (juce::Colour chosen)
         {
             if (colourOwner == nullptr) return;
-            // If the engineer has multiple strips selected (Shift /
-            // Cmd-click), apply the colour to every one of them so
-            // 'select 8 strips, set colour' works as expected. The
-            // single-strip path still works because mouseDown selects
-            // this strip first; selectedLogical will contain at least
-            // this one when the colour picker opens via right-click.
-            if (colourOwner->selectedLogical.size() > 1)
+            // A colour picked on a strip that is part of a multi-selection
+            // (Shift / Cmd-click) goes to every selected strip, so 'select 8
+            // strips, set colour' works. Picked on any other strip it goes to
+            // that strip alone: neither a chip click nor a right-click selects
+            // the strip first, so the selection may be somewhere else entirely.
+            const auto& selection = colourOwner->selectedLogical;
+            if (selection.size() > 1 && selection.count (logical) > 0)
             {
                 for (int logical : colourOwner->selectedLogical)
                 {
@@ -721,11 +723,22 @@ void MainComponent::rebuildStrips()
         // travels through its own panRCb (below) -- the two sides are
         // INDEPENDENT, not mirrored, so the engineer can pan the L
         // channel hard-left and R hard-right (or whatever they want).
-        auto panCb  = [this, i, editGroupPeers] (float pan)
+        // Pan is per channel, and on a pair it is the image: a stereo strip's
+        // knobs move that strip alone, and a grouped move from a mono strip
+        // reaches the group's mono strips only. Broadcasting to every grouped
+        // track wrote both halves of each pair, the source's own R included,
+        // and collapsed every stereo image in the group.
+        auto panCb  = [this, i, step, editGroupPeers] (float pan)
         {
             engine.setTrackPan (i, pan);
+            if (step == 2) return;
+            auto& tracks = engine.getRecorder();
+            const int count = tracks.getNumTracks();
+            const auto pairedLeft = [&tracks, count] (int t)
+            { return t >= 0 && t + 1 < count && tracks.getTrack (t).isStereo.load (std::memory_order_relaxed); };
             for (int peer : editGroupPeers (i))
-                engine.setTrackPan (peer, pan);
+                if (! pairedLeft (peer) && ! pairedLeft (peer - 1))
+                    engine.setTrackPan (peer, pan);
         };
         auto panRCb = [this, i] (float pan)
         {

@@ -361,6 +361,10 @@ void MainComponent::condemnAllStrips()
     // per-strip delete paths but not the whole-set shrinks).
     for (auto& s : strips)
         if (s != nullptr) s->invalidate();
+    // A condemned strip never comes back, so the next tick rebuilds whatever
+    // the count and generation say: a refused open changes neither, and left
+    // the MIXER frozen with stale pairs while EDIT rebuilt.
+    lastTrackCount = -1;
 
     // The EDIT view has the SAME hazard and was never covered: each TrackRow
     // owns a LedMeter holding a TrackState& on its own timer, and the rows are
@@ -402,12 +406,13 @@ void MainComponent::addTracks (const std::vector<zynforge::AddTracksDialog::Entr
                                const QuestionScope& scope)
 {
     if (entries.empty() || ! stillInScope (scope)) return;
-    // A take or LOCK can arrive behind the dialog, and the engine refuses new
-    // strips under a take without a word.
-    if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
+    // A take, its finalization or LOCK can arrive behind the dialog, and the
+    // engine refuses new strips under any of them without a word.
+    if (engine.isTakeOnDisk() || sessionIoBusy.load() || sessionLocked)
     {
         showStatus (sessionLocked         ? "LOCKED -- no tracks were added"
                     : engine.isRecording() ? "No tracks were added -- a take started while the dialog was open"
+                    : engine.isCaptureFinalizing() ? "No tracks were added -- the take is still being saved; try again in a moment"
                                            : "No tracks were added -- wait for the session operation to finish");
         return;
     }
@@ -417,8 +422,14 @@ void MainComponent::addTracks (const std::vector<zynforge::AddTracksDialog::Entr
     int newTracks = 0;
     for (const auto& e : entries)
         newTracks += e.count * (e.stereo ? 2 : 1);
-    const int target = juce::jlimit (0, 256, existing + newTracks);
-    engine.setStripCount (target);
+    engine.setStripCount (juce::jlimit (0, 256, existing + newTracks));
+    // What the engine really made, not what was asked for.
+    const int target = engine.getRecorder().getNumTracks();
+    if (target <= existing)
+    {
+        showStatus ("No tracks were added");
+        return;
+    }
 
     // Apply per-row naming + stereo flags to the just-added strips.
     int cursor = firstNew;
@@ -634,16 +645,26 @@ void MainComponent::showBatchColourDialog()
 
 void MainComponent::importChannelNamesFromCsv()
 {
+    // The file panel is modal: it would stand in front of STOP.
+    if (waitsForTake ("Import Channel Names")) return;
     chooser = std::make_unique<juce::FileChooser> (
         "Import channel names from CSV", getSessionsRoot(), "*.csv;*.txt");
     juce::Component::SafePointer<MainComponent> self (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode
                           | juce::FileBrowserComponent::canSelectFiles,
-        [self] (const juce::FileChooser& fc)
+        [self, scope = questionScope()] (const juce::FileChooser& fc)
         {
             if (self == nullptr) return;
             const auto f = fc.getResult();
             if (! f.existsAsFile()) return;
+            // Names go by index, so only into the strips the panel was opened over.
+            if (! self->stillInScope (scope) || self->sessionLocked || self->engine.isRecording())
+            {
+                self->showStatus (self->sessionLocked ? "LOCKED -- no channel names were imported"
+                                  : self->engine.isRecording() ? "No channel names were imported -- a take started while the panel was open"
+                                                               : "No channel names were imported -- the session or its strips changed while the panel was open");
+                return;
+            }
             const auto names = zynforge::channelcsv::parseNames (f.loadFileAsString());
             if (names.isEmpty()) { self->showStatus ("No channel names found in " + f.getFileName()); return; }
 

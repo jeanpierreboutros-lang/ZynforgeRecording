@@ -228,7 +228,15 @@ void MainComponent::jumpToCue (int index)
     // on that track for the rest of the take. Mix state (gain/pan/mute/solo/
     // monitor) is always safe to move. A cue's output is the show patch, so
     // Virtual Soundcheck decides where it lands.
+    //
+    // A pair linked now is ONE strip, whatever it was when the cue was taken,
+    // so its R half follows L as linking makes it (AudioEngine::setTrackStereo):
+    // R's own snapshot gives only its pan, which is the image. Replaying R's
+    // snapshot put back its fader, mute and input from before the link, so the
+    // pair recorded and played R from somewhere nobody could see.
     const bool recording = engine.isRecording();
+    const auto pairedLeft = [&rec, total] (int t)
+    { return t >= 0 && t + 1 < total && rec.getTrack (t).isStereo.load (std::memory_order_relaxed); };
     const int n = (int) cue.strips.size();
     for (int i = 0; i < n; ++i)
     {
@@ -236,18 +244,41 @@ void MainComponent::jumpToCue (int index)
         const int target = resolveTarget (s, i);
         if (target < 0) continue;
 
-        engine.setTrackGainDbRamped (target, s.gainDb, kCueRecallSeconds);
-        engine.setTrackPanRamped    (target, s.pan,    kCueRecallSeconds);
-        if (! recording)
-            engine.setTrackInputRouting (target, s.inputRouting);
-        zynforge::vsc::recallOutput (engine, target, s.outputRouting);
+        engine.setTrackPanRamped (target, s.pan, kCueRecallSeconds);
+        if (pairedLeft (target - 1)) continue;
 
-        auto& t = rec.getTrack (target);
-        t.muted  .store (s.muted,   std::memory_order_relaxed);
-        t.soloed .store (s.soloed,  std::memory_order_relaxed);
-        t.monitor.store (s.monitor, std::memory_order_relaxed);
+        const bool pair = pairedLeft (target);
+        for (int half = target; half <= target + (pair ? 1 : 0); ++half)
+        {
+            engine.setTrackGainDbRamped (half, s.gainDb, kCueRecallSeconds);
+            auto& t = rec.getTrack (half);
+            t.muted  .store (s.muted,   std::memory_order_relaxed);
+            t.soloed .store (s.soloed,  std::memory_order_relaxed);
+            t.monitor.store (s.monitor, std::memory_order_relaxed);
+            if (! recording)
+                t.armed.store (s.armed, std::memory_order_relaxed);
+        }
+
+        // -2 is the default patch, the strip's own channel. The setter clamps
+        // it to -1, so it is written as that channel or the strip was unpatched.
+        const int input = s.inputRouting == -2 ? target : s.inputRouting;
+        if (! pair)
+        {
+            if (! recording) engine.setTrackInputRouting (target, input);
+            zynforge::vsc::recallOutput (engine, target, s.outputRouting);
+            continue;
+        }
+        // R is always L + 1, on the device's last two when L asks for its last.
         if (! recording)
-            t.armed.store (s.armed, std::memory_order_relaxed);
+        {
+            const int left = pairStartChannel (input, engine.getCurrentDeviceInputCount());
+            engine.setTrackInputRouting (target,     left);
+            engine.setTrackInputRouting (target + 1, left < 0 ? -1 : left + 1);
+        }
+        const int output = s.outputRouting >= 0 ? pairStartChannel (s.outputRouting, engine.getCurrentDeviceOutputCount())
+                                                : s.outputRouting;
+        zynforge::vsc::recallOutput (engine, target,     output);
+        zynforge::vsc::recallOutput (engine, target + 1, output >= 0 ? output + 1 : output);
     }
     lastTrackCount = -1;   // force strip refresh so combos + buttons redraw
 

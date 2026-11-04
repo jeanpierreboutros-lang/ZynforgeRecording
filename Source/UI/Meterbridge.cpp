@@ -102,6 +102,7 @@ namespace zynforge
                     meters.push_back (std::move (m));
 
                     auto label = std::make_unique<juce::Label> (juce::String(), t.getNameThreadSafe());
+                    label->setTitle ("Strip " + juce::String (i + 1));   // the number MIXER, EDIT and PATCH show
                     label->setColour (juce::Label::textColourId, brand::textPrimary);
                     label->setJustificationType (juce::Justification::centred);
                     label->setFont (brand::type::uiLabel());
@@ -143,7 +144,9 @@ namespace zynforge
                     g.setColour (brand::borderSubtle);
                     g.fillRect (band.getX(), band.getBottom(), band.getWidth(), 1);
 
-                    // Stamped column numbers, aligned to the resized() columns.
+                    // Stamped column numbers, aligned to the resized() columns. A
+                    // column is numbered by its strip, as MIXER, EDIT and PATCH
+                    // number it, so after a stereo pair they skip its R half.
                     const int colW = juce::jmax (28, inner.getWidth() / (int) meters.size());
                     g.setFont (zynforge::brand::type::monoStamp());
                     for (std::size_t i = 0; i < meters.size(); ++i)
@@ -151,7 +154,8 @@ namespace zynforge
                         auto numBox = juce::Rectangle<int> (inner.getX() + (int) i * colW + 3,
                                                             inner.getY() + 2, 22, 14);
                         g.setColour (brand::debossFace.withAlpha (zynforge::brand::alpha::prominent));
-                        g.drawText (juce::String ((int) i + 1).paddedLeft ('0', 2),
+                        const int strip = i < nameTracks.size() ? nameTracks[i] : (int) i;
+                        g.drawText (juce::String (strip + 1).paddedLeft ('0', 2),
                                     numBox, juce::Justification::centredLeft, false);
                     }
                 }
