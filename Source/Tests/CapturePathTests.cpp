@@ -1515,6 +1515,111 @@ namespace zynforge
             testLiveHelperSessions();
             testPreRoll();
             testHelperStopAndQuit();
+            testResumedHashes();
+        }
+
+        // A take with a backup and a mirror, hashed, then left as a quit
+        // leaves it: pending, every hash empty. Returns the primary's hash.
+        juce::String pendingHashedTake (const juce::File& session, const juce::File& backup, const juce::File& mirror)
+        {
+            {
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (backup);
+                expect (rec.setMirrors ({ { mirror, CaptureFormat::Wav24 } }));
+                expect (rec.startRecording (session));
+                rec.waitForCopiesOpenForTests();
+                Ramp ramp { rec };
+                for (int b = 0; b < 8; ++b) { ramp.block(); rec.drainPendingForTests(); }
+                rec.stopRecording();
+            }
+            std::atomic<bool> stop { false };
+            expect (MultitrackRecorder::waitForReportHashes (session, stop, true));
+            const auto finished = juce::JSON::parse (session.getChildFile ("session.report.json"))
+                                      ["tracks"][0]["sha256"][0].toString();
+            expect (MultitrackRecorder::editSessionReport (session, [] (juce::DynamicObject& live)
+            {
+                live.setProperty ("sha256Pending", true);
+                if (auto* tracks = live.getProperty ("tracks").getArray())
+                    for (auto& track : *tracks)
+                    {
+                        track.getDynamicObject()->setProperty ("sha256", juce::Array<juce::var>());
+                        track.getDynamicObject()->setProperty ("backupSha256", juce::Array<juce::var>());
+                        if (auto* mirrors = track.getProperty ("mirrors", {}).getArray())
+                            for (auto& one : *mirrors)
+                                one.getDynamicObject()->setProperty ("sha256", juce::Array<juce::var>());
+                    }
+            }));
+            return finished;
+        }
+
+        // The first hash a report lists at `path` (track 0, then fields and
+        // first entries), empty where any step is missing: an empty array must
+        // not be indexed.
+        static juce::String firstHash (const juce::var& report, std::initializer_list<const char*> path)
+        {
+            auto at = report;
+            const auto first = [] (const juce::var& list)
+            {
+                auto* items = list.getArray();
+                return items != nullptr && ! items->isEmpty() ? items->getReference (0) : juce::var();
+            };
+            at = first (at.getProperty ("tracks", {}));
+            for (const auto* field : path)
+                at = first (at.getProperty (field, {}));
+            return at.toString();
+        }
+
+        void testResumedHashes()
+        {
+            beginTest ("Resumed hashes reach the primary first, and a backup that is gone fails only the backup");
+            {
+                const auto root = tempDir ("resume-order");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                const auto backup = root.getChildFile ("backup");
+                const auto finished = pendingHashedTake (session, backup, root.getChildFile ("mirror"));
+                expect (finished.isNotEmpty());
+                expect (backup.deleteRecursively());   // the backup drive was unplugged
+                const auto file = session.getChildFile ("session.report.json");
+
+                juce::var beforeCopies;
+                auto done = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder::resumeReportHashes (session, [done] { done->signal(); },
+                                                        [&] { beforeCopies = juce::JSON::parse (file); });
+                expect (done->wait (10000), "the hashes never finished");
+                expectEquals (firstHash (beforeCopies, { "sha256" }), finished,
+                              "the primary waited for every copy to be read");
+                const auto report = juce::JSON::parse (file);
+                expect (! (bool) report["sha256Pending"]);
+                expectEquals (firstHash (report, { "sha256" }), finished);
+                expect (! (bool) report["sha256Failed"], "a missing backup failed the primary's hashes");
+                expect ((bool) report["copySha256Failed"], "the backup that could not be read was not named");
+                expect (firstHash (report, { "mirrors", "sha256" }).isNotEmpty());
+            }
+
+            beginTest ("A session another process is hashing is not hashed a second time");
+            {
+                const auto root = tempDir ("resume-elsewhere");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                const auto finished = pendingHashedTake (session, root.getChildFile ("backup"), root.getChildFile ("mirror"));
+                const auto file = session.getChildFile ("session.report.json");
+
+                capture::identity::ScanClaim helperHashing;   // as the helper's pass after STOP holds it
+                expect (helperHashing.hold (session));
+                auto done = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder::resumeReportHashes (session, [done] { done->signal(); });
+                done->wait (1500);
+                expect ((bool) juce::JSON::parse (file)["sha256Pending"],
+                        "a second hash pass ran beside the one already reading the take");
+                helperHashing.release();
+                done->reset();
+                MultitrackRecorder::resumeReportHashes (session, [done] { done->signal(); });
+                expect (done->wait (10000), "the hashes never finished once the other pass had gone");
+                expectEquals (firstHash (juce::JSON::parse (file), { "sha256" }), finished);
+            }
         }
 
         void testHelperStopAndQuit()

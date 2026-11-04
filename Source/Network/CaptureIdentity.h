@@ -196,31 +196,31 @@ namespace zynforge::capture::identity
         JUCE_DECLARE_NON_COPYABLE (Endpoint)
     };
 
-    // A capture helper holds this from before it touches a session until that
-    // session's files are final. A window can then tell a live session from a
-    // crashed one with no help from the helper: a handshake can fail, or never
-    // be tried, while the helper goes on writing.
-    class TakeClaim final
+    // One flock per session folder in the private capture folder, held while a
+    // process works on that session. The kernel drops it when the process
+    // ends, however it ends, so another process can ask with no help from it.
+    class SessionClaim
     {
     public:
-        TakeClaim() = default;
-        ~TakeClaim() { release(); }
+        ~SessionClaim() { release(); }
 
-        void hold (const juce::File& session)
+        // False when someone else kept it through the brief retry.
+        bool hold (const juce::File& session)
         {
             release();
            #if JUCE_MAC || JUCE_LINUX
-            descriptor = Endpoint::openSharedFile (nameFor (session).toRawUTF8());
+            descriptor = Endpoint::openSharedFile (nameFor (kind, session).toRawUTF8());
             // Only a probe holds it otherwise, for an instant.
             for (int attempt = 0; descriptor >= 0 && attempt < 50; ++attempt)
             {
-                if (::flock (descriptor, LOCK_EX | LOCK_NB) == 0) return;
+                if (::flock (descriptor, LOCK_EX | LOCK_NB) == 0) return true;
                 juce::Thread::sleep (1);
             }
             release();
            #else
             juce::ignoreUnused (session);
            #endif
+            return false;
         }
 
         void release()
@@ -231,22 +231,48 @@ namespace zynforge::capture::identity
             descriptor = -1;
         }
 
-        static bool isHeld (const juce::File& session)
+    protected:
+        explicit SessionClaim (const char* kindIn) : kind (kindIn) {}
+
+        static bool heldAt (const char* kind, const juce::File& session)
         {
-            return Endpoint::lockIsHeld (nameFor (session).toRawUTF8());
+            return Endpoint::lockIsHeld (nameFor (kind, session).toRawUTF8());
         }
 
     private:
         // One folder has one name here, however the path was spelled.
-        static juce::String nameFor (const juce::File& session)
+        static juce::String nameFor (const char* kind, const juce::File& session)
         {
             std::error_code error;
             const auto path = std::filesystem::weakly_canonical (session.getFullPathName().toStdString(), error);
             const auto text = error ? session.getFullPathName() : juce::String (path.string());
-            return "take-" + juce::SHA256 (text.toUTF8()).toHexString().substring (0, 32) + ".lock";
+            return juce::String (kind) + "-" + juce::SHA256 (text.toUTF8()).toHexString().substring (0, 32) + ".lock";
         }
 
+        const char* kind;
         int descriptor { -1 };
-        JUCE_DECLARE_NON_COPYABLE (TakeClaim)
+        JUCE_DECLARE_NON_COPYABLE (SessionClaim)
+    };
+
+    // A capture helper holds this from before it touches a session until that
+    // session's files are final. A window can then tell a live session from a
+    // crashed one with no help from the helper: a handshake can fail, or never
+    // be tried, while the helper goes on writing.
+    class TakeClaim final : public SessionClaim
+    {
+    public:
+        TakeClaim() : SessionClaim ("take") {}
+        static bool isHeld (const juce::File& session) { return heldAt ("take", session); }
+    };
+
+    // A hash pass over a session's report holds this for as long as it reads.
+    // The count of running passes is per process: a helper's pass after STOP
+    // and a window's resumed one would otherwise read every take file twice,
+    // side by side, on the same drive.
+    class ScanClaim final : public SessionClaim
+    {
+    public:
+        ScanClaim() : SessionClaim ("scan") {}
+        static bool isHeld (const juce::File& session) { return heldAt ("scan", session); }
     };
 }
