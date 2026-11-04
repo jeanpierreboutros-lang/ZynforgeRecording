@@ -1514,6 +1514,99 @@ namespace zynforge
             testCopiesFollowStrips();
             testLiveHelperSessions();
             testPreRoll();
+            testHelperStopAndQuit();
+        }
+
+        void testHelperStopAndQuit()
+        {
+            beginTest ("A lost helper that still holds its take is not taken for gone");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                rig.session.createDirectory();
+                main.engine.beginExternalTake (rig.session, kRate);
+                // The helper is still closing the take's files, and has stopped listening.
+                capture::identity::TakeClaim stillClosing;
+                stillClosing.hold (rig.session);
+                rig.daemon.stop();
+                expect (pumpUntil ([&] { return ! main.captureSupervisor.isAttached(); }, 3000));
+                main.daemonLinkLost = true;
+                expect (main.resolveLostDaemon() == MainComponent::LostDaemon::unknown,
+                        "a helper still writing the take was called gone");
+                expect (main.engine.isExternalRecording(), "the window stopped guarding a take still being closed");
+                stillClosing.release();
+                expect (main.resolveLostDaemon() == MainComponent::LostDaemon::gone);
+                main.leaveLostDaemon();
+            }
+
+            beginTest ("A helper told to quit mid-take stays up for STOP and answers it");
+            {
+                const auto binary = capture::CaptureSupervisor::discoverBinary();
+                if (binary.existsAsFile())
+                {
+                    const int port = 50000 + juce::Random::getSystemRandom().nextInt (9000);
+                    const auto session = tempDir ("signal-stop");
+                    juce::ChildProcess child;
+                    expect (child.start (juce::StringArray { binary.getFullPathName(), "--port", juce::String (port),
+                                                             "--inputs", "1", "--no-device" }));
+                    capture::CaptureClient client;
+                    expect (pumpUntil ([&] { return client.connect ("127.0.0.1", port); }, 5000), "the helper never listened");
+                    expect (client.hello (2000).ok);
+                    capture::Command arm; arm.action = capture::Action::ArmTrack; arm.trackIndex = 0; arm.boolValue = true;
+                    expect (client.send (arm));
+                    capture::Command start; start.action = capture::Action::StartRecording;
+                    start.sessionDir = session.getFullPathName();
+                    expect (client.request (start, 3000).ok);
+                    expectGreaterOrEqual (capture::CaptureSupervisor::askChildrenToExit (binary.getFileName()), 1);
+                    juce::Thread::sleep (300);
+                    expect (child.isRunning(), "one signal ended a rolling take");
+                    capture::Command stop; stop.action = capture::Action::StopRecording;
+                    expect (client.request (stop, 10000).completed, "STOP's reply was lost to the exit");
+                    client.disconnect();
+                    expect (child.waitForProcessToFinish (5000), "the helper never exited after STOP");
+                    expect (child.readAllProcessOutput().contains ("stopped cleanly"));
+                    session.deleteRecursively();
+                }
+            }
+
+            beginTest ("Quit waits while a take its device ended is still closing its files");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                MainComponent::s_testConstruct = true;
+                const auto root = tempDir ("quit-finalizing");
+                {
+                    MainComponent main;
+                    auto& engine = main.engine;
+                    engine.clearAllStripOverrides();
+                    engine.setStripCount (1);
+                    engine.prepareForTests (kRate, kBlock);
+                    engine.setActiveSessionDir (root);
+                    engine.claimMixerFor (root);
+                    engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (engine.startRecording (root), engine.getRecorder().getStartError());
+                    juce::AudioBuffer<float> in (1, kBlock), out (2, kBlock);
+                    in.clear(); out.clear();
+                    for (int b = 0; b < 4; ++b)
+                        engine.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), 1,
+                                                                 out.getArrayOfWritePointers(), 2, kBlock, {});
+                    engine.audioDeviceStopped();   // the interface dropped mid-take
+                    expect (engine.isCaptureFinalizing());
+                    auto* modal = juce::ModalComponentManager::getInstance();
+                    const int before = modal->getNumModalComponents();
+                    main.confirmAndQuit();
+                    expectEquals (modal->getNumModalComponents(), before,
+                                  "a quit dialog opened while the take was still being closed");
+                    expect (main.statusLabel.getText().containsIgnoreCase ("closing"), main.statusLabel.getText());
+                    expect (pumpUntil ([&] { return ! engine.isCaptureFinalizing(); }, 10000));
+                    for (int i = modal->getNumModalComponents(); --i >= before;)
+                        if (auto* c = modal->getModalComponent (i)) c->exitModalState (0);
+                    pumpUntil ([&] { return modal->getNumModalComponents() <= before; }, 2000);
+                    engine.clearAllStripOverrides();
+                }
+                MainComponent::s_testConstruct = false;
+                MultitrackRecorder::deleteSessionAfterCancellingReports (root);
+            }
         }
     };
 
