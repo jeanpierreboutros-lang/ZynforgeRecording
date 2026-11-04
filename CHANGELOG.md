@@ -22,6 +22,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27. The development Mac has it, now as `eca170e`; the mini does not.
 - THIRD-PARTY-NOTICES lists the HarfBuzz (10.1.0) and zlib copyright this JUCE carries.
 
+### Changed — look, 2026-11-04
+
+- Every scrollbar draws like the timeline overview under the EDIT lanes: an ember outline over a faint ember fill. EDIT's vertical scrollbar was grey beside the amber overview.
+
 ### Fixed — after the three-hour take, 2026-11-04
 
 Found on `577592c` after a 3 h 01 min, 54-track take on the same exFAT drive. The take recorded with no missed samples.

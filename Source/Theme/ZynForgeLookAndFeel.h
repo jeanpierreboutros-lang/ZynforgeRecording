@@ -53,6 +53,12 @@ namespace zynforge
         // Every message on screen goes through typeset(); see DisplayText.h.
         void drawLabel (juce::Graphics&, juce::Label&) override;
         void drawTooltip (juce::Graphics&, const juce::String& text, int width, int height) override;
+        // Every scrollbar thumb draws like the EDIT timeline overview's view
+        // box: an outline in the thumb colour (ember by default) over a faint
+        // fill of it, so the two bars of EDIT read as one control family.
+        void drawScrollbar (juce::Graphics&, juce::ScrollBar&, int x, int y, int width, int height,
+                            bool isScrollbarVertical, int thumbStartPosition, int thumbSize,
+                            bool isMouseOver, bool isMouseDown) override;
         juce::AlertWindow* createAlertWindow (const juce::String& title, const juce::String& message,
                                               const juce::String& button1, const juce::String& button2,
                                               const juce::String& button3, juce::MessageBoxIconType iconType,

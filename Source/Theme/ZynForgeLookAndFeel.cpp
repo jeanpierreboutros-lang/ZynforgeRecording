@@ -112,8 +112,9 @@ namespace zynforge
         setColour (juce::TableHeaderComponent::textColourId,       brand::textSecondary);
         setColour (juce::TableHeaderComponent::outlineColourId,    brand::edge);
         setColour (juce::TableHeaderComponent::highlightColourId,  brand::controlBgHover);
-        // JUCE's default scheme paints these bright blue.
-        setColour (juce::ScrollBar::thumbColourId,            brand::borderBright);
+        // JUCE's default scheme paints these bright blue. Ember, like the EDIT
+        // timeline overview's view box (TimelineMinimap): see drawScrollbar.
+        setColour (juce::ScrollBar::thumbColourId,            brand::toolActive());
         setColour (juce::ScrollBar::trackColourId,            juce::Colours::transparentBlack);
     }
 
@@ -272,6 +273,23 @@ namespace zynforge
         }
 
         g.drawRect (label.getLocalBounds());
+    }
+
+    void ZynForgeLookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar& bar, int x, int y,
+                                            int width, int height, bool isScrollbarVertical,
+                                            int thumbStartPosition, int thumbSize, bool, bool)
+    {
+        if (thumbSize <= 0) return;
+        const auto thumb = isScrollbarVertical
+            ? juce::Rectangle<int> (x, thumbStartPosition, width, thumbSize).toFloat().reduced (2.0f, 1.0f)
+            : juce::Rectangle<int> (thumbStartPosition, y, thumbSize, height).toFloat().reduced (1.0f, 2.0f);
+        if (thumb.isEmpty()) return;
+        // Same drawing as TimelineMinimap's view box.
+        const auto colour = bar.findColour (juce::ScrollBar::thumbColourId);
+        g.setColour (colour.withAlpha (brand::alpha::subtle));
+        g.fillRoundedRectangle (thumb, brand::radius::sm);
+        g.setColour (colour);
+        g.drawRoundedRectangle (thumb.reduced (0.5f), brand::radius::sm, 1.2f);
     }
 
     void ZynForgeLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& text, int width, int height)

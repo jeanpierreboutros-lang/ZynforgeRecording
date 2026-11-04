@@ -9,6 +9,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/ZynForgeLookAndFeel.h"
 #include "../UI/ExportDialog.h"
 #include "../UI/BackupMirrorDialog.h"
 
@@ -34,6 +35,42 @@ namespace zynforge
 
         void runTest() override
         {
+            beginTest ("Scrollbars draw in the ember of the EDIT timeline overview");
+            {
+                // The owner asked for EDIT's vertical scrollbar and the timeline
+                // overview under the lanes to share one amber (2026-11-04).
+                ZynForgeLookAndFeel lnf;
+                expect (lnf.findColour (juce::ScrollBar::thumbColourId) == brand::toolActive(),
+                        "the default thumb is not the overview's ember");
+                juce::ScrollBar bar (true);
+                bar.setLookAndFeel (&lnf);
+                bar.setBounds (0, 0, 14, 200);
+                bar.setRangeLimits (0.0, 100.0);
+                bar.setCurrentRange (0.0, 40.0);
+                juce::Image image (juce::Image::ARGB, 14, 200, true);
+                {
+                    juce::Graphics g (image);
+                    bar.paintEntireComponent (g, false);
+                }
+                bar.setLookAndFeel (nullptr);
+                const auto near = [] (juce::Colour a, juce::Colour b)
+                {
+                    return std::abs (a.getRed() - b.getRed()) + std::abs (a.getGreen() - b.getGreen())
+                         + std::abs (a.getBlue() - b.getBlue()) < 30;
+                };
+                int ember = 0, grey = 0;
+                for (int y = 0; y < image.getHeight(); ++y)
+                    for (int x = 0; x < image.getWidth(); ++x)
+                    {
+                        const auto c = image.getPixelAt (x, y);
+                        if (c.getAlpha() < 200) continue;
+                        if (near (c, brand::toolActive())) ++ember;
+                        if (near (c, brand::borderBright)) ++grey;
+                    }
+                expect (ember > 20, "no ember outline was drawn on the thumb");
+                expectEquals (grey, 0, "the old grey thumb is still drawn");
+            }
+
             beginTest ("A mirror root that holds the session is REFUSED");
             {
                 TempDir tmp;
