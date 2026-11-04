@@ -165,6 +165,20 @@ namespace zynforge
             const bool firstOlder = readTicks[0].load (std::memory_order_relaxed)
                                  <= readTicks[1].load (std::memory_order_relaxed);
             const int slot = nearFirst ? 0 : nearSecond ? 1 : firstOlder ? 0 : 1;
+            // Two clips of one file less than a block apart share a slot, and
+            // the later one, read last, is what it holds. The earlier one's
+            // place is kept beside it, or its block can be the next victim
+            // in the middle of their crossfade. A reader moving forward never
+            // reads behind its slot, so this costs plain playback nothing.
+            if ((nearFirst || nearSecond) && position < readPositions[slot].load (std::memory_order_relaxed))
+            {
+                readLows[slot].store (position, std::memory_order_relaxed);
+                lowTicks[slot].store (tick, std::memory_order_relaxed);
+            }
+            else if (! (nearFirst || nearSecond))
+            {
+                readLows[slot].store (-1, std::memory_order_relaxed);
+            }
             readPositions[slot].store (position, std::memory_order_relaxed);
             readTicks[slot].store (tick, std::memory_order_relaxed);
         }
@@ -222,16 +236,24 @@ namespace zynforge
             const auto ticks = std::array<juce::uint32, 2> { readTicks[0].load (std::memory_order_relaxed),
                                                              readTicks[1].load (std::memory_order_relaxed) };
             const int  newest = ticks[0] >= ticks[1] ? 0 : 1;
-            std::array<juce::int64, 2> reads { -1, -1 };
+            std::array<juce::int64, 2> reads { -1, -1 }, lows { -1, -1 };
             for (int i = 0; i < 2; ++i)
+            {
                 if (i == newest || tick - ticks[(size_t) i] <= kReadPositionExpiry)
                     reads[(size_t) i] = readPositions[i].load (std::memory_order_relaxed);
+                if (reads[(size_t) i] >= 0 && tick - lowTicks[i].load (std::memory_order_relaxed) <= kReadPositionExpiry)
+                    lows[(size_t) i] = readLows[i].load (std::memory_order_relaxed);
+            }
             const auto cued = cuePosition.load (std::memory_order_relaxed);
             for (int step = 0; step < playBlocks; ++step)
             {
                 const auto ahead = (juce::int64) step * kBlockSamples;
                 for (const auto at : reads)
                     if (at >= 0) want (blockStart (at) + ahead);
+                // The earlier clip of a shared slot: its block and the next.
+                if (step < 2)
+                    for (const auto low : lows)
+                        if (low >= 0) want (blockStart (low) + ahead);
                 if (step < kCueBlocks && cued >= 0) want (blockStart (cued) + ahead);
             }
 
@@ -271,6 +293,9 @@ namespace zynforge
         // Two read positions, for one reader serving two places at once.
         std::atomic<juce::int64>  readPositions[2] { { 0 }, { -1 } };
         std::atomic<juce::uint32> readTicks[2]     { { 0 }, { 0 } };
+        // An earlier position merged into each slot, and when it was last read.
+        std::atomic<juce::int64>  readLows[2]      { { -1 }, { -1 } };
+        std::atomic<juce::uint32> lowTicks[2]      { { 0 }, { 0 } };
         std::atomic<juce::uint32> readTick    { 0 };
         std::atomic<juce::int64>  cuePosition { -1 };
 
