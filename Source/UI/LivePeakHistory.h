@@ -104,6 +104,6 @@ namespace zynforge
         size_t recentNext { 0 };
         juce::int64 totalBins { 0 }, binsPerPoint { 1 }, pendingBins { 0 };
         float pendingPeak { 0.0f };
-        const int binSamples;
+        int binSamples;   // not const: a rebuilt EDIT row takes over a held take by copy
     };
 }

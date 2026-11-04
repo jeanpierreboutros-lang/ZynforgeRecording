@@ -102,6 +102,20 @@ namespace zynforge::uncached
         bool bypassesCache() const noexcept { return bypassed; }
         bool readAheadOff() const noexcept  { return noReadAhead; }
 
+        // Puts the next reads through the page cache, or back past it. For a
+        // stream that also serves short on-screen reads (ScanInput.h); one
+        // fcntl per change. Nothing to do where the volume refused F_NOCACHE.
+        void usePageCache (bool use)
+        {
+           #if JUCE_MAC
+            if (! bypassed || use == cachedNow) return;
+            if (::fcntl (fd, F_NOCACHE, use ? 0 : 1) != -1) cachedNow = use;
+           #else
+            juce::ignoreUnused (use);
+           #endif
+        }
+        bool readsThroughPageCache() const noexcept { return ! bypassed || cachedNow; }
+
     private:
        #if JUCE_MAC
         FileInput (int handle, bool bypass, bool rdAheadOff) : fd (handle), bypassed (bypass), noReadAhead (rdAheadOff) {}
@@ -111,6 +125,6 @@ namespace zynforge::uncached
         explicit FileInput (std::unique_ptr<juce::FileInputStream> s) : stream (std::move (s)) {}
         std::unique_ptr<juce::FileInputStream> stream;
        #endif
-        bool bypassed { false }, noReadAhead { false }, failed { false };
+        bool bypassed { false }, noReadAhead { false }, failed { false }, cachedNow { false };
     };
 }

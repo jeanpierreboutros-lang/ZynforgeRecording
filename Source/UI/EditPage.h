@@ -190,9 +190,13 @@ namespace zynforge
         void repaintLanes();        // force every track row to repaint
         void updatePlaceholder();   // show/hide the empty-state overlay by channel count
         void rescanWaveforms();     // drop cached peaks + re-scan every row (e.g. after a strip reorder renamed files)
+        // Scan threads free to read right now.
+        int  runningScanThreadsForTests() const;
         // New audio joined the session, so WaveCache.wfm predates a file and the
         // next open would throw the whole cache away. Writes a newer one.
-        void sessionMediaAdded() noexcept { waveCacheSaved = false; }
+        // `written`: the files it wrote. Peaks are keyed by path, so any still in
+        // memory for one of those names describe what was there before.
+        void sessionMediaAdded (const juce::Array<juce::File>& written = {});
 
         // Strip reorder by swatch drag. While the pointer moves, the dragged
         // row asks for a preview: the list draws a drop line where the strip
@@ -325,20 +329,32 @@ namespace zynforge
         juce::TextButton zoomHIn  { "H+" }, zoomHOut { "H-" };
         juce::TextButton followButton { "FOLLOW" };
 
+        // The scan threads read nothing while a take is on disk (rolling, or an
+        // async STOP finalizing): it is the take's drive.
+        void pauseWaveformScans();
+        void resumeWaveformScans();
+        bool waveformScansPaused { false };
+
         // WaveCache.wfm persistence: writes the AudioThumbnailCache
         // contents to disk so the EDIT view re-renders waveforms
         // instantly on session reopen instead of re-scanning every
         // Track_NN.wav. Pro Tools-style. Both directions run on
         // waveCacheThread. A job runs while waveCacheWork still holds its
         // number; changing it cancels the job at its next chunk.
+        // A reset empties the caches on that thread, after whatever runs there,
+        // then loads the session's file (load) or deletes it (forget). The rows
+        // have no files until it has run (waveCacheLoading), so nothing reads
+        // peaks another session or a renamed file left behind.
+        enum class CacheReset { clear, load, forget };
         void cancelWaveCacheWork();
-        void beginWaveCacheLoad (const juce::File& sessionDir);
+        void beginWaveCacheReset (const juce::File& sessionDir, CacheReset);
         void beginWaveCacheSave (const juce::File& sessionDir);
         SerialWorker      waveCacheThread;
-        std::atomic<int>  waveCacheWork   { 0 };
-        std::atomic<int>  waveCacheLoaded { -1 };    // the load job that finished
+        std::atomic<int>  waveCacheWork      { 0 };
+        std::atomic<int>  waveCacheResetDone { 0 };   // the last reset job that ran, cancelled or not
+        int               waveCacheResetJob  { 0 };   // the reset the rows wait for
         std::atomic<bool> waveCacheSaving { false };
-        bool              waveCacheLoading { false };
+        bool              waveCacheLoading { false };   // rows wait for waveCacheResetJob
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditPage)
     };

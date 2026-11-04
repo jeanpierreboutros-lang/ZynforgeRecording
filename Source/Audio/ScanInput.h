@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_events/juce_events.h>
 #include <memory>
 
 #include "CheckedAudioReader.h"
@@ -19,9 +20,43 @@ namespace zynforge::scanio
 {
     inline constexpr int kReadBufferBytes = 1 << 19;   // 512 KiB
 
+    // The scan's file, read past the page cache on the scan threads only.
+    // Below ~128 samples per pixel JUCE draws a thumbnail by reading its file
+    // on the message thread, through this same stream: with two clips of one
+    // file on screen, each repaint read both regions again, a disk read per
+    // clip per frame once the stream was uncached. Those reads are short and
+    // on-screen, so they go through the page cache as they did before.
+    class ScanFileInput final : public juce::InputStream
+    {
+    public:
+        static std::unique_ptr<ScanFileInput> open (const juce::File& file)
+        {
+            auto in = uncached::FileInput::open (file);
+            if (in == nullptr) return {};
+            return std::unique_ptr<ScanFileInput> (new ScanFileInput (std::move (in)));
+        }
+
+        juce::int64 getTotalLength() override { return in->getTotalLength(); }
+        int read (void* destination, int bytes) override
+        {
+            in->usePageCache (juce::MessageManager::existsAndIsCurrentThread());
+            return in->read (destination, bytes);
+        }
+        bool isExhausted() override        { return in->isExhausted(); }
+        juce::int64 getPosition() override { return in->getPosition(); }
+        bool setPosition (juce::int64 newPosition) override { return in->setPosition (newPosition); }
+
+        bool bypassesCache() const noexcept         { return in->bypassesCache(); }
+        bool readsThroughPageCache() const noexcept { return in->readsThroughPageCache(); }
+
+    private:
+        explicit ScanFileInput (std::unique_ptr<uncached::FileInput> file) : in (std::move (file)) {}
+        std::unique_ptr<uncached::FileInput> in;
+    };
+
     inline std::unique_ptr<juce::InputStream> openStream (const juce::File& file)
     {
-        auto in = uncached::FileInput::open (file);
+        auto in = ScanFileInput::open (file);
         if (in == nullptr) return {};
         return std::make_unique<juce::BufferedInputStream> (in.release(), kReadBufferBytes, true);
     }
@@ -72,5 +107,24 @@ namespace zynforge::scanio
     {
         thread.stopThread (-1);
         thread.startThread (juce::Thread::Priority::low);
+    }
+
+    // A take must have its drive to itself. Pausing never waits: the slice in
+    // flight finishes on its own, and a slice stuck on a drive that stopped
+    // answering must not take the message thread with it. Every thumbnail keeps
+    // its place, so a resumed scan goes on where it stopped.
+    inline void pauseScanThread (juce::TimeSliceThread& thread)
+    {
+        thread.signalThreadShouldExit();
+        thread.notify();
+    }
+
+    // False while the slice that was in flight when it paused still runs; try
+    // again later rather than wait for it.
+    inline bool resumeScanThread (juce::TimeSliceThread& thread)
+    {
+        if (thread.isThreadRunning()) return ! thread.threadShouldExit();
+        startScanThread (thread);
+        return true;
     }
 }

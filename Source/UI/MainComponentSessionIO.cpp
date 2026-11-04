@@ -1527,7 +1527,10 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
             if (self->editPage != nullptr)
             {
                 self->editPage->setEnabled (! self->sessionLocked);
-                self->editPage->sessionMediaAdded();
+                juce::Array<juce::File> written;
+                for (const auto& track : result.tracks)
+                    written.add (audioFilesDir.getChildFile (juce::String::formatted ("Track_%02d.wav", track.trackIndex + 1)));
+                self->editPage->sessionMediaAdded (written);
             }
 
             const int stereoCount = (int) std::count_if (
