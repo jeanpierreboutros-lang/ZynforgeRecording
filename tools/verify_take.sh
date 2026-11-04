@@ -173,6 +173,15 @@ else
         red "  report hashing failed"
         fail=1
     fi
+    # Copy hashes are kept apart from the primary's. A copy file that would
+    # not read back is a copy to review; one whose drive was gone is owed.
+    if [[ "$(jq -r '.copySha256Failed // false' "$REPORT")" == "true" ]]; then
+        red "  a backup or mirror file could not be read back to hash -- check that copy"
+        fail=1
+    fi
+    if [[ "$(jq -r '.copySha256Missing // false' "$REPORT")" == "true" ]]; then
+        ylw "  backup or mirror hashes are owed: that drive was not there. Reopen the session with it connected."
+    fi
     for field in primaryFailed backupFailed mirrorFailed punchSpliceFailed; do
         if [[ "$(jq -r --arg field "$field" '.[$field] // false' "$REPORT")" == "true" ]]; then
             red "  $field is true — capture needs review"

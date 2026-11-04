@@ -50,10 +50,29 @@ namespace zynforge
             prevR = prevR2 = prevR3 = 0.0f;
         }
 
+        // Integrated loudness and true peak start again from here: a take or a
+        // session starts its own programme. Any thread may call it while the
+        // audio thread feeds the meter: the readings clear at once, and the
+        // audio thread drops what it still holds of the old programme (the
+        // part-filled 100 ms chunk, the true-peak interpolation history) at
+        // its next block. Momentary and short-term go on as they are.
+        void resetProgramme() noexcept
+        {
+            clearProgramme();
+            programmeReset.store (true, std::memory_order_release);
+        }
+
         // Process one block of the (post-fader) master, read from the 64-bit
         // accumulator with master gain applied here.
         void processMasterDouble (const double* L, const double* R, double gain, int n) noexcept
         {
+            if (programmeReset.exchange (false, std::memory_order_acq_rel))
+            {
+                chunkAccum = 0.0; chunkCount = 0;
+                prevL = prevL2 = prevL3 = 0.0f;
+                prevR = prevR2 = prevR3 = 0.0f;
+                clearProgramme();
+            }
             for (int i = 0; i < n; ++i)
             {
                 const double l = L[i] * gain;
@@ -111,6 +130,14 @@ namespace zynforge
         }
 
     private:
+        void clearProgramme() noexcept
+        {
+            for (auto& h : hist) h.store (0, std::memory_order_relaxed);
+            truePeakDb.store (-120.0f, std::memory_order_relaxed);
+        }
+
+        std::atomic<bool> programmeReset { false };
+
         // ── K-weighting ────────────────────────────────────────────────
         struct Biquad { double b0, b1, b2, a1, a2; };
         Biquad shelf {}, hpf {};

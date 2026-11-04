@@ -198,8 +198,9 @@ namespace zynforge
 
         // ── Master loudness (ITU-R BS.1770-style) ─────────────────────
         // Measured on the post-fader stereo master. Momentary/short-term
-        // are live; integrated is gated program loudness since the device
-        // started. True-peak is a 4x-oversampled estimate (dBTP).
+        // are live; integrated is gated program loudness since the take (or the
+        // session) began, and true peak the highest since then: a strip
+        // layout change keeps both. True-peak is a 4x-oversampled estimate (dBTP).
         float getMomentaryLufs()  const noexcept { return loudness.getMomentaryLufs(); }
         float getShortTermLufs()  const noexcept { return loudness.getShortTermLufs(); }
         float getIntegratedLufs() const noexcept { return loudness.getIntegratedLufs(); }
@@ -1106,6 +1107,9 @@ namespace zynforge
         {
             juce::File file;
             std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
+            // Silence the mix writes ahead of its first block: the pre-roll
+            // the track files start with. -1 until the take has gone live.
+            std::shared_ptr<std::atomic<juce::int64>> leadPad;
         };
         StereoMixFile openStereoMix (const juce::File& sessionDir, double sampleRate);
 
@@ -1164,6 +1168,17 @@ namespace zynforge
         // is the distance between them for the take in progress.
         std::atomic<juce::int64> continueShift { 0 };
         juce::int64 continueFileBase { 0 };
+        // Where STOP placed each take's new media that landed away from its
+        // file position, per track, so an undo or a redo adds it back there.
+        // placed false: a lead-in STOP left off the timeline. Cleared with
+        // the clips on a session open, and on a strip move.
+        struct RecordedPlacement { juce::int64 from, to, shift; bool placed; };
+        std::vector<std::vector<RecordedPlacement>> recordedPlacements;
+        // Set around the engine's own callback detach and attach for a strip
+        // layout change, which JUCE reports as a device stop and start.
+        bool layoutRestart { false };
+        double loudnessRate { 0.0 };   // the rate the loudness meter was prepared at
+        void notePlacement (int track, juce::int64 from, juce::int64 to, juce::int64 shift, bool placed);
         // Per-track Playlist storing every Take (named clip list). The
         // active take's clips mirror trackClips above so the player
         // path doesn't need to know about takes.

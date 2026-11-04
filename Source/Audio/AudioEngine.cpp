@@ -8,8 +8,67 @@
 #include "FastAccumulate.h"
 #include "MultiPartReader.h"
 
+#include <vector>
+
 namespace zynforge
 {
+    namespace
+    {
+        // StereoMix.wav begins on the take's first sample, and the track files
+        // begin with pre-roll the mix never heard: that much silence goes in
+        // front. Its length is known once RECORD returns, a moment after the
+        // first live block; this runs on the mix writer's thread, and the
+        // queue in front of it holds the audio meanwhile.
+        class LeadPadWriter final : public juce::AudioFormatWriter
+        {
+        public:
+            LeadPadWriter (juce::AudioFormatWriter* innerIn, std::shared_ptr<std::atomic<juce::int64>> padIn)
+                : juce::AudioFormatWriter (nullptr, innerIn->getFormatName(), innerIn->getSampleRate(),
+                                           (unsigned int) innerIn->getNumChannels(),
+                                           (unsigned int) innerIn->getBitsPerSample()),
+                  inner (innerIn), pad (std::move (padIn))
+            {
+                usesFloatingPointData = inner->isFloatingPoint();
+            }
+
+            // A take that stopped before its first live block still lines up.
+            ~LeadPadWriter() override { writePad(); }
+
+            bool write (const int** samples, int numSamples) override
+            {
+                return writePad() && inner->write (samples, numSamples);
+            }
+
+            bool flush() override { return inner->flush(); }
+
+        private:
+            bool writePad()
+            {
+                if (padded) return healthy;
+                auto frames = pad->load (std::memory_order_acquire);
+                for (int waited = 0; frames < 0 && waited < 2000; ++waited)
+                {
+                    juce::Thread::sleep (1);
+                    frames = pad->load (std::memory_order_acquire);
+                }
+                padded = true;
+                std::vector<int> zeros (4096, 0);
+                std::vector<const int*> channels ((size_t) juce::jmax (1, (int) numChannels), zeros.data());
+                while (frames > 0 && healthy)
+                {
+                    const int count = (int) juce::jmin (frames, (juce::int64) zeros.size());
+                    healthy = inner->write (channels.data(), count);
+                    frames -= count;
+                }
+                return healthy;
+            }
+
+            std::unique_ptr<juce::AudioFormatWriter> inner;
+            std::shared_ptr<std::atomic<juce::int64>> pad;
+            bool padded { false }, healthy { true };
+        };
+    }
+
     void AudioEngine::rememberRecentSession (const juce::File& dir)
     {
         if (appProps == nullptr || (! isTakeOnDisk() && ! dir.isDirectory())) return;
@@ -287,28 +346,44 @@ namespace zynforge
         const auto markerRate    = markers.getSampleRate();
         markers.setContext (sessionDir, sr);
         auto mix = openStereoMix (sessionDir, sr);
+        const bool mixWanted = recordStereoMixFlag.load (std::memory_order_acquire);
+        const bool mixOpened = mix.writer != nullptr;
+        // In place before the take goes live, so the mix's first block is the
+        // take's first live block (the callback writes only blocks the
+        // recorder captured).
+        if (mixWanted)
+        {
+            const juce::ScopedLock sl (stereoMixLock);
+            stereoMixWriter = std::move (mix.writer);
+        }
+        const bool continuing = recorder.isContinueArmed() && player.isLoaded();
+        const auto landsAt = continuing ? continueLandsAt() : (juce::int64) 0;
+        recorder.setContinueLandsAt (continuing ? landsAt : -1);
 
         if (! recorder.startRecording (sessionDir))
         {
             markers.setContext (markerSession, markerRate);
-            if (mix.writer != nullptr)
+            if (mix.leadPad != nullptr) mix.leadPad->store (0, std::memory_order_release);
+            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> unused;
             {
-                mix.writer.reset();
+                const juce::ScopedLock sl (stereoMixLock);
+                unused = std::move (stereoMixWriter);
+            }
+            if (unused != nullptr || mixOpened)
+            {
+                unused.reset();
                 mix.file.deleteFile();
             }
             return false;
         }
-        if (recordStereoMixFlag.load (std::memory_order_acquire))
-        {
-            stereoMixWriteFailed.store (mix.writer == nullptr, std::memory_order_relaxed);
-            const juce::ScopedLock sl (stereoMixLock);
-            stereoMixWriter = std::move (mix.writer);
-        }
+        if (mix.leadPad != nullptr)
+            mix.leadPad->store (recorder.getPreRollHistorySamples(), std::memory_order_release);
+        if (mixWanted) stereoMixWriteFailed.store (! mixOpened, std::memory_order_relaxed);
+        // The header's integrated loudness and true peak are this take's.
+        loudness.resetProgramme();
 
         continueFileBase = recorder.isContinueArmed() ? recorder.getRecordBaseSamples() : 0;
-        continueShift.store (recorder.isContinueArmed() && player.isLoaded()
-                                 ? continueFileBase - continueLandsAt() : 0,
-                             std::memory_order_release);
+        continueShift.store (continuing ? continueFileBase - landsAt : 0, std::memory_order_release);
 
         // These strips are what this take was recorded with, so from here on
         // they are this folder's mixer, whichever session they came from.
@@ -366,8 +441,9 @@ namespace zynforge
             if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
             {
                 mix.file = path;
+                mix.leadPad = std::make_shared<std::atomic<juce::int64>> (-1);
                 mix.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
-                                 (w, mixWriterThread, 32768);
+                                 (new LeadPadWriter (w, mix.leadPad), mixWriterThread, 32768);
                 // JUCE writes the header at open and close unless told, and a
                 // crash would leave all this audio behind a length of zero.
                 mix.writer->setFlushInterval ((int) (sr * 5.0));
@@ -1530,6 +1606,10 @@ namespace zynforge
             appProps->saveIfNeeded();
         }
 
+        // JUCE reports the detach and attach below as a device stop and start,
+        // which stops the player and would empty every strip's pre-roll.
+        // Nothing about the device or the session changes, so neither happens.
+        const bool wasPlaying = player.isPlaying();
         deviceManager.removeAudioCallback (this);
         recorder.setTrackCount (n);
         // Freshly-added strips must NOT inherit a previous session's per-index
@@ -1544,7 +1624,10 @@ namespace zynforge
         if (n > oldCount)
             clearStripOverridesRange (oldCount, n);
         applyPersistedStripState();
+        layoutRestart = true;
         deviceManager.addAudioCallback (this);
+        layoutRestart = false;
+        if (wasPlaying && ! player.isPlaying()) startPlayback();
     }
 
     void AudioEngine::addOneStrip()
@@ -1769,6 +1852,10 @@ namespace zynforge
             reorderRefusal = "Those two strips share one stereo file, so they have to stay side by side";
             return false;
         }
+        // The strips move, the takes are renamed and the session reloads, so
+        // playback stops for it and goes on afterwards from where it was.
+        const bool wasPlaying = player.isPlaying();
+        const auto playedTo = player.getPositionSamples();
         player.stop();
         deviceManager.removeAudioCallback (this);
         const juce::ScopedLock structureGuard (recorder.getStructureLock());
@@ -1888,6 +1975,10 @@ namespace zynforge
         }
         else
         {
+            // Each strip keeps its own pre-roll, and recorded placements name
+            // tracks by index (undo is cleared for a move anyway).
+            recorder.reorderPreRoll (order);
+            recordedPlacements.clear();
             recorder.setTrackCount ((int) order.size());
             persist ((int) order.size());
             // The LTC source follows its strip; deleting that strip clears it.
@@ -1904,7 +1995,14 @@ namespace zynforge
             sourceTrackLengths.push_back (player.getTrackLengthSamples (i));
         player.clearAllClips();
         for (int i = 0; i < (int) trackClips.size(); ++i) player.setTrackClips (i, trackClips[(size_t) i]);
+        layoutRestart = true;
         deviceManager.addAudioCallback (this);
+        layoutRestart = false;
+        if (saved && wasPlaying && player.isLoaded())
+        {
+            player.setPositionSamples (juce::jlimit ((juce::int64) 0, player.getTotalLengthSamples(), playedTo));
+            startPlayback();
+        }
         if (saved && onTracksReordered) onTracksReordered (destination);
         return saved;
     }
@@ -2156,6 +2254,11 @@ namespace zynforge
 
         const auto before = deviceManager.getAudioDeviceSetup();
         auto setup = before;
+        // Names only, as at launch: the stand-in's rate and buffer are not the
+        // interface's, and asking for that rate would re-clock the rig. JUCE
+        // then keeps the rate the interface runs at and its own buffer.
+        setup.sampleRate = 0;
+        setup.bufferSize = 0;
         setup.inputDeviceName = state.chosenNow;
         setup.useDefaultInputChannels = true;
         const auto output = devicechoice::nameNow (chosenDevice.output, chosenDevice.outputUid, listDevices (false));
@@ -2220,12 +2323,18 @@ namespace zynforge
         // IO thread -- no priority inversion under load.
         recorder.setAudioWorkgroup (std::move (workgroup));
 
-        loudness.prepare (sr);
+        // A layout change restarts the callback at the same rate: the header's
+        // loudness carries on. Only a new rate starts the meter again.
+        if (std::abs (sr - loudnessRate) > 0.5)
+        {
+            loudness.prepare (sr);
+            loudnessRate = sr;
+        }
 
         // Strip count is user-controlled: the app opens with NO channels
         // (engineer adds them via +CH), and the count is preserved across
         // device restarts -- it is NOT restored from a previous session.
-        recorder.prepare (sr, blockSize, recorder.getNumTracks());   // start empty; preserve count across device restarts
+        recorder.prepare (sr, blockSize, recorder.getNumTracks(), layoutRestart);   // start empty; preserve count across device restarts
         player  .prepare (sr, blockSize);
 
         // Pre-allocate the stereo mix scratch buffer at the device block
@@ -2344,6 +2453,8 @@ namespace zynforge
         trackClips.clear();
         trackPlaylists.clear();
         sourceTrackLengths.clear();
+        recordedPlacements.clear();
+        loudness.resetProgramme();   // the next session's programme starts here
         resetAllStripState();
         setStreamOutputs (-1, -1);
         chaseStartLabel.store (0, std::memory_order_relaxed);
@@ -2778,6 +2889,7 @@ namespace zynforge
             punchSamples = last > first ? (int) (last - first) : 0;
         }
 
+        bool capturedThisBlock = false;
         if (punchSamples > 0)
         {
             const float* captureInputs[kMaxStrips] {};
@@ -2788,6 +2900,7 @@ namespace zynforge
                                    punchSamples,
                                    playerWasRolling ? playbackBlockStart + punchOffset
                                                     : (juce::int64) -1);
+            capturedThisBlock = recorder.capturedLastBlock();
         }
 
         // While punching, the recorded input replaces the old take on armed
@@ -2940,7 +3053,8 @@ namespace zynforge
         // Held to the end of this scope so the writer stays valid through the
         // accumulate + write below.
         const juce::ScopedTryLock mixStl (stereoMixLock);
-        const bool wantMixCapture = mixStl.isLocked() && recorder.isRecording() && (stereoMixWriter != nullptr);
+        // The blocks the take captured, so the mix starts and ends on its samples.
+        const bool wantMixCapture = mixStl.isLocked() && capturedThisBlock && (stereoMixWriter != nullptr);
 
         if (wantMixCapture)
         {

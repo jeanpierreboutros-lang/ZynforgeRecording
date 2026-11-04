@@ -32,7 +32,10 @@ namespace
         if (recorder.anyMirrorFailed()) failures.add ("mirror audio write failed");
         if (recorder.getMirrorsSkippedAtStart() > 0) failures.add ("configured mirror did not open");
         if (recorder.hasRecoveryMarkerFailed()) failures.add ("recovery marker failed");
-        if (recorder.hasReportWriteFailed()) failures.add ("integrity report could not be saved");
+        if (recorder.hasSessionFolderLost())
+            failures.add ("the session folder was renamed or moved during the take, so the take was not finished and has no report "
+                          "(its audio is intact: move the folder back and reopen it)");
+        else if (recorder.hasReportWriteFailed()) failures.add ("integrity report could not be saved");
         if (recorder.hasPunchSpliceFailed()) failures.add ("punch could not be spliced; the original take was kept and the new audio is in Session File Backups/Unspliced Punch");
         if (engine.hasStereoMixWriteFailed()) failures.add ("optional stereo mix is incomplete");
         return failures.isEmpty() ? juce::String()

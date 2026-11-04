@@ -164,6 +164,11 @@ namespace zynforge
 
         std::atomic<int>          clipCount        { 0 };
         std::atomic<juce::int64>  lastClipSample   { -1 };
+        // The same, for this take alone, for its report: counted only while
+        // this strip is captured, reset at go-live. The meter's count above is
+        // clip evidence the engineer clears by hand, soundcheck included.
+        std::atomic<int>          takeClipCount    { 0 };
+        std::atomic<juce::int64>  takeLastClipFrame { -1 };   // live frame of the block, from go-live
 
         // 0 means "use default personality colour for this index".
         std::atomic<juce::uint32> colourARGB       { 0 };

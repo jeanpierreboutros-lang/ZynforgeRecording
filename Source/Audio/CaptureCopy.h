@@ -75,6 +75,10 @@ namespace zynforge
         std::atomic<double>      lastProgressMs { 0.0 };
         std::atomic<bool>        overran { false }, finishing { false }, finished { false };
         std::atomic<bool>        abandoned { false }, flushWanted { false }, dropped { false }, opening { false };
+        // Latched for the take: this copy began capturing, and a track of it
+        // lost its file. Whether a copy holds what another lost is read from
+        // these, because STOP closes every track and the live count goes to 0.
+        std::atomic<bool>        joined { false }, incomplete { false };
 
         std::mutex              ringLock;
         std::condition_variable wake;
@@ -93,6 +97,7 @@ namespace zynforge
         void failTrack (Track& t)
         {
             t.failed = true;
+            incomplete.store (true, std::memory_order_relaxed);
             latchFailure();
         }
 
@@ -165,7 +170,10 @@ namespace zynforge
             t.ring.malloc ((size_t) ringFrames * (size_t) t.channels);
             t.accepting = t.ring != nullptr;
             if (t.accepting)
+            {
                 liveChannels.fetch_add (t.channels, std::memory_order_relaxed);
+                joined.store (true, std::memory_order_relaxed);
+            }
             else
             {
                 t.writer.reset();
@@ -234,6 +242,7 @@ namespace zynforge
                 closeFilesNow();
                 for (auto& t : tracks)
                     if (t.baseFile != juce::File()) t.failed = true;
+                incomplete.store (true, std::memory_order_relaxed);
                 latchFailure();
                 if (opening.exchange (false)) leaveTake (label + " could not start; it is not in this take");
                 finished.store (true);
