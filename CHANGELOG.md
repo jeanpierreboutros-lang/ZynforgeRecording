@@ -17,6 +17,94 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+Everything from here down to the next rule came from a whole-codebase review on 2026-11-04. All 75 of its findings are closed on `main`; one (Add Tracks while a STOP finalizes) was already refused and keeps a small defensive change. None of it is installed: the development Mac still has `eca170e` and the mini `281c6c0`. None of it has run on real hardware. The choices the fixes made where the owner may want otherwise are in the top ADR of [decisions.md](decisions.md).
+
+### Fixed — recording and the capture helper, 2026-11-04 review
+
+- In capture-helper mode, a status the helper built just before STOP could reach the window after STOP's answer. The window then took the finished take for a rolling one, offered a twin follower a re-link, and told it the take ended without STOP, so the follower kept recording. Statuses built before a command are now dropped, and the window takes up a rolling take only from a status received after the last take it ended (a status can be lost under load, which left the window holding an old "recording" one).
+- With the capture helper on, unplugging headphones, a display going to sleep or a USB headset going away no longer ends the take. The helper opened the window's monitor output along with its inputs, and lost the take with it. It now opens inputs only.
+- With the capture helper on, arming, renaming or re-routing a strip between songs no longer restarts the helper's device, so the next take keeps its full pre-roll. Those changes also answer at once.
+- STOP after the helper was told to quit (Activity Monitor, a kill, Ctrl-C) is confirmed as usual. The window no longer reports the helper gone mid-take, and recovery no longer runs on files still being closed.
+- Logging out, restarting or shutting down the Mac with a helper take rolling finishes that take properly, headers and report written, instead of leaving it to be repaired. One quit signal from anything else still leaves the take rolling.
+- The helper opens and changes its device on its own main thread only. A device that came or went during a configure or a RECORD could crash it.
+- Cmd-Q right after the interface dropped says the take is still closing its files and to quit again once it has, instead of offering Save and then hanging. A logout or restart asked for meanwhile is refused the same way.
+- Reopening a session the helper is still hashing no longer reads the whole take a second time from the window.
+- RECORD with no session open and the chosen sessions drive unplugged is refused, naming the drive. It used to record onto the Mac's own disk without a word. The idle clock reads NO DRIVE, and the Welcome screen shows the chosen folder with "Drive not connected".
+- After STOP, the banner and `session.report.json` say the other copies have the audio when another copy really holds it. They said no other copy had it. A copy that lost even one track no longer counts as holding another copy's loss.
+- 32-bit float AIFF capture no longer forces every open file to disk every 5 s.
+- RECORD on a strip whose take still sits in the session folder itself, from an older build, is refused with the reason. It used to record into `Audio Files/` and hide the old take. Move those files into `Audio Files/`, or record into a new session.
+- A session folder renamed or moved during a take raises a red banner line naming it, while putting it back still helps. Still gone at STOP, STOP says the take was not finished there and why, writes nothing at the old path, and the take is offered for recovery where it now is.
+- The report's clip counts and last clip position per track describe the take, not soundcheck or playback. A continue adds to the earlier pass.
+- A refused RECORD keeps the last take's copy lines on the banner, and names the real cause: a take a fresh take would replace, or an existing take that could not be read. Both used to say "mixed formats".
+- With the recording drive pulled, the clock shows no record time instead of the boot disk's.
+- A crash or power cut while a punch is being installed no longer loses the punch, or stitches an old part onto the spliced take. A punch not yet committed is kept in `Session File Backups/Interrupted Punch*`.
+- Ejecting the backup while the report's hashes run no longer fails a good primary. The backup's hashes are owed, and finish the next time the session opens with that drive connected. A reopened session hashes its primary first, so a missing or hung backup drive no longer holds the primary's hashes back.
+- Generic OSC: letting go of a momentary button never counts, and STOP presses within 250 ms count once. A tablet STOP button needs two separate presses, as STOP always does. `/zynforge/record 0` is a release and no longer stops a take: stopping over Generic OSC is `/zynforge/stop` only.
+- Twin Recorder: a follower whose helper is still closing its last take refuses the leader's next RECORD and says why ("press RECORD there once it has finished"), instead of answering "already recording, now linked".
+- Twin Recorder: after a follower's window crashed or relaunched during a helper take, the leader's STOP stops the follower's take again. A take the link did not start is still left rolling, and the leader is told why.
+
+### Fixed — playback and the engine, 2026-11-04 review
+
+- Chase against 29.97 non-drop or 23.976 timecode no longer skips back about 80 ms every 80 s, and takes recorded against it carry BWF times that a 29.97 or 23.976 DAW session places correctly. LTC at 24 or 30 non-drop takes about a quarter second more to LOCK. MTC at a pulled-down rate is told apart after 10 s of running, with one chase correction then.
+- An MTC full frame, sent when the master locates or scrubs while stopped, no longer plays bits of the session or starts playback that never stops. It sets the time only, and chase moves once the master runs.
+- Undo or redo after a continued take no longer moves the new audio later or lays it over a duplicate. A continued take that crashed comes back where it played, at the end of the arrangement.
+- A crossfade between two close cuts of one take plays in Virtual Soundcheck as it bounces, without a drop-out.
+- When the chosen interface comes back, it opens at its own rate and buffer, not the stand-in's.
+- A marker dropped just before or during a capture-helper STOP no longer vanishes.
+- The header's integrated loudness and true peak start afresh at each take and each session, and adding, deleting or moving a channel keeps them. A capture-helper take does not reset them yet.
+- Adding, deleting or moving a channel just before the downbeat keeps the full pre-roll, and Virtual Soundcheck playback carries on. A strip move during playback now resumes from where it was; it used to stop.
+- StereoMix.wav lines up with the track files from sample 0, pre-roll included.
+
+### Fixed — EDIT and sessions, 2026-11-04 review
+
+- While a take rolls, and until STOP has closed its files, EDIT's waveform scans read nothing from disk. A scan that RECORD paused carries on after STOP from where it stopped.
+- Zoomed in close during playback, EDIT redraws from memory again, not from the take drive. The uncached waveform reads that came after `eca170e` had reached those redraws too.
+- A new session's `WaveCache.wfm` holds only its own peaks, and memory no longer grows with each session opened in a run. Quit no longer spoils that file while it loads, and waits at most 5 s to save it on a slow drive, leaving the old file if it can't.
+- Moving a strip while a long session's waveforms are still appearing draws each strip's own audio, and saves that.
+- An import into a file name a delete had freed draws the imported audio, not the deleted strip's.
+- +CH, a link or unlink, or a delete during the post-STOP rescan no longer blanks the lanes back to what had been scanned so far.
+- A natively recorded stereo pair reads its file once to draw both lanes, not twice.
+- Renames, fader moves, patch changes and cue stores made during a long Save As or Move are in the copy. If the copy can't take them, Save As stays in the source with the changes and says so.
+- Export Audio, Export Songs and New Session, answered after another session opened behind them, do nothing and say why. Export Songs also refuses when the songs moved while it was open.
+- Restore Backup brings back cues, edits and layout for a Save As copy or a renamed folder. A save that landed behind the prompt made it silently open the newer project. Auto-save restarts its interval at every session open.
+- A raw export of an unlinked stereo take writes each strip's own channel, whatever was ticked. A mono strip on a two-channel file exports the channel it plays.
+- Detect Songs listens to each strip's own channel of a shared stereo file, and to both sides of a stereo strip.
+- Save As, Move and Show Handoff say they are waiting for the take's integrity hashes, rather than "copying", while they wait.
+
+### Fixed — mixer and main window, 2026-11-04 review
+
+- Pressing ST after MONO on the master plays stereo again, on the pair the output list shows. A mono master on Out 2 goes back to Out 1-2.
+- The master's output list never reads Off while the mix plays somewhere else. When the saved pair is not on this device, the list says where the mix plays, as "Out 3-4 (saved Out 9-10)".
+- Transport Sync, Control Surfaces, Desk Macro, Import Channel Names, Console: connect, Stream Bus Output, Auto-Save & Backup and the Help items are grey during a take. A panel left open closes by itself, as Cancel, when a take starts behind it from OSC, a desk macro, the twin, the helper or a punch window.
+- After a crash with a helper take rolling, the relaunched window holds the crash notice and the recovery list until STOP, and does not read the sessions folder during the take.
+- A fader's dB value box opens on a double-click. Return applies and a click elsewhere cancels. A word typed there no longer sends the fader to 0 dB.
+- A grouped pan move no longer collapses a stereo pair, and a pair's L knob leaves its R alone. Stereo strips are left out of grouped pan.
+- The backup can be turned off from Backup & Mirror Drives, with the × on its row.
+- A backup or mirror on the session's own drive is named as such, in amber, in Backup & Mirror Drives and as a warning in pre-flight.
+- Backup & Mirror Drives opens within 1.5 s over a drive that stopped answering, and says which.
+- Pre-flight can no longer freeze the window on a mirror drive that stopped answering.
+- After STOP the idle clock reads DISK FREE until pre-flight runs again. It kept pre-flight's record time from before the take.
+- No false Sample-Rate Mismatch at launch on a rig not at 48 kHz.
+- Recalling an older cue no longer splits a linked pair, and no longer unpatches strips on their default input.
+- Clicking the colour chip of a strip outside the selection colours that strip only.
+- A stereo strip's dB readout and CLIP count include its right half.
+- After a stereo pair, the Meterbridge numbers its columns as MIXER, EDIT and PATCH do.
+- Transport Sync lists LTC sources by strip number, name and the input they hear, one per stereo pair.
+- Twin Recorder: Disconnect needs a second press within 2 s while either Mac rolls. Between takes one press, as before.
+- Red text in Desk Macro and the Twin Recorder panel is readable on the dialog grey, and the mirror list shows its scrollbar.
+- "Next: ..." names the next cue on the timeline, not the next in the list.
+- A session open refused after the mixer was cleared no longer leaves frozen meters or stale pairs.
+
+### Fixed — tools and build, 2026-11-04 review
+
+- `verify_take.sh` checks the primary on its own hashes. A backup or mirror hash that failed or is owed is a yellow note, not a failure. A report still pending says hashes are made only while the app has the session open. Given no session, with no recorded capture in the app's settings, it says it is checking the session the app last had open, which may not be the show.
+- Every local build is sealed like a release: hardened runtime with the audio-input entitlement, on the app and the capture helper. Builds stop changing identity, and asking for the microphone again, from one build to the next. The next install may ask once more.
+- A clean build fetches JUCE as a full clone, so the commit pin keeps working after the security branch moves on.
+- CI also runs the suite under Rosetta, the tool tests, a launch-and-quit of the Release app, and checks the helper's architectures and both binaries' signing. CI is blocked by billing, so none of this has run there yet.
+- INSTALL.md's Developer ID section shows its commands; an unclosed code block had swallowed the Rollback section.
+
+---
+
 ### Changed — framework
 
 - Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27. The development Mac has it, now as `eca170e`; the mini does not.

@@ -1,5 +1,29 @@
 # Project Tasks
 
+## Bug audit, 2026-11-04
+
+A whole-codebase review made 75 findings, and all 75 are fixed on `main`. One of them, Add Tracks while a STOP finalizes, was already refused by the code; it keeps a small defensive change. Nothing here is installed (the development Mac still has `eca170e`, the mini `281c6c0`) and none of it has run on real hardware. What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the top ADR of [decisions.md](decisions.md), and the results are in [testing.md](testing.md).
+
+- [ ] Owner: install a build from `main` on purpose, then run *2026-11-04 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig. A helper take with a separate monitor output unplugged, an OSC tablet STOP button, 29.97 non-drop and 23.976 chase, and quitting or logging out while a take closes are the ones no test can stand in for.
+- [ ] Owner: review the conservative choices in the top ADR of [decisions.md](decisions.md), above all `/zynforge/record 0` no longer stopping, the fader value box on a double-click, and RECORD refused with the sessions drive gone.
+- [ ] Flaky test, partly fixed: *Twin recorder host / A daemon take found rolling offers a re-link, and a confirmed STOP reaches the follower* (and the new *A daemon STOP whose "stopped" status arrives before its reply still reaches the follower as a STOP*) can end with "This take ended without STOP". Two causes are fixed and tested: the helper sent a status built before STOP after STOP's reply (now dropped; *A status built before STOP never reaches the window after STOP's reply* failed before the fix), and the window re-adopted a finished take from a leftover "recording" status when STOP's own status was dropped by `CaptureServer::writeLine`'s timed lock (the window now adopts only from a status received after the take it ended). It still fails in about 1 of 12 runs of the group with seven busy CPU loops beside it (3 of 12 before), and passes in normal runs. The failure message now prints the follower's start/stop counts and the window's state: the follower gets one start and one stop, so the window still sees the take roll again briefly after its confirmed STOP. Find that path; until then treat it as a real defect in helper mode with a twin follower under heavy load.
+- [ ] A copy read that hangs for good keeps its resume hash thread (and `runningScans`) alive, so Save As, Move, handoff and relocation wait in `waitForReportHashes` until cancelled. The primary's hashes are now published before that point. Decide what those jobs should wait for.
+- [ ] Save As, Move and Handoff say they wait for hashes, but not how far along they are. "N of M files" needs a new `MultitrackRecorder` call.
+- [ ] A marker dropped while Save As or Move copies goes to the source's `markers.json` (the markers save on their own) and may miss the copy.
+- [ ] A Save As, Move or handoff copy brings a `WaveCache.wfm` keyed by the old absolute paths, so the copy rescans every waveform.
+- [ ] A mount that has stopped answering can still hold the quit-time waveform cache save inside a write: no thread is ever killed.
+- [ ] A deep-zoom repaint during a take still reads the file it draws (JUCE `getLevels` on the message thread). Since this round those reads go through the page cache.
+- [ ] The Welcome screen's Create does not take `questionScope`, as New Session now does.
+- [ ] Import with no session open still falls back to the internal disk when the chosen sessions drive is missing. RECORD now refuses there.
+- [ ] Detect Songs: legacy two-file stereo pairs still listen to the L file only.
+- [ ] A helper take start does not reset the window's header loudness (the start is in `startDaemonTake`, and `beginExternalTake` also runs on a reattach mid-take).
+- [ ] A crashed helper continue keeps the old rule and comes back at its file position: the helper's recorder has no landing to write.
+- [ ] Transport Sync shows "24 fps" and "30 fps" for 23.976 and 29.97 non-drop, and the timeline CSV labels samples at the nominal rate (`tx::frameRateFor`). Cosmetic and export only; chase and BWF use the real rate.
+- [ ] The same-drive warning compares filesystems, so a backup on another APFS volume of the session's physical disk passes as separate.
+- [ ] Confirm the merged TSan run covers *Mixer and main window fixes*: the LTC-source race it fixed shows only under ThreadSanitizer, and the fixer did not run one.
+- [ ] Not verified: a clean configure with a real full JUCE clone from GitHub (no network was used). A full clone costs more than a shallow one, once per clean configure or CI cache miss. Revisions before this one, pinned with a shallow clone, need `-DFETCHCONTENT_SOURCE_DIR_JUCE` (or a one-line edit) to rebuild.
+- [ ] CI: the new Release-job steps (Rosetta suite, tool tests, smoke launch, signing checks) have never run, because CI is blocked by billing. The smoke launch is unverified on a hosted runner, where microphone permission may behave differently; it may need a device-free flag. The runner's Xcode is not pinned.
+
 ## Three-hour take — 2026-11-04
 
 `577592c` on the development Mac: 54 tracks, 3 h 01 min 35 s (522,966,016 samples in every file), 48 kHz 24-bit WAV through Dante Virtual Soundcard, to the same external exFAT SSD. STOP was pressed unattended at 02:51:43. The report shows 0 missed samples and 0 ms of device stall, and all 54 files are closed at the same length.
@@ -24,8 +48,8 @@
 - [ ] On `577592c`, reopen the session and leave it until the rescan and hashes finish; time both, and the quit.
 - [ ] Run `tools/verify_take.sh` on the session once its hashes are written. Quitting cancelled the first pass before any hash was saved; opening the session resumes it.
 - [x] Why the app's reads were wasted far more than a test reader's on the same files: the app read 55 files side by side, and the kernel's read-ahead for that many outgrew memory. A reader doing the same cost 66×.
-- [ ] Setting a thumbnail source now reads 512 KiB on the message thread instead of the header alone. Time a 55-track session's open and STOP settle on a spinning drive.
-- [ ] A new session's `WaveCache.wfm` is written with the previous session's peaks: this one holds 57 entries (21.8 MB), none for its own files.
+- [ ] Setting a thumbnail source now reads 512 KiB on the message thread instead of the header alone. Time a 55-track session's open and STOP settle on a spinning drive. Since 2026-11-04 that read goes through the page cache.
+- [x] A new session's `WaveCache.wfm` is written with the previous session's peaks: this one holds 57 entries (21.8 MB), none for its own files. Fixed on `main` 2026-11-04 (*Bug audit* above): every session change now empties the in-memory peak caches before the new session's file loads, and quit no longer saves while they load.
 - [ ] Owner: the take has 55 tracks where about 58 were expected. Check which strips were not armed.
 
 ## JUCE 8.0.17-security — 2026-11-03

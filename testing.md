@@ -1,5 +1,58 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-04 fix round
+
+The whole-codebase review's 75 findings were fixed on four branches and merged. Each fix has a regression test, and every regression test was built and run on the unfixed code first and seen failing there, with the exceptions listed below. Nothing here has run on real hardware; the hardware steps are *2026-11-04 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
+
+### New test files
+
+- `Source/Tests/CaptureHelperTests.cpp`, *Capture helper device and exit*. A test-only device type, `RigType` (an interface plus a separate headphone output, named after the output as CoreAudio's combiner names it), goes in through `CaptureDaemon::useDeviceTypeForTests`, so the helper's real device paths run without CoreAudio. It covers input-only opening with "Headphones" unplugged mid-take, an arm change that keeps the device and its pre-roll, device work on the helper's main thread whichever thread asked, the helper staying up until STOP's reply has gone out, a status built before STOP never arriving after STOP's reply (added at the merge, after a twin-host test failed three times in full runs; seen failing first). *Twin recorder host* gains *A daemon STOP whose "stopped" status arrives before its reply still reaches the follower as a STOP*, which holds STOP's reply while the window ticks; it passed before the window-side change too and is kept as a guard. Under seven busy CPU loops the twin group failed 3 of 12 runs before the two merge fixes and 1 of 12 after; see tasks.md, and the exit policy in `HelperExit.h`.
+- `Source/Tests/CaptureEngineRepairTests.cpp`, two suites, *Capture repairs* and *Engine repairs*, both friends of `MultitrackRecorder`. On the unfixed code they failed 55 and 18 times. They cover copy lines after STOP, the float AIFF flush, root-level takes, a session folder moved mid-take, the report's clip figures, refusal texts, the probe on a pulled drive, crashes inside a punch install, copy hashes, undo after a continue, close cuts in one file, the device coming back, markers through a helper STOP, loudness, pre-roll across layout changes and StereoMix alignment.
+- `Source/Tests/MixerFixTests.cpp`, *Mixer and main window fixes*, 32 groups; 98 failures on the unfixed code. Seams: friend declarations, `PreflightDialog::getRows`, `BigClockPanel` getters and the `backupdlg::rootCheckStallForTests` hook. `--test-filter` takes the registered name, not the class name.
+
+### New groups in existing files
+
+- *Capture path* (`CapturePathTests.cpp`): a lost helper that still holds its take is not taken for gone; a helper told to quit mid-take stays up for STOP and answers it (the real helper binary); Quit waits while a take its device ended is still closing; resumed hashes reach the primary first, and a backup that is gone fails only the backup; a session another process is hashing is not hashed again.
+- *OSC remote*: a momentary STOP button gives one STOP tap per press; a momentary RECORD button never stops a take. The timed seam is `OscRemote::dispatchForTest (msg, nowMs)`.
+- *Timecode chase*: LTC at 29.97 non-drop and at 23.976 told from 30 and 24; MTC at 29.97 non-drop told from 30 after the master has run a while; a full frame between quarter-frame runs never keeps a stopped master running.
+- *Twin recorder link*: a follower still closing its last take refuses RECORD and says why; a follower whose window restarted during a linked helper take still stops with the leader; a take a restarted follower can't tie to the link is refused with the real reason. `FakeHost` gains `daemonStop` and the two link-memory overrides.
+- *EDIT integrity*: scans stop reading the take's drive during a take; on-screen reads use the page cache and whole-take scans do not; a new session's saved peaks hold none of the last session's; quitting while saved peaks load leaves `WaveCache.wfm` as it was; a strip move during the load; imports into freed and live names; held takes through add, link and delete; a one-file stereo pair scans once.
+- *Session fixes*: Save As and Move keep mixer edits made during the copy; Export Audio, Export Songs and New Session confirmed after another session opened; Export Songs after the songs moved; Restore Backup under another name; RECORD with the Local Storage drive gone; raw export of an unlinked stereo take; Save As waiting for hashes. Test hooks: `launchForTests` on `ExportAudioDialog`, `ExportSongsDialog` and `NewSessionDialog`.
+- *Song detection*: Detect Songs hears each strip's own channel of a shared stereo file.
+- `tools/test_verify_tools.py`: a copy that could not be hashed is a note for a whole primary; a copy flagged on its own is a note; a primary that could not be hashed still fails; a pending report says how to finish it; the fallback says it is the open session, not the recorded one.
+
+### Exceptions to "seen failing first"
+
+- *A helper told to quit mid-take stays up for STOP and answers it* passed before the fix too: the race is narrow on an empty test take. It is an integration guard; the red test is *A helper stays up through STOP until STOP's reply has gone out*.
+- `test_a_primary_that_could_not_be_hashed_still_fails`, *Off stays off through a mode flip* and *Clearing the LTC source drops LOCK at once, and the decoder relocks on its own* are guards and pass before and after. The LTC-source race itself shows only under ThreadSanitizer.
+- *Add Tracks while a STOP is still finalizing adds nothing and says so* passed on the unfixed code: that finding was not a fault as described, since every async STOP already holds the session-I/O reservation. It stays as a guard.
+- Three tests needed a second try before they failed: the strip-move-during-load test first passed because the real reorder handler ran a second, corrective rescan, so it now stands in for that handler; the Local Storage test lost its setting to a settings reload, and with `saveIfNeeded()` added it was seen failing with the fix disabled by hand rather than on the unfixed code; the page-cache test calls a new class, `scanio::ScanFileInput`, and was seen failing against it written without the page-cache switch.
+
+### Changed tests
+
+- *OSC transport goes through the host interception boundary* sent `/zynforge/record 0` as STOP; it now sends `/zynforge/stop`.
+- An MTC full frame no longer makes chase live, so *MTC full-frame message publishes the timecode immediately, as a cue, not a running clock* (which asserted the old behaviour), *A locked MTC source stamps the take through the engine* (*Capture metadata*), five fixtures in *Network state* and *Chase liveness follows the selected source* (*Engine review repairs*) now feed a quarter-frame run, through `ltctest::mtcQuarterFrames` in `Source/Tests/LtcTestSignal.h`.
+- A *Network fixes* twin test that disconnects during a take now presses Disconnect twice.
+
+### Results
+
+Each branch alone, before the merge: helper 1610, engine 1627, EDIT 1612 and mixer 1623 test groups, 0 failures (main had 1591). `tools/test_verify_tools.py` 28 OK, `tools/test_notarize.py` 16 OK. Both gates are clean. The app target builds; the built app was not launched.
+
+On the merged branch:
+
+- **Release:** **1701 test groups, 0 failures** in the final run, launched through `open`. Earlier runs of the merged tree had one failure each in the twin-host test that is still flaky under load (see tasks.md).
+- **ASan/UBSan:** 1699 test groups ran with one failure, a test expectation the merge then corrected (a backup whose drive is gone is owed, not failed); *Capture path* re-run under ASan after the correction: 51 groups, 0 failures. No sanitizer reports.
+- **TSan:** **1699 test groups, 0 failures**, no reports, before the two merge-time helper/window fixes; after them *Capture helper device and exit*, *Capture daemon*, *Twin recorder host* and *Capture supervisor*: 53 groups, 0 failures, no reports.
+
+*Twin recorder host / A daemon take found rolling offers a re-link, and a confirmed STOP reaches the follower* failed once in a full run on two branches while the machine was loaded ("This take ended without STOP"), and passed alone and in every later full run. A likely cause is in tasks.md (*Bug audit, 2026-11-04*).
+
+### Not covered headless
+
+- The OS's SIGTERM-then-SIGKILL at logout, and a signal's sender pid: the exit policy is tested as a pure rule.
+- A real CoreAudio combined device losing its output; `RigType` stands in.
+- A real full JUCE clone from GitHub: the pin was checked in the existing checkout and in an offline scratch project.
+- The new CI steps: CI is blocked by billing.
+
 ## Post-STOP rescan on the exFAT drive — 2026-11-04
 
 Measured on the external exFAT SSD (FSKit, 128 KiB clusters, macOS 26.6.2), by the drive's own *Bytes (Read)* (`ioreg`) against the bytes asked for, and the app's reads by `proc_pid_rusage`.
