@@ -856,6 +856,7 @@ namespace zynforge
         friend class CaptureFixTests;
         friend class CaptureDaemonLinkTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
+        friend class MixerFixTests;            // Add Tracks while a STOP finalizes
         friend class TwinLinkTests;            // report publication ordering
         friend class CaptureMetaTests;
         friend class ChannelAlarmTests;        // what the daemon's loop latched
