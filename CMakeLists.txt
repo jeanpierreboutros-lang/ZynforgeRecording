@@ -211,6 +211,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/AuditFixTests.cpp
     Source/Tests/AuditSecurityTests.cpp
     Source/Tests/CaptureDaemonTests.cpp
+    Source/Tests/CaptureEngineRepairTests.cpp
     Source/Tests/CaptureFixTests.cpp
     Source/Tests/CaptureLinkTests.cpp
     Source/Tests/CaptureMetaTests.cpp
