@@ -1371,7 +1371,9 @@ namespace zynforge
             if (isTrackArrangementEmpty (t)) continue;
 
             songs::Voice voice;
-            voice.ownFile = getTrackAudioFile (t);
+            // The channel it plays: an unlinked right strip plays the left's file's second.
+            voice.ownFile = getTrackAudioFile (t, &voice.channel);
+            if (recorder.getTrack (t).isStereo.load (std::memory_order_relaxed)) voice.channel = -1;
             if (const auto* clips = tryClipsFor (t)) voice.clips = *clips;
             else
             {

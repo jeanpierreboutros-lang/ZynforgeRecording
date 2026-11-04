@@ -8,6 +8,10 @@
 #include "../Audio/SessionRepair.h"
 #include "../Audio/ShowHandoff.h"
 #include "../Audio/VirtualSoundcheck.h"
+#include "../UI/ExportDialog.h"
+#include "../UI/ExportSongsDialog.h"
+#include "../UI/NewSessionDialog.h"
+#include "SilentAudioDevice.h"
 #include <csignal>
 #include <sys/resource.h>
 #if JUCE_MAC
@@ -748,6 +752,263 @@ public:
         }
     }
 
+    static bool writeStereoAudio (const juce::File& file, float left, float right)
+    {
+        file.getParentDirectory().createDirectory();
+        juce::WavAudioFormat format;
+        std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+            file.createOutputStream().release(), 48000.0, 2, 24, {}, 0));
+        if (! writer) return false;
+        juce::AudioBuffer<float> audio (2, 4800);
+        juce::FloatVectorOperations::fill (audio.getWritePointer (0), left, 4800);
+        juce::FloatVectorOperations::fill (audio.getWritePointer (1), right, 4800);
+        return writer->writeFromAudioSampleBuffer (audio, 0, 4800);
+    }
+
+    static juce::String savedName (const juce::File& session, int strip)
+    {
+        const auto mix = juce::JSON::parse (session.getChildFile ("session_mix.json"));
+        return mix["strips"][strip]["name"].toString();
+    }
+
+    void testCopiesKeepWhatChangedDuringThem()
+    {
+        beginTest ("Save As keeps the mixer edits made while the copy runs");
+        {
+            Folder f; writeSavedShow (f); expect (writeAudio (f.track (1)));
+            const auto dest = f.dir.getSiblingFile ("Copy");
+            Host host (f);
+            expect (host.main.sessionJobs.reserve());
+            host.main.completeSaveAs (f.dir, dest);
+            host.main.engine.setTrackName (0, "Renamed during the copy");   // MIXER stays live
+            expect (pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }));
+            expect (host.main.engine.getActiveSessionDir() == dest, "setup: the copy opened: " + host.status());
+            expectEquals (host.main.engine.getRecorder().getTrack (0).getNameThreadSafe(), juce::String ("Renamed during the copy"),
+                          "the copy opened without the rename made while it ran");
+            expectEquals (savedName (dest, 0), juce::String ("Renamed during the copy"), "the copy's saved mix lacks the rename");
+        }
+
+        beginTest ("Move keeps the mixer edits made while the move runs");
+        {
+            Folder f, parent ("Parent"); writeSavedShow (f); expect (writeAudio (f.track (1)));
+            Host host (f);
+            expect (host.main.sessionJobs.reserve());
+            host.main.completeRelocate (f.dir, parent.dir);
+            host.main.engine.setTrackName (1, "Renamed during the move");
+            expect (pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }));
+            const auto moved = parent.dir.getChildFile (f.dir.getFileName());
+            expect (host.main.engine.getActiveSessionDir() == moved, "setup: the session moved: " + host.status());
+            expectEquals (host.main.engine.getRecorder().getTrack (1).getNameThreadSafe(), juce::String ("Renamed during the move"),
+                          "the moved session opened without the rename made while it moved");
+            expectEquals (savedName (moved, 1), juce::String ("Renamed during the move"));
+        }
+
+        beginTest ("Save As says it waits for the take's hashes rather than copying");
+        {
+            Folder f; writeSavedShow (f, 1); expect (writeAudio (f.track (1)));
+            f.dir.getChildFile ("session.report.json").replaceWithText (
+                R"({"sha256Pending":true,"stoppedAt":"test","tracks":[{"files":["Track_01.wav"]}]})");
+            juce::WaitableEvent held;
+            MultitrackRecorder::resumeReportHashes (f.dir, {}, [&held] { held.wait (20000); });
+            Host host (f);
+            const auto dest = f.dir.getSiblingFile ("Copy");
+            expect (host.main.sessionJobs.reserve());
+            host.main.completeSaveAs (f.dir, dest);
+            expect (pumpUntil ([&] { return host.status().contains ("hash"); }, 5000),
+                    "the status never said what the copy waits for: " + host.status());
+            expect (! host.status().contains ("(copying session)"), host.status());
+            held.signal();
+            expect (pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }));
+            expect (host.status().contains ("Saved As"), host.status());
+        }
+    }
+
+    void testQuestionsAnsweredAfterASwitch()
+    {
+        const auto answerExport = [] (Host& host, const std::function<void()>& meanwhile,
+                                      ExportAudioContent::Source source)
+        {
+            ExportAudioContent::ResultCallback answer;
+            ExportAudioDialog::launchForTests = [&answer] (ExportAudioContent::ResultCallback callback) { answer = std::move (callback); };
+            host.main.onExportAudio();
+            ExportAudioDialog::launchForTests = nullptr;
+            if (answer == nullptr) return false;
+            meanwhile();
+            // A wrong export then stops at its own guard, before any folder picker.
+            if (! host.main.sessionJobs.reserve()) return false;
+            ExportAudioContent::Result choice;
+            choice.source = source;
+            choice.rows = { 0 };
+            answer (choice);
+            host.main.sessionJobs.release();
+            return true;
+        };
+
+        beginTest ("Export Audio confirmed after another session opened exports nothing");
+        {
+            Folder a ("A"), b ("B");
+            writeSavedShow (a); writeSavedShow (b);
+            expect (writeAudio (a.track (1)) && writeAudio (b.track (1)));
+            Host host (a);
+            expect (answerExport (host, [&] { host.main.openSessionFolder (b.dir); }, ExportAudioContent::Source::editedTracks),
+                    "setup: the dialog opened: " + host.status());
+            expect (host.status().contains ("session changed"), "the export went on in the other session: " + host.status());
+        }
+
+        beginTest ("Export Songs confirmed after another session opened exports nothing");
+        {
+            Folder a ("A"), b ("B");
+            writeSavedShow (a, 1); writeSavedShow (b, 1);
+            expect (writeAudio (a.track (1)) && writeAudio (b.track (1)));
+            Host host (a);
+            host.main.engine.getMarkers().drop (0, "Opener");
+            ExportSongsContent::ResultCallback answer;
+            ExportSongsDialog::launchForTests = [&answer] (ExportSongsContent::ResultCallback callback) { answer = std::move (callback); };
+            host.main.exportSongs();
+            ExportSongsDialog::launchForTests = nullptr;
+            expect (answer != nullptr, "setup: the dialog opened: " + host.status());
+            host.main.openSessionFolder (b.dir);
+            host.main.engine.getMarkers().drop (0, "Other");
+            songexport::Choice choice;
+            choice.songs = { { 0, 4800, "Opener" } };
+            choice.numbers = { 1 };
+            if (answer != nullptr) answer (choice);
+            pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); });
+            expect (host.status().contains ("changed"), host.status());
+            expect (! b.dir.getChildFile ("Export Files/Songs").exists(), "the first session's songs were cut from the second's audio");
+        }
+
+        beginTest ("Export Songs confirmed after the songs moved exports nothing");
+        {
+            Folder a; writeSavedShow (a, 1); expect (writeAudio (a.track (1)));
+            Host host (a);
+            host.main.engine.getMarkers().drop (0, "Opener");
+            ExportSongsContent::ResultCallback answer;
+            ExportSongsDialog::launchForTests = [&answer] (ExportSongsContent::ResultCallback callback) { answer = std::move (callback); };
+            host.main.exportSongs();
+            ExportSongsDialog::launchForTests = nullptr;
+            expect (answer != nullptr, "setup: the dialog opened: " + host.status());
+            host.main.engine.getMarkers().drop (2400, "Second");   // a desk or a take behind the dialog
+            songexport::Choice choice;
+            choice.songs = { { 0, 4800, "Opener" } };
+            choice.numbers = { 1 };
+            if (answer != nullptr) answer (choice);
+            pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); });
+            expect (host.status().contains ("changed"), host.status());
+            expect (! a.dir.getChildFile ("Export Files/Songs").exists(), "songs were cut at ranges that no longer exist");
+        }
+
+        beginTest ("New Session confirmed after another session opened leaves that session alone");
+        {
+            Folder a ("A"), b ("B");
+            writeSavedShow (a); writeSavedShow (b);
+            Host host (a);
+            NewSessionDialog::ResultCallback answer;
+            NewSessionDialog::launchForTests = [&answer] (NewSessionDialog::ResultCallback callback) { answer = std::move (callback); };
+            host.main.launchNewSessionDialog();
+            NewSessionDialog::launchForTests = nullptr;
+            expect (answer != nullptr, "setup: the dialog opened");
+            host.main.openSessionFolder (b.dir);
+            NewSessionDialog::Result r;
+            r.name = "Fresh";
+            r.location = a.dir.getParentDirectory();
+            if (answer != nullptr) answer (r);
+            expect (host.main.engine.getActiveSessionDir() == b.dir, "the new session replaced the one opened behind its dialog");
+            expect (! r.location.getChildFile ("Fresh").exists(), "a session was created anyway");
+            expect (host.status().contains ("changed"), host.status());
+        }
+    }
+
+    void testRestoreFindsTheProject()
+    {
+        beginTest ("Restore Backup brings a project back under another name, after a save landed");
+        {
+            Folder f ("Gig B");
+            writeSavedShow (f);
+            f.project().deleteFile();
+            const auto project = f.dir.getChildFile ("Gig A.zfproj");   // a Save As copy keeps the source's name
+            expect (project.replaceWithText (R"({"zynforgeSession":true,"setlist":[{"name":"Opener","samplePos":0}],"playlists":[]})"));
+            expect (sessionbackup::writeSnapshot (f.dir).isDirectory(), "setup: a good backup");
+            expect (project.replaceWithText ("{\"setlist\": [ {\"name\": "));
+
+            Host host (f.dir.getSiblingFile ("none"));
+            std::vector<sessionrepair::DamagedFile> offered;
+            host.main.damagedFilesPromptForTests = [&] (const auto& files) { offered = files; };
+            host.main.openSessionFolder (f.dir);
+            expectEquals ((int) offered.size(), 1, "setup: the damage was reported");
+            expect (host.main.saveSessionStateTo (f.dir), "setup: a save behind the prompt");
+            expect (host.main.restoreDamagedFiles (f.dir, offered), host.status());
+            expectEquals ((int) host.main.cues.size(), 1, "the backup's cues did not come back");
+            expect (findSessionProj (f.dir).loadFileAsString().contains ("Opener"),
+                    "the project the session opens is still the defaults: " + findSessionProj (f.dir).getFileName());
+        }
+    }
+
+    void testRecordNeedsLocalStorage()
+    {
+        beginTest ("RECORD with the Local Storage drive gone names it instead of using the internal disk");
+        {
+            MainComponent host; host.stopTimer();
+            testaudio::useSilentDevice (host.engine);
+            host.engine.prepareForTests (48000, 256);
+            auto* props = host.engine.getAppProps();
+            expect (props != nullptr);
+            if (props != nullptr)
+            {
+                const auto previousRoot = props->getValue ("sessionsRoot");
+                const auto previousActive = props->getValue ("activeSessionDir");
+                const juce::String absent ("/Volumes/zf-absent-" + juce::Uuid().toString() + "/Zynforge Sessions");
+                props->setValue ("sessionsRoot", absent);
+                props->removeValue ("activeSessionDir");
+                props->saveIfNeeded();   // strip settings reload the file
+                host.engine.setStripCount (1);
+                host.engine.setTrackArmed (0, true);
+                MainComponent::RecordStartPlan plan;
+                expect (! host.prepareRecordStart (plan), "RECORD went ahead into " + plan.dir.getFullPathName());
+                expect (host.recordRefusal.contains (absent), host.recordRefusal);
+                props->setValue ("sessionsRoot", previousRoot);
+                if (previousActive.isNotEmpty()) props->setValue ("activeSessionDir", previousActive);
+                props->saveIfNeeded();
+            }
+            forget (host);
+        }
+    }
+
+    void testRawExportOfAnUnlinkedPair()
+    {
+        beginTest ("Raw export of an unlinked stereo take writes each strip's own channel");
+        {
+            Folder f; writeSavedShow (f, 2);
+            expect (writeStereoAudio (f.track (1), 0.25f, -0.5f));
+            Host host (f);
+            expectEquals (host.main.engine.getRecorder().getNumTracks(), 2, "setup: two mono strips");
+            Folder out ("Out");
+            const auto exportBoth = [&] (std::vector<int> rows)
+            {
+                for (const auto& old : out.dir.findChildFiles (juce::File::findFiles, false)) old.deleteFile();
+                host.main.startExportTracksTo (out.dir, rows, {});
+                pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); });
+                juce::StringArray written;
+                juce::AudioFormatManager formats; formats.registerBasicFormats();
+                for (const auto& file : out.dir.findChildFiles (juce::File::findFiles, false, "*.wav"))
+                {
+                    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+                    float lo[1] {}, hi[1] {};
+                    if (reader != nullptr) reader->readMaxLevels (0, 4800, lo[0], hi[0], lo[0], hi[0]);
+                    written.add (file.getFileNameWithoutExtension().upToFirstOccurrenceOf (" ", false, false)
+                                 + ":" + juce::String (reader != nullptr ? (int) reader->numChannels : 0)
+                                 + ":" + juce::String (juce::roundToInt ((lo[0] + hi[0]) * 100.0f)));
+                }
+                written.sort (false);
+                return written.joinIntoString (" ");
+            };
+            expectEquals (exportBoth ({ 0, 1 }), juce::String ("Track_01:1:50 Track_02:1:-100"),
+                          "ticking both strips did not give each its own channel");
+            expectEquals (exportBoth ({ 0 }), juce::String ("Track_01:1:50"), "the left strip carried the right one's audio");
+            expectEquals (exportBoth ({ 1 }), juce::String ("Track_02:1:-100"));
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -766,6 +1027,11 @@ public:
         testOpeningAFolderThatIsNoSession();
         testFirstSaveIsReported();
         testManyTemplates();
+        testCopiesKeepWhatChangedDuringThem();
+        testQuestionsAnsweredAfterASwitch();
+        testRestoreFindsTheProject();
+        testRecordNeedsLocalStorage();
+        testRawExportOfAnUnlinkedPair();
     }
 };
 

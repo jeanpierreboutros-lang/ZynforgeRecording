@@ -530,7 +530,7 @@ HITS=$(grep -rn 'createUnchecked' $SCOPE 2>/dev/null \
        | grep -vE 'Source/Audio/(MultiPartReader\.h|SessionPlayer\.cpp)|Source/UI/EditTrackRow\.h')
 HITS+=$(grep -rnE 'scanio::|createForScan' $SCOPE 2>/dev/null \
        | grep -vE 'Source/Audio/(MultiPartReader|ScanInput)\.h|Source/UI/EditTrackRow\.h' \
-       | grep -vE 'Source/UI/EditPage\.cpp:[0-9]+:.*scanio::startScanThread')
+       | grep -vE 'Source/UI/EditPage\.cpp:[0-9]+:.*scanio::(start|pause|resume)ScanThread')
 HITS+=$(grep -rnE '\.createReaderFor \(' $SCOPE 2>/dev/null \
        | grep -vE 'Source/Audio/(CheckedAudioReader\.h|MultiPartReader\.h|MultitrackRecorder\.cpp|SessionInterchange\.h|ScanInput\.h)|Source/UI/MainComponentSessionIO\.cpp|^[^:]+:[0-9]+:[[:space:]]*//')
 report "whatever writes or reports from audio opens it checked" \
@@ -547,6 +547,9 @@ grep -q 'uncached::FileInput::open (f)' Source/Audio/FastHash.h 2>/dev/null \
     || HITS+="Source/Audio/FastHash.h: fileSha256 no longer opens uncached::FileInput"$'\n'
 grep -q 'scanio::startScanThread' Source/UI/EditPage.cpp 2>/dev/null \
     || HITS+="Source/UI/EditPage.cpp: scan threads no longer start through scanio::startScanThread"$'\n'
+# ...and read nothing while a take is on disk: it is the take's drive.
+grep -q 'scanio::pauseScanThread' Source/UI/EditPage.cpp 2>/dev/null \
+    || HITS+="Source/UI/EditPage.cpp: scan threads no longer pause while a take is on disk"$'\n'
 HITS+=$(grep -nE 'FileInputStream|createInputStream' Source/Audio/ScanInput.h Source/Audio/FastHash.h 2>/dev/null \
         | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//|InputStream\* createInputStream')
 HITS+=$(grep -rnE 'setiopolicy_np|setpriority \(' Source/UI/EditPage.cpp Source/Audio/ScanInput.h 2>/dev/null \

@@ -421,6 +421,14 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
 
     planRecordPosition (plan);
     plan.dir = plan.continueTake ? engine.getActiveSessionDir() : makeNewSessionDir();
+    // No folder: Local Storage was chosen but its drive is not there
+    // (makeNewSessionDir would otherwise have fallen back to the internal disk).
+    if (plan.dir == juce::File())
+    {
+        showRecordRefusal ("Local Storage is not connected: " + missingLocalStorage()
+                           + " -- connect its drive, or choose another in File > New Session");
+        return false;
+    }
 
     // A new folder goes in the sessions folder the engineer chose. With its
     // drive unplugged the engine falls back to ~/Music, and the take would land

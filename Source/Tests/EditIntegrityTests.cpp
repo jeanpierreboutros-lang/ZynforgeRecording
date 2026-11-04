@@ -178,6 +178,319 @@ namespace zynforge
             return c;
         }
 
+        static bool writeStereoWav (const juce::File& file, int samples, float levelL, float levelR)
+        {
+            file.getParentDirectory().createDirectory();
+            file.deleteFile();
+            juce::WavAudioFormat format;
+            std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                file.createOutputStream().release(), 48000.0, 2, 24, {}, 0));
+            if (writer == nullptr) return false;
+            juce::AudioBuffer<float> audio (2, samples);
+            for (int i = 0; i < samples; ++i)
+            {
+                audio.setSample (0, i, levelL * std::sin ((float) i * 0.05f));
+                audio.setSample (1, i, levelR * std::sin ((float) i * 0.05f));
+            }
+            return writer->writeFromAudioSampleBuffer (audio, 0, samples);
+        }
+
+        static bool rowsScanned (EditPage& page, size_t count)
+        {
+            const auto rows = rowsOf (page);
+            return rows.size() == count
+                && std::all_of (rows.begin(), rows.end(), [] (EditPage::TrackRow* r) { return r->waveformsLoaded(); });
+        }
+
+        static void holdTake (EditPage::TrackRow& row, int bins)
+        {
+            row.setLiveRecording (true);
+            for (int i = 0; i < bins; ++i) { row.appendLivePeakL (0.5f); row.appendLivePeakR (0.5f); }
+            row.holdLiveEnvelopeUntilScanned();
+        }
+
+        void runScanAndCacheTests()
+        {
+            beginTest ("Waveform scans stop reading the take's drive while a take rolls");
+            {
+                Show s (2, { 0, 48000 * 4 });
+                expectEquals (s.page().runningScanThreadsForTests(), 4, "setup: the scan threads run between takes");
+                s.engine.setTrackArmed (0, true);
+                expect (s.engine.startRecording (s.dir), "setup: the take rolls");
+                expect (pumpUntil ([&] { return s.page().runningScanThreadsForTests() == 0; }, 5000),
+                        "a waveform scan kept reading the drive the take is written to");
+                auto& recorder = s.engine.getRecorder();
+                std::vector<float> audio (256, 0.5f);
+                const float* input[] { audio.data(), audio.data() };
+                for (int b = 0; b < 20; ++b) recorder.processBlock (input, 2, 256);
+                pumpUntil ([] { return false; }, 100);
+                expectEquals (s.page().runningScanThreadsForTests(), 0, "the scans came back while the take rolled");
+                s.engine.stopRecording();
+                expect (pumpUntil ([&] { return s.page().runningScanThreadsForTests() == 4; }, 5000),
+                        "the scans never came back after the take");
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 2) && rowsOf (s.page())[0]->getWaveformSecondsForTests() > 0.0; }, 10000),
+                        "the take's rescan never finished");
+            }
+
+            beginTest ("On-screen waveform reads go through the page cache, whole-take scans do not");
+            {
+                Show s (1, { 48000 * 4 });
+                expect (juce::MessageManager::existsAndIsCurrentThread(), "setup: tests run on the message thread");
+                auto in = scanio::ScanFileInput::open (s.take (1));
+                expect (in != nullptr, "setup: the take opens");
+                if (in != nullptr && in->bypassesCache())
+                {
+                    char bytes[4096];
+                    expectEquals (in->read (bytes, (int) sizeof (bytes)), (int) sizeof (bytes));
+                    expect (in->readsThroughPageCache(), "a repaint read the take from the drive past the page cache");
+
+                    struct Scan final : juce::Thread
+                    {
+                        scanio::ScanFileInput& input;
+                        std::atomic<bool> cached { true };
+                        explicit Scan (scanio::ScanFileInput& i) : juce::Thread ("scan read test"), input (i) {}
+                        void run() override
+                        {
+                            char buffer[4096];
+                            input.read (buffer, (int) sizeof (buffer));
+                            cached.store (input.readsThroughPageCache());
+                        }
+                    } scan (*in);
+                    scan.startThread();
+                    scan.waitForThreadToExit (-1);
+                    expect (! scan.cached.load(), "a whole-take scan read through the page cache");
+                    expectEquals (in->getPosition(), (juce::int64) 8192, "the two reads did not follow each other");
+                }
+            }
+
+            beginTest ("A strip move while the saved peaks load draws each strip's own audio");
+            {
+                Show s (2, { 48000 }, 0.8f);
+                expect (writeWav (s.take (2), 48000, 1, 0.05f));
+                s.engine.loadSession (s.dir);
+                s.page().refresh();
+                const auto cacheFile = wavecache::fileIn (s.dir);
+                expect (pumpUntil ([&] { return cacheFile.existsAsFile(); }, 10000), "setup: the peaks were saved");
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 2); }, 10000), "setup: both rows drawn");
+
+                // Leave the session and come back: the page loads WaveCache.wfm again.
+                const auto other = s.dir.getSiblingFile (s.dir.getFileName() + "-elsewhere");
+                expect (other.createDirectory().wasOk());
+                s.engine.setActiveSessionDir (other);
+                s.page().refresh();
+                s.engine.setActiveSessionDir (s.dir);
+                s.page().refresh();
+                juce::Thread::sleep (300);   // the load lands; the page has not seen it yet
+
+                // The host's reorder handler runs once, inside the load: in the
+                // field the load takes seconds and the handler comes first.
+                const auto handler = s.engine.onTracksReordered;
+                s.engine.onTracksReordered = nullptr;
+                expect (s.engine.reorderTracks ({ 1, 0 }), "setup: the strips swap");
+                s.engine.onTracksReordered = handler;
+                s.page().refresh();          // what onTracksReordered does
+                s.page().rescanWaveforms();
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 2) && rowsOf (s.page())[0]->getWaveformSecondsForTests() > 0.0; }, 10000),
+                        "the lanes never drew after the move");
+                const auto rows = rowsOf (s.page());
+                if (rows.size() == 2)
+                {
+                    expect (rows[0]->getWaveformPeakForTests() < 0.3f,
+                            "the first lane draws the loud strip that moved away: " + juce::String (rows[0]->getWaveformPeakForTests()));
+                    expect (rows[1]->getWaveformPeakForTests() > 0.5f, "the second lane lost the loud strip");
+                }
+                other.deleteRecursively();
+            }
+
+            beginTest ("An import into a file name a delete freed draws the imported audio");
+            {
+                Show s (3, { 48000, 48000, 48000 }, 0.8f);
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 3) && ! s.main.sessionIoBusy.load(); }, 10000),
+                        "setup: the three takes drawn");
+                s.main.removeStrip (0, 1);   // Track_02 and _03 become _01 and _02; Track_03 is free
+                expect (pumpUntil ([&] { return s.engine.getRecorder().getNumTracks() == 2 && rowsScanned (s.page(), 2); }, 10000),
+                        "setup: the strip went");
+                pumpUntil ([] { return false; }, 200);
+
+                const auto folder = s.dir.getSiblingFile (s.dir.getFileName() + "-source");
+                const auto source = folder.getChildFile ("Quiet.wav");
+                expect (writeWav (source, 48000, 1, 0.05f));
+                s.main.completeAudioImport ({ source });
+                expect (pumpUntil ([&] { return s.engine.getRecorder().getNumTracks() == 3 && ! s.main.sessionIoBusy.load(); }, 10000),
+                        "setup: the import finished");
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 3) && rowsOf (s.page())[2]->getWaveformSecondsForTests() > 0.0; }, 10000),
+                        "the imported strip never drew");
+                const auto rows = rowsOf (s.page());
+                if (rows.size() == 3)
+                    expect (rows[2]->getWaveformPeakForTests() < 0.3f,
+                            "the imported strip draws the deleted strip's audio: " + juce::String (rows[2]->getWaveformPeakForTests()));
+                folder.deleteRecursively();
+            }
+
+            beginTest ("An import over a file name with peaks still in memory draws the new audio");
+            {
+                Show s (2, { 48000, 48000 }, 0.8f);
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 2) && ! s.main.sessionIoBusy.load(); }, 10000),
+                        "setup: both takes drawn");
+                // The second take goes without a strip move, as Remove Last Capture does.
+                expect (s.take (2).deleteFile());
+                s.engine.setStripCount (1);
+                s.page().refresh();
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 1); }, 5000), "setup: one row left");
+
+                const auto folder = s.dir.getSiblingFile (s.dir.getFileName() + "-source");
+                const auto source = folder.getChildFile ("Quiet.wav");
+                expect (writeWav (source, 48000, 1, 0.05f));
+                s.main.completeAudioImport ({ source });
+                expect (pumpUntil ([&] { return s.engine.getRecorder().getNumTracks() == 2 && ! s.main.sessionIoBusy.load(); }, 10000),
+                        "setup: the import finished");
+                expect (s.take (2).existsAsFile(), "setup: the import reused the free name");
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 2) && rowsOf (s.page())[1]->getWaveformSecondsForTests() > 0.0; }, 10000),
+                        "the imported strip never drew");
+                const auto rows = rowsOf (s.page());
+                if (rows.size() == 2)
+                    expect (rows[1]->getWaveformPeakForTests() < 0.3f,
+                            "the imported strip draws the old take's peaks: " + juce::String (rows[1]->getWaveformPeakForTests()));
+                folder.deleteRecursively();
+            }
+
+            beginTest ("Adding or linking a strip during the post-STOP rescan keeps each row's held take");
+            {
+                Show s (3, { 48000, 48000, 48000 });
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 3); }, 10000), "setup: three rows");
+                auto rows = rowsOf (s.page());
+                if (rows.size() == 3)
+                {
+                    holdTake (*rows[0], 200);
+                    holdTake (*rows[1], 300);
+                    const auto reloads = rows[0]->getWaveformReloadsForTests();
+
+                    s.engine.setStripCount (4);
+                    s.page().refresh();
+                    auto after = rowsOf (s.page());
+                    expect (after.size() == 4, "setup: the new strip has a row");
+                    if (after.size() == 4)
+                    {
+                        expect (after[0]->isHoldingLiveEnvelope(), "a new strip dropped the take the first row was holding");
+                        expect (after[1]->isHoldingLiveEnvelope(), "a new strip dropped the take the second row was holding");
+                        expectEquals (after[0]->getWaveformReloadsForTests(), reloads, "an unchanged row restarted its scan");
+                    }
+
+                    s.engine.setTrackStereo (1, true);
+                    s.page().refresh();
+                    after = rowsOf (s.page());
+                    expect (after.size() == 3, "setup: the link made one row of two");
+                    if (after.size() == 3)
+                    {
+                        expect (after[0]->isHoldingLiveEnvelope(), "a link elsewhere dropped the first row's take");
+                        expect (after[1]->isStereoPair() && after[1]->isHoldingLiveEnvelope(),
+                                "the linked strip dropped the take it was holding");
+                        expectEquals (after[1]->getLiveEnvelopeSamplesForTests(),
+                                      (juce::int64) 300 * TrackState::kLiveBinSamples, "the held take changed");
+                    }
+                }
+            }
+
+            beginTest ("A delete during the post-STOP rescan keeps the held take on its strip");
+            {
+                Show s (3, { 48000, 48000, 48000 });
+                expect (pumpUntil ([&] { return rowsScanned (s.page(), 3) && ! s.main.sessionIoBusy.load(); }, 10000),
+                        "setup: three rows");
+                auto rows = rowsOf (s.page());
+                if (rows.size() == 3)
+                {
+                    const auto strip = rows[2]->getStripKey();
+                    holdTake (*rows[2], 250);
+                    s.main.removeStrip (0, 1);
+                    s.page().refresh();
+                    const auto after = rowsOf (s.page());
+                    expect (after.size() == 2, "setup: the strip went");
+                    if (after.size() == 2)
+                    {
+                        expect (after[1]->getStripKey() == strip, "setup: the last strip moved up");
+                        expect (after[1]->isHoldingLiveEnvelope(), "a delete dropped the take another strip was holding");
+                        expectEquals (after[1]->getLiveEnvelopeSamplesForTests(), (juce::int64) 250 * TrackState::kLiveBinSamples);
+                    }
+                }
+            }
+
+            beginTest ("A new session's saved peaks hold none of the last session's");
+            {
+                Show s (2, { 48000, 48000 });
+                expect (pumpUntil ([&] { return wavecache::fileIn (s.dir).existsAsFile(); }, 10000), "setup: the first session's peaks saved");
+                const auto next = s.dir.getSiblingFile (s.dir.getFileName() + "-next");
+                next.getChildFile ("Audio Files").createDirectory();
+                s.engine.setActiveSessionDir (next);
+                s.engine.claimMixerFor (next);
+                s.engine.loadSession (next);
+                s.engine.setStripCount (1);
+                s.page().refresh();
+                const auto cacheFile = wavecache::fileIn (next);
+                expect (pumpUntil ([&] { return cacheFile.existsAsFile(); }, 10000), "setup: the new session's peaks saved");
+
+                wavecache::Caches saved;
+                for (int i = 0; i < 4; ++i) saved.push_back (std::make_unique<juce::AudioThumbnailCache> (256));
+                wavecache::load (next, saved, [] { return false; });
+                int foreign = 0;
+                for (auto& cache : saved)
+                    for (int t : { 1, 2 })
+                    {
+                        juce::AudioThumbnail probe (wavecache::kThumbResolution, s.formats, *cache);
+                        if (cache->loadThumb (probe, s.take (t).hashCode())) ++foreign;
+                    }
+                expectEquals (foreign, 0, "the new session's WaveCache.wfm carries the last session's peaks");
+                next.deleteRecursively();
+            }
+
+            beginTest ("Quitting while a session's saved peaks load leaves WaveCache.wfm as it was");
+            {
+                Show s (2, { 48000 * 60, 48000 * 60 });
+                const auto cacheFile = wavecache::fileIn (s.dir);
+                expect (pumpUntil ([&] { return cacheFile.existsAsFile(); }, 20000), "setup: the peaks were saved");
+                pumpUntil ([] { return false; }, 200);
+                juce::MemoryBlock before;
+                expect (cacheFile.loadFileAsData (before) && before.getSize() > 1000, "setup: a cache with peaks in it");
+                {
+                    EditPage reopened (s.engine);   // opens the session, so its peaks start loading
+                }
+                juce::MemoryBlock after;
+                expect (cacheFile.loadFileAsData (after) && after == before,
+                        "quitting mid-load replaced the saved peaks with what had loaded so far");
+            }
+
+            beginTest ("A one-file stereo pair scans its file once and draws both lanes");
+            {
+                Show s (4, {});
+                for (int t = 0; t < 4; ++t) s.engine.setTrackColour (t, juce::Colour (0xff3c8cc8));
+                expect (writeStereoWav (s.take (1), 48000, 0.8f, 0.0f));
+                expect (writeStereoWav (s.take (3), 48000, 0.8f, 0.8f));
+                EditPage::TrackRow silentRight (0, true, s.engine, s.formats, s.cache);
+                EditPage::TrackRow loudRight   (2, true, s.engine, s.formats, s.cache);
+                sizeRow (silentRight);
+                sizeRow (loudRight);
+                silentRight.setWaveformFiles (s.take (1), s.take (2));
+                loudRight  .setWaveformFiles (s.take (3), s.take (4));
+                expect (pumpUntil ([&] { return silentRight.waveformsLoaded() && loudRight.waveformsLoaded()
+                                             && loudRight.getWaveformSecondsForTests() > 0.0; }, 10000), "thumbnail scans");
+                expectEquals (loudRight.getRightThumbnailHashForTests(), (juce::int64) 0,
+                              "the right lane scanned the same file a second time");
+                const auto paintRow = [] (EditPage::TrackRow& row)
+                {
+                    juce::Image img (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                    juce::Graphics g (img);
+                    row.paint (g);
+                    return img;
+                };
+                const auto a = paintRow (silentRight), b = paintRow (loudRight);
+                int top = 0, bottom = 0;
+                for (int x = laneX (loudRight, 0.2); x < laneX (loudRight, 0.8); ++x)
+                    for (int y = 4; y < a.getHeight() - 4; ++y)
+                        if (a.getPixelAt (x, y) != b.getPixelAt (x, y)) ++(y < a.getHeight() / 2 ? top : bottom);
+                expect (bottom > 1000, "the right lane does not draw the file's right channel: " + juce::String (bottom));
+                expect (top < bottom / 10, "the left lanes differ though their channels match: " + juce::String (top));
+            }
+        }
+
         void runTest() override
         {
             AudioEngine::setTestModeSkipAudioInit (true);
@@ -1161,6 +1474,8 @@ namespace zynforge
                 expectEquals (s.clips (1)[0].fadeInSamples, (juce::int64) 500, "the peer lost its fade-in");
                 expectEquals (s.clips (1)[1].fadeOutSamples, (juce::int64) 700, "the peer lost its fade-out");
             }
+
+            runScanAndCacheTests();
 
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);

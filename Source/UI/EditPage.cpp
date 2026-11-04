@@ -150,17 +150,53 @@ namespace zynforge
         // EditPage sets this on every resize.
         void setViewportHeight (int h) { viewportHeight = juce::jmax (60, h); }
 
-        void rebuild (int numTracks)
+        // reuseRows: the row of a strip whose block is unchanged (same place,
+        // same pair) stays as it is, so adding a channel or linking a pair
+        // elsewhere neither restarts its scan nor drops the take it holds after
+        // a STOP. Never after condemnAllRows: those rows hold TrackStates that
+        // are being freed.
+        void rebuild (int numTracks, bool reuseRows)
         {
+            auto& rec = engine.getRecorder();
+            // A post-STOP hold shows the strip's own take, so it follows the
+            // strip into a row built new (a link, a delete), by lane.
+            struct Held { LivePeakHistory envelope { TrackState::kLiveBinSamples }; bool rescanIssued { false }; };
+            std::map<juce::String, Held> held;
+            for (size_t k = 0; k < rows.size(); ++k)
+            {
+                const auto& r = *rows[k];
+                if (! r.isHoldingLiveEnvelope()) continue;
+                held[r.getStripKey()] = { r.heldEnvelope (false), r.holdRescanIssued() };
+                if (r.isStereoPair() && k < builtRightKeys.size() && builtRightKeys[k].isNotEmpty())
+                    held[builtRightKeys[k]] = { r.heldEnvelope (true), r.holdRescanIssued() };
+            }
+
+            auto old = std::move (rows);
+            const auto oldRightKeys = std::move (builtRightKeys);
             rows.clear();
+            builtRightKeys.clear();
             rows.reserve ((size_t) numTracks);
 
             // Logical iteration -- stereo L track owns the next R partner.
             int i = 0;
             while (i < numTracks)
             {
-                auto& tL = engine.getRecorder().getTrack (i);
+                auto& tL = rec.getTrack (i);
                 const bool stereo = tL.isStereo.load() && (i + 1 < numTracks);
+                const auto rightKey = stereo ? rec.getTrack (i + 1).stripId : juce::String();
+                std::unique_ptr<TrackRow> kept;
+                for (size_t k = 0; reuseRows && kept == nullptr && k < old.size(); ++k)
+                    if (old[k] != nullptr && old[k]->getTrackIndex() == i && old[k]->isStereoPair() == stereo
+                        && old[k]->getStripKey() == tL.stripId
+                        && (k < oldRightKeys.size() ? oldRightKeys[k] : juce::String()) == rightKey)
+                        kept = std::move (old[k]);
+                if (kept != nullptr)
+                {
+                    rows.push_back (std::move (kept));
+                    builtRightKeys.push_back (rightKey);
+                    i += stereo ? 2 : 1;
+                    continue;
+                }
                 // Shard by physical track index so each WAV always lands in the
                 // same cache (stable cache hits) and adjacent tracks spread
                 // across the parallel scan threads.
@@ -176,10 +212,18 @@ namespace zynforge
                 };
                 r->toolsBar               = sharedToolsBar;
                 applyRowView (*r);
+                if (const auto left = held.find (r->getStripKey()); left != held.end())
+                {
+                    const auto right = stereo ? held.find (rightKey) : held.end();
+                    r->adoptHeldTake (left->second.envelope, right != held.end() ? &right->second.envelope : nullptr,
+                                      left->second.rescanIssued);
+                }
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
+                builtRightKeys.push_back (rightKey);
                 i += stereo ? 2 : 1;
             }
+            old.clear();   // the rows no strip kept
             resized();
         }
 
@@ -547,6 +591,7 @@ namespace zynforge
         juce::AudioFormatManager&                 formats;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>>& thumbCaches;
         std::vector<std::unique_ptr<TrackRow>>    rows;
+        std::vector<juce::String>                 builtRightKeys;   // per row: its R strip, empty when mono
         struct RowView
         {
             TrackRow::Size     size   { TrackRow::Size::Small };
@@ -705,28 +750,65 @@ namespace zynforge
         // active. Best-effort: failure here only means the next launch
         // re-scans waveforms, no data loss -- so SKIP it when the timer
         // already wrote this session's cache (the common case), rather than
-        // paying a cache-sized synchronous write on every quit.
+        // paying a cache-sized synchronous write on every quit. Not while the
+        // session's saved peaks are still coming in: the caches hold part of
+        // them, and that part would replace the whole file. And never longer
+        // than a few seconds on a slow drive: an unfinished write leaves the
+        // old file, and quit does not wait on a rescan's worth of peaks.
         const auto sessionDir = engine.getActiveSessionDir();
-        if (! waveCacheSaved && ! engine.isTakeOnDisk() && sessionDir.isDirectory())
-            wavecache::save (sessionDir, thumbnailCaches, [] { return false; });
+        if (! waveCacheSaved && ! waveCacheLoading && ! engine.isTakeOnDisk() && sessionDir.isDirectory())
+        {
+            const auto giveUp = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+            wavecache::save (sessionDir, thumbnailCaches,
+                             [giveUp] { return juce::Time::getMillisecondCounterHiRes() > giveUp; });
+        }
     }
 
     void EditPage::cancelWaveCacheWork()
     {
         ++waveCacheWork;
-        waveCacheLoading = false;
     }
 
-    void EditPage::beginWaveCacheLoad (const juce::File& sessionDir)
+    void EditPage::beginWaveCacheReset (const juce::File& sessionDir, CacheReset what)
     {
-        cancelWaveCacheWork();
-        const auto job = ++waveCacheWork;
+        const auto job = ++waveCacheWork;   // also stops what runs now
         waveCacheLoading = true;
-        waveCacheThread.add ([this, sessionDir, job]
+        waveCacheResetJob = job;
+        waveCacheThread.add ([this, sessionDir, job, what]
         {
-            wavecache::load (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
-            if (waveCacheWork.load() == job) waveCacheLoaded.store (job);
+            // Here, after whatever ran before: a load stopped in the middle of
+            // a shard still fills that shard.
+            for (auto& cache : thumbnailCaches) cache->clear();
+            if (what == CacheReset::load)
+                wavecache::load (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
+            else if (what == CacheReset::forget && sessionDir.isDirectory())
+                wavecache::fileIn (sessionDir).deleteFile();
+            waveCacheResetDone.store (job);
         });
+    }
+
+    void EditPage::pauseWaveformScans()
+    {
+        for (auto& cache : thumbnailCaches) scanio::pauseScanThread (cache->getTimeSliceThread());
+        waveformScansPaused = true;
+    }
+
+    void EditPage::resumeWaveformScans()
+    {
+        bool all = true;
+        for (auto& cache : thumbnailCaches)
+            all = scanio::resumeScanThread (cache->getTimeSliceThread()) && all;
+        waveformScansPaused = ! all;
+    }
+
+    void EditPage::sessionMediaAdded (const juce::Array<juce::File>& written)
+    {
+        waveCacheSaved = false;
+        // A take removed without a strip move leaves its peaks under its name,
+        // and a new row would draw them for the file written there now.
+        for (const auto& file : written)
+            for (auto& cache : thumbnailCaches)
+                cache->removeThumb (file.hashCode());
     }
 
     void EditPage::beginWaveCacheSave (const juce::File& sessionDir)
@@ -861,8 +943,9 @@ namespace zynforge
         const auto layout = trackorder::logicalBlocks (trackorder::stereoFlags (engine.getRecorder()));
         if (rowsCondemned || n != lastTrackCount || ! list->matchesLayout (layout))
         {
+            const bool condemned = rowsCondemned;
             rowsCondemned = false;
-            list->rebuild (n);
+            list->rebuild (n, ! condemned);
             lastTrackCount = n;
             resized();
         }
@@ -896,21 +979,31 @@ namespace zynforge
         // that branch) silently skipped the cache and re-scanned every WAV.
         // A dedicated marker makes the load immune to the caller's ordering
         // and also stops the double-load when both branches fire on one tick.
+        // Every session change empties the caches first, saved file or not:
+        // peaks are keyed by path, so the last session's would be saved into
+        // this one's WaveCache.wfm, kept in memory for the whole run, and drawn
+        // for any path used again. The rows below get no files until that has
+        // run, and the reset is queued after them, once no row of the last
+        // session can still store a scan.
+        bool resetCaches = false, loadSaved = false;
         if (engine.isTakeOnDisk())
         {
             if (sessionDir != waveCacheLoadedFor)
             {
                 waveCacheLoadedFor = sessionDir;
-                cancelWaveCacheWork();
+                resetCaches = true;
             }
         }
         else if (sessionDir.isDirectory() && sessionDir != waveCacheLoadedFor)
         {
             waveCacheLoadedFor = sessionDir;
-            if (wavecache::fileIn (sessionDir).existsAsFile())
-                beginWaveCacheLoad (sessionDir);
-            else
-                cancelWaveCacheWork();
+            resetCaches = true;
+            loadSaved = wavecache::fileIn (sessionDir).existsAsFile();
+        }
+        if (resetCaches)
+        {
+            cancelWaveCacheWork();
+            waveCacheLoading = true;
         }
 
         // While recording, only the ARMED rows defer to the live red capture
@@ -938,6 +1031,9 @@ namespace zynforge
             // Rows blank until the saved peaks are in: the previous session's
             // waveforms must not sit under this session's names.
             list->setWaveformsFromSession (waveCacheLoading ? juce::File() : sessionDir);
+
+        if (resetCaches)
+            beginWaveCacheReset (sessionDir, loadSaved ? CacheReset::load : CacheReset::clear);
 
         updatePlaceholder();
         lastLoaded = engine.getPlayer().isLoaded();
@@ -1030,16 +1126,38 @@ namespace zynforge
         // is unchanged, so the path-keyed thumbnail cache would keep the old
         // peaks (row shows the swapped name/colour over the previous track's
         // waveform). forceRefreshWaveforms drops each row's cached hash and
-        // re-scans, so the lanes pick up the swapped content.
+        // re-scans, so the lanes pick up the swapped content. Every other
+        // entry goes too: a name a delete freed would otherwise show the
+        // deleted strip's peaks for the next file written there (an import).
+        const bool loadInFlight = waveCacheLoading;
+        for (auto& cache : thumbnailCaches) cache->clear();
         if (list != nullptr) list->forceRefreshWaveforms();
 
         // The saved peaks are keyed by path too, and a rename keeps each file's
         // modification time, so nothing else would notice them go stale. On the
         // cache's own thread, so it lands after any save already in flight.
-        cancelWaveCacheWork();
+        // Saved peaks still loading: the rows wait without files, and get them
+        // once that load is stopped and the caches emptied behind it, so none
+        // draws a peak the load filled under an old name.
         waveCacheSaved = false;
-        if (const auto sessionDir = engine.getActiveSessionDir(); sessionDir.isDirectory())
-            waveCacheThread.add ([sessionDir] { wavecache::fileIn (sessionDir).deleteFile(); });
+        const auto sessionDir = engine.getActiveSessionDir();
+        if (loadInFlight)
+            beginWaveCacheReset (sessionDir, CacheReset::forget);
+        else
+        {
+            cancelWaveCacheWork();
+            if (sessionDir.isDirectory())
+                waveCacheThread.add ([sessionDir] { wavecache::fileIn (sessionDir).deleteFile(); });
+        }
+    }
+
+    int EditPage::runningScanThreadsForTests() const
+    {
+        int running = 0;
+        for (const auto& cache : thumbnailCaches)
+            if (cache->getTimeSliceThread().isThreadRunning() && ! cache->getTimeSliceThread().threadShouldExit())
+                ++running;
+        return running;
     }
 
     void EditPage::updatePlaceholder()
@@ -1060,7 +1178,7 @@ namespace zynforge
     {
         followSelectedClips();
 
-        if (waveCacheLoading && waveCacheLoaded.load() == waveCacheWork.load())
+        if (waveCacheLoading && waveCacheResetDone.load() >= waveCacheResetJob)
         {
             waveCacheLoading = false;
             refresh();
@@ -1094,6 +1212,11 @@ namespace zynforge
         // A local STOP clears `recording` at once, but the take files are
         // drained, closed and (for a punch) spliced on a worker afterwards.
         const bool finalizing = engine.isCaptureFinalizing();
+        // A scan still running from the last STOP or an open would read the
+        // take's drive for the whole take, and achieve nothing: the take's own
+        // rows rescan at its STOP. Each scan waits where it is until the take
+        // has settled (below).
+        if ((rec || finalizing) && ! waveformScansPaused) pauseWaveformScans();
         const auto& player = engine.getPlayer();
         const double liveRate = engine.getDeviceSampleRate() > 0.0
             ? engine.getDeviceSampleRate()
@@ -1170,6 +1293,7 @@ namespace zynforge
         // a punch not yet spliced) and nothing rescanned once it completed.
         if (captureJustSettled && list != nullptr)
             list->refreshWaveformsOf (capturedRows);
+        if (waveformScansPaused && ! rec && ! finalizing) resumeWaveformScans();
 
         // Persist WaveCache.wfm as soon as the background scan finishes for the
         // whole session -- even while EDIT is hidden -- so reopening the show
@@ -1195,7 +1319,8 @@ namespace zynforge
 
         // Waveforms are NOT re-scanned from disk while recording: 48 channels
         // re-read at 24 Hz would contend with the recorder's own capture
-        // writes and risk dropouts (capture integrity wins). The meters show
+        // writes and risk dropouts (capture integrity wins), and the scan
+        // threads are paused for the take (above). The meters show
         // live signal during the take. The post-stop re-scan above drops any
         // partial cached peaks before the new cache can be saved.
 

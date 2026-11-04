@@ -551,7 +551,8 @@ private:
     juce::String lastTrimFollowNotice;
     juce::String lastBusRoutingNotice;
     void updateTransportLabels();
-    juce::File makeNewSessionDir() const;
+    juce::File makeNewSessionDir() const;   // none when Local Storage's drive is missing
+    juce::String missingLocalStorage() const;
     juce::File getSessionsRoot() const;
     void timerCallback() override;
     // timerCallback's steps (MainComponentTimer.cpp), in call order.

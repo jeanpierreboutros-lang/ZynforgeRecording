@@ -479,10 +479,15 @@ namespace zynforge
             if (fR != currentFileR)
             {
                 currentFileR = fR;
-                applyThumbSource (thumbnailR, fR, false);
+                // One file: the R lane draws its channel 1 from thumbnailL, so
+                // the file is scanned once, not once per lane.
+                applyThumbSource (thumbnailR, stereoOneFile ? juce::File() : fR, false);
             }
             repaint();
         }
+
+        // The thumbnail the R lane draws from.
+        juce::AudioThumbnail& rightThumb() noexcept { return stereoOneFile ? thumbnailL : thumbnailR; }
 
         // Point a thumbnail at a take. A single file -> scanio::FileSource (cached
         // by file hash, as before). A MULTI-PART take (Track_NN + its
@@ -495,16 +500,19 @@ namespace zynforge
         {
             if (! main.existsAsFile()) { thumb.setSource (nullptr); return; }
             const auto parts = findTakeParts (main);
+            // force: detach the old scan before dropping its entry. A scan that
+            // completes while it is detached stores its (old) peaks, and
+            // setSource would then find them.
             if (parts.size() <= 1)
             {
-                if (force) thumbCache.removeThumb (main.hashCode());
+                if (force) { thumb.clear(); thumbCache.removeThumb (main.hashCode()); }
                 thumb.setSource (new scanio::FileSource (main));
                 return;
             }
             // Stable combined hash so the multi-part thumb caches across reopen
             // without colliding with the single-file entry.
             const juce::int64 h = main.hashCode() ^ ((juce::int64) parts.size() << 48) ^ 0x5bd1e995LL;
-            if (force) thumbCache.removeThumb (h);
+            if (force) { thumb.clear(); thumbCache.removeThumb (h); }
             if (auto r = ConcatReader::createForScan (formats, parts))
                 thumb.setReader (r.release(), h);
             else
@@ -544,7 +552,7 @@ namespace zynforge
             if (c.audioFile != juce::File() && c.audioFile != take)
                 return { thumbnailForFile (c.audioFile), false,
                          c.sourceChannel >= 0 ? juce::jlimit (0, 1, c.sourceChannel) : 0 };
-            if (rightLane) return { &thumbnailR, ! stereoOneFile, stereoOneFile ? 1 : 0 };
+            if (rightLane) return { &rightThumb(), ! stereoOneFile, stereoOneFile ? 1 : 0 };
             if (stereo)    return { &thumbnailL, ! stereoOneFile, 0 };
             return { &thumbnailL, false, monoFileChannel };
         }
@@ -667,7 +675,7 @@ namespace zynforge
             // partial would shadow the finished file forever. Drop the cached
             // thumb first so the now-complete file is re-scanned at full length.
             if (currentFileL.existsAsFile()) applyThumbSource (thumbnailL, currentFileL, true);
-            if (currentFileR.existsAsFile()) applyThumbSource (thumbnailR, currentFileR, true);
+            if (currentFileR.existsAsFile() && ! stereoOneFile) applyThumbSource (thumbnailR, currentFileR, true);
             for (auto& own : ownThumbs) applyThumbSource (*own.thumb, own.file, true);
             repaint();
         }
@@ -743,6 +751,22 @@ namespace zynforge
             reloadsAtHold = waveformReloads;
         }
         bool isHoldingLiveEnvelope() const noexcept { return liveHold; }
+
+        // A row built new for the same strip (a link, a delete during the
+        // post-STOP rescan) takes over the held take, so its lane does not drop
+        // the whole take for the part of it scanned so far.
+        const LivePeakHistory& heldEnvelope (bool rightLane) const noexcept { return rightLane ? recPeakR : recPeakL; }
+        bool holdRescanIssued() const noexcept { return waveformReloads != reloadsAtHold; }
+        void adoptHeldTake (const LivePeakHistory& left, const LivePeakHistory* right, bool rescanIssued)
+        {
+            recPeakL = left;
+            if (right != nullptr && stereo) recPeakR = *right;
+            liveHold = ! recPeakL.empty();
+            // The old row's settle rescan had been issued: this row's own first
+            // scan is the one that releases it. Otherwise the settle rescan
+            // still reloads every holding row, as before.
+            reloadsAtHold = rescanIssued ? waveformReloads - 1 : waveformReloads;
+        }
 
         // Append one column to the live envelope. Called once per UI tick
         // while recording; values are 0..1 input peaks. Caps the history
@@ -976,7 +1000,7 @@ namespace zynforge
                 else
                 {
                     const double fileSec = juce::jmax (thumbnailL.getTotalLength(),
-                                                       stereo ? thumbnailR.getTotalLength() : 0.0);
+                                                       stereo ? rightThumb().getTotalLength() : 0.0);
                     drawSpan (0, 0, (juce::int64) (fileSec * srB), laneWaveFor ({}, false),
                               stereo ? laneWaveFor ({}, true) : LaneWave {});
                 }
@@ -1126,9 +1150,9 @@ namespace zynforge
                 if (! showLive && thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
                     drawWaveOutlined (thumbnailL, laneL, ! stereoOneFile, 0,
                                       0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
-                if (! showLive && thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
-                    drawWaveOutlined (thumbnailR, laneR, ! stereoOneFile, 1,
-                                      0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
+                if (! showLive && rightThumb().getTotalLength() > 0.0 && ! arrangementEmptied)
+                    drawWaveOutlined (rightThumb(), laneR, ! stereoOneFile, 1,
+                                      0.0, rightThumb().getTotalLength(), waveZoom (rightThumb()));
                 // Live capture envelope -- grows L→R during the take, glowing
                 // forge-orange so the engineer sees the take is HOT / rolling.
                 // After stop (liveHold) it dims to ember -- a provisional
@@ -1138,7 +1162,7 @@ namespace zynforge
                     // Existing take dim under the capture; capture confined to its
                     // timeline fraction so a punch lands at the punch point.
                     drawContinueExisting (g, laneL, thumbnailL, ! stereoOneFile, 0, waveZoom (thumbnailL), existingFrac);
-                    drawContinueExisting (g, laneR, thumbnailR, ! stereoOneFile, 1, waveZoom (thumbnailR), existingFrac);
+                    drawContinueExisting (g, laneR, rightThumb(), ! stereoOneFile, 1, waveZoom (rightThumb()), existingFrac);
                     // Live capture glows hot (recording NOW); the post-stop hold dims
                 // to the channel colour so it matches the clean thumbnail that
                 // replaces it (no flash of orange barcode on stop).
@@ -2622,6 +2646,8 @@ namespace zynforge
         juce::int64  getLiveEnvelopeSamplesForTests() const { return recPeakL.spanSamples(); }
         int          getOwnThumbnailCountForTests() const noexcept { return (int) ownThumbs.size(); }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
+        float        getWaveformPeakForTests() const { return thumbnailL.getApproximatePeak(); }
+        juce::int64  getRightThumbnailHashForTests() const { return thumbnailR.getHashCode(); }
         int          getOverviewBuildsForTests() const noexcept { return overviewBuilds; }
         int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }
 

@@ -118,6 +118,48 @@ namespace zynforge
 
                 dir.deleteRecursively();
             }
+
+            beginTest ("Detect Songs hears each strip's own channel of a shared stereo file");
+            {
+                // An audience pair recorded as one file, then unlinked: the
+                // music is on the right only.
+                auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getChildFile ("zf-songs-" + juce::Uuid().toString());
+                dir.createDirectory();
+                const auto f = dir.getChildFile ("Track_01.wav");
+                const int len = (int) (3.0 * sr);
+                {
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (
+                        f.createOutputStream().release(), sr, 2, 24, {}, 0));
+                    expect (w != nullptr);
+                    juce::AudioBuffer<float> buf (2, len);
+                    buf.clear();
+                    for (int i = 0; i < len; ++i)
+                        buf.setSample (1, i, 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 200.0 * i / sr));
+                    if (w != nullptr) w->writeFromAudioSampleBuffer (buf, 0, len);
+                }
+                Clip whole;
+                whole.fileLengthSamples = len;
+                const auto voice = [&] (int channel)
+                {
+                    songs::Voice v;
+                    v.ownFile = f;
+                    v.clips.push_back (whole);
+                    v.channel = channel;
+                    return v;
+                };
+                const auto heard = [&] (std::vector<songs::Voice> voices)
+                {
+                    double rate = sr;
+                    return (int) songs::scanVoices (voices, p, rate).size();
+                };
+                expectEquals (heard ({ voice (0) }), 0, "the left strip heard the right channel");
+                expectEquals (heard ({ voice (1) }), 1, "the right strip heard the left channel instead of its own");
+                expectEquals (heard ({ voice (-1) }), 1, "a stereo strip ignored its right side");
+                expectEquals (heard ({ voice (0), voice (1) }), 1, "the pair's strips did not each hear their own channel");
+                dir.deleteRecursively();
+            }
         }
     };
 

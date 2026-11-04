@@ -62,5 +62,7 @@ namespace zynforge
     public:
         static void launch (const std::vector<songexport::Range>& songs, double sessionRate,
                             ExportSongsContent::ResultCallback onResult);
+        // Tests answer in place of the window.
+        inline static std::function<void (ExportSongsContent::ResultCallback)> launchForTests;
     };
 }
