@@ -6,11 +6,13 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
-References are kept in line with the current headers. The 2026-11-03 pass
-checked `BigClockPanel`, `DialogChrome`, `EditTimeRuler`, `EditToolsBar`,
-`LedMeter`, `MasterStrip`, `SessionRecoveryDialog`, `Toast` and `TransportBar`
-against the `875521a` source; `ChannelStrip`, `EditPage::TrackRow`, `FineFader`
-and `WelcomeDialog` were updated on 2026-11-02 and 2026-11-03. These documents
+References are kept in line with the current headers. The 2026-11-04 pass
+checked every document here against the `821131a` source, after that day's
+review fixes: `BigClockPanel`, `ChannelStrip`, `DialogChrome`,
+`EditPage::TrackRow`, `FineFader`, `LedMeter`, `MasterStrip`,
+`SessionRecoveryDialog`, `TransportBar` and `WelcomeDialog` changed;
+`EditTimeRuler`, `EditToolsBar` and `Toast` did not. None of that source has run
+on real hardware yet. These documents
 describe implementation; they do not establish field or accessibility acceptance.
 [Testing](../../testing.md), [installation](../../INSTALL.md),
 [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md)

@@ -61,7 +61,7 @@ Two items only — `New` and `Open`. Don't add others: anything else doesn't bel
 
 | Item | Right pane content |
 |---|---|
-| New | Form: name / location / file type / sample rate / bit depth / devices → `[Cancel] [Create]`. Local Storage is a plain label beside its path button |
+| New | Form: name / location / file type / sample rate / bit depth / devices → `[Cancel] [Create]`. Local Storage is a plain label beside its path button, with the drive's free space under it |
 | Open | `FileChooser` style picker rooted at `defaultLocation`, plus up to six recent sessions (`AudioEngine::getRecentSessions()`, remembered on record and open) as buttons |
 
 ## States
@@ -79,10 +79,11 @@ Two items only — `New` and `Open`. Don't add others: anything else doesn't bel
 - Name must be non-empty. Invalid chars replaced via `juce::File::createLegalFileName`.
 - Resolved folder uniqueness uses `getNonexistentChildFile`, so an existing show is never reused or overwritten.
 - Location, subfolder, and `.zfproj` creation must all succeed. Failure removes the partial new folder, reports the storage error, and leaves the current session loaded.
+- **Unplugged sessions drive.** When the chosen sessions folder is on a drive that is not mounted (`folderDriveMissing`, `Source/UI/RecordPosition.h`), the host passes that folder, not the engine's `~/Music` fallback, as `defaultLocation`. The free-space line then reads `Drive not connected` in `alertAmber` instead of the boot disk's space, and Create refuses with a status line naming the drive (`createSessionFromWelcome`).
 
 ## Tokens used
 
-- **Colours**: `brand::bgPanel` body, `brand::bgElevated` sidebar, `brand::accentStatus` (Create button), `brand::featureEngaged` (sidebar selection indicator), `brand::textPrimary` / `textSecondary`
+- **Colours**: `brand::bgPanel` body, `brand::bgElevated` sidebar, `brand::accentStatus` (Create button), `brand::featureEngaged` (sidebar selection indicator), `brand::textPrimary` / `textSecondary`, `brand::alertAmber` for `Drive not connected`
 - **Typography**: `brand::type::sectionTitle()` for "Session Name" etc., `brand::type::uiBody()` for the input rows
 - **Spacing**: `brand::space::md` between form rows, `brand::space::xl` between sidebar and right pane
 - **Radius**: `brand::radius::md` on combo bodies, `brand::radius::lg` on the sidebar entries
@@ -92,7 +93,7 @@ Two items only — `New` and `Open`. Don't add others: anything else doesn't bel
 
 Launch order is serialised via nested `callAfterDelay` so dialogs don't stack:
 
-1. **Recovery** (250 ms after launch) — if orphans exist, shows first
+1. **Recovery** (250 ms after launch) — if orphans exist, shows first. While a take rolls (a helper take adopted after a crash) the list and its scan of the sessions folder wait for STOP
 2. **Tutorial** (after recovery dismissal) — only on first-run
 3. **Document/last-session open or Welcome** (after tutorial dismissal) — an explicit `.zfproj` wins; otherwise a valid last session auto-reopens; Welcome is the empty fallback
 

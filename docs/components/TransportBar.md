@@ -42,7 +42,21 @@ While metadata persistence is busy, the host still lets Space stop transport
 that is already playing or recording. This does not authorize starting playback,
 changing a finalizing take, bypassing LOCK, or skipping ordinary two-tap STOP.
 Remote STOP returns pending until required media/metadata completion; an idle
-capture flag alone is not the acknowledgment.
+capture flag alone is not the acknowledgment. Generic OSC taps reach the same
+two-tap guard: `/zynforge/stop 0` and `/zynforge/record 0` are releases and
+count for nothing, STOP presses within 250 ms of the last one count once, and
+stopping over Generic OSC is `/zynforge/stop` only (`/zynforge/play 0` still
+stops playback).
+
+After a daemon STOP, a status the helper built before the command is dropped,
+and the window adopts a rolling take only from a status received after the take
+it last ended (`daemonTakeEndedAtMs`). A stale "recording" status can no longer
+bring a finished take back onto the bar.
+
+Nothing modal opens over a rolling take, because a modal swallows the click on
+STOP and takes Space. The host greys the menu items that open one while a take
+rolls, and a take that starts behind an open prompt closes the prompts marked
+`closesForTake` (see [DialogChrome](DialogChrome.md)).
 
 ## IconButton (nested)
 

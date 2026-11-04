@@ -23,7 +23,8 @@ Meters `engine.getMasterState()`, with `getMasterStateR()` as the stereo partner
 | Method | Purpose |
 |---|---|
 | `setVisible(bool)` | Host shows it only in the MIXER view |
-| `refreshOutputs()` | Rebuilds the output combo. The strip's own 10 Hz timer calls it; it rebuilds only when the device's active output count or the stereo mode changed |
+| `refreshOutputs()` | Rebuilds the output combo. The strip's own 10 Hz timer calls it; it rebuilds only when the device's active output count, the stereo mode or the saved pair changed, and otherwise only re-syncs the selected item |
+| `outputsForMode(stereo, left, right)` | Static. The outputs a mode flip leaves the master on: mono is one output stored as (L, L); stereo is the pair that output belongs to (Out 1 or Out 2 both give Out 1-2); Off stays Off |
 
 ## Layout
 
@@ -47,6 +48,10 @@ The meter is 26 px wide in mono and 40 px in stereo. The fader runs −60 to +12
 ## Output combo
 
 Stereo lists pairs (`Out 1-2`, `Out 3-4`, …), mono lists single outputs. The list shows at least 8 entries either way; entries past the device's active outputs read `(off)`. The last item, `Off (no output)`, calls `setMasterOutputs(-1, -1)`: the master still meters but lands on no interface channel.
+
+The list is built from `mix::masterOutputs`, the rule the audio callback plays by. When the saved pair is not on this device, the mix plays on the device's last pair, and the list adds one inert item naming both, e.g. `Out 3-4 (saved Out 9-10)`, selected, with a tooltip saying where the mix plays. Picking it does nothing; the saved pair is kept, not rewritten.
+
+The MONO / ST toggle re-pairs the outputs before it flips the mode (`outputsForMode`). Mono stores its one output as (L, L), and kept into stereo that pair played the mix folded to one output under a strip that said ST.
 
 ## State sources
 
@@ -92,5 +97,6 @@ Use `engine.getMasterStereo()` / `setMasterStereo()` for mode and `setMasterOutp
 - The strip is a focus container titled "Master"; the fader, MUTE, mode toggle and output combo have spoken titles ("Master gain", "Master mute", "Mono / stereo", "Master output"), and the toggle and combo carry their tooltips as help text
 - Uses `FineFader`: drag and keyboard adjust gain; wheel/trackpad gestures propagate for scrolling without changing level
 - Double-click the fader to reset to 0 dB
+- The value box under the fader opens on a double-click; Return applies, a click elsewhere cancels, and a word never moves the level (`FineFader::getValueFromText`)
 - Stereo/mono toggle and output combo have tooltips
 - Meter click clears the local clip latch; there is no global PeakTally bar

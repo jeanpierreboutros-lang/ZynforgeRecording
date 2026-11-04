@@ -8,7 +8,7 @@ A `juce::Component` + `juce::Timer` that reads a `TrackState`'s atomic peak / RM
 
 ## When to use
 
-One per metered surface. Pass the `TrackState&` it should read. For a stereo pair, set the right channel's state via `setStereoPartner` so the one widget paints two bars. The EDIT row uses a narrow instance with labels off. Owners can replace the default tooltip ("Peak + RMS LED meter. Click to clear the clip indicator.") with their own.
+One per metered surface. Pass the `TrackState&` it should read. For a stereo pair, set the right channel's state via `setStereoPartner` so the one widget paints two bars; `ChannelStrip`'s dB readout and `CLIP xN` beside it read both halves too. The EDIT row uses a narrow instance with labels off. Owners can replace the default tooltip ("Peak + RMS LED meter. Click to clear the clip indicator.") with their own.
 
 ## API
 

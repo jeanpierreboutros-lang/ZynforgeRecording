@@ -31,7 +31,8 @@ No params — state is entirely push-driven via setters.
 | `setMode(Mode)` | Mode enum: `Idle`, `Recording`, `Playing`. Entering `Recording` restarts the heat ramp. |
 | `setElapsed(juce::int64 samples, double sampleRate)` | Formats to `HH:MM:SS`; a rate ≤ 0 falls back to 48 kHz |
 | `setMarkers(int count)` | `MARKERS` row value |
-| `setDiskInfo(double freeGB, int lastWriteMs, juce::int64 missedSamples, double remainingSeconds, DiskReading reading)` | Time-left slot and disk-health rows. `DiskReading`: `Fresh`, `CopyStale`, `PrimaryStale` |
+| `setDiskInfo(double freeGB, int lastWriteMs, juce::int64 missedSamples, double remainingSeconds, DiskReading reading)` | Time-left slot and disk-health rows. `DiskReading`: `Fresh`, `CopyStale`, `PrimaryStale`, `DriveMissing` |
+| `getFreeGB()` / `getRemainingSeconds()` / `getDiskReading()` | What the panel was last given, for tests |
 | `setArmedReady(bool)` | Lights the lamp amber and reads `ARMED`. No border, no pulse. |
 
 ## States
@@ -48,7 +49,10 @@ Disk readings:
 - With no estimate (`remainingSeconds` ≤ 0 or infinite) the large slot reads `DISK FREE` with free GB, and the `FREE` row is dropped. Otherwise it reads `RECORD TIME LEFT` as `NhMMm`.
 - `CopyStale`: the caption turns `alertAmber` and reads `PRIMARY TIME LEFT`, since a backup drive isn't answering.
 - `PrimaryStale`: free space and time left read `STALE` in `alertAmber`.
+- `DriveMissing`: free space reads `NO DRIVE` in `alertAmber`. The host passes it between takes when no session folder is open and the chosen sessions folder is on a drive that is not mounted (`folderDriveMissing`): a free-space read there walks up to `/Volumes` and would show the boot disk. RECORD refuses in that state too.
 - A negative `freeGB` reads `--`.
+
+What the host passes between takes: `remainingSeconds` is pre-flight's estimate, and only while what it was worked out for still matches (`MainComponent::idleEstimateKey`: session, arm count, capture format, backup and mirror folders and formats). A take clears it, so after STOP the large slot reads `DISK FREE` until pre-flight runs again. During a take the engine's live estimate is passed as before.
 - Missed samples > 0 read `MISSED SAMPLES` with the count in `accentRecord` (white on the take plate); otherwise the row reads `NO MISSED WRITES`.
 
 The timer keeps its width. The right-hand column takes what is left, up to 300 px. A row that doesn't fit (under 16 px tall or 136 px wide) isn't drawn; rows give way in the order `MARKERS`, `LAST WRITE`, missed samples, `FREE`.
@@ -61,7 +65,7 @@ Each tick advances the phase by 2π/15 (one full sine per second), steps the ~30
 
 ## Tokens used
 
-- **Colours**: `brand::takePlate` / `accentRecord` for a rolling take; `accentPlay` for playback; `signalArmedReady()` (`engagedAmber`) for the armed lamp; `alertAmber` for stale disk readings; `bgDeep` base fill, `bgPanel` plate, `edge` idle border; `textPrimary` / `textSecondary` / `textMuted` for type and the idle lamp
+- **Colours**: `brand::takePlate` / `accentRecord` for a rolling take; `accentPlay` for playback; `signalArmedReady()` (`engagedAmber`) for the armed lamp; `alertAmber` for stale disk readings and `NO DRIVE`; `bgDeep` base fill, `bgPanel` plate, `edge` idle border; `textPrimary` / `textSecondary` / `textMuted` for type and the idle lamp
 - **Typography**: `brand::type::mono(…, true)` for the timer, sized to 0.95 × the inner height and capped at `brand::type::h_hero` (48 pt); `type::ui(h_display or h_subhead, true)` for the state label; `type::caption()` for the time-left caption; `type::mono(h_subhead or h_headline, true)` for its value; `type::channelName()` / `type::mono(h_body, true)` for row labels / values
 - **Spacing**: `brand::space::lg` side inset, `space::xs` vertical inset, `space::md` lamp-to-label gap, `space::xl` padding around the timer
 - **Radius**: `brand::radius::lg` on the plate

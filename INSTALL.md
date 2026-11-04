@@ -2,6 +2,8 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
+`main` is ahead of both Macs: since `eca170e` it has the waveform scans past the page cache, the scrollbar look and the 2026-11-04 review's fixes. It is not installed anywhere, no DMG holds it, and it has not run on real hardware.
+
 ## Development Mac update — 2026-11-04, one waveform shape
 
 The development Mac (MacBook Pro) now has `eca170e`: `577592c` plus the one-shape zoomed-out waveform (*Fixed — after the three-hour take* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
@@ -295,7 +297,7 @@ The previous installs and packages (`b2c1991`, `3e6104c`, `8d79ab8`, `672456d`, 
 
 ## Package both executables
 
-The build produces the GUI bundle and a separate `ZynforgeCapture` artefact, then automatically embeds the matching helper and seals the local app after the copy. The installed layout requires:
+The build produces the GUI bundle and a separate `ZynforgeCapture` artefact, then automatically embeds the matching helper and seals the local app after the copy. On `main` since 2026-11-04 that ad-hoc seal carries the options `tools/notarize.sh` signs with: hardened runtime and the audio-input entitlement, on the app and on the helper, so a local build no longer comes out hardened or plain depending on Xcode. The development Mac's `eca170e` already came out hardened; the mini's `281c6c0` is plain. An install from `main` may still ask for the microphone once. The installed layout requires:
 
 ```text
 Zynforge Recording.app/Contents/MacOS/
@@ -354,6 +356,6 @@ The October 5 two-Mac cleanup removed every app bundle older than `443c769` at t
 | Development | `577592c` | `Zynforge Recording.app.backup-20261104-104037-before-eca170e` |
 | Mac mini | `443c769` | `Zynforge Recording.app.backup-20261029-221655-before-281c6c0` |
 
-The development Mac's list was checked on 2026-11-03; the mini's is from its installation record. Earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.
+The development Mac's list was checked on 2026-11-03; the mini's is from its installation record. Earlier code requires rebuilding and verifying that source revision. Every revision without `3ad6e41` (all of `main` before `8b2dad8`) fetches JUCE as a shallow clone of a pinned commit, which fails once that commit is no longer a branch tip (the 8.0.4 pin already does): configure it with `-DFETCHCONTENT_SOURCE_DIR_JUCE=<a JUCE checkout at that commit>`, or drop its `GIT_SHALLOW` line. Historical backup names in this document are not usable recovery paths.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.

@@ -38,7 +38,7 @@ The fixes from the 2026-11-04 review are on `main` only: not in the development 
 - [ ] 🟧 **Desk and remotes.** On an X32 / M32: names, Scene Follow, a desk macro and a remote RECORD all behave as on `9a40f54`. On the MIDI control surface, faders and banks.
 - [ ] 🟨 **Quit.** A normal quit leaves no crash report and the interface is not wedged on the next launch. macOS may ask for the microphone once after the install.
 
-**First long take, 2026-11-03 (partial).** 55 tracks for 4 h 10 min through Dante Virtual Soundcard on `5c7a3e4`, to an external exFAT SSD: 0 missed samples, 0 ms device stall, every file complete. Quit left no crash report. EDIT then showed only the start of the take on the rows on screen, and the post-STOP rescan, the report's hashes and quit were very slow. `577592c` fixes the first; the second comes from that exFAT drive and is still open. `tools/verify_take.sh` has not run yet, because quitting cancelled the hashes before any was saved. *Device* still needs its `verify_take.sh` pass, and the Dante path is not the SD5 / HDSPe rig.
+**First long take, 2026-11-03 (partial).** 55 tracks for 4 h 10 min through Dante Virtual Soundcard on `5c7a3e4`, to an external exFAT SSD: 0 missed samples, 0 ms device stall, every file complete. Quit left no crash report. EDIT then showed only the start of the take on the rows on screen, and the post-STOP rescan, the report's hashes and quit were very slow. `577592c` fixes the first. The second came from macOS reading ahead for all 55 files at once and throwing most of it away, not from the drive; `main`, after `eca170e`, reads takes past the page cache (see *Rebuild time* below), and the report's hashes stay paced at about 15 MiB/s. `tools/verify_take.sh` has not run yet, because quitting cancelled the hashes before any was saved. *Device* still needs its `verify_take.sh` pass, and the Dante path is not the SD5 / HDSPe rig.
 
 **Three-hour take, 2026-11-04 (partial).** 54 tracks for 3 h 01 min on `577592c`, same drive: 0 missed samples, 0 ms device stall, every file complete, and the rows on screen kept the whole take after STOP. The drive again read about 2.6 GB/s: hashes took 2 h 30 min and the waveform rescan 3 h 10 min after STOP. The zoomed-out waveform looked doubled; `eca170e` draws one shape. `tools/verify_take.sh` has not run on it yet.
 
@@ -502,8 +502,9 @@ The helper checks WAV, AIFF and FLAC files, including continued takes, but does 
 
 ```bash
 tools/verify_take.sh "/path/to/Session"    # use the exact session under test
-# With no path, the helper verifies the capture the app last recorded, then its active session.
-# It never guesses from folder dates.
+# With no path, the helper verifies the capture the app last recorded. With none
+# recorded it falls back to the session the app last had open, and says that may
+# not be the show. It never guesses from folder dates.
 ```
 
 Its implemented checks include:
@@ -512,10 +513,10 @@ Its implemented checks include:
 - a continued take has its base file and an unbroken `_partNN` sequence;
 - primary-file frame totals match the report and every take file is listed exactly once;
 - `session.report.json` exists, hashing has finished, `missedSamples` is zero and capture-failure flags are clear;
-- every listed primary file's on-disk SHA-256 matches the report.
+- every listed primary file's on-disk SHA-256 matches the report. On `main` a backup or mirror hash that failed or is owed is a yellow note, not a failure: check that copy on its own drive.
 
 Still do by hand: (1b) open in another DAW, and (1d) the hard-kill-mid-take
-crash-safety check on disposable data. A survivor without a clean-stop report will not pass the helper even when audio is recoverable. Requires `ffprobe`, `xxd`, `shasum`, `jq`, `python3`; these are not all stock macOS tools. A pending-hash report exits nonzero and must be checked again when hashing finishes.
+crash-safety check on disposable data. A survivor without a clean-stop report will not pass the helper even when audio is recoverable. Requires `ffprobe`, `xxd`, `shasum`, `jq`, `python3`; these are not all stock macOS tools. A pending-hash report exits nonzero and must be checked again when hashing finishes. Hashes are made only while the app has the session open, so open it, leave it open until hashing finishes, then re-run.
 
 ## October regression acceptance — repeat on the intended installed build
 

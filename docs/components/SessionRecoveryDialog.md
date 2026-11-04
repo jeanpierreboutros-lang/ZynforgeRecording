@@ -10,6 +10,8 @@ A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` (async, nativ
 
 Called from `MainComponent::offerSessionRecovery()` during startup, after a capture-daemon take has been reattached. The host builds the list (`sessionsToRecover`): it drops any session a capture helper holds a take lock on, and the live take's session. While a helper too old to report its locks is running, it offers nothing and says so in the status bar. Skips silently when the list is empty.
 
+Never over a rolling take. While a take rolls (local, or a helper take adopted after a crash), `offerSessionRecovery` sets `recoveryOfferHeld` and returns without scanning the sessions folder, which may be the take's drive; `serviceModalsAroundTakes` offers the list once the take's files are final. The window is marked `closesForTake` (`FloatingLaunch.h`): a take that starts behind it (OSC, a desk macro, the twin, the helper, a punch window) closes it as Skip, and it is offered again after STOP.
+
 ## API
 
 ```cpp
@@ -24,11 +26,11 @@ struct Row {
 using OpenCallback   = std::function<void (const juce::File&)>;
 using RemoveCallback = std::function<juce::String (const juce::File&)>;   // empty = removed, else why not
 
-static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen,
-                    RemoveCallback onRemove, std::function<void()> onClosed = {});
+static juce::DialogWindow* launch (juce::Array<juce::File> orphans, OpenCallback onOpen,
+                                   RemoveCallback onRemove, std::function<void()> onClosed = {});
 ```
 
-The static `launch` instantiates the dialog and wires async modal behaviour. `onOpen` fires when the engineer picks Recover; the host owns session loading. `onRemove` fires when a Delete is confirmed; the host owns removal and returns a reason when it refuses. The public constructor takes the same callbacks, with `onRemove` optional. `onClosed` fires when the actual dialog is destroyed and sequences the next startup step. An empty orphan list creates no dialog and does not call `onClosed`.
+The static `launch` instantiates the dialog, wires async modal behaviour and returns its window (`nullptr` when there is nothing to show), so the host can mark it to close for a take. `onOpen` fires when the engineer picks Recover; the host owns session loading. `onRemove` fires when a Delete is confirmed; the host owns removal and returns a reason when it refuses. The public constructor takes the same callbacks, with `onRemove` optional. `onClosed` fires when the actual dialog is destroyed and sequences the next startup step. An empty orphan list creates no dialog and does not call `onClosed`.
 
 ## Layout
 
@@ -51,7 +53,7 @@ The static `launch` instantiates the dialog and wires async modal behaviour. `on
 
 Track-file counts are taken from the session's `Audio Files` directory, with a legacy root-directory fallback. They count `Track_*` WAV / FLAC / AIFF files and skip `_part` continuations, so a split take counts once. This is a media-file count, not necessarily the number of logical mixer strips (stereo layouts differ). Size is the whole session folder, recursive, in decimal KB / MB / GB.
 
-Recovery of an interrupted track-order transaction is handled by the session-open path through `TrackFileTransaction`, separately from this orphan-recording dialog. The session-open path also restores interrupted punch originals from `.punchbase` sidecars and archives any partial replacement under `Session File Backups/Interrupted Punch*`; configured backup/mirror copies are checked before another punch start. Preserve those folders, `Session File Backups/reorder_*` and `Removed Tracks` when diagnosing a failed recovery. Recover is not a guarantee that every recorded sample survived a crash.
+Recovery of an interrupted track-order transaction is handled by the session-open path through `TrackFileTransaction`, separately from this orphan-recording dialog. The session-open path also restores interrupted punch originals from `.punchbase` sidecars and archives any partial replacement under `Session File Backups/Interrupted Punch*`; configured backup/mirror copies are checked before another punch start. A `Track_NN.punchinstall` marker says a punch was being installed: with its main `.punchbase` sidecar still there the install had not committed, so the base comes back and the punch's `.punchtmp*` files are archived too; with the main sidecar gone it had, so the spliced take stays and any leftover base part is archived, never put back on it. Preserve those folders, `Session File Backups/reorder_*` and `Removed Tracks` when diagnosing a failed recovery. Recover is not a guarantee that every recorded sample survived a crash.
 
 `juce::TableListBoxModel`-backed. Columns sort on click; names sort naturally. Default sort is **modified-time, newest first** — engineers almost always want the session they just crashed out of, which is the most-recently-modified.
 
@@ -89,7 +91,7 @@ Recovery of an interrupted track-order transaction is handled by the session-ope
 
 | ✅ Do | ❌ Don't |
 |---|---|
-| Show this dialog AT LAUNCH, before the Welcome dialog | Show it mid-session when an orphan suddenly appears |
+| Show this dialog AT LAUNCH, before the Welcome dialog | Show it mid-session when an orphan suddenly appears, or over a rolling take |
 | Default-sort by most-recent — that's what the engineer wants | Default-sort alphabetically — irrelevant to recovery flow |
 | Make Delete require a confirm | Delete on single click — data loss class |
 | Pre-select row 0 so Enter/double-click works immediately | Leave selection empty on open |

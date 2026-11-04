@@ -1,9 +1,11 @@
 # Documentation index
 
-Reconciled on 2026-11-03 against `main` on JUCE 8.0.17-security. Documentation
-commits do not change the installed binaries: see the status in the [README](../README.md).
-The development Mac has `eca170e` (every fix, on JUCE 8.0.17-security), and the Mac
-mini and the current DMG have `281c6c0`, all protocol 4. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
+Reconciled on 2026-11-04 against `main` at `821131a`, after the 2026-11-04
+review's fixes. Documentation commits do not change the installed binaries: see the
+status in the [README](../README.md). The development Mac has `eca170e` (on JUCE
+8.0.17-security, without that day's later scan, scrollbar and review fixes), and the
+Mac mini and the current DMG have `281c6c0`, all protocol 4. `main` is not installed
+anywhere and has not run on real hardware. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
 rollback. Refer to the owning documents below instead of copying
 package hashes, test counts or acceptance claims into new guides.
 

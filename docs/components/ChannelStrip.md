@@ -15,7 +15,7 @@ Always one per logical strip in the MIXER view. Stereo pairs use a single `Chann
 | Variant | How it's distinguished | Visual |
 |---|---|---|
 | Mono | `pairState == nullptr` | Single pan knob centred under fader |
-| Stereo pair | `pairState != nullptr` | Two pan knobs (L + R), independent |
+| Stereo pair | `pairState != nullptr` | Two pan knobs (L + R), independent; they are the pair's image and never reach or follow an edit group |
 | Edit-group member | `state.editGroup.load() >= 0` | "EG N" warm-amber chip |
 
 ## Constructor
@@ -36,10 +36,10 @@ ChannelStrip (int index, TrackState& state,
 |---|---|---|---|
 | `index` | `int` | yes | 0-based physical strip index (matches `Track_NN.wav` numbering minus 1) |
 | `state` | `TrackState&` | yes | Strip's mutable state. Atomics read/written by both UI and audio thread |
-| `onColourPicked` | `std::function<void(Colour)>` | no | Fires when the engineer picks a colour in the swatch popup |
+| `onColourPicked` | `std::function<void(Colour)>` | no | Fires when the engineer picks a colour in the swatch popup. The host colours every selected strip only when this strip is part of a multi-selection; otherwise this strip alone |
 | `onRename` | `std::function<void(String)>` | no | Fires when the inline name editor commits |
 | `onGainDb` | `std::function<void(float dB)>` | no | Fires on fader move. Host typically broadcasts to edit-group peers |
-| `onPan` / `onPanR` | `std::function<void(float)>` | no | Pan -1..+1 |
+| `onPan` / `onPanR` | `std::function<void(float)>` | no | Pan -1..+1. The host sends a mono strip's pan to the group's mono strips only; a stereo strip's knobs move that strip alone |
 | `onInputRouted` / `onOutputRouted` | `std::function<void(int)>` | no | Hardware channel index, or -1: no signal on an input, the master on an output |
 | `stereoPartner` | `TrackState*` | no | When set, treats this as a stereo pair |
 
@@ -56,7 +56,7 @@ ChannelStrip (int index, TrackState& state,
 
 ## States
 
-The host wires `canChangeArm` to recording eligibility. If a take is active (local or daemon), an arm click is refused and the toggle is restored to the actual state; `onAfterArmedToggle` is not a way to bypass this guard. The recorder independently freezes capture participation at take start. Before a track-count shrink, the host condemns strips, edit rows and floating meters before releasing `TrackState` references.
+The host wires `canChangeArm` to recording eligibility. If a take is active (local or daemon), an arm click is refused and the toggle is restored to the actual state; `onAfterArmedToggle` is not a way to bypass this guard. The recorder independently freezes capture participation at take start. Before a track-count shrink, the host condemns strips, edit rows and floating meters before releasing `TrackState` references. A condemned strip never comes back: `condemnAllStrips` sets `lastTrackCount = -1`, so the next tick rebuilds the strips even when a refused session open left the count unchanged.
 
 | State | Visual | Behaviour |
 |---|---|---|
@@ -75,6 +75,10 @@ The host wires `canChangeArm` to recording eligibility. If a take is active (loc
 - **Spacing**: `brand::space::xs` / `sm` / `md` between buttons and groups; some literal pixels still in the layout (audit TODO)
 - **Radius**: `brand::radius::sm` for chips, `brand::radius::md` for the swatch
 - **Alpha**: `brand::alpha::dimmed` for the swatch outline sheen
+
+## Level readouts
+
+The value label under the fader opens on a double-click (`FineFader::editOnDoubleClick`); Return applies, a click elsewhere cancels, and text with no number keeps the level (see [FineFader](FineFader.md)). On a stereo strip the dB readout shows the louder half and `CLIP xN` adds both halves' counts, as the meter does: a clip on R is a clip on the strip.
 
 ## Stereo and input detection
 

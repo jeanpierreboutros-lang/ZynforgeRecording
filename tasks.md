@@ -20,7 +20,7 @@ A whole-codebase review made 75 findings, and all 75 are fixed on `main`. One of
 - [ ] A crashed helper continue keeps the old rule and comes back at its file position: the helper's recorder has no landing to write.
 - [ ] Transport Sync shows "24 fps" and "30 fps" for 23.976 and 29.97 non-drop, and the timeline CSV labels samples at the nominal rate (`tx::frameRateFor`). Cosmetic and export only; chase and BWF use the real rate.
 - [ ] The same-drive warning compares filesystems, so a backup on another APFS volume of the session's physical disk passes as separate.
-- [ ] Confirm the merged TSan run covers *Mixer and main window fixes*: the LTC-source race it fixed shows only under ThreadSanitizer, and the fixer did not run one.
+- [x] The merged TSan run covers *Mixer and main window fixes*, where the LTC-source race it fixed shows only under ThreadSanitizer: its 1699 groups are `main`'s 1591 plus all four branches' new groups (19 + 36 + 21 + 32), 0 failures, no reports.
 - [ ] Not verified: a clean configure with a real full JUCE clone from GitHub (no network was used). A full clone costs more than a shallow one, once per clean configure or CI cache miss. Revisions before this one, pinned with a shallow clone, need `-DFETCHCONTENT_SOURCE_DIR_JUCE` (or a one-line edit) to rebuild.
 - [ ] CI: the new Release-job steps (Rosetta suite, tool tests, smoke launch, signing checks) have never run, because CI is blocked by billing. The smoke launch is unverified on a hosted runner, where microphone permission may behave differently; it may need a device-free flag. The runner's Xcode is not pinned.
 

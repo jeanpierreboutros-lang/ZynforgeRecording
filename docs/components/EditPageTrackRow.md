@@ -10,7 +10,7 @@ The row and shared timeline mapping/constants were extracted from the former `Ed
 
 ## When to use
 
-`EditPage::TrackList` creates one TrackRow per logical strip (stereo pairs collapse to one row). Lifetime tracks the session — rebuilds on track count change.
+`EditPage::TrackList` creates one TrackRow per logical strip (stereo pairs collapse to one row). Lifetime tracks the session — rebuilds on track count change. `TrackList::rebuild` keeps the row of every strip whose block is unchanged (same index, same pair, same L and R strip IDs), with its thumbnails, partial scans and post-STOP hold, so +CH or a link elsewhere neither restarts its scan nor blanks its lane. Rows are never kept after `condemnAllRows`. A held take follows its strip, lane by lane, into a row built new (`heldEnvelope`, `adoptHeldTake`).
 
 ## Constructor
 
@@ -38,7 +38,7 @@ The right pane's content adapts to a per-row `LaneMode`:
 
 Switching mode: the row's right-click menu (`TrackRow::rowMenu`), on the channel name, the bare header or any lane with no clip under the pointer. It holds lane and size, and Delete Channel on the header only. Both stay with the strip and save as `ui.editRows`. A Markers lane draws MARKERS LANE and still shows a rolling take.
 
-Clip-menu actions apply to both halves of a stereo row and to each edit-group peer's OWN clip under the clicked one (`peerClipTargets`). A channel picked in the Input or Output combo goes through `setStripLinkedRouting` and sets both sides, as MIXER and PATCH do. → Master goes through `sendStripToMaster` and moves the output alone. Waveforms are drawn through `drawThumbnailVisible`, which reads only the visible columns, so deep zoom stays responsive. Crossfades pair clips in timeline order. Hit-tests walk a clip list top first (`topClipAt`, `clipHitOrder`), the reverse of paint. While the timeline is read-only (recording, finalizing or a session job), drags already in flight stop editing.
+Clip-menu actions apply to both halves of a stereo row and to each edit-group peer's OWN clip under the clicked one (`peerClipTargets`). A channel picked in the Input or Output combo goes through `setStripLinkedRouting` and sets both sides, as MIXER and PATCH do. → Master goes through `sendStripToMaster` and moves the output alone. Waveforms are drawn through `drawThumbnailVisible`, which reads only the visible columns, so deep zoom stays responsive. Those on-screen detail reads run on the message thread and go through the page cache; the whole-take scans on the scan threads read past it (`scanio::ScanFileInput`, see *Waveform scans* below). Crossfades pair clips in timeline order. Hit-tests walk a clip list top first (`topClipAt`, `clipHitOrder`), the reverse of paint. While the timeline is read-only (recording, finalizing or a session job), drags already in flight stop editing.
 
 ## Height presets
 
@@ -105,6 +105,14 @@ At long time scales, the overview draws one shape: the quadratic mean of 16 shor
 | Crossfade visualisation | Overlap between adjacent clips (in timeline order), paints X-shape | Always when two clips overlap |
 | Partial fade ramp | Fade diagonal | A piece of a split fade draws only its part of the original ramp |
 | Loop-region overlay | Wave pane, translucent blue | When `player.hasLoopRegion()` |
+
+## Waveform scans
+
+- Each row's thumbnails scan through `scanio::openStream`. The scan threads run at utility priority and read the take past the page cache (`Source/Audio/UncachedFileInput.h`); a read on the message thread (JUCE's detail draw below about 128 samples per pixel) switches that stream to the page cache, one `fcntl` per change.
+- While a take rolls, and until STOP has closed its files, `EditPage::timerCallback` pauses all four scan threads (`scanio::pauseScanThread`, which never waits). They resume after the settle tick has issued the captured rows' rescans (`resumeScanThread`, retried next tick while the paused slice still runs). Each thumbnail keeps its place, so a paused scan goes on where it stopped.
+- A one-file stereo pair scans its file once: `thumbnailR` has no source, and the R lane draws channel 1 of `thumbnailL` (`rightThumb()`), in every paint path.
+- A forced reload (`applyThumbSource (…, true)`) detaches the old scan before it drops the cached entry, so a scan finishing in between cannot store old peaks under the name.
+- Peak caches are keyed by path. Every session change empties them (`beginWaveCacheReset`, queued on the cache thread), and the session's rows get no files until that has run. Every strip move or delete clears them too (`rescanWaveforms`). An import names the files it wrote (`sessionMediaAdded (written)`) so their old peaks go.
 
 ## Accessibility
 

@@ -64,3 +64,13 @@ A dialog that lays its body out from `y = 0` (instead of below `titleH`) collide
 | Style controls with `dialog::style*` | Define a private `styleCombo` in the dialog — that's how dialogs drift |
 | Start the body below `titleH` (`bodyBounds`) | Lay out from `y=0` — the first field collides with the title |
 | Keep prompts neutral grey (`bgElevated`) | Use blue-tinted `bgPanel`/`bgDeep` for the body |
+| Put red text on a dialog in `brand::textDanger` (5.8:1 on `bgElevated`) | Use `accentRecord` for dialog text — it is 3.7:1 there |
+| Mark a modal whose answer can be dropped with `closesForTake` / `launchClosesForTake` | Open a modal over a rolling take |
+
+## Dialogs and a rolling take
+
+A modal swallows the click on STOP and takes Space, so nothing modal stands over a rolling take.
+
+- A menu item that opens a modal greys while a take rolls and refuses with a status line through `MainComponent::waitsForTake`.
+- A take can still start behind an open modal (a desk, OSC, twin or helper RECORD, a punch window). A dialog marked with `closesForTake (window)` or launched with `launchClosesForTake (opts)` (`Source/UI/FloatingLaunch.h`) is closed by `MainComponent::serviceModalsAroundTakes` on the 10 Hz tick, as if cancelled (exit code 0).
+- Mark only what may be dropped that way: a settings panel that applies as it goes, or a notice that can be shown again. The crash notice and the recovery list are held while a take rolls and shown again after STOP.

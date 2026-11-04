@@ -98,7 +98,7 @@ Everything from here down to the next rule came from a whole-codebase review on 
 ### Fixed — tools and build, 2026-11-04 review
 
 - `verify_take.sh` checks the primary on its own hashes. A backup or mirror hash that failed or is owed is a yellow note, not a failure. A report still pending says hashes are made only while the app has the session open. Given no session, with no recorded capture in the app's settings, it says it is checking the session the app last had open, which may not be the show.
-- Every local build is sealed like a release: hardened runtime with the audio-input entitlement, on the app and the capture helper. Builds stop changing identity, and asking for the microphone again, from one build to the next. The next install may ask once more.
+- Every local build is sealed like a release: hardened runtime with the audio-input entitlement, on the app and the capture helper. Builds no longer come out hardened or plain depending on whether Xcode re-signed them, a flip that changed the app's identity and brought the microphone prompt back. The next install may ask once more.
 - A clean build fetches JUCE as a full clone, so the commit pin keeps working after the security branch moves on.
 - CI also runs the suite under Rosetta, the tool tests, a launch-and-quit of the Release app, and checks the helper's architectures and both binaries' signing. CI is blocked by billing, so none of this has run there yet.
 - INSTALL.md's Developer ID section shows its commands; an unclosed code block had swallowed the Rollback section.

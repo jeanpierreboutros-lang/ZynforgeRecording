@@ -557,7 +557,7 @@ confirm/again keywords → `Warning`, else `Info`.
 | Monitoring | `signal-monitor` (green) input LED |
 | Muted | `signal-mute` (orange) M + clip dimmed by `alpha::dimmed` |
 | Soloed | `signal-solo` (yellow) S |
-| Stereo | L+R collapsed to ONE logical strip across MIXER/EDIT/PATCH |
+| Stereo | L+R collapsed to ONE logical strip across MIXER/EDIT/PATCH; its dB readout and CLIP count read both halves, and its two pan knobs stay out of edit-group pan |
 
 ### Fader  (`ZynForgeLookAndFeel::drawLinearSlider`)
 | State | Visual |
@@ -566,6 +566,7 @@ confirm/again keywords → `Warning`, else `Info`.
 | Hover / drag | `fader-thumb-edge` highlight |
 | At-unity | tick emphasis at 0 dB |
 | Disabled | thumb @ `alpha::dimmed` |
+| Value box | opens on a double-click (`FineFader`); Return applies, a click elsewhere cancels, a word never moves the level |
 
 ### LED + Meter  (`LedMeter.cpp`)
 | State | Visual |
@@ -580,18 +581,22 @@ One variant, fully centralized — **all 23 modals** paint through it
 (`bg-elevated` body, `border-subtle` edge, `radius::xl`, `shadow::elev3`).
 Prompts prime their editor via `dialog::primeNameEditor` (focus + select-all
 + Enter→OK=result 1). Custom dialog `paint()` is a smell — there are none.
+No modal stands over a rolling take, because it would swallow the click on
+STOP. Menu items that open one are grey while a take rolls, and a prompt marked
+`closesForTake` (`FloatingLaunch.h`) closes as Cancel when a take starts behind
+it. Red text on a dialog is `textDanger`, never `accentRecord`.
 
 
 ### TrackRow (EditPage.cpp — the EDIT lane)
 The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / I-R-S-M in the MIXER's order / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). Lane and size are on the row's right-click menu. **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
 
-**Live navigation:** the EDIT viewport follows a rolling playhead by default. A manual horizontal pan (trackpad, Shift+wheel, minimap) or timeline zoom switches to browse mode and must not be undone by the next UI timer tick. The small FOLLOW control restores live tracking; the next play/record pass starts following. During recording, row and ruler edits are locked while zoom, scrolling, minimap and FOLLOW remain usable. A fresh take starts with five minutes across the viewport; as it grows, the timeline widens at that same time scale so the waveform can keep scrolling. Vertical track scrolling and amplitude zoom never change horizontal follow. The ruler, pinned row headers and minimap all track the same viewport offset. The minimap's view box and every scrollbar thumb share one drawing: a `selectFill` ember outline over a faint fill of it. The macOS window has a 1120 × 700 minimum so fixed recording controls remain accessible when resized.
+**Live navigation:** the EDIT viewport follows a rolling playhead by default. A manual horizontal pan (trackpad, Shift+wheel, minimap) or timeline zoom switches to browse mode and must not be undone by the next UI timer tick. The small FOLLOW control restores live tracking; the next play/record pass starts following. During recording, row and ruler edits are locked while zoom, scrolling, minimap and FOLLOW remain usable. A fresh take starts with five minutes across the viewport; as it grows, the timeline widens at that same time scale so the waveform can keep scrolling. Vertical track scrolling and amplitude zoom never change horizontal follow. The ruler, pinned row headers and minimap all track the same viewport offset. The minimap's view box and every scrollbar thumb share one drawing: a `selectFill` ember outline over a faint fill of it. The macOS window has a 1210 × 700 minimum (`MainComponent::kMinWidth`) so fixed recording controls remain accessible when resized.
 
 ### TransportBar
 Path-drawn icon buttons (no glyph fonts): play/pause, stop, record, loop, return-to-zero, marker-drop. **States:** idle (cold control chrome, 3-step hover) · play active (accentPlay) · record active (accentRecord + the app-wide REC treatment) · loop engaged (engagedAmber). Record is shape-distinct from play (field rule: readable across a dark stage). All six expose spoken accessibility names (headless-tested).
 
 ### BigClockPanel
-The hero timecode plate. **Modes:** Idle (cold, lamp reads IDLE) · ArmedReady (amber lamp, reads ARMED) · Playing (active tint) · Recording (whole plate `takePlate` red with a 1 Hz `motion::pulseHz` breathe, white type, reads REC). Carries the time, record time left (free disk while nothing rolls) and the disk-health rows (free GB, missed samples, last write, markers) at body size, since they are the proof the take is safe. Those rows give way first when the row is short, in the order they are drawn. Fed by MainComponent's timer.
+The hero timecode plate. **Modes:** Idle (cold, lamp reads IDLE) · ArmedReady (amber lamp, reads ARMED) · Playing (active tint) · Recording (whole plate `takePlate` red with a 1 Hz `motion::pulseHz` breathe, white type, reads REC). Carries the time, record time left (between takes only pre-flight's figure while what it was worked out for is unchanged, otherwise DISK FREE; NO DRIVE in amber when the chosen sessions drive is unplugged) and the disk-health rows (free GB, missed samples, last write, markers) at body size, since they are the proof the take is safe. Those rows give way first when the row is short, in the order they are drawn. Fed by MainComponent's timer.
 
 ### PerfDashboard
 The status panel beside the clock, in both views at every window size, one width rolling or not. Device format stands in its own narrow column. Beside it, top row: master loudness at body size (LUFS momentary and integrated, true peak, red and marked `!` within 1 dB of full scale); a dropped sample takes that row over. Second row: AUDIO, DISK and BUF, each green / yellow / red. One thin bar along the bottom shows disk load, full at 50 MB/s. Red ring while recording.
