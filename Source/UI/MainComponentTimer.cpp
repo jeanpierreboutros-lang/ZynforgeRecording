@@ -5,6 +5,7 @@
 
 #include "MainComponent.h"
 #include "AudioDeviceDialog.h"
+#include "FloatingLaunch.h"
 #include "../Audio/VirtualSoundcheck.h"
 #include "RecordPosition.h"
 
@@ -24,6 +25,7 @@ void MainComponent::timerCallback()
     // synced, the status snapshot is taken once and feeds the header and the
     // show-day warnings).
     serviceCaptureDaemonLink();
+    serviceModalsAroundTakes();
     twinLink.tick();
     updateTwinStatusLabel();
     // Every way a session can change passes here within a tick.
@@ -129,6 +131,33 @@ void MainComponent::serviceCaptureDaemonLink()
         // Keep idle capture pre-roll following the GUI's device/arm layout.
         // Identical configurations are cached and cause no IPC or reinitialisation.
         if (! engine.isRecording() && captureSupervisor.isAttached()) configureCaptureDaemon();
+    }
+}
+
+// Nothing modal stands over a rolling take: a modal swallows the click on STOP
+// and takes Space. A take can start behind one -- a desk, OSC, twin or daemon
+// RECORD, a punch window -- so this window's marked prompts close while it
+// rolls (closesForTake), and launch notices held for the take come back once
+// its files are final.
+void MainComponent::serviceModalsAroundTakes()
+{
+    if (engine.isRecording())
+    {
+        zynforge::closeModalsForTake();
+        return;
+    }
+    if (engine.isTakeOnDisk()) return;
+    if (crashScanHeld)
+    {
+        crashScanHeld = false;
+        scanForCrashReports();
+    }
+    if (! heldCrashReports.isEmpty())
+        showCrashReportNotice (std::exchange (heldCrashReports, {}));
+    if (recoveryOfferHeld)
+    {
+        recoveryOfferHeld = false;
+        offerSessionRecovery();
     }
 }
 
@@ -293,9 +322,11 @@ void MainComponent::updateNextCueCountdown()
         {
             const auto pos = engine.getPlayer().getPositionSamples();
             const auto sr  = engine.getPlayer().getSampleRate();
+            // The next one on the timeline. The list can be in any order once
+            // cues are moved up or down or added out of order.
             const zynforge::SetlistBar::Cue* next = nullptr;
             for (const auto& c : cues)
-                if (c.samplePos > pos) { next = &c; break; }
+                if (c.samplePos > pos && (next == nullptr || c.samplePos < next->samplePos)) next = &c;
             if (next != nullptr && sr > 0.0)
             {
                 const double secs = (double) (next->samplePos - pos) / sr;
@@ -455,10 +486,15 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
         {
             diskQueryDir    = active;
             lastDiskQueryMs = juce::jmax ((juce::uint32) 1, nowMs);
+            // With no session folder the next take lands in the chosen sessions
+            // folder. With its drive unplugged a free-space read walks up to
+            // /Volumes, on the boot disk, so the clock says the drive is missing
+            // instead of showing another disk's space (RECORD refuses too).
             const auto sessRoot = active.isDirectory() ? active : getSessionsRoot();
+            sessionsDriveMissing = sessRoot != active && zynforge::folderDriveMissing (configuredSessionsRoot());
             const auto bytesFree = sessRoot.exists() ? sessRoot.getBytesFreeOnVolume()
                                                       : juce::File ("/").getBytesFreeOnVolume();
-            cachedFreeGB = bytesToGB (bytesFree);
+            cachedFreeGB = sessionsDriveMissing ? -1.0 : bytesToGB (bytesFree);
         }
     }
     const double freeGB = cachedFreeGB;
@@ -466,7 +502,12 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     // This estimate groups copies by physical volume and selects the first
     // volume to fill. Dividing one drive's free space by the aggregate write
     // rate makes independent backup/mirror drives look needlessly scarce.
-    const double remainingSec = (double) status.minutesRemaining * 60.0;
+    // Between takes the figure is pre-flight's, worked out for one session, arm
+    // count and set of copies. A take ends it -- the drive is hours fuller --
+    // and so does a change to any of those; the clock then shows free space.
+    if (rec) idleEstimateFor.clear();
+    const bool estimateStands = rec || (idleEstimateFor.isNotEmpty() && idleEstimateFor == idleEstimateKey());
+    const double remainingSec = estimateStands ? (double) status.minutesRemaining * 60.0 : 0.0;
 
     bigClock.setDiskInfo (freeGB,
                           status.lastWriteMs,
@@ -474,6 +515,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
                           remainingSec,
                           status.primaryDiskStale ? BigClockPanel::DiskReading::PrimaryStale
                           : status.copyDiskStale  ? BigClockPanel::DiskReading::CopyStale
+                          : ! rec && sessionsDriveMissing ? BigClockPanel::DiskReading::DriveMissing
                                                   : BigClockPanel::DiskReading::Fresh);
     perfDashboard.setLoudness (status.integratedLufs,
                                status.momentaryLufs,
@@ -496,6 +538,30 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
         dashWasRecording = rec;
         resized();
     }
+}
+
+// What pre-flight's idle record-time figure depends on: the session, the arm
+// count, the format and every copy's destination.
+juce::String MainComponent::idleEstimateKey()
+{
+    auto& rec = engine.getRecorder();
+    int armed = 0;
+    for (int i = 0, n = rec.getNumTracks(); i < n; ++i)
+        if (rec.getTrack (i).armed.load (std::memory_order_relaxed)) ++armed;
+    juce::String key;
+    key << engine.getActiveSessionDir().getFullPathName() << '|' << armed << '|' << (int) rec.getCaptureFormat()
+        << '|' << rec.getBackupDirectory().getFullPathName() << '|' << (int) rec.getBackupCaptureFormat();
+    for (const auto& m : rec.getMirrors()) key << '|' << m.root.getFullPathName() << '|' << (int) m.format;
+    return key;
+}
+
+juce::File MainComponent::configuredSessionsRoot() const
+{
+    if (auto* props = engine.getAppProps())
+        if (const auto chosen = props->getValue ("sessionsRoot"); chosen.isNotEmpty()
+                                                                  && juce::File::isAbsolutePath (chosen))
+            return juce::File (chosen);
+    return {};
 }
 
 // What the header says about the backup is read fresh, never remembered from
@@ -782,7 +848,12 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
 
     // With no session there is no rate to disagree with: 48 kHz here is only a
     // launch default, so the next session starts from what the device runs at.
-    if (! engine.hasSessionFolder() && ! engine.getPlayer().isLoaded() && ! engine.isRecording())
+    // A session pinned from the last run but not loaded yet is the same: its
+    // rate arrives when it opens (restoreSessionDocuments), and until then the
+    // default would raise a mismatch on every launch on a rig not at 48 kHz.
+    // RECORD in that gap starts a new folder, which takes the device's rate.
+    const bool sessionLoaded = engine.hasSessionFolder() && engine.mixerBelongsTo (engine.getActiveSessionDir());
+    if (! sessionLoaded && ! engine.getPlayer().isLoaded() && ! engine.isRecording())
     {
         pendingSampleRate = deviceSampleRate;
         engine.setSessionSampleRate (deviceSampleRate);
@@ -839,6 +910,7 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
         juce::MessageBoxIconType::WarningIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE-default navy
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    zynforge::closesForTake (aw);   // a take that starts behind it gets the banner instead
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }), false);
 }

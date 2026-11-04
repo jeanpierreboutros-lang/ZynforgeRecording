@@ -39,6 +39,7 @@
 #include <vector>
 
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
+namespace zynforge { class MixerFixTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -351,8 +352,12 @@ private:
     void runQcAnalysis();
     void detectSongsToMarkers();
     // Launch-time crash telemetry: offer the newest report since last run.
+    // Both wait for STOP while a take rolls (serviceModalsAroundTakes).
     void scanForCrashReports();
     void showCrashReportNotice (const juce::Array<juce::File>& reports);
+    bool crashScanHeld { false };
+    juce::Array<juce::File> heldCrashReports;
+    bool recoveryOfferHeld { false };
     bool configureCaptureDaemon();
     juce::var captureDaemonSettings();   // what the daemon takes from this window, the device aside
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
@@ -382,6 +387,8 @@ private:
     void wireConsoleLink();
     void saveConsoleLog();
     void writeConsoleLog (const juce::File&);
+    // True, with a status line, when a take rolls: what opens a modal waits.
+    bool waitsForTake (const juce::String& what);
     juce::String consoleLinkSummary() const;
     bool refuseConsoleWriteDuringTake();
     void consoleToggleSoundcheck();
@@ -477,6 +484,14 @@ private:
     juce::File   diskQueryDir;
     juce::uint32 lastDiskQueryMs { 0 };
     double       cachedFreeGB { 0.0 };
+    bool         sessionsDriveMissing { false };   // the chosen sessions folder's drive is not mounted
+    // The sessions folder the engineer chose (appProps sessionsRoot); empty for
+    // the default. The engine falls back to ~/Music when it can't be made.
+    juce::File configuredSessionsRoot() const;
+    // What pre-flight's record-time figure was worked out for. The idle clock
+    // shows it only while this still describes the rig (idleEstimateKey).
+    juce::String idleEstimateFor;
+    juce::String idleEstimateKey();
     bool         mixerUndoReady { false };  // baseline established yet?
     void editCutSelected (bool cut);
     void editPasteSelected();
@@ -541,6 +556,7 @@ private:
     void timerCallback() override;
     // timerCallback's steps (MainComponentTimer.cpp), in call order.
     void serviceCaptureDaemonLink();
+    void serviceModalsAroundTakes();
     void syncFloatingPanelButtons();
     void rebuildStripsIfLayoutChanged();
     void updateStatusPills();
@@ -601,7 +617,7 @@ private:
     std::function<void()> preflightStallForTests;   // runs where a dead drive would block
     zynforge::PreflightRow deskPatchRow() const;
     zynforge::PreflightRow deskLinkRow() const;
-    juce::String backupChecklistRow();
+    juce::String backupChecklistRow (bool onSessionDrive = false);
 
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
@@ -636,6 +652,7 @@ private:
     bool remotePunchRefused { false };  // and it was refused because it would punch
     juce::String remoteDeviceRefusal;   // or because nobody there can answer for the device
 
+    friend class zynforge::MixerFixTests;
     friend class zynforge::CaptureDaemonLinkTests;
     friend class zynforge::CapturePathTests;
     friend class zynforge::MainTransportRegressionTests;

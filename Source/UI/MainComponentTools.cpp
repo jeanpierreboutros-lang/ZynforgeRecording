@@ -12,6 +12,7 @@
 #include "../Audio/SongDetector.h"
 #include "../Audio/SpectrumBands.h"
 #include "../Capture/DeviceState.h"
+#include "FloatingLaunch.h"
 #include "QcReportDialog.h"
 #include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
@@ -329,6 +330,9 @@ void MainComponent::promptConsoleConnect()
         return;
     }
 
+    // Disconnecting opens nothing; the connect prompt is a modal.
+    if (waitsForTake ("Console connect")) return;
+
     auto* props = engine.getAppProps();
     const auto lastHost = props != nullptr
         ? props->getValue ("consoleHost", "192.168.1.10")
@@ -354,6 +358,7 @@ void MainComponent::promptConsoleConnect()
     dialog::primeNameEditor (*aw, "host");
     aw->addButton ("Connect", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel",  0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
@@ -782,6 +787,14 @@ void MainComponent::scanForCrashReports()
 {
     auto* props = engine.getAppProps();
     if (props == nullptr) return;
+    // A daemon take adopted at launch, after the GUI crashed, is exactly when
+    // STOP must stay clickable. The scan waits for STOP; the baseline is not
+    // moved, so a quit before then still shows it next time.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    {
+        crashScanHeld = true;
+        return;
+    }
 
     // First-ever run: don't dump historic reports on a fresh install --
     // just set the baseline and start watching from here.
@@ -799,6 +812,12 @@ void MainComponent::scanForCrashReports()
 void MainComponent::showCrashReportNotice (const juce::Array<juce::File>& reports)
 {
     if (reports.isEmpty()) return;
+    // Never over a rolling take; serviceModalsAroundTakes shows it after STOP.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    {
+        heldCrashReports = reports;
+        return;
+    }
     const auto newest = reports.getFirst();
     juce::String body;
     body << "ZynForge Recording crashed since the last run ("
@@ -812,10 +831,15 @@ void MainComponent::showCrashReportNotice (const juce::Array<juce::File>& report
     aw->addButton ("Copy details",     1);
     aw->addButton ("Reveal in Finder", 2);
     aw->addButton ("Dismiss",          0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);
+    juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
-        [aw, newest] (int result)
+        [aw, newest, reports, self] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
+            // Closed because a take started behind it: show it again after STOP.
+            if (result == 0 && self != nullptr && self->engine.isRecording())
+                self->heldCrashReports = reports;
             if (result == 1)
                 juce::SystemClipboard::copyTextToClipboard (
                     zynforge::crashscan::summarize (newest)
@@ -1029,12 +1053,19 @@ void MainComponent::promptStreamOutputs()
                                    juce::dontSendNotification);
     aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);
 
+    // The route is per session, so an answer for one never lands on the next.
     juce::Component::SafePointer<MainComponent> self (this);
-    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int result)
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw, scope = questionScope()] (int result)
     {
         std::unique_ptr<juce::AlertWindow> dispose (aw);
         if (self == nullptr || result != 1) return;
+        if (! self->stillInScope (scope))
+        {
+            self->showStatus ("Stream bus output not changed -- the session changed while the dialog was open");
+            return;
+        }
         const int index = aw->getComboBoxComponent ("pair")->getSelectedItemIndex();
         const int left  = index > 0 ? (index - 1) * 2 : -1;
         self->engine.setStreamOutputs (left, left >= 0 ? left + 1 : -1);

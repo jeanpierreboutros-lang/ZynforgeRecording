@@ -20,10 +20,15 @@ namespace zynforge
         void setElapsed   (juce::int64 samples, double sampleRate);
         void setMarkers   (int count);
         // Whether the numbers are live. A figure the volume probe could not
-        // refresh must read as stale, never as a confident number.
-        enum class DiskReading { Fresh, CopyStale, PrimaryStale };
+        // refresh must read as stale, never as a confident number. With the
+        // chosen sessions drive unplugged there is no figure at all: a read
+        // would land on the boot disk.
+        enum class DiskReading { Fresh, CopyStale, PrimaryStale, DriveMissing };
         void setDiskInfo  (double freeGB, int lastWriteMs, juce::int64 missedSamples,
                            double remainingSeconds, DiskReading reading);
+        double getFreeGB() const noexcept           { return freeGB; }
+        double getRemainingSeconds() const noexcept { return remainingSeconds; }
+        DiskReading getDiskReading() const noexcept { return diskReading; }
 
         // True when any strip is record-armed but the transport is
         // still idle. Lights the lamp amber and reads ARMED, so the engineer

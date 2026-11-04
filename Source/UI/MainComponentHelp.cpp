@@ -9,7 +9,9 @@
 // (orphan-session table on launch).
 
 #include "MainComponent.h"
+#include "FloatingLaunch.h"
 #include "NewSessionDialog.h"
+#include "RecordPosition.h"
 #include "SessionRecoveryDialog.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -248,6 +250,7 @@ void MainComponent::showFirstRunTutorial (std::function<void()> onFinished)
         const bool last = (idx + 1 >= (int) steps.size());
         aw->addButton (last ? "OK" : "Next", 1, juce::KeyPress (juce::KeyPress::returnKey));
         if (! last) aw->addButton ("Skip tour", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        zynforge::closesForTake (aw);
         aw->enterModalState (true, juce::ModalCallbackFunction::create (
             [aw, runner, idx, last, onFinished] (int result)
         {
@@ -280,7 +283,7 @@ void MainComponent::showKeyboardShortcuts()
     opts.useNativeTitleBar       = false;
     opts.resizable               = false;
     opts.content.setOwned (content.release());
-    opts.launchAsync();
+    zynforge::launchClosesForTake (opts);
 }
 
 void MainComponent::showUserGuide()
@@ -332,6 +335,7 @@ void MainComponent::showUserGuide()
                                       juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    zynforge::closesForTake (aw);
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));
 }
@@ -362,6 +366,11 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
     n.location      = r.location;
     n.captureFormat = r.captureFormat;
     n.sampleRate    = r.sampleRate;
+    if (zynforge::folderDriveMissing (r.location))
+    {
+        showStatus ("The drive for " + r.location.getFullPathName() + " is not connected -- connect it or choose another folder");
+        return;
+    }
     const auto sessionFolder = createSessionFolderStructure (n);
     if (! sessionFolder.isDirectory())
     {
@@ -478,8 +487,11 @@ void MainComponent::showStartupWelcome()
 
     // Pro Tools-style two-pane welcome: side rail with New / Open,
     // right pane with the matching form. ZynForge palette throughout
-    // -- no native OS chrome inside the dialog body.
-    const auto defaultRoot = getSessionsRoot();
+    // -- no native OS chrome inside the dialog body. The folder the engineer
+    // chose, even with its drive unplugged, so the Welcome says the drive is
+    // missing instead of offering ~/Music as if it were that drive.
+    const auto chosenRoot  = configuredSessionsRoot();
+    const auto defaultRoot = zynforge::folderDriveMissing (chosenRoot) ? chosenRoot : getSessionsRoot();
     const auto curFormat   = engine.getRecorder().getCaptureFormat();
     const double curSr     = pendingSampleRate;
 
@@ -648,6 +660,14 @@ juce::String MainComponent::removeRecoveredSession (const juce::File& dir)
 
 bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
 {
+    // A take adopted at relaunch (the daemon rolled on through a GUI crash) is
+    // when STOP must stay clickable. The list waits for STOP, and so does its
+    // scan of the sessions folder, which may be the take's drive.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    {
+        recoveryOfferHeld = true;
+        return false;
+    }
     if (unprovenHelperAlive())
         showStatus ("A capture helper from another build is running, so session recovery waits for it");
     const auto incomplete = sessionsToRecover (getSessionsRoot());
@@ -661,7 +681,13 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
     // welcome dialog or while they were already mid-click on
     // something else.
     juce::Component::SafePointer<MainComponent> self (this);
-    SessionRecoveryDialog::launch (incomplete,
+    // Closed by a take starting behind it, the list is offered again after STOP.
+    auto closed = [self, next = std::move (onClosed)]
+    {
+        if (self != nullptr && self->engine.isRecording()) self->recoveryOfferHeld = true;
+        if (next) next();
+    };
+    auto* window = SessionRecoveryDialog::launch (incomplete,
         [self] (const juce::File& dir)
         {
             if (self == nullptr) return;
@@ -691,6 +717,7 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
         {
             return self != nullptr ? self->removeRecoveredSession (dir) : juce::String ("The app is closing.");
         },
-        std::move (onClosed));
+        std::move (closed));
+    zynforge::closesForTake (window);
     return true;
 }

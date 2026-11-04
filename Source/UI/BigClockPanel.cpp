@@ -168,8 +168,10 @@ namespace zynforge
         auto right = inner.removeFromRight (juce::jlimit (0.0f, 300.0f, spare));
         const bool primaryStale = diskReading == DiskReading::PrimaryStale;
         const bool copyStale    = diskReading == DiskReading::CopyStale;
-        const auto valueCol     = primaryStale ? brand::alertAmber : brand::textPrimary;
+        const bool driveMissing = diskReading == DiskReading::DriveMissing;
+        const auto valueCol     = primaryStale || driveMissing ? brand::alertAmber : brand::textPrimary;
         const auto freeText     = primaryStale ? juce::String ("STALE")
+                                : driveMissing ? juce::String ("NO DRIVE")
                                 : freeGB < 0.0 ? juce::String ("--")
                                                : juce::String::formatted ("%.1f GB", freeGB);
         // With no estimate yet (nothing rolling) the large slot holds what is

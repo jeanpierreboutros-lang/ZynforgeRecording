@@ -418,6 +418,20 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
 
     planRecordPosition (plan);
     plan.dir = plan.continueTake ? engine.getActiveSessionDir() : makeNewSessionDir();
+
+    // A new folder goes in the sessions folder the engineer chose. With its
+    // drive unplugged the engine falls back to ~/Music, and the take would land
+    // on the boot disk with nothing said. Better a refusal that names the drive.
+    if (! plan.continueTake)
+    {
+        const auto chosen = configuredSessionsRoot();
+        if (zynforge::folderDriveMissing (chosen) && plan.dir.isAChildOf (getSessionsRoot()))
+        {
+            showRecordRefusal ("The sessions drive is not connected (" + chosen.getFullPathName()
+                               + ") -- connect it, or choose another storage folder in File > New Session");
+            return false;
+        }
+    }
     plan.numTracks = numTracks;
     plan.armed = armed;
 
@@ -1370,7 +1384,8 @@ bool MainComponent::applyBackupFolder (const juce::File& dir)
         showStatus ("Backup folder not changed -- a take is rolling or finalizing");
         return false;
     }
-    showStatus ("Backup folder -> " + dir.getFileName());
+    showStatus (dir == juce::File() ? juce::String ("Backup off -- takes are written to the session's drive only")
+                                    : "Backup folder -> " + dir.getFileName());
     return true;
 }
 
@@ -1687,7 +1702,7 @@ static juce::String checklistFormatName (zynforge::CaptureFormat format)
                                     : "?";
 }
 
-juce::String MainComponent::backupChecklistRow()
+juce::String MainComponent::backupChecklistRow (bool onSessionDrive)
 {
     const auto backupDir = engine.getRecorder().getBackupDirectory();
     const bool backupConfigured = backupDir.getFullPathName().isNotEmpty();
@@ -1705,11 +1720,17 @@ juce::String MainComponent::backupChecklistRow()
     const auto backupState = zynforge::preflight::redundancyReadiness (
         engine.isRecording(), backupConfigured, backupWritable, backupWriterActive);
     const auto format = checklistFormatName (engine.getRecorder().getBackupCaptureFormat());
+    // Writable, but on the session's own drive: one failure takes both copies.
+    const bool shared = onSessionDrive && backupState == BackupState::ConfiguredWritable;
     juce::String row;
-    row << (backupState == BackupState::Active
+    row << (shared ? "[!]  "
+            : backupState == BackupState::Active
               || backupState == BackupState::ConfiguredWritable ? "[OK]  " : "[X]  ")
         << "Backup:      ";
     if (backupState == BackupState::NotConfigured) row << "not configured";
+    else if (shared)
+        row << backupDir.getFullPathName() << " (writable, but on the same drive as the session -- not an independent copy, "
+            << format << ")";
     else if (backupState == BackupState::ConfiguredWritable)
         row << backupDir.getFullPathName() << " (configured + writable, " << format << ")";
     else if (backupState == BackupState::ConfiguredUnavailable)
@@ -1774,10 +1795,27 @@ void MainComponent::showPreflightChecklist()
     const auto freeBytes = withinTime (kDriveWaitMs, [root]
                                        { return root.exists() ? root.getBytesFreeOnVolume() : juce::int64 (0); });
     const double freeGB = bytesToGB (freeBytes.value_or (0));
+    // Every drive the record-time estimate stats from this thread -- the
+    // session's, the backup's and each mirror's -- is asked first, in one wait
+    // with a limit. The volume ids it brings back say which copies share the
+    // session's drive, where a second copy is no second copy at all.
     const auto backupFolder = engine.getRecorder().getBackupDirectory();
-    const bool estimateAnswers = sessionState.has_value() && freeBytes.has_value()
-        && (backupFolder.getFullPathName().isEmpty()
-            || zynforge::VolumeProbe::answersWithin (backupFolder, kDriveWaitMs));
+    const auto mirrors = engine.getMirrors();
+    std::vector<juce::File> drives { hasSes ? sess : root, backupFolder };
+    for (const auto& m : mirrors) drives.push_back (m.root);
+    const auto volumes = withinTime (kDriveWaitMs, [drives, stall = preflightStallForTests]
+    {
+        if (stall) stall();
+        std::vector<juce::uint64> ids;
+        for (const auto& drive : drives)
+            ids.push_back (drive.getFullPathName().isNotEmpty() ? zynforge::VolumeProbe::readVolume (drive).volumeId : 0);
+        return ids;
+    });
+    const auto onSessionDrive = [&volumes] (size_t index)
+    {
+        return volumes.has_value() && index < volumes->size() && (*volumes)[0] != 0 && (*volumes)[index] == (*volumes)[0];
+    };
+    const bool estimateAnswers = sessionState.has_value() && freeBytes.has_value() && volumes.has_value();
     const auto fmt    = engine.getRecorder().getCaptureFormat();
     const auto fmtStr = checklistFormatName (fmt);
 
@@ -1785,8 +1823,12 @@ void MainComponent::showPreflightChecklist()
     // this list can never call a disk fine that RECORD then turns away.
     const auto wantBytes = recordHeadroomBytes (sr, juce::jmax (1, armed), fmt);
     // The clock's own estimate when there is one, so the two can't disagree.
-    // It stats both drives from this thread, so only once they have answered.
-    if (estimateAnswers) engine.refreshDiskMinutesRemaining();
+    // It stats every drive from this thread, so only once they have answered.
+    if (estimateAnswers)
+    {
+        engine.refreshDiskMinutesRemaining();
+        idleEstimateFor = idleEstimateKey();
+    }
     const int estimated = engine.getEstimatedMinutesRemaining();
     const double headroomMinutes = estimated > 0 ? (double) estimated
                                  : wantBytes > 0 ? (freeGB * 1.0e9 / (double) wantBytes) * 30.0 : 0.0;
@@ -1821,7 +1863,7 @@ void MainComponent::showPreflightChecklist()
                       engine.isRecording() ? juce::String ("RECORDING ROLLING")
                                            : engine.getPlayer().isPlaying() ? juce::String ("Playing back")
                                                                             : juce::String ("Idle") });
-    rows.push_back (Row::fromLine (backupChecklistRow()));
+    rows.push_back (Row::fromLine (backupChecklistRow (onSessionDrive (1))));
     if (consoleLink.isConnected())
         rows.push_back (deskLinkRow());
     if (consoleLink.isConnected() || consoleLink.isOnSoundcheckPatch())
@@ -1908,8 +1950,9 @@ void MainComponent::showPreflightChecklist()
     }
 
     // Every configured mirror drive: mounted AND actually writable.
-    for (const auto& m : engine.getMirrors())
+    for (size_t mirrorIndex = 0; mirrorIndex < mirrors.size(); ++mirrorIndex)
     {
+        const auto& m = mirrors[mirrorIndex];
         const auto item = "Mirror " + m.root.getFullPathName();
         if (engine.isRecording())
         {
@@ -1923,9 +1966,12 @@ void MainComponent::showPreflightChecklist()
                 return zynforge::preflight::volumeWritable (root);
             });
             const bool w = answer.value_or (false);
-            rows.push_back ({ chk (w), item, w ? juce::String ("writable")
-                                                : answer.has_value() ? juce::String ("NOT writable / missing")
-                                                                     : juce::String ("drive not answering") });
+            const bool shared = w && onSessionDrive (2 + mirrorIndex);
+            rows.push_back ({ shared ? Row::Status::warning : chk (w), item,
+                              shared ? juce::String ("writable, but on the same drive as the session -- not an independent copy")
+                              : w ? juce::String ("writable")
+                                  : answer.has_value() ? juce::String ("NOT writable / missing")
+                                                       : juce::String ("drive not answering") });
         }
     }
 

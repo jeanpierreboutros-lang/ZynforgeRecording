@@ -1,4 +1,5 @@
 #include "WelcomeDialog.h"
+#include "RecordPosition.h"
 #include "../Audio/DisplayText.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -348,10 +349,15 @@ namespace zynforge
             {
                 pathValue.setText (compactPath (storageDir), juce::dontSendNotification);
                 pathValue.setTooltip (storageDir.getFullPathName());
-                const auto freeBytes = storageDir.getBytesFreeOnVolume();
-                freeValue.setText (freeBytes > 0 ? juce::String (bytesToGB (freeBytes), 1) + " GB free on this drive"
-                                                 : juce::String(),
+                // A read for a drive that is not plugged in walks up to /Volumes
+                // and gives the boot disk's space, so it says the drive is missing.
+                const bool missing = folderDriveMissing (storageDir);
+                const auto freeBytes = missing ? juce::int64 (0) : storageDir.getBytesFreeOnVolume();
+                freeValue.setText (missing ? juce::String ("Drive not connected")
+                                   : freeBytes > 0 ? juce::String (bytesToGB (freeBytes), 1) + " GB free on this drive"
+                                                   : juce::String(),
                                    juce::dontSendNotification);
+                freeValue.setColour (juce::Label::textColourId, missing ? brand::alertAmber : brand::textSecondary);
             }
 
             void pickFolder()

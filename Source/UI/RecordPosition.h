@@ -18,6 +18,18 @@ namespace zynforge
         return player.isLoaded() ? player.getPositionSamples() : 0;
     }
 
+    // A folder on a drive that is not plugged in. Free-space reads walk up to
+    // the first folder that exists, so for one under /Volumes they report the
+    // boot disk, and the engine's sessions folder falls back to ~/Music. A
+    // folder not made yet on a drive that is there is not missing.
+    inline bool folderDriveMissing (const juce::File& folder)
+    {
+        if (folder == juce::File() || ! folder.isAChildOf (juce::File ("/Volumes"))) return false;
+        auto f = folder;
+        while (! f.exists() && f.getParentDirectory() != f) f = f.getParentDirectory();
+        return f == juce::File ("/Volumes");
+    }
+
     // FLAC counts at its uncompressed size, which is conservative.
     inline int captureBytesPerSample (CaptureFormat format) noexcept
     {
