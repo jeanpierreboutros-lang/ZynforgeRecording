@@ -1004,6 +1004,7 @@ void MainComponent::endDaemonTake (juce::String error, bool rewind, std::functio
     engine.setExternalRecording (false);
     if (std::exchange (twinStopFollowsDaemon, false)) twinLink.noteLocalStopAccepted();
     daemonTakeAdopted = false;
+    daemonTakeEndedAtMs = juce::Time::currentTimeMillis();
     daemonStartUnansweredMs = 0;
     const auto session = engine.getActiveSessionDir();
     if (! session.isDirectory())

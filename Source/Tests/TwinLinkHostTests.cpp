@@ -400,11 +400,83 @@ namespace zynforge
                     main.onStopClicked();
                     expect (settle (main, [&] { return peer.count ("stop") == 1; }), "the daemon's STOP never reached the follower");
                     settleStopped (main);
+                    expect (! main.twinLink.snapshot().lastEvent.contains ("without STOP"),
+                            main.twinLink.snapshot().lastEvent + " | starts " + juce::String (peer.count ("start"))
+                            + " stops " + juce::String (peer.count ("stop"))
+                            + " | adopted " + juce::String ((int) main.daemonTakeAdopted)
+                            + " external " + juce::String ((int) main.engine.isExternalRecording())
+                            + " daemonRec " + juce::String ((int) main.captureSupervisor.lastStatus().recording)
+                            + " | " + main.lastCaptureFinalizationError);
+
+                    main.useCaptureDaemon = false;
+                    main.captureSupervisor.disconnect();
+                    daemon.stop();
+                    main.twinLink.stop();
+                    main.engine.clearSessionState();
+                    session.deleteRecursively();
+                }
+
+                beginTest ("A daemon STOP whose \"stopped\" status arrives before its reply still reaches the follower as a STOP");
+                {
+                    // The helper sends a stopped status just before STOP's reply.
+                    // A window tick between the two must wait for the reply, not
+                    // end the take itself and tell the twin link it ended without STOP.
+                    FollowerSocket peer;
+                    if (! linkAsLeader (main, peer)) return;
+                    capture::CaptureDaemon daemon;
+                    daemon.setTestModeNoDevice (true);
+                    juce::WaitableEvent statusSent, releaseReply;
+                    std::atomic<bool> holdReply { false };
+                    daemon.betweenStopStatusAndReplyForTests = [&]
+                    {
+                        if (! holdReply.load()) return;
+                        statusSent.signal();
+                        releaseReply.wait (5000);
+                    };
+                    int port = 0;
+                    juce::Random random;
+                    for (int attempt = 0; attempt < 20 && port == 0; ++attempt)
+                    {
+                        const int candidate = 50000 + random.nextInt (9000);
+                        if (daemon.start (candidate, 1)) port = candidate;
+                    }
+                    expect (port != 0);
+                    daemon.prepareForTests (48000.0, 256, 1);
+                    main.engine.clearAllStripOverrides();
+                    main.engine.setStripCount (1);
+                    main.engine.prepareForTests (48000.0, 256);
+                    main.useCaptureDaemon = true;
+                    main.captureDaemonPort = port;
+                    main.connectCaptureDaemon (false);
+                    expect (main.captureSupervisor.isAttached());
+
+                    const auto session = tempSession();
+                    juce::BigInteger arms;
+                    arms.setBit (0);
+                    expect (main.captureSupervisor.startRecording (session, 1, (int) CaptureFormat::Wav24, arms));
+                    expect (settle (main, [&]
+                    {
+                        main.serviceCaptureDaemonLink();
+                        return main.engine.isExternalRecording();
+                    }), "the window never saw the take");
+                    expect (settle (main, [&] { return peer.count ("start") == 1; }));
+
+                    holdReply = true;
+                    main.onStopClicked();
+                    main.onStopClicked();
+                    expect (statusSent.wait (5000), "the helper never sent STOP's own status");
+                    // The stopped status is in; the reply is not. Let the window tick.
+                    settle (main, [&] { main.serviceCaptureDaemonLink(); return false; }, 400);
+                    expect (! main.twinLink.snapshot().lastEvent.contains ("without STOP"), main.twinLink.snapshot().lastEvent);
+                    releaseReply.signal();
+                    expect (settle (main, [&] { return peer.count ("stop") == 1; }), "the daemon's STOP never reached the follower");
+                    settleStopped (main);
                     expect (! main.twinLink.snapshot().lastEvent.contains ("without STOP"), main.twinLink.snapshot().lastEvent);
 
                     main.useCaptureDaemon = false;
                     main.captureSupervisor.disconnect();
                     daemon.stop();
+                    daemon.betweenStopStatusAndReplyForTests = nullptr;
                     main.twinLink.stop();
                     main.engine.clearSessionState();
                     session.deleteRecursively();

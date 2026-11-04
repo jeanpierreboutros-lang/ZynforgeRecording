@@ -272,16 +272,24 @@ namespace zynforge::capture
     void CaptureDaemon::handleCommand (const Command& c)
     {
         std::unique_lock<std::mutex> g (commandLock);
+        if (c.action != Action::Hello && c.action != Action::Ping)
+            commandGeneration.fetch_add (1, std::memory_order_acq_rel);
         const auto sendReplyUnlocked = [this, &g] (const Reply& reply)
         {
             g.unlock();
-            server.sendReply (reply);
+            {
+                const std::lock_guard<std::mutex> order (sendOrder);
+                server.sendReply (reply);
+            }
             g.lock();
         };
         const auto sendStatusUnlocked = [this, &g] (const EngineStatus& status)
         {
             g.unlock();
-            server.sendStatus (status);
+            {
+                const std::lock_guard<std::mutex> order (sendOrder);
+                server.sendStatus (status);
+            }
             g.lock();
         };
         switch (c.action)
@@ -365,6 +373,7 @@ namespace zynforge::capture
                 }
                 if (beforeStopReplyForTests) beforeStopReplyForTests();
                 sendStatusUnlocked (buildStatus());
+                if (betweenStopStatusAndReplyForTests) betweenStopStatusAndReplyForTests();
                 sendReplyUnlocked (r);
                 break;
             }
@@ -596,14 +605,21 @@ namespace zynforge::capture
             if (server.hasClient())
             {
                 EngineStatus snapshot;
+                juce::uint64 builtAt = 0;
                 {
                     const std::lock_guard<std::mutex> g (commandLock);
                     snapshot = buildStatus();
+                    builtAt = commandGeneration.load (std::memory_order_acquire);
                 }
+                if (afterStatusBuiltForTests) afterStatusBuiltForTests (snapshot);
                 // Socket writes can wait on a connected peer that stopped
                 // reading. Never hold the command lock across that wait: STOP
-                // must still be able to finalise a rolling take.
-                server.sendStatus (snapshot);
+                // must still be able to finalise a rolling take. A command that
+                // ran since the build may already have replied: the next pass
+                // sends what it left instead (see commandGeneration).
+                const std::lock_guard<std::mutex> order (sendOrder);
+                if (commandGeneration.load (std::memory_order_acquire) == builtAt)
+                    server.sendStatus (snapshot);
             }
             else
             {

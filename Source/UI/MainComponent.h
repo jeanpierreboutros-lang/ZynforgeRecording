@@ -642,6 +642,11 @@ private:
     bool punchInWaiting { false };       // a save is holding up a PUNCH-mode punch-in
     bool daemonLinkLost { false };       // reported lost, not yet resolved
     bool daemonTakeAdopted { false };    // this window knows the rolling take
+    // When this window last ended a daemon take. Only a status received after
+    // it may adopt a rolling one: a status line can be dropped under load (the
+    // server's write lock is timed), and a "recording" status left over from
+    // before STOP would take the finished take up again.
+    juce::int64 daemonTakeEndedAtMs { 0 };
     // RECORD got no reply. The take may be rolling, so the guard is up until a
     // fresh status settles it.
     juce::uint32 daemonStartUnansweredMs { 0 };

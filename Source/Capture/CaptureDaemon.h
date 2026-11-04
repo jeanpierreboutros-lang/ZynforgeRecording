@@ -81,6 +81,10 @@ namespace zynforge::capture
         std::atomic<int> configuresForTests { 0 };
         std::function<void()> beforeStartForTests;
         std::function<void()> beforeStopReplyForTests;
+        // Runs after STOP's own status has gone out and before its reply.
+        std::function<void()> betweenStopStatusAndReplyForTests;
+        // Runs on the status thread between building a status and sending it.
+        std::function<void (const EngineStatus&)> afterStatusBuiltForTests;
         void processTestBlock (const float* const* inputs, int numChannels, int numSamples);
 
         // juce::AudioIODeviceCallback
@@ -116,6 +120,14 @@ namespace zynforge::capture
         CaptureServer            server;
 
         std::mutex        commandLock;     // command handling vs status build
+        // A status is built under commandLock and sent after it is released,
+        // so a STOP can run, and send its reply, in between. Every command but
+        // Hello and Ping bumps this under commandLock; status and reply sends
+        // take sendOrder, and a status built before the last command is dropped.
+        // Otherwise a "still recording" status lands after STOP's reply and
+        // the window takes the finished take for a rolling one.
+        std::atomic<juce::uint64> commandGeneration { 0 };
+        std::mutex        sendOrder;
         std::thread       statusThread;
         std::atomic<bool> running   { false };
         std::atomic<bool> testMode  { false };

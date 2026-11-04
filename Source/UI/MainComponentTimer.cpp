@@ -112,7 +112,8 @@ void MainComponent::serviceCaptureDaemonLink()
             {
                 if (daemonStatus.recording)
                 {
-                    if (! daemonTakeAdopted) adoptDaemonTake (daemonStatus, true);
+                    // Not from a status older than the take this window just ended.
+                    if (! daemonTakeAdopted && receivedAt > daemonTakeEndedAtMs) adoptDaemonTake (daemonStatus, true);
                 }
                 else if (daemonStartUnansweredMs != 0)
                 {

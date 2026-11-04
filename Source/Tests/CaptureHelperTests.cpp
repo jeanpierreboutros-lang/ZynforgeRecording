@@ -351,6 +351,62 @@ namespace zynforge
                 session.deleteRecursively();
             }
 
+            beginTest ("A status built before STOP never reaches the window after STOP's reply");
+            {
+                // The window takes a rolling status after STOP for a take it has
+                // not adopted, takes it up again and re-links a twin follower.
+                CaptureDaemon daemon;
+                daemon.setTestModeNoDevice (true);
+                // Installed before the status thread starts; armed later.
+                juce::WaitableEvent built, release;
+                std::atomic<bool> armed { false }, holding { false };
+                daemon.afterStatusBuiltForTests = [&] (const EngineStatus& s)
+                {
+                    if (! armed.load() || ! s.recording || holding.exchange (true)) return;
+                    built.signal();
+                    release.wait (5000);
+                };
+                bool listening = false;
+                juce::Random random;
+                for (int attempt = 0; attempt < 20 && ! listening; ++attempt)
+                    listening = daemon.start (50000 + random.nextInt (9000), 1);
+                expect (listening);
+                if (! listening) return;
+                daemon.prepareForTests (kRate, kBlock, 1);
+                daemon.getRecorder().getTrack (0).armed.store (true);
+
+                CaptureClient client;
+                std::atomic<bool> replied { false }, staleAfterReply { false };
+                client.onStatus = [&] (const EngineStatus& s)
+                {
+                    if (replied.load() && s.recording) staleAfterReply = true;
+                };
+                expect (client.connect ("127.0.0.1", daemon.getPort()));
+                expect (client.hello (2000).ok);
+                const auto session = tempSession ("stale-status");
+                Command start; start.action = Action::StartRecording; start.sessionDir = session.getFullPathName();
+                expect (client.request (start, 3000).ok);
+                std::vector<float> samples ((size_t) kBlock, 0.25f);
+                const float* inputs[] { samples.data() };
+                for (int i = 0; i < 20; ++i) daemon.processTestBlock (inputs, 1, kBlock);
+
+                // Hold one rolling status between its build and its send.
+                armed = true;
+                expect (built.wait (3000), "no rolling status was built");
+                Command stop; stop.action = Action::StopRecording;
+                const auto reply = client.request (stop, 5000);
+                expect (reply.completed && reply.ok, "STOP's reply never reached the window");
+                replied = true;
+                release.signal();
+                juce::Thread::sleep (400);   // the held status and the next ones go out
+                expect (! staleAfterReply.load(), "a status built before STOP arrived after STOP's reply");
+                client.disconnect();
+                daemon.stop();
+                daemon.afterStatusBuiltForTests = nullptr;
+                client.onStatus = nullptr;
+                session.deleteRecursively();
+            }
+
             beginTest ("A helper finishes its take at once only when the system is ending, or on a second signal");
             {
                 expect (! helperexit::finishTakeNow (1, false), "one signal from a person ended the take");

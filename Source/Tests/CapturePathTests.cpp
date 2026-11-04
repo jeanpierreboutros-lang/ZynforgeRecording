@@ -1573,7 +1573,7 @@ namespace zynforge
 
         void testResumedHashes()
         {
-            beginTest ("Resumed hashes reach the primary first, and a backup that is gone fails only the backup");
+            beginTest ("Resumed hashes reach the primary first, and a backup that is gone is owed, not a failed take");
             {
                 const auto root = tempDir ("resume-order");
                 const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
@@ -1595,7 +1595,10 @@ namespace zynforge
                 expect (! (bool) report["sha256Pending"]);
                 expectEquals (firstHash (report, { "sha256" }), finished);
                 expect (! (bool) report["sha256Failed"], "a missing backup failed the primary's hashes");
-                expect ((bool) report["copySha256Failed"], "the backup that could not be read was not named");
+                // A copy whose drive is gone is owed, not failed: failed is kept
+                // for a copy file that is there and will not read back.
+                expect ((bool) report["copySha256Missing"], "the backup whose drive was gone is not owed");
+                expect (! (bool) report["copySha256Failed"], "a backup whose drive was gone counts as unreadable");
                 expect (firstHash (report, { "mirrors", "sha256" }).isNotEmpty());
             }
 
