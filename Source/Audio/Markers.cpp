@@ -33,6 +33,10 @@ namespace zynforge
 
         std::mutex lock;
         std::optional<Save> waiting;
+        // The newest list handed to the queue, until a write of it lands. A
+        // reload of that folder reads this, not a file the write has not
+        // reached, and a failed write leaves it here for the next save.
+        std::optional<Save> unlanded;
         bool writing { false };
         std::function<void()> beforeWriteForTests;
         MarkersManager* owner { nullptr };   // message thread only
@@ -45,10 +49,25 @@ namespace zynforge
             return writing;
         }
 
+        std::optional<juce::String> unlandedFor (const juce::File& dir)
+        {
+            const std::lock_guard<std::mutex> guard (lock);
+            if (unlanded.has_value() && unlanded->dir == dir) return unlanded->json;
+            return std::nullopt;
+        }
+
+        // A newer list reached this folder some other way.
+        void landed (const juce::File& dir)
+        {
+            const std::lock_guard<std::mutex> guard (lock);
+            if (unlanded.has_value() && unlanded->dir == dir) unlanded.reset();
+        }
+
         static void add (const std::shared_ptr<SaveQueue>& queue, Save save)
         {
             {
                 const std::lock_guard<std::mutex> guard (queue->lock);
+                queue->unlanded = save;
                 queue->waiting = std::move (save);
                 if (queue->writing) return;
                 queue->writing = true;
@@ -69,7 +88,13 @@ namespace zynforge
                     }
                     if (hook != nullptr) hook();
                     juce::File kept;
-                    writeMarkers (next.dir, next.json, kept);
+                    const bool written = writeMarkers (next.dir, next.json, kept);
+                    {
+                        const std::lock_guard<std::mutex> guard (queue->lock);
+                        if (written && queue->unlanded.has_value() && queue->unlanded->dir == next.dir
+                            && queue->unlanded->json == next.json)
+                            queue->unlanded.reset();
+                    }
                     if (kept != juce::File())
                         juce::MessageManager::callAsync ([queue, kept]
                         {
@@ -99,6 +124,14 @@ namespace zynforge
 
     void MarkersManager::setContext (const juce::File& dir, double sr)
     {
+        // The folder already here: the list in memory is the newest there is.
+        // Every change went through save(), and a deferred write of it may not
+        // have landed yet (a take's STOP and the next RECORD both land here).
+        if (dir == sessionDir && dir != juce::File())
+        {
+            sampleRate = sr > 0 ? sr : sampleRate;
+            return;
+        }
         sessionDir = dir;
         sampleRate = sr > 0 ? sr : sampleRate;
         markers.clear();
@@ -255,6 +288,7 @@ namespace zynforge
         }
         juce::File kept;
         const bool written = writeMarkers (sessionDir, json, kept);
+        if (written) saveQueue->landed (sessionDir);
         if (kept != juce::File() && onDamagedFileKept)
             onDamagedFileKept (kept);
         return written;
@@ -263,13 +297,22 @@ namespace zynforge
     bool MarkersManager::load()
     {
         markers.clear();
-        if (! sessionDir.isDirectory()) return false;
-
-        const auto file = markersFileFor (sessionDir);
-        if (! file.existsAsFile()) return false;
+        if (sessionDir == juce::File()) return false;
+        juce::String text;
+        if (const auto owed = saveQueue->unlandedFor (sessionDir))
+        {
+            text = *owed;   // newer than the file: its write has not landed
+        }
+        else
+        {
+            if (! sessionDir.isDirectory()) return false;
+            const auto file = markersFileFor (sessionDir);
+            if (! file.existsAsFile()) return false;
+            text = file.loadFileAsString();
+        }
 
         juce::var parsed;
-        if (juce::JSON::parse (file.loadFileAsString(), parsed).failed())
+        if (juce::JSON::parse (text, parsed).failed())
             return false;
 
         if (auto* obj = parsed.getDynamicObject())
