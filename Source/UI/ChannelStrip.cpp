@@ -129,7 +129,11 @@ namespace zynforge
             // defensively so a queued callback can't touch freed memory).
             if (! strip.stripValid) { stopTimer(); return; }
 
-            const float peakLin = strip.state.peak.load (std::memory_order_relaxed);
+            // A stereo strip reads both halves, as its meter does: a clip on R
+            // is a clip on this strip.
+            const auto* right = strip.pairState;
+            const float peakLin = juce::jmax (strip.state.peak.load (std::memory_order_relaxed),
+                                              right != nullptr ? right->peak.load (std::memory_order_relaxed) : 0.0f);
             const float dB      = juce::Decibels::gainToDecibels (peakLin, -80.0f);
             // Only push text into the label when it actually changed -- an
             // idle/silent strip otherwise re-lays-out its labels 10x/s for
@@ -142,7 +146,8 @@ namespace zynforge
                 lastDbText = dbText;
             }
 
-            const int clips = strip.state.clipCount.load (std::memory_order_relaxed);
+            const int clips = strip.state.clipCount.load (std::memory_order_relaxed)
+                            + (right != nullptr ? right->clipCount.load (std::memory_order_relaxed) : 0);
             if (clips != lastClips)
             {
                 if (clips > 0)
@@ -822,8 +827,8 @@ namespace zynforge
         addAndMakeVisible (gainFader);
 
         // The fader's own text box is only as wide as the cap, which cut the
-        // value to "0....", so the value gets the strip's width. It stays
-        // click-to-type, as the box was.
+        // value to "0....", so the value gets the strip's width. It opens on a
+        // double-click and a click elsewhere cancels it (FineFader::editOnDoubleClick).
         faderValue.setFont (zynforge::brand::type::monoStamp());
         faderValue.setColour (juce::Label::textColourId, brand::textPrimary);
         faderValue.setColour (juce::Label::backgroundColourId,
@@ -831,9 +836,9 @@ namespace zynforge
         faderValue.setJustificationType (juce::Justification::centred);
         faderValue.setBorderSize ({});
         faderValue.setMinimumHorizontalScale (0.6f);
-        faderValue.setEditable (true, false, false);
+        FineFader::editOnDoubleClick (faderValue);
         faderValue.setTitle ("Gain value");
-        faderValue.setTooltip ("Fader level -- click to type a value.");
+        faderValue.setTooltip ("Fader level -- double-click to type a value, Return to apply.");
         faderValue.onTextChange = [this]
         {
             const auto typed = gainFader.getValueFromText (faderValue.getText());

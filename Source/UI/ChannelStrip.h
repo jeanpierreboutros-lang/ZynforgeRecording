@@ -12,6 +12,8 @@
 
 namespace zynforge
 {
+    class MixerFixTests;
+
     class ChannelStrip final : public juce::Component
     {
     public:
@@ -121,6 +123,7 @@ namespace zynforge
         void mouseExit  (const juce::MouseEvent&) override;
 
     private:
+        friend class zynforge::MixerFixTests;
         // The header plate: id row (number + chip) over the name row.
         static constexpr int kIdRowH   = 12;
         static constexpr int kNameRowH = 22;
