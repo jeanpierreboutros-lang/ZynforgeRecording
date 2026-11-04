@@ -26,7 +26,11 @@ FetchContent_Declare(
     # Immutable commit for JUCE 8.0.17-security. A mutable release tag lets an
     # upstream retag silently replace code in a clean build.
     GIT_TAG        dabd5ad13cd869cba41046947fffc8e5ce5cd662
-    GIT_SHALLOW    TRUE
+    # A full clone, never GIT_SHALLOW: a shallow clone fetches only branch
+    # tips, so a commit pin checks out only while that commit IS a tip, and a
+    # clean configure fails as soon as its branch moves on (the 8.0.4 pin of
+    # every earlier revision already does). A full clone reaches any commit on
+    # a branch or a tag.
 )
 FetchContent_MakeAvailable(JUCE)
 
@@ -347,7 +351,21 @@ target_link_libraries(ZynforgeCapture PRIVATE
 # The test runner embeds the helper the same way, so the daemon suites
 # exercise the shipping discovery path (Contents/MacOS/ZynforgeCapture).
 if(APPLE)
+    # The seal is the one tools/notarize.sh ships, hardened runtime with the
+    # audio-input entitlement, so every local build runs the configuration a
+    # release does. A plain seal here left a build hardened or not depending
+    # on whether Xcode re-signed after this step, and each flip changed the
+    # app's identity and brought the microphone prompt back. The test runner
+    # is not hardened; its helper is sealed like the shipping one.
+    set(ZYNFORGE_HELPER_SEAL --options runtime
+        --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/tools/entitlements/ZynforgeCapture.entitlements")
     foreach(app ZynforgeRecording ZynforgeRecordingTests)
+        if(app STREQUAL "ZynforgeRecording")
+            set(app_seal --options runtime
+                --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/tools/entitlements/ZynforgeRecording.entitlements")
+        else()
+            set(app_seal)
+        endif()
         add_dependencies(${app} ZynforgeCapture)
         add_custom_command(TARGET ${app} POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -358,9 +376,9 @@ if(APPLE)
             # also invalidates any earlier bundle signature. Give local/CI builds a
             # complete ad-hoc seal after embedding. Xcode or a release pipeline can
             # replace this with the configured Developer ID signature afterwards.
-            COMMAND /usr/bin/codesign --force --sign -
+            COMMAND /usr/bin/codesign --force --sign - ${ZYNFORGE_HELPER_SEAL}
                     "$<TARGET_BUNDLE_DIR:${app}>/Contents/MacOS/ZynforgeCapture"
-            COMMAND /usr/bin/codesign --force --sign -
+            COMMAND /usr/bin/codesign --force --sign - ${app_seal}
                     "$<TARGET_BUNDLE_DIR:${app}>"
             COMMENT "Embedding ZynforgeCapture and sealing the ${app} bundle"
             VERBATIM)
