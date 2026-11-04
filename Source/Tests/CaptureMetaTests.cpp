@@ -933,8 +933,14 @@ namespace zynforge
                 {
                     AudioEngine engine;
                     engine.setChaseMode (AudioEngine::ChaseMode::Mtc);
+                    // A running master: one whole quarter-frame run of 10:20:30:00
+                    // at 25 fps. A full frame alone is a cue, not a running clock.
                     const auto report = engineTake (engine, dir, [&]
-                    { engine.getTimecodeChase().feedMtcFullFrame (10, 20, 30, 0, 25.0f); });
+                    {
+                        const int nibbles[8] { 0, 0, 30 & 0x0F, 30 >> 4, 20 & 0x0F, 20 >> 4, 10, 1 << 1 };
+                        for (int type = 0; type < 8; ++type)
+                            engine.getTimecodeChase().feedMtcQuarterFrame ((juce::uint8) ((type << 4) | nibbles[type]));
+                    });
                     expectEquals (report.getProperty ("timeReferenceSource", "").toString(), juce::String ("mtc"));
                     const auto seconds = (double) (juce::int64) report.getProperty ("timeReference", 0) / kRate;
                     expect (seconds > 37230.0 && seconds < 37232.0, juce::String (seconds));

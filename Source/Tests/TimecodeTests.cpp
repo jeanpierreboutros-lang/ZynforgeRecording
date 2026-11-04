@@ -67,11 +67,13 @@ namespace zynforge
                 expectWithinAbsoluteError (tc.getFps(), 25.0f, 0.01f);
             }
 
-            beginTest ("MTC full-frame message publishes the timecode immediately");
+            beginTest ("MTC full-frame message publishes the timecode immediately, as a cue, not a running clock");
             {
+                // A master sends one while stopped to cue its slaves (a locate,
+                // a scrub): chase must not take it for a clock that is running.
                 TimecodeChase tc;
                 tc.feedMtcFullFrame (9, 58, 7, 11);
-                expect (tc.isRunning());
+                expect (! tc.isRunning(), "a cue from a stopped master read as running timecode");
                 expectEquals ((int) tc.getHours(),   9);
                 expectEquals ((int) tc.getMinutes(), 58);
                 expectEquals ((int) tc.getSeconds(), 7);
@@ -154,6 +156,52 @@ namespace zynforge
                 expectEquals ((int) tc.getHours(), 2, "the next whole run was not read");
             }
 
+            beginTest ("A full frame between quarter-frame runs never keeps a stopped master running");
+            {
+                TimecodeChase tc;
+                for (int type = 0; type < 8; ++type)
+                    tc.feedMtcQuarterFrame (quarterFrame (type, 1, 0, 0, 0, 3));
+                expect (tc.isRunning());
+                juce::Thread::sleep (300);   // the master stopped
+                expect (! tc.isRunning());
+                tc.feedMtcFullFrame (1, 0, 30, 0, 30.0f);   // and cued a new place
+                expect (! tc.isRunning(), "a cue restarted a stopped master's clock");
+                expectEquals ((int) tc.getSeconds(), 30);
+            }
+
+            // Quarter-frames for `frames` frames from `start`, timed as a master
+            // running at `realFps` sends them; labels count at the nominal rate.
+            const auto feedMtcRun = [&quarterFrame] (TimecodeChase& tc, Tc start, int frames, int nominal,
+                                                    int rateCode, double realFps)
+            {
+                int count = ((start.h * 60 + start.m) * 60 + start.s) * nominal + start.f;
+                const double msPerQuarter = 1000.0 / (realFps * 4.0);
+                double now = 1000.0;
+                for (int f = 0; f + 1 < frames; f += 2, count += 2)
+                {
+                    const int fr = count % nominal, total = count / nominal;
+                    const int sc = total % 60, mn = (total / 60) % 60, hr = (total / 3600) % 24;
+                    for (int type = 0; type < 8; ++type, now += msPerQuarter)
+                        tc.feedMtcQuarterFrame (quarterFrame (type, hr, mn, sc, fr, rateCode), now);
+                }
+            };
+
+            beginTest ("MTC at 29.97 non-drop is told from 30 once the master has run a while");
+            {
+                TimecodeChase pulled;
+                feedMtcRun (pulled, { 1, 0, 0, 0 }, 30 * 12, 30, 3, 30000.0 / 1001.0);
+                expectWithinAbsoluteError (pulled.getFps(), 29.97f, 0.01f);
+                expect (! pulled.isDropFrame());
+
+                TimecodeChase real;
+                feedMtcRun (real, { 1, 0, 0, 0 }, 30 * 12, 30, 3, 30.0);
+                expectWithinAbsoluteError (real.getFps(), 30.0f, 0.001f, "true 30 fps MTC read as pulled down");
+
+                TimecodeChase film;
+                feedMtcRun (film, { 1, 0, 0, 0 }, 24 * 12, 24, 0, 24000.0 / 1001.0);
+                expectWithinAbsoluteError (film.getFps(), 23.976f, 0.01f);
+            }
+
             beginTest ("MTC running backwards is read from its own direction");
             {
                 TimecodeChase tc;
@@ -232,6 +280,34 @@ namespace zynforge
                 expectWithinAbsoluteError (tc.getFps(), 29.97f, 0.01f);
                 expect (tc.isDropFrame());
                 expectTime (tc, { 0, 1, 0, 16 });   // :25..:29 (5), then :02..:16 (15)
+            }
+
+            beginTest ("LTC at 29.97 non-drop is told from 30, and its time counts real seconds");
+            {
+                TimecodeChase tc;
+                const auto sig = ltcSignal (48000.0, 30000.0 / 1001.0, false, { 1, 0, 0, 0 }, 40);
+                feedBlocks (tc, sig, 48000.0);
+                expect (tc.isRunning(), "29.97 non-drop LTC did not LOCK");
+                expectWithinAbsoluteError (tc.getFps(), 29.97f, 0.01f);
+                expect (! tc.isDropFrame());
+                expectTime (tc, { 1, 0, 1, 9 });
+                // Frames are what is real: 01:00:01:09 is 108039 frames of 1001/30000 s.
+                expectWithinAbsoluteError (tc.timeOfDaySeconds (0), 108039.0 * 1001.0 / 30000.0, 1.0e-6);
+                // So 80 s of labels are 80.08 s of a free-running player, not 80.
+                const juce::uint32 a = (1u << 24), b = (1u << 24) | (1u << 16) | (20u << 8);
+                expectWithinAbsoluteError (tc.secondsAt (b, 0) - tc.secondsAt (a, 0), 80.08, 1.0e-6);
+                expectEquals ((int) tc.labelAt (tc.secondsAt (b, 0)), (int) b, "a stamp does not read back as its label");
+            }
+
+            beginTest ("LTC at 23.976 is told from 24");
+            {
+                TimecodeChase tc;
+                const auto sig = ltcSignal (48000.0, 24000.0 / 1001.0, false, { 2, 0, 0, 0 }, 40);
+                feedBlocks (tc, sig, 48000.0);
+                expect (tc.isRunning(), "23.976 LTC did not LOCK");
+                expectWithinAbsoluteError (tc.getFps(), 23.976f, 0.01f);
+                expectTime (tc, { 2, 0, 1, 15 });
+                expectWithinAbsoluteError (tc.timeOfDaySeconds (0), (2.0 * 3600.0 * 24.0 + 39.0) * 1001.0 / 24000.0, 1.0e-6);
             }
 
             beginTest ("LTC decodes at 44.1 kHz, inverted, with a noise floor");

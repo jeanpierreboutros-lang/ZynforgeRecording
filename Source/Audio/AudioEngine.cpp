@@ -793,18 +793,15 @@ namespace zynforge
 
     juce::int64 AudioEngine::getChaseTargetSamples() const
     {
-        double fps = timecodeChase.getFps();
-        if (fps <= 0.0) fps = 30.0;   // not yet learned -> sane default
         const double rate = player.getSampleRate() > 0.0 ? player.getSampleRate()
                           : (deviceManager.getCurrentAudioDevice() != nullptr
                                 ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 48000.0);
         const auto start = chaseStartLabel.load (std::memory_order_relaxed);
-        double secs = timecodeChase.timeOfDaySeconds (0)
-                    - ((double) (start >> 24) * 3600.0 + (double) ((start >> 16) & 0xFF) * 60.0
-                       + (double) ((start >> 8) & 0xFF) + (double) (start & 0xFF) / fps);
+        // Both ends converted alike: a pulled-down rate's labels are not seconds.
+        double secs = timecodeChase.timeOfDaySeconds (0) - timecodeChase.secondsAt (start, 0);
         // House timecode wraps at midnight; a show running across it is still
         // the same show.
-        constexpr double kDay = 24.0 * 3600.0;
+        const double kDay = timecodeChase.secondsAt (24u << 24, 0);
         if (secs < -kDay / 2.0) secs += kDay;
         return (juce::int64) std::floor (secs * rate + 0.5);
     }
@@ -841,19 +838,16 @@ namespace zynforge
         auto files = folder.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "Track_*");
         files.sort();
         const double rate = player.getSampleRate();
-        double fps = timecodeChase.getFps();
-        if (fps <= 0.0) fps = 30.0;
         if (rate <= 0.0) return false;
         for (const auto& file : files)
         {
             juce::uint64 stamp = 0;
             if (file.getFileName().contains (".punchbase") || mainTakeTrackNumber (file) <= 0
                 || bwf::readTimeReference (file, stamp) != bwf::StampResult::ok) continue;
-            const double seconds = (double) stamp / rate;
-            const int whole = (int) seconds;
+            // The stamp counts real seconds, which a pulled-down rate's labels do not.
+            const auto label = timecodeChase.labelAt ((double) stamp / rate);
             return setChaseStartTimecode (juce::String::formatted ("%02d:%02d:%02d:%02d",
-                (whole / 3600) % 24, (whole / 60) % 60, whole % 60,
-                juce::jmin (29, (int) ((seconds - whole) * fps))));
+                (int) (label >> 24), (int) ((label >> 16) & 0xFF), (int) ((label >> 8) & 0xFF), (int) (label & 0xFF)));
         }
         return false;
     }

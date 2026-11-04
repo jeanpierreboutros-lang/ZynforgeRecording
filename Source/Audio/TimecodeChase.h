@@ -25,8 +25,10 @@ namespace zynforge
     // passed since the previous sync word.
     //
     // LOCK (isLtcLocked) needs three such frames in a row whose labels count
-    // up one frame at a time. It then holds through a relocate as long as
-    // valid frames keep arriving, and drops a quarter second after they stop:
+    // up one frame at a time, eight at 24 and 30 non-drop, where the span of
+    // the run is what tells them from 23.976 and 29.97 non-drop. It then holds
+    // through a relocate as long as valid frames keep arriving, and drops a
+    // quarter second after they stop:
     // counted in samples while the strip is still fed, and in wall-clock time
     // when the feed itself stops (strip unrouted, device change). The frame
     // rate is the measured sync-to-sync period, floored by the highest frame
@@ -67,7 +69,11 @@ namespace zynforge
             prevFrameCount = -1;
             maxFrameSeen = 0;
             locked = false;
+            chainStartSample = 0;
+            ltcPulledDown = false;
+            ltcRateKnown = false;
             mtcAcc = MtcAcc{};
+            mtcRate = MtcRate{};
         }
 
         // Race-free subset of reset() that is safe to call from the message
@@ -132,7 +138,10 @@ namespace zynforge
         //   5: minute MS nibble
         //   6: hour   LS nibble
         //   7: hour   MS nibble + bits 1-2 of fps code
-        void feedMtcQuarterFrame (juce::uint8 data) noexcept
+        // `nowMs` is when it arrived: the run's timing is what tells 29.97 and
+        // 23.976 non-drop from 30 and 24, whose rate codes they share.
+        void feedMtcQuarterFrame (juce::uint8 data,
+                                  double nowMs = juce::Time::getMillisecondCounterHiRes()) noexcept
         {
             const int type = (data >> 4) & 0x07;
             const int expected = mtcAcc.received > 0 ? mtcAcc.lastType + mtcAcc.direction : -1;
@@ -148,7 +157,7 @@ namespace zynforge
                 mtcAcc.lastType = type;
                 if (++mtcAcc.received == 8)
                 {
-                    publishMtcRun();
+                    publishMtcRun (nowMs);
                     mtcAcc = MtcAcc{};
                 }
             }
@@ -156,7 +165,11 @@ namespace zynforge
         }
 
         // Full-frame MTC message (F0 7F cc 01 01 hr mn sc fr F7). The
-        // MIDI driver pre-extracts the 4 bytes and hands them in.
+        // MIDI driver pre-extracts the 4 bytes and hands them in. A master
+        // sends one to cue its slaves, mostly while it is stopped (a locate,
+        // a scrub): it says where, never that a clock is running. Only
+        // quarter-frame runs make MTC run, or each locate on a stopped master
+        // would play a moment of the session.
         void feedMtcFullFrame (juce::uint8 hr, juce::uint8 mn,
                                juce::uint8 sc, juce::uint8 fr,
                                float fps = 0.0f, bool dropFrame = false) noexcept
@@ -164,16 +177,16 @@ namespace zynforge
             // Honour the full-frame's SMPTE rate (from the message's timecode
             // type) so a 24/25 fps locate seeks to the right sample immediately,
             // not the 30fps default until quarter-frames start. fps<=0 => keep
-            // whatever the last frame rate was.
-            if (fps > 0.0f)
+            // whatever the last frame rate was, and so does the same nominal
+            // rate: its code cannot say whether the master runs pulled down.
+            const float known = getFps();
+            if (fps > 0.0f && (std::lround (fps) != std::lround (known) || dropFrame != isDropFrame()))
             {
                 ltcFps.store (fps, std::memory_order_relaxed);
                 ltcDropFrame.store (dropFrame, std::memory_order_relaxed);
             }
             publishLabel (hr, mn, sc, fr);
-            running.store (true, std::memory_order_relaxed);
             mtcAcc = MtcAcc{};   // restart the QF accumulator
-            lastMtcTickMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
         }
 
         // MTC is live: a full time has been assembled and quarter-frames are
@@ -203,7 +216,9 @@ namespace zynforge
         juce::uint8 getMinutes() const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 16); }
         juce::uint8 getSeconds() const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 8); }
         juce::uint8 getFrames()  const noexcept { return (juce::uint8)  label.load (std::memory_order_relaxed); }
-        // Detected frame rate (24, 25, 29.97, 30) -- 0 until a frame decodes.
+        // Detected frame rate (23.976, 24, 25, 29.97, 30) -- 0 until a frame
+        // decodes. 29.97 is drop-frame when isDropFrame(), pulled-down
+        // non-drop otherwise.
         float getFps() const noexcept { return ltcFps.load (std::memory_order_relaxed); }
         bool  isDropFrame() const noexcept { return ltcDropFrame.load (std::memory_order_relaxed); }
 
@@ -213,10 +228,47 @@ namespace zynforge
         // quarter-frames span two).
         double timeOfDaySeconds (int framesLate) const noexcept
         {
-            const auto now = label.load (std::memory_order_relaxed);
+            return secondsAt (label.load (std::memory_order_relaxed), framesLate);
+        }
+
+        // The seconds a label (hh mm ss ff, one byte each) stands for at the
+        // rate read now. 23.976 and 29.97 non-drop count 24 and 30 labels to a
+        // second that lasts 1001/1000 of one, so only their frame count is real
+        // time: read as label seconds they fall 1 ms a second behind a player
+        // running free. Drop-frame labels already track the clock.
+        double secondsAt (juce::uint32 at, int framesLate) const noexcept
+        {
             const double rate = getFps() > 0.0f ? (double) getFps() : 30.0;
-            return (int) (now >> 24) * 3600.0 + (int) ((now >> 16) & 0xFF) * 60.0
-                 + (int) ((now >> 8) & 0xFF) + ((int) (now & 0xFF) + framesLate) / rate;
+            const int h = (int) (at >> 24), m = (int) ((at >> 16) & 0xFF);
+            const int s = (int) ((at >> 8) & 0xFF), f = (int) (at & 0xFF);
+            if (isPulledDown (rate))
+            {
+                const int nominal = (int) std::lround (rate);
+                return ((double) ((h * 60 + m) * 60 + s) * nominal + f + framesLate) * 1001.0 / (nominal * 1000.0);
+            }
+            return h * 3600.0 + m * 60.0 + s + (f + framesLate) / rate;
+        }
+
+        // The label for a time of day, at the rate read now: secondsAt turned round.
+        juce::uint32 labelAt (double seconds) const noexcept
+        {
+            const double rate = getFps() > 0.0f ? (double) getFps() : 30.0;
+            juce::int64 whole = 0;
+            int frame = 0;
+            if (isPulledDown (rate))
+            {
+                const int nominal = (int) std::lround (rate);
+                const auto frames = (juce::int64) std::floor (seconds * nominal * 1000.0 / 1001.0 + 1.0e-6);
+                whole = frames / nominal;
+                frame = (int) (frames % nominal);
+            }
+            else
+            {
+                whole = (juce::int64) seconds;
+                frame = juce::jmin (29, (int) ((seconds - (double) whole) * rate));
+            }
+            return ((juce::uint32) ((whole / 3600) % 24) << 24) | ((juce::uint32) ((whole / 60) % 60) << 16)
+                 | ((juce::uint32) (whole % 60) << 8) | (juce::uint32) frame;
         }
 
     private:
@@ -237,21 +289,63 @@ namespace zynforge
                          std::memory_order_relaxed);
         }
 
-        void publishMtcRun() noexcept
+        // A rate that is not a whole number and not drop-frame: 23.976 or
+        // 29.97 non-drop, whose labels count at 24 and 30.
+        bool isPulledDown (double rate) const noexcept
         {
-            publishLabel ((juce::uint8) (mtcAcc.nibbles[6] | ((mtcAcc.nibbles[7] & 0x01) << 4)),
-                          (juce::uint8) (mtcAcc.nibbles[4] |  (mtcAcc.nibbles[5] << 4)),
-                          (juce::uint8) (mtcAcc.nibbles[2] |  (mtcAcc.nibbles[3] << 4)),
-                          (juce::uint8) (mtcAcc.nibbles[0] | ((mtcAcc.nibbles[1] & 0x01) << 4)));
+            return ! isDropFrame() && std::abs (rate - std::round (rate)) > 0.01;
+        }
+
+        // A run of frames that took longer than its nominal rate allows, by
+        // more than half of the 1/1001 a pulled-down rate loses. A clock that
+        // is merely off by its crystal's tens of ppm is nowhere near.
+        static bool runsPulledDown (double measuredFps, int nominal) noexcept
+        {
+            return measuredFps < nominal * (1.0 - kPullDownSplit);
+        }
+
+        void publishMtcRun (double nowMs) noexcept
+        {
+            const auto hr = (juce::uint8) (mtcAcc.nibbles[6] | ((mtcAcc.nibbles[7] & 0x01) << 4));
+            const auto mn = (juce::uint8) (mtcAcc.nibbles[4] |  (mtcAcc.nibbles[5] << 4));
+            const auto sc = (juce::uint8) (mtcAcc.nibbles[2] |  (mtcAcc.nibbles[3] << 4));
+            const auto fr = (juce::uint8) (mtcAcc.nibbles[0] | ((mtcAcc.nibbles[1] & 0x01) << 4));
+            publishLabel (hr, mn, sc, fr);
             running.store (true, std::memory_order_relaxed);
 
             // Frame-rate lives in the hour-MS nibble (type 7): bits 1-2.
             // 0=24, 1=25, 2=29.97-drop, 3=30. Publish it so the chaser
             // maps frames→samples correctly (LTC derives fps differently).
             const int rateCode = (mtcAcc.nibbles[7] >> 1) & 0x3;
-            ltcFps.store (rateCode == 0 ? 24.0f : rateCode == 1 ? 25.0f
-                        : rateCode == 2 ? 29.97f : 30.0f, std::memory_order_relaxed);
-            ltcDropFrame.store (rateCode == 2, std::memory_order_relaxed);
+            const int nominal = rateCode == 0 ? 24 : rateCode == 1 ? 25 : 30;
+            const bool drop = rateCode == 2;
+
+            // 23.976 and 29.97 non-drop share the codes of 24 and 30. Forward
+            // runs land two frames apart; over kMtcRateWindowMs of them, the
+            // frames counted against the clock tell the two apart. MIDI timing
+            // is good to a millisecond or two, so the window has to be long.
+            const bool canPullDown = ! drop && nominal != 25;
+            if (! canPullDown || nominal != mtcRate.nominal)
+            {
+                mtcRate = MtcRate{};
+                mtcRate.nominal = nominal;
+            }
+            const juce::int64 count = (juce::int64) ((hr * 60 + mn) * 60 + sc) * nominal + fr;
+            const bool continues = mtcAcc.direction > 0 && mtcRate.baseMs >= 0.0
+                                && count == mtcRate.lastCount + 2;
+            if (! continues)
+            {
+                mtcRate.baseCount = count;
+                mtcRate.baseMs = nowMs;
+            }
+            else if (canPullDown && nowMs - mtcRate.baseMs >= kMtcRateWindowMs)
+                mtcRate.pulledDown = runsPulledDown ((double) (count - mtcRate.baseCount) * 1000.0
+                                                         / (nowMs - mtcRate.baseMs), nominal);
+            mtcRate.lastCount = count;
+
+            ltcFps.store (drop ? 29.97f : mtcRate.pulledDown ? (float) (nominal * 1000.0 / 1001.0) : (float) nominal,
+                          std::memory_order_relaxed);
+            ltcDropFrame.store (drop, std::memory_order_relaxed);
         }
 
         // Bit-cell limits for one sample rate. A half cell runs sr/4800 (30
@@ -316,12 +410,12 @@ namespace zynforge
                 chain = 0;
                 return;
             }
-            decodeFrame (sr / (double) period, at);
+            decodeFrame (sr / (double) period, at, sr);
         }
 
         // framePos now points at the oldest of the last 80 bits, which is
         // bit 0 of the frame whose sync word just completed.
-        void decodeFrame (double measuredFps, juce::int64 at) noexcept
+        void decodeFrame (double measuredFps, juce::int64 at, double sr) noexcept
         {
             juce::uint8 d[80] {};
             for (int i = 0; i < 80; ++i)
@@ -374,13 +468,17 @@ namespace zynforge
             // Frame rate from the period, snapped to the standard set; 29.97
             // vs 30 by the drop-frame flag. A frame number the rate cannot
             // hold (frame 24 at "24 fps") means the guess is too low.
-            if (! locked && chain == 0) maxFrameSeen = 0;   // a fresh acquisition
+            if (! locked && chain == 0)                      // a fresh acquisition
+            {
+                maxFrameSeen = 0;
+                ltcPulledDown = false;
+                ltcRateKnown = false;
+            }
             maxFrameSeen = juce::jmax (maxFrameSeen, (int) fr);
             float fps = measuredFps < 24.5 ? 24.0f : measuredFps < 27.5 ? 25.0f : 30.0f;
             if (maxFrameSeen >= (int) fps) fps = maxFrameSeen < 25 ? 25.0f : 30.0f;
             const int  nominal = (int) fps;
             const bool drop    = nominal == 30 && df;
-            if (drop) fps = 29.97f;
 
             // Labels count up one frame at a time (drop-frame skips two
             // labels at most minute starts; midnight wraps).
@@ -389,14 +487,35 @@ namespace zynforge
             const bool countsUp = prevFrameCount >= 0
                 && (count == (prevFrameCount + 1) % day || (drop && count == (prevFrameCount + 3) % day));
             chain = countsUp ? chain + 1 : 1;
+            if (chain == 1) chainStartSample = at;
             prevFrameCount  = count;
             lastValidSample = at;
+
+            // 23.976 and 29.97 non-drop carry 24 and 30 labels and no flag. One
+            // sync-to-sync period cannot tell them apart; the span of a run of
+            // frames can, to a few hundredths of a frame a second. Until it has
+            // been measured, a rate that could be either does not LOCK, so the
+            // chase never starts at one rate and jumps when the other is found.
+            // What a run measured holds through a relocate.
+            const bool canPullDown = ! drop && nominal != 25;
+            if (! canPullDown)
+            {
+                ltcPulledDown = false;
+                ltcRateKnown = true;
+            }
+            else if (chain >= kFramesToKnowRate)
+            {
+                ltcPulledDown = runsPulledDown (sr * (chain - 1) / (double) (at - chainStartSample), nominal);
+                ltcRateKnown = true;
+            }
+            if (drop) fps = 29.97f;
+            else if (ltcPulledDown) fps = (float) (nominal * 1000.0 / 1001.0);
 
             publishLabel (hr, mn, sc, fr);
             ltcDropFrame.store (drop, std::memory_order_relaxed);
             ltcFps      .store (fps, std::memory_order_relaxed);
 
-            if (! locked && chain >= kFramesToLock) locked = true;
+            if (! locked && chain >= kFramesToLock && ltcRateKnown) locked = true;
             if (locked)
             {
                 lastLtcFrameMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
@@ -421,8 +540,24 @@ namespace zynforge
         int          prevFrameCount { -1 };
         int          maxFrameSeen { 0 };
         bool         locked { false };         // audio-thread view of ltcLocked
+        juce::int64  chainStartSample { 0 };   // sync of the first frame in the chain
+        bool         ltcPulledDown { false };  // 23.976 / 29.97 non-drop, measured
+        bool         ltcRateKnown { false };   // pulled down or not, as far as LOCK needs
         static constexpr int    kFramesToLock   = 3;
+        static constexpr int    kFramesToKnowRate = 8;
         static constexpr double kLtcDropSeconds = 0.25;
+        static constexpr double kPullDownSplit  = 0.0005;   // half of the 1/1001 a pulled-down rate loses
+
+        // MTC rate measurement (MIDI thread).
+        struct MtcRate
+        {
+            int         nominal { 0 };
+            juce::int64 baseCount { 0 }, lastCount { 0 };
+            double      baseMs { -1.0 };
+            bool        pulledDown { false };
+        };
+        MtcRate mtcRate;
+        static constexpr double kMtcRateWindowMs = 10000.0;
 
         // Cross-thread atomics.
         std::atomic<bool>  running       { false };   // MTC only
