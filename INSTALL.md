@@ -2,11 +2,26 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-`main` is ahead of both Macs: since `eca170e` it has the waveform scans past the page cache, the scrollbar look and the 2026-11-04 review's fixes. It is not installed anywhere, no DMG holds it, and it has not run on real hardware.
+The development Mac now has `0e1bd8a`, `main` on 2026-11-04 with every fix of that day. The Mac mini still has `281c6c0`; no DMG holds `0e1bd8a`, and it has not run on real hardware.
 
-## Development Mac update — 2026-11-04, one waveform shape
+## Development Mac update — 2026-11-04, the review's fixes
 
-The development Mac (MacBook Pro) now has `eca170e`: `577592c` plus the one-shape zoomed-out waveform (*Fixed — after the three-hour take* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
+The development Mac (MacBook Pro) now has `0e1bd8a`: `eca170e` plus the waveform scans past the page cache at utility priority, the ember scrollbars, the 2026-11-04 review's fixes and the two capture-helper/window fixes made at the merge (top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `b76a981dae701373467219d89f3e0ed3fc83e2094eb0e7fb1f3858608b2dc30f` |
+| Capture helper | `4e81a65d4366d5bcabfa5e00ad13885d12206e6b4d84650de9940233df929194` |
+
+- **Tests before install:** Release 1701 test groups / 0 failures; TSan 1699 / 0 and the helper/twin groups 0 failures after the merge fixes; ASan/UBSan no reports (see [testing.md](testing.md)). One twin-host test is still flaky under heavy CPU load (*Bug audit, 2026-11-04* in [tasks.md](tasks.md)). The built app launched with `--isolated-settings`, quit by itself after 35 s and left no crash report.
+- **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Both executables are universal.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261104-214622-before-0e1bd8a` (`eca170e`).
+- **Signing:** ad-hoc with the hardened runtime and the audio-input entitlement. macOS asked for the microphone again at the first launch, as a new ad-hoc identity does.
+- **After install:** no take has been recorded on it yet.
+
+## Previous development Mac update — 2026-11-04, one waveform shape
+
+The development Mac (MacBook Pro) had `eca170e`: `577592c` plus the one-shape zoomed-out waveform (*Fixed — after the three-hour take* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
 
 | Executable | SHA-256 |
 | --- | --- |
@@ -354,6 +369,7 @@ The October 5 two-Mac cleanup removed every app bundle older than `443c769` at t
 | Development | `9a40f54` | `Zynforge Recording.app.backup-20261103-172758-before-5c7a3e4` |
 | Development | `5c7a3e4` | `Zynforge Recording.app.backup-20261103-233742-before-577592c` |
 | Development | `577592c` | `Zynforge Recording.app.backup-20261104-104037-before-eca170e` |
+| Development | `eca170e` | `Zynforge Recording.app.backup-20261104-214622-before-0e1bd8a` |
 | Mac mini | `443c769` | `Zynforge Recording.app.backup-20261029-221655-before-281c6c0` |
 
 The development Mac's list was checked on 2026-11-03; the mini's is from its installation record. Earlier code requires rebuilding and verifying that source revision. Every revision without `3ad6e41` (all of `main` before `8b2dad8`) fetches JUCE as a shallow clone of a pinned commit, which fails once that commit is no longer a branch tip (the 8.0.4 pin already does): configure it with `-DFETCHCONTENT_SOURCE_DIR_JUCE=<a JUCE checkout at that commit>`, or drop its `GIT_SHALLOW` line. Historical backup names in this document are not usable recovery paths.

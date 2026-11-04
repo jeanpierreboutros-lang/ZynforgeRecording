@@ -9,13 +9,13 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 ## Current baseline and owned STOP/persistence work
 
 The Mac mini and the current DMG run `281c6c0` with its matching protocol-v4
-helper (installed 2026-10-29); the development Mac runs `eca170e` on JUCE 8.0.17-security, also protocol 4. Release, TSan and ASan/UBSan/float-cast-overflow
+helper (installed 2026-10-29); the development Mac runs `0e1bd8a` on JUCE 8.0.17-security, also protocol 4. Release, TSan and ASan/UBSan/float-cast-overflow
 each pass 689 groups at `281c6c0` and 1588 at `577592c`, with zero failures and no sanitizer reports; interactive and
 physical capture acceptance remains open. [INSTALL.md](INSTALL.md) owns package
 identities; [the follow-up register](docs/history/REVIEW-REPAIRS-2026-10-05.md) and
 [earlier S6 audit](docs/history/AUDIT-2026-10-05.md) retain separate evidence.
-This document describes `main`, which is ahead of both installed builds: it
-carries the 2026-11-04 review's fixes, is not installed on either Mac and has
+This document describes `main`. The development Mac runs it as `0e1bd8a`, with the
+2026-11-04 review's fixes; the Mac mini is behind on `281c6c0`. It has
 not run on real hardware. [testing.md](testing.md) holds its results.
 
 A local STOP crosses the recorder's capture boundary once, publishes recording=false and retains a finalization lease. `AudioEngine::stopRecordingAsync` owns the worker that drains queues, closes writers, splices punches, starts integrity reporting and prepares playback readers. Only the message thread installs prepared player/clip state, including refreshed explicit-source readers after a punch; edited clip state survives but stale source descriptors do not. The owned job retires old readers off that thread before invoking its completion. Deferred device configuration waits for the same ownership boundary. Repeated STOP/start/structural mutation cannot reuse finalizing writer state. The synchronous engine entry remains for legacy callers. A daemon STOP has its own owned thread (`CaptureSupervisor::stopRecordingAsync`) and loads its media on the same worker (`AudioEngine::finishExternalTakeAsync`), through `endDaemonTake`.

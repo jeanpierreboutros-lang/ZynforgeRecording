@@ -2,9 +2,10 @@
 
 ## Bug audit, 2026-11-04
 
-A whole-codebase review made 75 findings, and all 75 are fixed on `main`. One of them, Add Tracks while a STOP finalizes, was already refused by the code; it keeps a small defensive change. Nothing here is installed (the development Mac still has `eca170e`, the mini `281c6c0`) and none of it has run on real hardware. What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the top ADR of [decisions.md](decisions.md), and the results are in [testing.md](testing.md).
+A whole-codebase review made 75 findings, and all 75 are fixed on `main`. One of them, Add Tracks while a STOP finalizes, was already refused by the code; it keeps a small defensive change. The development Mac has it as `0e1bd8a` (installed 2026-11-04 evening); the mini still has `281c6c0`, and none of it has run on real hardware. What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the top ADR of [decisions.md](decisions.md), and the results are in [testing.md](testing.md).
 
-- [ ] Owner: install a build from `main` on purpose, then run *2026-11-04 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig. A helper take with a separate monitor output unplugged, an OSC tablet STOP button, 29.97 non-drop and 23.976 chase, and quitting or logging out while a take closes are the ones no test can stand in for.
+- [x] Installed `0e1bd8a` on the development Mac (rollback `eca170e`, see [INSTALL.md](INSTALL.md)).
+- [ ] Owner: run *2026-11-04 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig. A helper take with a separate monitor output unplugged, an OSC tablet STOP button, 29.97 non-drop and 23.976 chase, and quitting or logging out while a take closes are the ones no test can stand in for.
 - [ ] Owner: review the conservative choices in the top ADR of [decisions.md](decisions.md), above all `/zynforge/record 0` no longer stopping, the fader value box on a double-click, and RECORD refused with the sessions drive gone.
 - [ ] Flaky test, partly fixed: *Twin recorder host / A daemon take found rolling offers a re-link, and a confirmed STOP reaches the follower* (and the new *A daemon STOP whose "stopped" status arrives before its reply still reaches the follower as a STOP*) can end with "This take ended without STOP". Two causes are fixed and tested: the helper sent a status built before STOP after STOP's reply (now dropped; *A status built before STOP never reaches the window after STOP's reply* failed before the fix), and the window re-adopted a finished take from a leftover "recording" status when STOP's own status was dropped by `CaptureServer::writeLine`'s timed lock (the window now adopts only from a status received after the take it ended). It still fails in about 1 of 12 runs of the group with seven busy CPU loops beside it (3 of 12 before), and passes in normal runs. The failure message now prints the follower's start/stop counts and the window's state: the follower gets one start and one stop, so the window still sees the take roll again briefly after its confirmed STOP. Find that path; until then treat it as a real defect in helper mode with a twin follower under heavy load.
 - [ ] A copy read that hangs for good keeps its resume hash thread (and `runningScans`) alive, so Save As, Move, handoff and relocation wait in `waitForReportHashes` until cancelled. The primary's hashes are now published before that point. Decide what those jobs should wait for.
@@ -54,7 +55,7 @@ A whole-codebase review made 75 findings, and all 75 are fixed on `main`. One of
 
 ## JUCE 8.0.17-security — 2026-11-03
 
-`main` moved from JUCE 8.0.4 to 8.0.17-security, pinned by commit (ADR at the top of [decisions.md](decisions.md), results in [testing.md](testing.md)). The development Mac has it, now as `eca170e`; the mini does not.
+`main` moved from JUCE 8.0.4 to 8.0.17-security, pinned by commit (ADR at the top of [decisions.md](decisions.md), results in [testing.md](testing.md)). The development Mac has it, now as `0e1bd8a`; the mini does not.
 
 - [x] Pin 8.0.17-security; measure text with `GlyphArrangement::getStringWidth`; update the test audio format and the JSON depth-guard test for the new framework.
 - [x] Release and ASan/UBSan 1586 / 0; the LOCK menu test fixed after a TSan run; CI green.
@@ -75,7 +76,7 @@ Read in the source, not run or fixed.
 
 ## Fix round after `d4a9a57` — 2026-11-03
 
-A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. It is in the development Mac's `eca170e`, not on the mini, and none of it has run on real hardware.
+A whole-codebase review, fixed on seven branches and merged to `main`. See the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the 2026-11-02 entries at the top of [decisions.md](decisions.md), and [testing.md](testing.md) for results. It is in the development Mac's `0e1bd8a`, not on the mini, and none of it has run on real hardware.
 
 - [x] Device: the chosen device is saved, reopens at launch, shows under the clock, and RECORD asks before rolling on another. A device that stops calling back raises an alarm.
 - [x] Punch and reads: a punch runs only where the timeline is the take file. A failed read fails the job, on every consumer.
@@ -113,7 +114,7 @@ The owner cut the app to a recorder and virtual soundcheck after a feature censu
 
 ## Fix pass — 2026-11-01
 
-Everything below landed on `main` on 2026-11-01. It is in the development Mac's `eca170e`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
+Everything below landed on `main` on 2026-11-01. It is in the development Mac's `0e1bd8a`, not on the mini, and none of it has been tried on real hardware. See [CHANGELOG.md](CHANGELOG.md) for what changed and [testing.md](testing.md) for the results.
 
 - [x] Punch safety: only a range selected in this run punches, and once; Loop makes no region; a parked playhead appends; a stopped cursor asks first; PUNCH mode has no arm state; a remote RECORD never punches; the header pill.
 - [x] Main window: alarm banner, LOCK on custom mouse code and on quitting, report scans on their own runner, tracked Patch and Meterbridge windows, pre-roll control, OSC token in its panel, dead dialog controls removed.
@@ -165,7 +166,7 @@ Seven read-only reviewers covered capture, the real-time engine, editing/renders
 - [x] Editing: range edits split every crossing clip; **split inside a fade is exact** (user decision: clip fade-ramp fields); paste undo; strips above the last Track_NN; analysis main-take filter; CSV import; trims, Strip Silence, handoff CSV, Tab-to-transient.
 - [x] Session and main window: undo cleared on New Session; analysis refused during a take; crash recovery after daemon reattach; export stale indices; layout saves during jobs; stereo link/strip delete/patch/VCA/LOCK/DEVICE fixes; Welcome recents.
 - [x] Closed as not reproducible: the AppleDouble `._X.zfproj` lookup (macOS hides those files from directory listings; filter kept as defence in depth).
-- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)). The development Mac moved to `fffab44` on 2026-11-02, then `d4a9a57`, then `9a40f54`, `5c7a3e4` (JUCE 8.0.17-security) and `577592c` on 2026-11-03, and `eca170e` on 2026-11-04.
+- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)). The development Mac moved to `fffab44` on 2026-11-02, then `d4a9a57`, then `9a40f54`, `5c7a3e4` (JUCE 8.0.17-security) and `577592c` on 2026-11-03, and `eca170e` and `0e1bd8a` on 2026-11-04.
 - [ ] Physical checks on the installed build: see the October bug-hunt section in [FIELD-TEST.md](FIELD-TEST.md). Not launched on the mini yet.
 
 ## Handover back to Claude Code + structural-debt pass — 2026-10-29

@@ -17,7 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-Everything from here down to the next rule came from a whole-codebase review on 2026-11-04. All 75 of its findings are closed on `main`; one (Add Tracks while a STOP finalizes) was already refused and keeps a small defensive change. None of it is installed: the development Mac still has `eca170e` and the mini `281c6c0`. None of it has run on real hardware. The choices the fixes made where the owner may want otherwise are in the top ADR of [decisions.md](decisions.md).
+Everything from here down to the next rule came from a whole-codebase review on 2026-11-04. All 75 of its findings are closed on `main`; one (Add Tracks while a STOP finalizes) was already refused and keeps a small defensive change. The development Mac has it as `0e1bd8a`; the mini still has `281c6c0`. None of it has run on real hardware. The choices the fixes made where the owner may want otherwise are in the top ADR of [decisions.md](decisions.md).
 
 ### Fixed — recording and the capture helper, 2026-11-04 review
 
