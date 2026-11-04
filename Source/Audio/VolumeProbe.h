@@ -29,6 +29,7 @@ namespace zynforge
             juce::int64  totalBytes { 0 };
             juce::uint64 volumeId { 0 };   // the same for two paths on one volume
             double       atMs { 0.0 };     // when this was read; 0 = nothing yet
+            bool         rootExists { true };   // the folder itself, not a parent, was read
         };
         using Reader = std::function<Reading (const juce::File&)>;
 
@@ -42,6 +43,7 @@ namespace zynforge
                 target = target.getParentDirectory();
 
             Reading reading;
+            reading.rootExists = target == root;
             struct statfs info {};
             if (::statfs (target.getFullPathName().toRawUTF8(), &info) != 0)
                 return reading;
@@ -74,17 +76,27 @@ namespace zynforge
             return answered->wait (timeoutMs);
         }
 
-        VolumeProbe (const juce::File& root, Reader reader, int periodMs)
+        // sameVolumeOnly: a take's probe. A drive pulled from under its folder
+        // walks up to whatever holds the mount point, which is the boot disk,
+        // so a reading from any volume but the first is no volume at all.
+        VolumeProbe (const juce::File& root, Reader reader, int periodMs, bool sameVolumeOnly = false)
         {
-            std::thread ([state = shared, root, read = std::move (reader), periodMs]
+            std::thread ([state = shared, root, read = std::move (reader), periodMs, sameVolumeOnly]
             {
                 juce::Thread::setCurrentThreadName ("Volume probe");
+                juce::uint64 firstVolume = 0;
                 for (;;)
                 {
-                    const auto reading = read (root);
+                    auto reading = read (root);
+                    if (sameVolumeOnly && reading.volumeId != 0)
+                    {
+                        if (firstVolume == 0) firstVolume = reading.volumeId;
+                        else if (reading.volumeId != firstVolume) reading.freeBytes = reading.totalBytes = 0;
+                    }
                     state->freeBytes .store (reading.freeBytes,  std::memory_order_relaxed);
                     state->totalBytes.store (reading.totalBytes, std::memory_order_relaxed);
                     state->volumeId  .store (reading.volumeId,   std::memory_order_relaxed);
+                    state->rootExists.store (reading.rootExists, std::memory_order_relaxed);
                     state->atMs.store (juce::Time::getMillisecondCounterHiRes(),
                                        std::memory_order_release);
 
@@ -112,6 +124,7 @@ namespace zynforge
             reading.freeBytes  = shared->freeBytes .load (std::memory_order_relaxed);
             reading.totalBytes = shared->totalBytes.load (std::memory_order_relaxed);
             reading.volumeId   = shared->volumeId  .load (std::memory_order_relaxed);
+            reading.rootExists = shared->rootExists.load (std::memory_order_relaxed);
             return reading;
         }
 
@@ -121,6 +134,7 @@ namespace zynforge
             std::atomic<juce::int64>  freeBytes { 0 };
             std::atomic<juce::int64>  totalBytes { 0 };
             std::atomic<juce::uint64> volumeId { 0 };
+            std::atomic<bool>         rootExists { true };
             std::atomic<double>       atMs { 0.0 };
             std::mutex                lock;
             std::condition_variable   wake;

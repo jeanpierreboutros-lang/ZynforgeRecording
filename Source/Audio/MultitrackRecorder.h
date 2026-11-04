@@ -44,7 +44,9 @@ namespace zynforge
         ~MultitrackRecorder() override;
 
         // Called by AudioEngine when the device opens / sample rate changes.
-        void prepare (double sampleRateHz, int maxBlockSize, int numInputs);
+        // keepPreRoll: the engine's own restart for a strip layout change. A
+        // history buffer that is still the right size keeps what it holds.
+        void prepare (double sampleRateHz, int maxBlockSize, int numInputs, bool keepPreRoll = false);
         void release();
 
         // Real-time safe: pushes input samples and updates meters.
@@ -132,6 +134,16 @@ namespace zynforge
         void setTimeReferenceHint (const bwf::TimeAnchor& anchor) { timeHint = anchor; hasTimeHint = true; }
         void clearTimeReferenceHint() noexcept { hasTimeHint = false; }
 
+        // Where the NEXT take, if it is a continue, plays on the arrangement
+        // (AudioEngine::continueLandsAt), for its recovery marker: after a
+        // crash its new audio lands there, as STOP would have put it. Each
+        // start consumes it.
+        void setContinueLandsAt (juce::int64 position) noexcept { continueLandsAtHint = position; }
+
+        // Whether the last processBlock captured its samples into the take.
+        // Audio thread only, read by the engine's callback after that call.
+        bool capturedLastBlock() const noexcept { return lastBlockCaptured; }
+
         // The device whose clock source goes into the take's report, by its
         // JUCE name. Set before start. Empty = no device to ask.
         void setClockDevice (const juce::String& deviceName) { clockDevice = deviceName; }
@@ -158,6 +170,7 @@ namespace zynforge
             continueAsPart    = false;
             recordBaseSamples = 0;
             punchCaptureOrigin.store (-1, std::memory_order_relaxed);
+            continueLandsAtHint = -1;
         }
 
         // Recording position ON THE TIMELINE: the take base (0 for a normal
@@ -215,6 +228,10 @@ namespace zynforge
         void addTrack();
         void removeLastTrack();
         void setTrackCount (int n);
+        // A strip move takes each strip's pre-roll history with it: the
+        // history at index i is what strip i's input heard. order[new] = old,
+        // as AudioEngine::reorderTracks takes it. No-op while recording.
+        void reorderPreRoll (const std::vector<int>& order);
 
         int          getNumTracks() const noexcept { return (int) tracks.size(); }
 
@@ -419,6 +436,9 @@ namespace zynforge
         {
             return recoveryMarkerFailed.load (std::memory_order_relaxed);
         }
+        // STOP found the session folder gone from where the take began (renamed
+        // or moved during the take): the take was not finished and has no report.
+        bool hasSessionFolderLost() const noexcept { return sessionFolderLost.load (std::memory_order_relaxed); }
         bool hasReportWriteFailed() const noexcept
         {
             return reportWriteFailed.load (std::memory_order_relaxed)
@@ -622,7 +642,7 @@ namespace zynforge
         void drainShard (ShardClient&);
         void rebuildShards();
         void closeWriters();
-        void allocatePreRollBuffers();
+        void allocatePreRollBuffers (bool keepHistory = false);
         // Pre-roll: goLive sizes it, then each copy's thread writes the history
         // before its first live samples (see goLive).
         void preparePreRollDump();
@@ -860,6 +880,8 @@ namespace zynforge
         friend class CaptureMetaTests;
         friend class ChannelAlarmTests;        // what the daemon's loop latched
         friend class MainWindowFixTests;       // what the window refuses while a take finalizes
+        friend class CaptureRepairTests;       // copy lines, install crashes, copy hashes
+        friend class EngineRepairTests;
         std::function<void()> afterFifoReservationForTests;
         std::function<void()> beforeStampForTests;
         std::function<void (CaptureCopy&)> beforeCopyWriteForTests;
@@ -928,6 +950,8 @@ namespace zynforge
         // that sees the ticks sees the size), so nothing there converts time.
         bwf::TimeAnchor          timeHint, timeAnchor;
         bool                     hasTimeHint { false };
+        juce::int64              continueLandsAtHint { -1 };
+        bool                     lastBlockCaptured { false };   // audio thread only
         std::atomic<juce::int64> firstLiveTicks     { 0 };   // 0 = none yet
         std::atomic<int>         firstLiveBlock     { 0 };
 
@@ -966,6 +990,7 @@ namespace zynforge
         // the operator loses the take's integrity manifest.
         std::atomic<bool> recoveryMarkerFailed { false };
         std::atomic<bool> reportWriteFailed { false };
+        std::atomic<bool> sessionFolderLost { false };
         // The final hash/write runs after stopRecording returns and cannot
         // capture `this`: the recorder may be destroyed before it finishes.
         // Each new take invalidates older completion notifications.
