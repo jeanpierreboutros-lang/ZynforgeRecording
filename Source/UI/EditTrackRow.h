@@ -587,14 +587,13 @@ namespace zynforge
             else             thumb.drawChannel  (g, area, t0, t1, channel, zoom);
         }
 
-        // Use a short-window median for the body of a zoomed-out take while
-        // retaining the actual maximum as a thin marker in each screen column.
-        // Cache the result because playhead repaints must not re-query millions
-        // of thumbnail bins at 24 Hz.
+        // A zoomed-out take draws ONE shape per lane (buildWaveformOverview):
+        // a second, dimmer peak layer behind it read as two waveforms on top
+        // of each other. Cache the result because playhead repaints must not
+        // re-query millions of thumbnail bins at 24 Hz.
         bool drawOverviewWave (juce::Graphics& g, juce::AudioThumbnail& thumb,
                                juce::Rectangle<int> area, int channel,
-                               double t0, double t1, float zoom,
-                               juce::Colour bodyColour, juce::Colour peakColour)
+                               double t0, double t1, float zoom, juce::Colour colour)
         {
             if (! thumb.isFullyLoaded() || channel < 0 || channel >= thumb.getNumChannels()
                 || area.getWidth() <= 0 || area.getHeight() <= 0 || t1 <= t0
@@ -640,23 +639,17 @@ namespace zynforge
 
             const float mid = (float) area.getCentreY();
             const float half = area.getHeight() * 0.5f;
-            juce::RectangleList<float> peakRects, bodyRects;
-            peakRects.ensureStorageAllocated (visible.getWidth());
-            bodyRects.ensureStorageAllocated (visible.getWidth());
+            juce::RectangleList<float> rects;
+            rects.ensureStorageAllocated (visible.getWidth());
             for (int drawX = visible.getX(); drawX < visible.getRight(); ++drawX)
             {
                 const auto x = (size_t) (drawX - visible.getX());
-                const float p = juce::jlimit (0.0f, half, it->levels.peaks[x] * zoom * half);
-                const float b = juce::jlimit (0.0f, half, it->levels.body[x] * zoom * half);
-                if (p > 0.0f)
-                    peakRects.addWithoutMerging ({ (float) drawX, mid - p, 1.0f, 2.0f * p });
-                if (b > 0.0f)
-                    bodyRects.addWithoutMerging ({ (float) drawX, mid - b, 1.0f, 2.0f * b });
+                const float h = juce::jlimit (0.0f, half, it->levels.level[x] * zoom * half);
+                if (h > 0.0f)
+                    rects.addWithoutMerging ({ (float) drawX, mid - h, 1.0f, 2.0f * h });
             }
-            g.setColour (peakColour);
-            g.fillRectList (peakRects);
-            g.setColour (bodyColour);
-            g.fillRectList (bodyRects);
+            g.setColour (colour);
+            g.fillRectList (rects);
             return true;
         }
 
@@ -859,8 +852,7 @@ namespace zynforge
                 g.fillRect (area);
                 g.setColour (waveFace);
                 if (! (wholeFile && thumb.getNumChannels() != 1)
-                    && drawOverviewWave (g, thumb, area, chan, t0, t1, zoom,
-                                         waveFace, waveFace.withAlpha (brand::alpha::muted)))
+                    && drawOverviewWave (g, thumb, area, chan, t0, t1, zoom, waveFace))
                     return;
                 drawThumbnailVisible (g, thumb, area, t0, t1, wholeFile ? -1 : chan, zoom);
             };
@@ -1253,8 +1245,7 @@ namespace zynforge
                                 const float gz = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
                                 // A muted clip draws a single dim, cool tint so it
                                 // drops below the rest; a live clip gets the same
-                                // solid-body + lighter-outline look as the main
-                                // waveform (drawWaveOutlined) so it reads cleanly.
+                                // look as the main waveform (drawWaveOutlined).
                                 const auto mutedCol = brand::lift (clipTint, 0.20f).withAlpha (zynforge::brand::alpha::muted);
                                 auto drawClipLane = [&] (const LaneWave& w, juce::Rectangle<int> area)
                                 {
@@ -1266,8 +1257,7 @@ namespace zynforge
                                     }
                                     g.setColour (mutedCol);
                                     if (! ((! w.wholeFile || w.thumb->getNumChannels() == 1)
-                                           && drawOverviewWave (g, *w.thumb, area, w.channel, t0, t1, z, mutedCol,
-                                                                mutedCol.withAlpha (brand::alpha::subtle))))
+                                           && drawOverviewWave (g, *w.thumb, area, w.channel, t0, t1, z, mutedCol)))
                                         drawThumbnailVisible (g, *w.thumb, area, t0, t1,
                                                               w.wholeFile ? -1 : w.channel, z);
                                 };

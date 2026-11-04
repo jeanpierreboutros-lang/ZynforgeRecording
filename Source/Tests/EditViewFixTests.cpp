@@ -32,20 +32,28 @@ namespace zynforge
 
         void runTest() override
         {
-            beginTest ("Zoomed-out waveform keeps an isolated transient without making it a solid block");
+            beginTest ("Zoomed-out waveform is one shape: a lone transient lifts its column without filling it");
             {
                 const auto overview = buildWaveformOverview (4, 0.0, 4.0,
                     [] (double a, double)
                     { return a < 1.0 / 16.0 ? 0.95f : 0.20f; });
-                expectEquals ((int) overview.body.size(), 4);
-                expectWithinAbsoluteError (overview.body[0], 0.20f, 0.001f);
-                expectWithinAbsoluteError (overview.peaks[0], 0.95f, 0.001f);
-                expectWithinAbsoluteError (overview.body[1], 0.20f, 0.001f);
+                expectEquals ((int) overview.level.size(), 4);
+                // sqrt ((0.95^2 + 15 * 0.2^2) / 16) = 0.3065, then 1-2-1 smoothing.
+                expectWithinAbsoluteError (overview.level[0], 0.2799f, 0.001f);
+                expectWithinAbsoluteError (overview.level[1], 0.2266f, 0.001f);
+                expectWithinAbsoluteError (overview.level[3], 0.20f, 0.001f);
+                expect (overview.level[0] < 0.5f, "a lone transient must not fill its column");
 
                 const auto sustained = buildWaveformOverview (2, 0.0, 2.0,
                     [] (double, double) { return 0.70f; });
-                expectWithinAbsoluteError (sustained.body[0], 0.70f, 0.001f);
-                expectWithinAbsoluteError (sustained.peaks[0], 0.70f, 0.001f);
+                expectWithinAbsoluteError (sustained.level[0], 0.70f, 0.001f);
+                expectWithinAbsoluteError (sustained.level[1], 0.70f, 0.001f);
+
+                // Each column stays between its quietest and loudest window.
+                const auto mixed = buildWaveformOverview (1, 0.0, 1.0,
+                    [] (double a, double) { return (int) (a * 16.0 + 0.5) % 2 == 0 ? 0.8f : 0.1f; });
+                expect (mixed.level[0] > 0.1f && mixed.level[0] < 0.8f);
+                expectWithinAbsoluteError (mixed.level[0], std::sqrt ((0.64f + 0.01f) / 2.0f), 0.001f);
             }
 
             beginTest ("A finalized take invalidates a waveform cache saved before its audio");

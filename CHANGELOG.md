@@ -22,6 +22,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Built on JUCE 8.0.17-security instead of 8.0.4. It brings JUCE's macOS 26 work and its security fixes: files with a malformed channel count or metadata can no longer crash the app on open, received OSC bundles and parsed JSON have nesting limits, and malformed text is handled safely. zlib inside JUCE moves from 1.2.3 to 1.3.1. Not yet tried on macOS 27. The development Mac has it, now as `577592c`; the mini does not.
 - THIRD-PARTY-NOTICES lists the HarfBuzz (10.1.0) and zlib copyright this JUCE carries.
 
+### Fixed — after the three-hour take, 2026-11-04
+
+Found on `577592c` after a 3 h 01 min, 54-track take on the same exFAT drive. The take recorded with no missed samples.
+
+- A zoomed-out EDIT lane draws one waveform. It drew a bright shape for the typical level with a dim peak shape behind it, which read as two waveforms on top of each other. The single shape is the quadratic mean of 16 short peak windows per screen column: sustained and dense passages keep their height, and a lone transient lifts its column a little instead of filling it with a solid block. Closer in, the native waveform draws as before. Display only; the audio is untouched.
+
 ### Fixed — after the first long take, 2026-11-03
 
 Found on `5c7a3e4` after a 4 h 10 min, 55-track take on an external exFAT drive. The take itself recorded with no missed samples.

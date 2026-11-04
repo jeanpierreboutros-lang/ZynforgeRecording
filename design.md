@@ -236,7 +236,7 @@ A row's lane and size live on one right-click menu, on the channel name, the bar
 
 ## October interaction contracts — 2026-10-04
 
-Finalized takes support 512× horizontal zoom; live recording retains its 16× cap. Tick drawing is bounded to the viewport, and manual horizontal navigation suspends FOLLOW until resumed. Long-scale waveforms show a sustained-level body with thin true-peak markers; stale caches reload from finalized media.
+Finalized takes support 512× horizontal zoom; live recording retains its 16× cap. Tick drawing is bounded to the viewport, and manual horizontal navigation suspends FOLLOW until resumed. Long-scale waveforms draw one shape in one colour (the quadratic mean of short peak windows), never a body over a second, dimmer peak layer; stale caches reload from finalized media.
 
 Stereo linking refuses overlapping pairs. Auto-arm responds to input activity only and arms both stereo halves together. Session deletion holds a session-I/O reservation while its confirmation is open and rechecks capture/identity on completion. Failed media reads and replica ownership conflicts must be visible; they cannot look like successful empty audio. Console reconnect keeps the saved stage patch available for restoration when remote state is unknown.
 

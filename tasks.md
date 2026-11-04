@@ -1,5 +1,15 @@
 # Project Tasks
 
+## Three-hour take — 2026-11-04
+
+`577592c` on the development Mac: 54 tracks, 3 h 01 min 35 s (522,966,016 samples in every file), 48 kHz 24-bit WAV through Dante Virtual Soundcard, to the same external exFAT SSD. STOP was pressed unattended at 02:51:43. The report shows 0 missed samples and 0 ms of device stall, and all 54 files are closed at the same length.
+
+- [x] After STOP the rows on screen kept the whole take drawn (rows 1–5, one minute after STOP).
+- [x] The owner found the zoomed-out waveform doubled: a bright level shape over a dim peak shape. It now draws one shape (*Fixed — after the three-hour take* in [CHANGELOG.md](CHANGELOG.md)).
+- [ ] The read storm again: the drive read about 2.6 GB/s after STOP. The report's hashes finished 2 h 30 min after STOP and the waveform cache was saved 3 h 10 min after STOP, with the app left open. Same open item as below.
+- [ ] Rows scrolled off screen were not watched during the rescan; they showed the whole take once it finished.
+- [ ] Run `tools/verify_take.sh` on this session (its hashes are written).
+
 ## First long take — 2026-11-03
 
 `5c7a3e4` on the development Mac: 55 tracks, 4 h 10 min, 48 kHz 24-bit WAV through Dante Virtual Soundcard, to an external exFAT SSD. The report shows 0 missed samples and 0 ms of device stall, and every file holds 720,204,800 samples. No backup drive was used.

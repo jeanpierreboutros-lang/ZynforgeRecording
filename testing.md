@@ -1,5 +1,9 @@
 # Testing Strategy — ZynForge Recording
 
+## One waveform shape — 2026-11-04
+
+*Zoomed-out waveform is one shape* (in *EDIT view fixes*) replaces the median-and-peak check. `buildWaveformOverview` now returns one level per column: a lone loud window among quiet ones gives 0.28 after smoothing, not its 0.95 peak; a sustained 0.70 stays 0.70; alternating 0.8 / 0.1 windows give their quadratic mean, 0.57. **Release: 1588 test groups, 0 failures**, launched through `open`; the invariants gate is clean and the build adds no new kind of warning. ASan/UBSan and TSan were not re-run for this display-only change. The look itself is checked by eye (*One waveform* in [FIELD-TEST.md](FIELD-TEST.md)).
+
 ## After the first long take — 2026-11-03
 
 The take is described under *First long take* in [FIELD-TEST.md](FIELD-TEST.md). What was measured on it, on `5c7a3e4`: five minutes after STOP the rows on screen showed the first 155 s of the take, and the drawn shape matched the first 155 s of `Track_02.wav` (correlation 0.87) rather than its last 155 s (0.19). The lanes then grew slowly. The app read 2.7 GB/s from the drive while its file offsets moved about 9 MB/s, and a sample showed all four scan threads in `read()` under `readMaxLevels`. A test reader making the same 1.5 KB reads on the same files, at background priority and across 14 files in turn, cost only 1.3–2.1× the bytes it asked for.

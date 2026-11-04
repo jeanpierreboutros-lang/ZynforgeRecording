@@ -96,7 +96,7 @@ Only one drag-in-progress at a time:
 
 ## Special paint paths
 
-At long time scales, the overview combines a short-window median body with thin true-peak maxima. Below the overview threshold, the native thumbnail supplies detailed waveform drawing. A cache older than the finalized media is discarded. Live capture uses bounded peak history, including original-resolution bins near the recording head; it does not repeatedly rescan growing files.
+At long time scales, the overview draws one shape: the quadratic mean of 16 short peak windows per screen column. (Until 2026-11-04 it drew a median body over a dimmer per-column maximum, which read as two waveforms.) Below the overview threshold, the native thumbnail supplies detailed waveform drawing. A cache older than the finalized media is discarded. Live capture uses bounded peak history, including original-resolution bins near the recording head; it does not repeatedly rescan growing files.
 
 | What | Where | When |
 |---|---|---|
