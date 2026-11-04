@@ -45,16 +45,22 @@ namespace zynforge::songs
     {
         juce::File ownFile;
         std::vector<Clip> clips;
+        // The channel of ownFile this strip plays: an unlinked pair's right
+        // strip plays channel 1 of the left's file. -1 = every channel, as a
+        // stereo strip plays it.
+        int channel { -1 };
     };
 
     // Per-file peak-envelope flags: flags[w] = 1 when window w's peak is
     // above threshold. Streams the file; never holds more than one block.
     // A read that fails sets `readFailed`, because a scan that stopped early
-    // looks exactly like a take that went quiet.
+    // looks exactly like a take that went quiet. `channel` is the one channel
+    // listened to; -1 listens to the first two, as a stereo strip plays them.
     inline std::vector<char> envelopeFlags (const juce::File& f, float thresholdDb,
                                             double windowSec, double& srOut,
                                             const std::atomic<bool>* cancel = nullptr,
-                                            bool* readFailed = nullptr)
+                                            bool* readFailed = nullptr,
+                                            int channel = 0)
     {
         std::vector<char> flags;
         juce::AudioFormatManager fm;
@@ -66,19 +72,23 @@ namespace zynforge::songs
         srOut = reader->sampleRate;
         const float thresh = juce::Decibels::decibelsToGain (thresholdDb, -120.0f);
         const int win = juce::jmax (64, (int) (reader->sampleRate * windowSec));
-        juce::AudioBuffer<float> buf (1, win);
+        const bool both = channel < 0 && reader->numChannels > 1;
+        juce::AudioBuffer<float> buf (both ? 2 : 1, win);
+        // A one-channel buffer takes the reader's left or right; a mono file
+        // gives its only channel either way.
+        const bool left = channel <= 0, right = channel != 0;
         flags.reserve ((size_t) (reader->lengthInSamples / win + 1));
         for (juce::int64 p = 0; p < reader->lengthInSamples; p += win)
         {
             if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
             const int n = (int) juce::jmin ((juce::int64) win, reader->lengthInSamples - p);
             buf.clear();
-            if (! reader->read (&buf, 0, n, p, true, false))
+            if (! reader->read (&buf, 0, n, p, left, right))
             {
                 if (readFailed != nullptr) *readFailed = true;
                 return {};
             }
-            flags.push_back (buf.getMagnitude (0, 0, n) >= thresh ? 1 : 0);
+            flags.push_back (buf.getMagnitude (0, n) >= thresh ? 1 : 0);
         }
         return flags;
     }
@@ -122,13 +132,15 @@ namespace zynforge::songs
             const auto flagsFor = [&] (const Clip& clip) -> const std::vector<char>*
             {
                 const auto file = clip.audioFile != juce::File() ? clip.audioFile : voice.ownFile;
-                const auto key  = file.getFullPathName();
+                // A mono strip hears the channel it plays: its clip's, else its own.
+                const int channel = voice.channel < 0 ? -1 : (clip.sourceChannel >= 0 ? clip.sourceChannel : voice.channel);
+                const auto key  = file.getFullPathName() + "#" + juce::String (channel);
                 auto known = perFile.find (key);
                 if (known == perFile.end())
                 {
                     double fileRate = 0.0;
                     known = perFile.emplace (key, envelopeFlags (file, params.thresholdDb, params.windowSec,
-                                                                 fileRate, cancel, readFailed)).first;
+                                                                 fileRate, cancel, readFailed, channel)).first;
                     if (fileRate > 0.0) srOut = fileRate;
                 }
                 return &known->second;
