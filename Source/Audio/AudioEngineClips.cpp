@@ -107,6 +107,7 @@ namespace zynforge
             trackClips.clear();
             trackPlaylists.clear();
             sourceTrackLengths.clear();
+            recordedPlacements.clear();
         }
         // GROW ONLY. A plain resize(n) SHRANK the lists to the player's track
         // count, destroying the clip list of every strip above the highest
@@ -134,8 +135,15 @@ namespace zynforge
                 // holds pasted clips gets its whole new take the same way --
                 // requiring oldLength > 0 left that recording out entirely.
                 if (appendRecordedAudio && newLength > oldLength)
-                    addRecordedSpan (i, shift != 0 ? juce::jmax (oldLength, continueFileBase) : oldLength,
-                                     newLength, shift);
+                {
+                    const auto from = shift != 0 ? juce::jmax (oldLength, continueFileBase) : oldLength;
+                    if (shift != 0)
+                    {
+                        notePlacement (i, oldLength, from, 0, false);
+                        notePlacement (i, from, newLength, shift, true);
+                    }
+                    addRecordedSpan (i, from, newLength, shift);
+                }
                 // Keep the engineer's edits verbatim. player.loadSession
                 // cleared the player-side clip lists, so republish what we
                 // already hold rather than reseeding a default over them.
@@ -176,6 +184,13 @@ namespace zynforge
                 if (! trackClips[(size_t) i].empty()
                     || (i < (int) trackPlaylists.size() && ! trackPlaylists[(size_t) i].takes.empty()))
                     player.setTrackClips (i, trackClips[(size_t) i]);
+    }
+
+    void AudioEngine::notePlacement (int track, juce::int64 from, juce::int64 to, juce::int64 shift, bool placed)
+    {
+        if (to <= from || track < 0) return;
+        if ((int) recordedPlacements.size() <= track) recordedPlacements.resize ((size_t) track + 1);
+        recordedPlacements[(size_t) track].push_back ({ from, to, shift, placed });
     }
 
     void AudioEngine::addRecordedSpan (int track, juce::int64 from, juce::int64 to, juce::int64 shift)
@@ -467,7 +482,19 @@ namespace zynforge
 
         // STOP's own path, from the length these clips knew: a plain clip
         // grows, an edited arrangement keeps every edit and gains a new clip.
+        // A continue that crashed lands where it was recording, at the end of
+        // the arrangement, as its recovery marker says (see goLive).
         for (int i = 0; i < n; ++i) sourceTrackLengths[(size_t) i] = known[(size_t) i];
+        if (afterCrash)
+        {
+            const auto marker = juce::JSON::parse (getActiveSessionDir().getChildFile ("recording.session"));
+            if (marker.hasProperty ("continueBase") && marker.hasProperty ("continueLandsAt"))
+            {
+                continueFileBase = (juce::int64) marker.getProperty ("continueBase", 0);
+                continueShift.store (continueFileBase - (juce::int64) marker.getProperty ("continueLandsAt", 0),
+                                     std::memory_order_release);
+            }
+        }
         seedDefaultClips (/*preserveEdits*/ true, /*appendRecordedAudio*/ true);
     }
 
@@ -638,16 +665,39 @@ namespace zynforge
             const auto now = sourceTrackLengths[(size_t) t];
             if (now <= known) continue;
 
+            // Back where STOP put it: a span that landed away from its file
+            // position goes there again, and the rest follows STOP's plain rule.
             auto& list = trackClips[(size_t) t];
-            if (list.size() == 1 && isPlainDefaultClip (list[0], t, known))
+            const auto place = [&] (juce::int64 from, juce::int64 to, juce::int64 shift)
             {
-                list[0].fileLengthSamples = now;
-                syncActiveTake (t);
-            }
-            else
+                if (to <= from) return;
+                if (shift == 0 && list.size() == 1 && isPlainDefaultClip (list[0], t, from))
+                {
+                    list[0].fileLengthSamples = to;
+                    syncActiveTake (t);
+                }
+                else
+                {
+                    addRecordedSpan (t, from, to, shift);
+                }
+            };
+            auto from = known;
+            if (t < (int) recordedPlacements.size())
             {
-                addRecordedSpan (t, known, now);
+                auto placements = recordedPlacements[(size_t) t];
+                std::sort (placements.begin(), placements.end(),
+                           [] (const RecordedPlacement& a, const RecordedPlacement& b) { return a.from < b.from; });
+                for (const auto& p : placements)
+                {
+                    if (p.to <= from) continue;
+                    if (p.from >= now) break;
+                    place (from, p.from, 0);
+                    const auto to = juce::jmin (now, p.to);
+                    if (p.placed) place (juce::jmax (from, p.from), to, p.shift);
+                    from = juce::jmax (from, to);
+                }
             }
+            place (from, now, 0);
             player.setTrackClips (t, list);
         }
     }
