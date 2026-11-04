@@ -937,9 +937,8 @@ namespace zynforge
                     // at 25 fps. A full frame alone is a cue, not a running clock.
                     const auto report = engineTake (engine, dir, [&]
                     {
-                        const int nibbles[8] { 0, 0, 30 & 0x0F, 30 >> 4, 20 & 0x0F, 20 >> 4, 10, 1 << 1 };
-                        for (int type = 0; type < 8; ++type)
-                            engine.getTimecodeChase().feedMtcQuarterFrame ((juce::uint8) ((type << 4) | nibbles[type]));
+                        for (const auto qf : ltctest::mtcQuarterFrames ({ 10, 20, 30, 0 }, 1))
+                            engine.getTimecodeChase().feedMtcQuarterFrame (qf);
                     });
                     expectEquals (report.getProperty ("timeReferenceSource", "").toString(), juce::String ("mtc"));
                     const auto seconds = (double) (juce::int64) report.getProperty ("timeReference", 0) / kRate;

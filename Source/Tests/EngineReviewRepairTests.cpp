@@ -31,9 +31,14 @@ namespace zynforge
                     1, 2, 3, 4, juce::MidiMessage::fps25));
                 expect (! e.isChaseLive(), "MTC made an LTC chase read as live");
                 e.setChaseMode (AudioEngine::ChaseMode::Mtc);
+                // A full frame is a cue; quarter-frames are a running master.
                 e.handleIncomingMidiMessage (nullptr, juce::MidiMessage::fullFrame (
                     1, 2, 3, 4, juce::MidiMessage::fps25));
-                expect (e.isChaseLive(), "MTC chase did not go live on a full frame");
+                expect (! e.isChaseLive(), "a cue from a stopped master read as a running clock");
+                const int nibbles[8] { 4, 0, 3, 0, 2, 0, 1, 1 << 1 };   // 01:02:03:04 at 25 fps
+                for (int type = 0; type < 8; ++type)
+                    e.handleIncomingMidiMessage (nullptr, juce::MidiMessage::quarterFrame (type, nibbles[type]));
+                expect (e.isChaseLive(), "MTC chase did not go live on a running master");
                 e.setChaseMode (AudioEngine::ChaseMode::Off);
             }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -8,6 +9,18 @@
 namespace zynforge::ltctest
 {
     struct Tc { int h, m, s, f; };
+
+    // One whole MTC quarter-frame run (types 0..7) labelling `t`: what makes
+    // MTC chase live. A full frame alone is a cue and never does. rateCode
+    // 0 = 24, 1 = 25, 2 = 29.97 drop, 3 = 30.
+    inline std::array<unsigned char, 8> mtcQuarterFrames (Tc t, int rateCode)
+    {
+        const int nibbles[8] { t.f & 0x0F, (t.f >> 4) & 0x01, t.s & 0x0F, (t.s >> 4) & 0x03,
+                               t.m & 0x0F, (t.m >> 4) & 0x03, t.h & 0x0F, ((t.h >> 4) & 0x01) | (rateCode << 1) };
+        std::array<unsigned char, 8> run {};
+        for (int type = 0; type < 8; ++type) run[(size_t) type] = (unsigned char) ((type << 4) | nibbles[type]);
+        return run;
+    }
 
     // Biphase-mark: a transition at every bit start, plus one mid-cell
     // for a '1'. `clock` is the running time in (fractional) samples.
