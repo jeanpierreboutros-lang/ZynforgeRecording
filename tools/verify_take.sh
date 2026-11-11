@@ -120,7 +120,7 @@ for w in "${media[@]}"; do
     size=$(stat -f%z "$w")
     magic=$(xxd -l 4 -p "$w")                       # 52494646=RIFF  52463634=RF64
     dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$w" 2>/dev/null)
-    human=$(python3 -c "print(f'{$size/1e9:.2f} GB')" 2>/dev/null)
+    human=$(python3 -I -c "print(f'{$size/1e9:.2f} GB')" 2>/dev/null)
 
     case "$magic" in
         52494646) tag="RIFF" ;;
@@ -229,7 +229,7 @@ else
     # report's frame counts and the complete part sequence as well: otherwise
     # a short but correctly hashed file, or a missing middle part, looks green.
     hdr "4. frame counts + continuation sequence"
-    if ! python3 - "$REPORT" "$AUDIO" <<'PY'
+    if ! python3 -I - "$REPORT" "$AUDIO" <<'PY'
 import json, pathlib, re, subprocess, sys
 from fractions import Fraction
 
