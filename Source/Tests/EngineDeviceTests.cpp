@@ -332,6 +332,12 @@ public:
         devicePanelInputMeter();   // C3
         masterMeterIsPostFader();   // C3
         stereoMixWriteErrors();   // C4
+        recordAgainstADeviceStop();   // C5
+        takeOutlivesItsMonitorOutput();   // C5
+        inputLossStillEndsTheTake();   // C5
+        noReturnWithinGraceEndsTheTake();   // C5
+        halErrorRidesThrough();   // C5
+        restartInPlaceKeepsMonitoring();   // C5
     }
 
 private:
@@ -607,6 +613,262 @@ private:
         engine.wrapStereoMixWriterForTests = nullptr;
     }
 
+    // ── ENG-04 ─────────────────────────────────────────────────────────
+    void recordAgainstADeviceStop()
+    {
+        beginTest ("ENG-04: a device stop landing on a RECORD press never closes the new take unannounced");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        engine.clearAllStripOverrides();
+        engine.setStripCount (1);
+        engine.prepareForTests (enginedevice::kRate, enginedevice::kBlock);
+        engine.getRecorder().setPreRollSeconds (0);
+        engine.getRecorder().getTrack (0).armed.store (true);
+        bool interrupted = false;
+        engine.onTakeInterrupted = [&interrupted] (bool) { interrupted = true; };
+
+        std::thread coreAudio;
+        auto& structure = engine.getRecorder().getStructureLock();
+        engine.beforeRecorderStartForTests = [&]
+        {
+            // The recorder opens its files under its structure lock; the
+            // device restart lands on CoreAudio's thread meanwhile.
+            structure.enter();
+            coreAudio = std::thread ([&engine] { engine.audioDeviceStopped(); });
+            juce::Thread::sleep (200);
+        };
+        engine.afterRecorderStartForTests = [&] { structure.exit(); };
+        const bool started = engine.startRecording (session.dir);
+        coreAudio.join();
+        engine.beforeRecorderStartForTests = nullptr;
+        engine.afterRecorderStartForTests = nullptr;
+        expect (started, engine.getRecorder().getStartError());
+
+        enginedevice::pumpUntil ([&] { return ! engine.isCaptureFinalizing(); });
+        const bool rolling = engine.isRecording();
+        expect (rolling || interrupted, "the take was closed with no alarm and no interruption");
+        if (! rolling) expect (engine.captureStatus().captureDeviceLost, "a closed take did not say why");
+        if (rolling) engine.stopRecording();
+    }
+
+    // ── ENG-01 ─────────────────────────────────────────────────────────
+    void takeOutlivesItsMonitorOutput()
+    {
+        beginTest ("ENG-01: unplugging the monitor output of a device pair keeps the take rolling, aligned");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        Rig rig;
+        enginedevice::OnRig on (engine, rig, "Interface", "Headphones");
+        enginedevice::readyTwoStrips (engine);
+        engine.getRecorder().getTrack (0).streamSend.store (true);
+        engine.setRecordStereoMix (true);
+        bool interrupted = false;
+        engine.onTakeInterrupted = [&interrupted] (bool) { interrupted = true; };
+        expect (engine.startRecording (session.dir), engine.getRecorder().getStartError());
+        enginedevice::Feeder feed { engine, 8 };
+        feed.blocks (40, 0.25f);
+        const auto lastBefore = feed.lastBlockTicks;
+
+        // Headphones out: JUCE closes the combined device, named after them,
+        // and opens the Mac's default pair in its place.
+        rig.outputs.erase ("Headphones");
+        on.type->listChanged();
+        expect (engine.isRecording(), "losing the headphones ended the take");
+        expect (! engine.isCaptureFinalizing());
+        expect (engine.isRidingThroughDeviceStop(), "the take is not held open");
+        expect (engine.captureStatus().deviceNotice.isNotEmpty(), "nothing says the device stopped");
+
+        // The watch opens the interface again on its own.
+        engine.serviceDeviceWatch (juce::Time::getMillisecondCounter());
+        expect (! engine.isRidingThroughDeviceStop(), "the interface was not opened again");
+        const auto setup = on.manager().getAudioDeviceSetup();
+        expectEquals (setup.inputDeviceName, juce::String ("Interface"));
+        expect (setup.outputDeviceName.isEmpty(), "the take came back on " + setup.outputDeviceName);
+
+        juce::Thread::sleep (150);
+        feed.blocks (1, 0.5f, 0);
+        const auto gap = enginedevice::expectedGap (lastBefore, feed.lastBlockTicks);
+        feed.blocks (39, 0.5f, 0);
+        const auto status = engine.captureStatus();
+        expect (status.missedSamples >= 2 * (gap - 64), "the gap was not counted");
+        expect (status.deviceNotice.contains ("MONITOR OUTPUT LOST"), status.deviceNotice);
+        expect (status.deviceNotice.contains ("continues"), status.deviceNotice);
+        expect (! status.captureDeviceLost);
+
+        engine.stopRecording();
+        expect (! interrupted);
+        auto reader = enginedevice::read (session.track (1));
+        expect (reader != nullptr);
+        if (reader != nullptr)
+        {
+            const auto measured = reader->lengthInSamples - 80 * enginedevice::kBlock;
+            expectWithinAbsoluteError ((double) measured, (double) gap, 64.0,
+                                       "the silence written is not the time the device was away");
+            enginedevice::expectGapInFile (*this, session.track (1), 40 * enginedevice::kBlock, measured,
+                                           40 * enginedevice::kBlock);
+            enginedevice::expectGapInFile (*this, session.track (2), 40 * enginedevice::kBlock, measured,
+                                           40 * enginedevice::kBlock);
+            auto mix = enginedevice::read (session.dir.getChildFile ("Export Files/StereoMix.wav"));
+            expect (mix != nullptr);
+            if (mix != nullptr)
+                expectEquals (mix->lengthInSamples, reader->lengthInSamples, "StereoMix.wav lost its place");
+        }
+        engine.setRecordStereoMix (false);
+
+        beginTest ("ENG-01: after the take, the monitor output comes back once it is listed again");
+        rig.outputs["Headphones"] = 2;
+        on.type->listChanged();
+        const auto state = engine.getDeviceState();
+        expect (devicechoice::shouldReopen (state, true), "nothing will put the headphones back");
+        juce::String error;
+        expect (engine.reopenChosenDevice (error), error);
+        expectEquals (on.manager().getAudioDeviceSetup().outputDeviceName, juce::String ("Headphones"));
+        expect (! devicechoice::shouldReopen (engine.getDeviceState(), true));
+    }
+
+    void inputLossStillEndsTheTake()
+    {
+        beginTest ("ENG-01: losing the input device still ends the take as a device loss");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        Rig rig;
+        enginedevice::OnRig on (engine, rig, "Interface", "Headphones");
+        enginedevice::readyTwoStrips (engine);
+        bool interrupted = false;
+        engine.onTakeInterrupted = [&interrupted] (bool) { interrupted = true; };
+        expect (engine.startRecording (session.dir), engine.getRecorder().getStartError());
+        enginedevice::Feeder feed { engine, 8 };
+        feed.blocks (20, 0.25f);
+
+        rig.inputs.erase ("Interface");
+        if (auto* device = on.device()) device->stop();   // the combiner stops with its input half
+        expect (! engine.isRecording(), "a take whose input is gone kept rolling");
+        expect (! engine.isRidingThroughDeviceStop());
+        expect (enginedevice::pumpUntil ([&] { return interrupted && ! engine.isCaptureFinalizing(); }),
+                "the take never finished closing");
+        expect (engine.captureStatus().captureDeviceLost, "the device loss was not latched");
+    }
+
+    void noReturnWithinGraceEndsTheTake()
+    {
+        beginTest ("ENG-01: an input that does not come back within the grace period ends the take");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        Rig rig;
+        enginedevice::OnRig on (engine, rig, "Interface", "Headphones");
+        enginedevice::readyTwoStrips (engine);
+        bool interrupted = false;
+        engine.onTakeInterrupted = [&interrupted] (bool) { interrupted = true; };
+        expect (engine.startRecording (session.dir), engine.getRecorder().getStartError());
+        enginedevice::Feeder feed { engine, 8 };
+        feed.blocks (20, 0.25f);
+
+        rig.refusesToOpen.add ("Interface");
+        rig.outputs.erase ("Headphones");
+        on.type->listChanged();
+        const auto start = juce::Time::getMillisecondCounter();
+        engine.serviceDeviceWatch (start + 1000);
+        expect (engine.isRecording(), "the take ended inside the grace period");
+        expect (engine.isRidingThroughDeviceStop());
+        engine.serviceDeviceWatch (start + AudioEngine::kRideThroughGraceMs + 100);
+        expect (! engine.isRecording(), "the take is still held open past the grace period");
+        expect (! engine.isRidingThroughDeviceStop());
+        expect (enginedevice::pumpUntil ([&] { return interrupted && ! engine.isCaptureFinalizing(); }),
+                "the take never finished closing");
+        expect (engine.captureStatus().captureDeviceLost, "the device loss was not latched");
+        auto reader = enginedevice::read (session.track (1));
+        expect (reader != nullptr);
+        if (reader != nullptr) expectEquals (reader->lengthInSamples, (juce::int64) 20 * enginedevice::kBlock);
+    }
+
+    void halErrorRidesThrough()
+    {
+        beginTest ("ENG-01: a device pair stopped by a HAL error is opened again and the take resumes");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        Rig rig;
+        enginedevice::OnRig on (engine, rig, "Interface", "Headphones");
+        enginedevice::readyTwoStrips (engine);
+        bool interrupted = false;
+        engine.onTakeInterrupted = [&interrupted] (bool) { interrupted = true; };
+        expect (engine.startRecording (session.dir), engine.getRecorder().getStartError());
+        enginedevice::Feeder feed { engine, 8 };
+        feed.blocks (20, 0.25f);
+        const auto lastBefore = feed.lastBlockTicks;
+
+        if (auto* device = on.device()) device->failWithHalError();
+        const auto now = juce::Time::getMillisecondCounter();
+        engine.serviceDeviceWatch (now);
+        expect (engine.isRecording());
+        expect (on.device() != nullptr && ! on.device()->isPlaying(), "the device should still be stopped");
+        engine.serviceDeviceWatch (now + AudioEngine::kSilentStopMs + 100);
+        expect (engine.isRecording(), "the HAL error ended the take");
+        expect (! engine.isRidingThroughDeviceStop(), "the device was not opened again");
+        expect (on.device() != nullptr && on.device()->isPlaying(), "nothing is running");
+
+        juce::Thread::sleep (100);
+        feed.blocks (1, 0.5f, 0);
+        const auto gap = enginedevice::expectedGap (lastBefore, feed.lastBlockTicks);
+        feed.blocks (19, 0.5f, 0);
+        engine.stopRecording();
+        expect (! interrupted);
+        auto reader = enginedevice::read (session.track (1));
+        expect (reader != nullptr);
+        if (reader != nullptr)
+        {
+            const auto measured = reader->lengthInSamples - 40 * enginedevice::kBlock;
+            expectWithinAbsoluteError ((double) measured, (double) gap, 64.0);
+            enginedevice::expectGapInFile (*this, session.track (1), 20 * enginedevice::kBlock, measured,
+                                           20 * enginedevice::kBlock);
+        }
+    }
+
+    void restartInPlaceKeepsMonitoring()
+    {
+        beginTest ("ENG-01: a restart CoreAudio asks for, from its own thread, resumes on the same pair");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        Rig rig;
+        enginedevice::OnRig on (engine, rig, "Interface", "Headphones");
+        enginedevice::readyTwoStrips (engine);
+        bool interrupted = false;
+        engine.onTakeInterrupted = [&interrupted] (bool) { interrupted = true; };
+        expect (engine.startRecording (session.dir), engine.getRecorder().getStartError());
+        enginedevice::Feeder feed { engine, 8 };
+        feed.blocks (20, 0.25f);
+
+        auto* device = on.device();
+        expect (device != nullptr);
+        if (device == nullptr) return;
+        juce::AudioIODeviceCallback* callback = nullptr;
+        std::thread coreAudio ([&] { callback = device->stopForRestart(); });
+        coreAudio.join();
+        expect (engine.isRecording(), "a device restart ended the take");
+        expect (engine.isRidingThroughDeviceStop());
+        device->startAgain (callback);
+        expect (! engine.isRidingThroughDeviceStop(), "the restarted device was not taken back");
+        expectEquals (on.manager().getAudioDeviceSetup().outputDeviceName, juce::String ("Headphones"));
+        feed.blocks (20, 0.5f);
+        const auto notice = engine.captureStatus().deviceNotice;
+        expect (notice.contains ("continues") && ! notice.contains ("MONITOR OUTPUT LOST"), notice);
+        engine.stopRecording();
+        expect (! interrupted);
+
+        beginTest ("ENG-01: a restart at another rate is not taken back, and the take ends after the grace period");
+        enginedevice::Folder second;
+        expect (engine.startRecording (second.dir), engine.getRecorder().getStartError());
+        feed.blocks (20, 0.25f);
+        device = on.device();
+        if (device == nullptr) return;
+        callback = device->stopForRestart();
+        rig.rate = 96000.0;
+        device->startAgain (callback);
+        expect (engine.isRecording());
+        expect (engine.isRidingThroughDeviceStop(), "a 96 kHz device was taken into a 48 kHz take");
+        engine.serviceDeviceWatch (juce::Time::getMillisecondCounter() + AudioEngine::kRideThroughGraceMs + 100);
+        expect (! engine.isRecording(), "the take is still open");
+        expect (enginedevice::pumpUntil ([&] { return interrupted && ! engine.isCaptureFinalizing(); }));
+    }
 };
 
 static EngineDeviceTests engineDeviceTests;

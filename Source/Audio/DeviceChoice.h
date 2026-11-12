@@ -108,6 +108,10 @@ namespace zynforge::devicechoice
         juce::String chosenNow;    // what it is called now, empty when missing
         int liveInputs { 0 };
         int chosenInputs { 0 };
+        // A take held open through a lost monitor output came back on its
+        // input alone, and the chosen output is listed again: the device
+        // watch puts the pair back once nothing rolls. Set by the engine.
+        bool monitorOutputBack { false };
 
         // An aggregate that lost a member stays listed under its name with fewer
         // inputs, and its channels move down: nothing wraps, every strip just
@@ -283,7 +287,8 @@ namespace zynforge::devicechoice
     // devices in, which would be fighting them for it.
     inline bool shouldReopen (const DeviceState& state, bool transportQuiet) noexcept
     {
-        return transportQuiet && state.verdict == Verdict::chosenNotOpen;
+        return transportQuiet && (state.verdict == Verdict::chosenNotOpen
+                                  || (state.verdict == Verdict::onChosen && state.monitorOutputBack));
     }
 
     // A device can be listed before it can run, and each attempt that fails

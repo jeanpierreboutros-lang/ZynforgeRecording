@@ -39,6 +39,14 @@ namespace zynforge
             return stalled;
         }
 
+        // The wait so far is not a stall: a take held open through a device
+        // stop puts that stretch in the files as silence and counts it there.
+        void excuse (juce::uint32 nowMs) noexcept
+        {
+            stalled = false;
+            lastProgressMs = nowMs;
+        }
+
         // Time this take has had no audio, a stall still running included.
         juce::uint32 stalledMs (juce::uint32 nowMs) const noexcept
         {

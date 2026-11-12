@@ -960,6 +960,29 @@ namespace zynforge
         int dropMarkerAtCurrentPosition (const juce::String& name = {},
                                          const juce::String& type = "user");
 
+        // ── A take outlives a device that is not its input ─────────────
+        // A device pair runs through JUCE's combiner, named after its OUTPUT:
+        // headphones pulled, a display asleep or a headset gone stops the
+        // whole device, input included. While the take's input device is
+        // still there, the take is held open instead of ended (capture paused,
+        // outputs silent), the input is opened again on its own at the take's
+        // rate, and capture resumes with the stretch it missed written as
+        // silence and counted as missed samples, so every track stays on the
+        // clock. Not back within kRideThroughGraceMs, or the input itself gone,
+        // and the take ends exactly as a device loss always has. A punch never
+        // rides through: its timeline is the player's.
+        static constexpr juce::uint32 kRideThroughGraceMs = 5000;
+        // A failed HAL call on a device pair stops both halves and says
+        // nothing: JUCE's combiner reports only an error, and the device
+        // manager passes no error on. A device that says it is not playing,
+        // with no block for this long during a take, has stopped.
+        static constexpr juce::uint32 kSilentStopMs = 500;
+        // Runs from the 100 ms watch timer while a take rolls; tests call it
+        // with their own clock. Message thread.
+        void serviceDeviceWatch (juce::uint32 nowMs);
+        // True while a take is held open waiting for its input device.
+        bool isRidingThroughDeviceStop() const noexcept { return deviceRideThrough.load (std::memory_order_acquire); }
+
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;
         void audioDeviceStopped() override;
@@ -995,6 +1018,9 @@ namespace zynforge
         std::mutex deviceLifecycleLock;
         std::optional<DeferredDeviceConfiguration> deferredDeviceConfiguration;
         bool deferredDeviceRelease = false;
+        // The device stopped with no take, and nothing has started since:
+        // the recorder has no writers, so RECORD waits. Under deviceLifecycleLock.
+        bool deviceStoppedIdle { false };
         std::atomic<bool> deferredDeviceAudio { false };
         std::atomic<bool> asyncCaptureFinalizing { false };
         std::unique_ptr<CaptureStopJob> captureStopJob;
@@ -1004,6 +1030,57 @@ namespace zynforge
         std::atomic<juce::uint32> callbackCount { 0 };       // bumped first in every callback
         std::atomic<bool>         deviceErrorSeen { false };  // any thread
         CallbackWatchdog          callbackWatchdog;           // under the structure lock
+        // The device watch's view of the callback: the count it last saw, and
+        // when that count last moved. Message thread.
+        juce::uint32 watchCallbacks { 0 }, watchProgressMs { 0 };
+
+        // The take's device as it started: what a ride-through waits for and
+        // opens again. Message thread, under deviceLifecycleLock.
+        struct TakeDevice
+        {
+            juce::AudioDeviceManager::AudioDeviceSetup setup;
+            double rate { 0.0 };
+            int    block { 0 }, inputs { 0 };
+        };
+        TakeDevice takeDevice;
+        // Under deviceLifecycleLock.
+        struct RideThrough
+        {
+            bool active { false };
+            juce::uint32 startedMs { 0 }, nextAttemptMs { 0 };
+            // A device JUCE opened meanwhile. Never prepared for: it runs
+            // silent, and takes over once the take is over.
+            std::optional<DeferredDeviceConfiguration> standIn;
+        };
+        RideThrough ride;
+        enum class RideOutcome : int { none = 0, waiting, resumed, resumedWithoutOutput };
+        std::atomic<bool>        deviceRideThrough { false };      // the callback holds capture, outputs silent
+        std::atomic<bool>        resumeGapPending { false };       // the next block adds the stretch first
+        std::atomic<bool>        watchdogExcusePending { false };  // a ride-through's wait is not a stall
+        std::atomic<juce::int64> lastCaptureTicks { 0 };           // audio thread: start of the last captured block
+        std::atomic<int>         lastCaptureBlock { 0 };
+        std::atomic<juce::int64> rideGapFrames { 0 };              // silence added this take
+        std::atomic<int>         rideOutcome { 0 };
+        // A ride-through came back without the monitor output: once the take
+        // is over and the chosen output is listed, the device watch reopens it.
+        std::atomic<bool>        monitorOutputDropped { false };
+        struct DeviceWatch final : public juce::Timer
+        {
+            explicit DeviceWatch (AudioEngine& e) : engine (e) {}
+            void timerCallback() override { engine.serviceDeviceWatch (juce::Time::getMillisecondCounter()); }
+            AudioEngine& engine;
+        };
+        std::unique_ptr<DeviceWatch> deviceWatch;   // message thread
+        void startDeviceWatch();
+        bool mayRideThrough();
+        bool takeInputListed();
+        void beginRideThrough (juce::uint32 nowMs);
+        bool rideThroughAccepts (juce::AudioIODevice&);
+        void resumeRideThrough();
+        bool finalizeDeviceLoss();
+        void settleRideThroughAfterStop();
+        void reopenTakeInput();
+        juce::String deviceNotice() const;
         juce::String             reorderRefusal;
         devicechoice::Chosen     chosenDevice;
         devicechoice::Answers    deviceAnswers;

@@ -619,6 +619,29 @@ namespace zynforge
         }
     }
 
+    void MultitrackRecorder::addCaptureGap (juce::int64 frames) noexcept
+    {
+        if (frames <= 0) return;
+        const juce::SpinLock::ScopedLockType boundaryGuard (captureBoundary);
+        if (! recording.load (std::memory_order_acquire)) return;
+        const int lost = (int) juce::jmin (frames, (juce::int64) std::numeric_limits<int>::max());
+        const int n = (int) juce::jmin (fifos.size(), captureArms.size());
+        // The channels processBlock feeds: armed ones, and the right half of
+        // an armed pair. A saturated descriptor ring ends on a gap, so this
+        // one joins it (accountCapture).
+        for (int ch = 0; ch < n; ++ch)
+        {
+            const bool armed = captureArms[(size_t) ch];
+            const bool pairArmed = ch > 0 && tracks[(size_t) ch - 1]->isStereo.load (std::memory_order_relaxed)
+                                && captureArms[(size_t) ch - 1];
+            if (! armed && ! pairArmed) continue;
+            fifos[(size_t) ch]->accountCapture (0, lost);
+            missedSamples.fetch_add (lost, std::memory_order_relaxed);
+        }
+        samplesSinceStart.fetch_add (lost, std::memory_order_relaxed);
+        alarmFrames.store (alarmFrames.load (std::memory_order_relaxed) + lost, std::memory_order_relaxed);
+    }
+
     // NOTE: punch-in is triggered two ways, both via armPunchIn(): the normal
     // RECORD button when a session is loaded (MainComponent::onRecordClicked --
     // continue/overdub at the edit cursor, append at the end by default), and
