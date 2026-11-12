@@ -712,8 +712,8 @@ namespace zynforge
         addAndMakeVisible (followButton);
         syncFollowButton();
 
-        zoomHIn .onClick = [this] { pauseFollowForZoom(); setZoom (steppedTimelineZoom (zoom, true)); };
-        zoomHOut.onClick = [this] { pauseFollowForZoom(); setZoom (steppedTimelineZoom (zoom, false)); };
+        zoomHIn .onClick = [this] { stepZoom (true); };
+        zoomHOut.onClick = [this] { stepZoom (false); };
 
         // Pro Tools-style Min:Secs time ruler perched above the track
         // list. Reads session length + sample rate from the engine via
@@ -1583,6 +1583,42 @@ namespace zynforge
     {
         pauseFollowForZoom();
         setZoom (z);
+    }
+
+    void EditPage::stepZoom (bool zoomIn)
+    {
+        pauseFollowForZoom();
+        if (list == nullptr) { setZoom (steppedTimelineZoom (zoom, zoomIn)); return; }
+
+        // The lane maps the timeline across content x [headerW + 4,
+        // contentW - 4]; the pinned header covers the first headerW px of the view.
+        constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
+        const auto laneWidth = [this] { return (double) juce::jmax (1, list->getWidth() - kHeaderW - 8); };
+        const int viewX = viewport.getViewPositionX();
+        const int viewW = viewport.getViewWidth();
+
+        int anchor = kHeaderW + juce::jmax (0, viewW - kHeaderW) / 2;   // in the view
+        const auto& player = engine.getPlayer();
+        const bool rec = engine.isRecording();
+        const double liveRate = engine.getDeviceSampleRate() > 0.0
+            ? engine.getDeviceSampleRate()
+            : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+        const auto pos = rec ? (engine.isCaptureWindowActive() && player.isPlaying()
+                                    ? player.getPositionSamples() : engine.getRecordTimelineSamples())
+                             : player.getPositionSamples();
+        const auto total = rec ? recordingTimelineSpanSamples (pos, player.getTotalLengthSamples(), liveRate)
+                               : player.getTotalLengthSamples();
+        if (total > 0 && (rec || player.isLoaded()))
+        {
+            const int playheadX = kHeaderW + 4 + (int) ((double) pos / (double) total * laneWidth()) - viewX;
+            if (playheadX >= kHeaderW && playheadX < viewW) anchor = playheadX;
+        }
+
+        const double frac = (double) (viewX + anchor - kHeaderW - 4) / laneWidth();
+        setZoom (steppedTimelineZoom (zoom, zoomIn));
+        const int maxX = juce::jmax (0, list->getWidth() - viewW);
+        viewport.setViewPosition (juce::jlimit (0, maxX, (int) std::lround (kHeaderW + 4 + frac * laneWidth() - anchor)),
+                                  viewport.getViewPositionY());
     }
 
     void EditPage::setVerticalZoom (float z)

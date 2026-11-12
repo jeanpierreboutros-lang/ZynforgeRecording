@@ -48,6 +48,11 @@ namespace zynforge
         void  setZoom (float z);
         void  userSetZoom (float z);
         float getZoom() const noexcept { return zoom; }
+        // One H+ / H- step (also Cmd+] / Cmd+[). The playhead stays where it
+        // is on screen when it is in view; otherwise the middle of the view
+        // does, as for the Cmd-wheel. setZoom alone keeps the left pixel, and
+        // after STOP that put the playhead off screen.
+        void  stepZoom (bool zoomIn);
 
         // Vertical (amplitude) zoom for the waveforms. 1.0 = true level
         // (peak 0 dBFS fills the lane). Lets the engineer pull up quiet

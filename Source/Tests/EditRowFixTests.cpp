@@ -182,6 +182,7 @@ namespace zynforge
             cueEditsSurviveTimelineUndo (main);
             continuedTakesKeepOneWaveform();
             clipPromptsFollowTheirClip();
+            zoomStepsKeepThePlayhead (main);
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1491,6 +1492,43 @@ namespace zynforge
                 pumpUntil ([] { return false; }, 300);   // the answer arrives a moment after the prompt leaves
                 for (const auto& c : s.clips (0))
                     expect (std::abs (c.gainDb) < 0.01f, "a gain meant for a deleted clip landed on another");
+            }
+        }
+
+        void zoomStepsKeepThePlayhead (MainComponent& main)
+        {
+            beginTest ("H+ and Cmd+] zoom around the playhead, not from the left edge");
+            {
+                Show show (main);
+                show.session ({ "KICK" }, false, false);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                auto& engine = show.engine;
+                auto& page = show.page();
+                auto* viewport = findChild<juce::Viewport> (page);
+                auto* hIn = buttonTitled (page, "Horizontal zoom in");
+                expect (viewport != nullptr && hIn != nullptr, "setup: the viewport and H+");
+                if (viewport != nullptr && hIn != nullptr && viewport->getViewedComponent() != nullptr)
+                {
+                    const auto playheadOnScreen = [&]
+                    {
+                        constexpr int headerW = brand::space::editHeaderW;
+                        const int contentW = viewport->getViewedComponent()->getWidth();
+                        const double frac = (double) engine.getPlayer().getPositionSamples()
+                                          / (double) juce::jmax ((juce::int64) 1, engine.getPlayer().getTotalLengthSamples());
+                        const int x = headerW + 4 + (int) (frac * (contentW - headerW - 8));
+                        const int viewX = viewport->getViewPositionX();
+                        return x >= viewX + headerW && x < viewX + viewport->getViewWidth();
+                    };
+                    engine.getPlayer().setPositionSamples (kRate * 95 / 100);   // where STOP leaves it
+                    expect (playheadOnScreen(), "setup: the playhead shows at fit");
+                    hIn->onClick();
+                    expect (page.getZoom() > 1.0f, "setup: H+ zoomed in");
+                    expect (playheadOnScreen(), "H+ zoomed the playhead off screen");
+                    main.keyPressed (juce::KeyPress (']', juce::ModifierKeys::commandModifier, 0), nullptr);
+                    expect (page.getZoom() > 1.5f, "setup: Cmd+] zoomed in");
+                    expect (playheadOnScreen(), "Cmd+] zoomed the playhead off screen");
+                    page.setZoom (1.0f);
+                }
             }
         }
     };

@@ -87,8 +87,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         // Cmd+] zoom IN on the timeline, Cmd+[ zoom OUT (EDIT view only).
         if (currentView == View::Edit && editPage != nullptr)
         {
-            if (kc == ']') { editPage->userSetZoom (editPage->getZoom() * 1.41f); return true; }
-            if (kc == '[') { editPage->userSetZoom (editPage->getZoom() * 0.71f); return true; }
+            if (kc == ']') { editPage->stepZoom (true);  return true; }
+            if (kc == '[') { editPage->stepZoom (false); return true; }
         }
     }
 
