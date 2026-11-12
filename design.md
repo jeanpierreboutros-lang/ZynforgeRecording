@@ -541,9 +541,10 @@ ComboBox) or the component's own `paint()` (ChannelStrip, Toast, Meter).
 | State | Behavior | Timing |
 |-------|----------|--------|
 | In | fade in at the bottom-right | `motion::quickFadeMs` (200) |
-| Hold | static, queue waits | `motion::toastHoldMs` (2800) |
+| Hold | static, queue waits; a wrapped message holds longer | `motion::toastHoldMs` (2800) + 1200 per extra line |
 | Out | fade | `motion::fadeOutMs` (320) |
-| Queued | back-to-back toasts display in order, never stomp | — |
+| Queued | back-to-back toasts display in order, never stomp; a notice that differs only in a number replaces the last; at most 3 wait, the least urgent dropped first | — |
+| Long message | wraps by word and grows upward from its slot (up to 200 px), never cut off | — |
 
 `showStatus()` routes by message severity: hard-fail keywords → `Error`,
 confirm/again keywords → `Warning`, else `Info`.

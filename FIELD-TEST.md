@@ -1,4 +1,4 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-11-04)
+# ZynForge Recording — Field-Test Checklist (updated 2026-11-11)
 
 Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak, which ends only when someone presses STOP twice: nothing stops it unattended. Tick boxes only after performing them; the failure column tells you when to stop and report. The development Mac has `eca170e`, the Mac mini and the current DMG have `281c6c0`, all protocol 4, and `main` (now on JUCE 8.0.17-security) is ahead of both: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
 
@@ -8,13 +8,62 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ---
 
+## 2026-11-11 fix round — not yet performed
+
+The fixes from the 2026-11-11 review are merged on `integrate/fix-2026-11-11`; [INSTALL.md](INSTALL.md) says which Mac has them. Use disposable sessions, and keep a recovery plan for the steps that pull hardware or end processes. The device steps need the capture helper **off**, so the take is in the window.
+
+### Device and engine
+
+- [ ] 🟥 **Device pair, monitor output unplugged.** Inputs from the interface, monitoring on a separate output (headphones, a USB headset or a display's audio), capture helper off. Start a take, then unplug the headphones. The take keeps rolling: the banner reads AUDIO DEVICE STOPPED, then within a few seconds MONITOR OUTPUT LOST, naming the input and the seconds of silence. There is no monitoring until STOP. STOP writes a full report with that stretch counted as missed samples, so `tools/verify_take.sh` reports it as dropped audio, as it should. Plug the headphones back in after STOP: monitoring returns by itself. Repeat with a display going to sleep and a USB headset switched off. Then pull the interface itself during a take: the take ends as a device loss, as before.
+- [ ] 🟧 **Interface or Dante reconfigured mid-take.** Restart the interface's driver, or reconfigure Dante Virtual Soundcard at the same rate, during a take. The take rides through and continues with monitoring: AUDIO DEVICE RESTARTED with the seconds of silence. At another rate or channel count, the take ends as a device loss.
+- [ ] 🟧 **A device pair that stops with a hardware error.** If a pair can be made to fail a hardware call (a flaky USB output, a hub power-cycled), the take must ride through within about half a second of the last block, as above, not hang.
+- [ ] 🟧 **RECORD during a device restart.** Change the interface's clock or rate in its own control panel and press RECORD in the same second. RECORD is refused: "the audio device has stopped -- RECORD waits until it runs again". Once the device runs, RECORD starts a take. The window never freezes.
+- [ ] 🟧 **PLAY at the wrong rate.** A 48 kHz session with the device set to 44.1 kHz in Audio MIDI Setup: PLAY, a tablet PLAY and chase all refuse and say why; the banner reads "recording blocked, PLAY refused"; the desk hears nothing.
+- [ ] 🟧 **VSC past output 64.** On a 128-channel card, patch a strip to output 65 or higher and run VSC: the signal reaches that desk channel, and VSC does not call the strip unreachable.
+- [ ] 🟨 **Buffer kept.** Pick 256 in DEVICE, Apply, quit, relaunch: DEVICE shows 256. Unplug and replug the interface: it comes back at 256.
+- [ ] 🟨 **DEVICE panel.** Open DEVICE, change the master output on the MASTER strip, close DEVICE without Apply: the master stays where you put it. The panel's input meter moves with the interface's input, and not with VSC playback. The MASTER meter follows the master fader and MUTE.
+
+### Timecode and loudness
+
+- [ ] 🟧 **29.97 drop-frame chase.** LTC, then MTC, at 29.97 drop-frame for at least 10 minutes. No relocation (it jumped about once a minute on MTC), and the playhead matches the master's display to the frame. Record a minute and drop it into a DAW session at 29.97 DF: it lands at the generator's time.
+- [ ] 🟨 **Loudness.** Play an EBU Tech 3341 test file through the master: the header's LUFS matches a reference meter within 0.1 LU.
+
+### Capture copies and hashes
+
+- [ ] 🟥 **Slow backup added mid-show.** Add a slow USB hard disk as backup between sets, then continue. At STOP the banner says nothing about a copy stopping, and the next take includes the backup.
+- [ ] 🟧 **Hashes during the next set.** Helper on. Stop set 1 and start set 2 while set 1 is still hashing: set 1's report stays pending until set 2 stops, then finishes. Set 2 has 0 missed samples and no copy overrun.
+- [ ] 🟥 **Recording drive pulled.** On a disposable rig, pull the recording drive mid-take. STOP never calls that copy intact: it says the drive was unplugged or writing failed, and that the copy is incomplete.
+
+### Console, remotes and twin
+
+- [ ] 🟥 **OSC tablet STOP needs a value.** See *OSC tablet STOP button* in the 2026-11-04 round below, now with the value. Also a button that sends `/zynforge/stop <token>` alone: refused, and the status line and the OSC log say why. A tablet MARKER button drops one marker per press.
+- [ ] 🟧 **Selection punch and remotes.** Select a range, press RECORD, and during the punch press a tablet PLAY button and the Mackie STOP: both refused ("STOP ends it"), the punch goes on. A tablet STOP ends it. Stop a punch before its punch-in: it says nothing was replaced, and playback does not restart.
+- [ ] 🟨 **Mackie touch faders.** Hold a motor fader while the app moves that strip's level: the motor does not fight your hand. Let go: it goes to the app's level. The bottom of travel reads -60 dB (off) and stays there.
+- [ ] 🟨 **Yamaha CL / QL.** Connect: names arrive (the requests now go out bare, like `get MIXER:Current/InCh/Label/Name 4 0`). An ERROR reply does not mark the desk as answering. Pull the desk's network cable: an amber CONSOLE LINK LOST stays on the banner, and pre-flight says so, until you connect again.
+- [ ] 🟨 **Helper and ports.** Helper on. After it has started, turn the OSC listener and the Twin link off and on: both listen again on their ports. Relaunch the window during a long helper STOP: it attaches, and daemon mode stays on.
+- [ ] 🟨 **Twin re-link after a leader restart.** Helper on the leader. During a linked take, force-quit the leader's window and relaunch it; it re-links. After STOP both Macs show the comparison, and both reports carry the peer's numbers. Disconnect and Connect: the panel starts clean.
+
+### Sessions
+
+- [ ] 🟨 **Welcome on a rig without its interface.** Choose an interface, quit, unplug it, launch, and Create a session from the Welcome without touching the device pickers. The Welcome stays open if the create fails and says why, and the audio devices are not switched.
+- [ ] 🟨 **Read-only media.** Open a session on a locked SD card or a read-only disk image and leave it past two auto-save intervals: no AUTO-SAVE FAILED. Move a fader: the next interval warns.
+- [ ] 🟧 **RECORD with a Save As panel open.** Open Save As's folder panel, and separately the Welcome, then start a take from the desk macro or the twin leader. The take starts. The Welcome closes; the Save As panel stays, and answering it after the take started is refused with the reason.
+- [ ] 🟨 **Large poly import.** Import a real 64-channel 44.1 kHz poly file into a 48 kHz session. Note the time; every channel lands on its own strip at the right pitch.
+
+### EDIT and main window
+
+- [ ] 🟧 **RECORD while peaks load.** Open a large session on a spinning take drive and press RECORD within seconds. Unarmed lanes that had loaded show the earlier sets; Activity Monitor ▸ Disk shows the app reading nothing from that drive during the take. The rest draw after STOP.
+- [ ] 🟨 **Quit right after STOP.** After a long take, quit as soon as STOP has finished. Reopen: the waveforms draw at once from `WaveCache.wfm`.
+- [ ] 🟨 **Prompts close for a take.** Open the VSC question, then Batch Rename, and start a take from a desk macro each time: the prompt closes, STOP takes a click and Space works. A Batch Rename closed this way renames nothing.
+- [ ] ⬜ **At real size.** A long toast wraps and is readable to the end; PATCH's amber OFF / NOT ON DEVICE row and an "N STRIPS" output read at the mix position.
+
 ## 2026-11-04 fix round — not yet performed
 
 The fixes from the 2026-11-04 review are in the development Mac's `0e1bd8a` (installed that evening), not in the mini's `281c6c0`. Use disposable sessions, and keep a recovery plan for the steps that pull hardware or end processes.
 
 - [ ] 🟥 **Helper take, monitor output unplugged.** Capture helper on, inputs from the interface, monitoring on a separate output (headphones, a USB headset or a display's audio). Start a take, then unplug the headphones, or let the display sleep. The take keeps rolling, the banner stays clear, and STOP gives a clean report. Run `tools/verify_take.sh` (exit 0).
 - [ ] 🟧 **Pre-roll after an idle arm change, helper mode.** Helper on, 10 s pre-roll. Let the rig sit idle longer than that, then arm one more strip, rename one and re-route one. The changes apply at once. Press RECORD straight away: the take opens with the full 10 s of pre-roll.
-- [ ] 🟥 **OSC tablet STOP button.** A momentary button sending `/zynforge/stop` (1 on press, 0 on release). One press arms STOP and the take keeps rolling; letting go does nothing; a second press stops it. Hold the button down for a few seconds: one press. A toggle-style button on `/zynforge/record` sending 0 must not stop a take. Note whether a fast deliberate double tap needed a third.
+- [ ] 🟥 **OSC tablet STOP button.** A momentary button sending `/zynforge/stop 1 <token>` on press and `/zynforge/stop 0 <token>` on release: since 2026-11-11 the value is required. One press arms STOP and the take keeps rolling; letting go does nothing; a second press stops it. Hold the button down for a few seconds: one press. A button that sends `/zynforge/stop <token>` with no value is refused, the status line and the OSC log say why, and the take keeps rolling. A toggle-style button on `/zynforge/record` sending 0 must not stop a take. Note whether a fast deliberate double tap needed a third.
 - [ ] 🟧 **29.97 non-drop and 23.976 chase.** LTC from a video generator or deck at 29.97 non-drop, then 23.976. Chase locks within about a third of a second and plays 10 minutes against a reference without an audible skip (it skipped about every 80 s). Record a minute, drop the file into a DAW session at the same rate: it lands at the generator's time. Repeat with MTC at 29.97: one correction about 10 s after it starts running, then none. Check true 30 and 24 still lock. Transport Sync still reads "30 fps" / "24 fps" for the pulled-down rates; that is known.
 - [ ] 🟧 **MTC master parked.** With chase on and the MTC master stopped, locate and scrub it. The session must not play. Press play on the master: chase follows once it runs.
 - [ ] 🟥 **Save As with mixer edits during the copy.** On a long session on a slow drive, start Save As; while it copies, move faders, rename a strip, change a patch and store a cue. When the copy opens, every one of those changes is there. Repeat with Move. Straight after a take, the status should say the job waits for the integrity hashes.
@@ -65,7 +114,7 @@ None of this has been tried on real hardware. These fixes are in the development
 ### A device that stops
 
 10. Pull the clock from an interface that stalls rather than disappears, or suspend its driver, during a take. `!! NO AUDIO FROM THE DEVICE` within about 2 s, take still open, and the time stays on the banner once it recovers.
-11. A device pair (separate input and output devices): unplug the output during a take. JUCE's combiner reports an error and stops. Confirm the alarm rises, and record what the take then does.
+11. A device pair (separate input and output devices), capture helper off: unplug the output during a take. Since 2026-11-11 the take keeps rolling: AUDIO DEVICE STOPPED, then MONITOR OUTPUT LOST naming the input and the seconds of silence, counted as missed samples, and no monitoring until STOP. STOP writes a full report, and monitoring returns after STOP once the output is back. See *Device pair, monitor output unplugged* in the 2026-11-11 round.
 12. The same during a daemon take, with the window closed: the report must carry `deviceStallMs`.
 
 ### Trim-Follow

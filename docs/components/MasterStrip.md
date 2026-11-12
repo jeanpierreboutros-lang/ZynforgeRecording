@@ -61,7 +61,7 @@ The master strip reads from `engine.getMasterState()` (and `getMasterStateR()` f
 |---|---|---|
 | `gainDb` | `std::atomic<float>` | Fader position, via `getMasterGainDb()` / `setMasterGainDb()` |
 | `muted` | `std::atomic<bool>` | Output mute, via `getMasterMuted()` / `setMasterMuted()` |
-| `peak` / `rms` | `std::atomic<float>` | Driven by the audio thread; the meter samples them on its own timer (8–60 Hz) |
+| `peak` / `rms` | `std::atomic<float>` | Driven by the audio thread after the master fader and MUTE, so both move the meter (the tooltip says so); the meter samples them on its own timer (8–60 Hz) |
 | `clipped` | `std::atomic<bool>` | Latches via the audio thread; clears via meter click |
 
 Use `engine.getMasterStereo()` / `setMasterStereo()` for mode and `setMasterOutputs()` for routing. The 10 Hz timer pulls gain, mute, output, mode and held-off state back from the engine, so changes made elsewhere (session restore, a MIDI control surface) show on the strip.

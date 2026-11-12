@@ -32,7 +32,7 @@ No params — state is entirely push-driven via setters.
 | `setElapsed(juce::int64 samples, double sampleRate)` | Formats to `HH:MM:SS`; a rate ≤ 0 falls back to 48 kHz |
 | `setMarkers(int count)` | `MARKERS` row value |
 | `setDiskInfo(double freeGB, int lastWriteMs, juce::int64 missedSamples, double remainingSeconds, DiskReading reading)` | Time-left slot and disk-health rows. `DiskReading`: `Fresh`, `CopyStale`, `PrimaryStale`, `DriveMissing` |
-| `getFreeGB()` / `getRemainingSeconds()` / `getDiskReading()` | What the panel was last given, for tests |
+| `getFreeGB()` / `getRemainingSeconds()` / `getDiskReading()` / `getMissedSamples()` | What the panel was last given, for tests |
 | `setArmedReady(bool)` | Lights the lamp amber and reads `ARMED`. No border, no pulse. |
 
 ## States
@@ -53,7 +53,7 @@ Disk readings:
 - A negative `freeGB` reads `--`.
 
 What the host passes between takes: `remainingSeconds` is pre-flight's estimate, and only while what it was worked out for still matches (`MainComponent::idleEstimateKey`: session, arm count, capture format, backup and mirror folders and formats). A take clears it, so after STOP the large slot reads `DISK FREE` until pre-flight runs again. During a take the engine's live estimate is passed as before.
-- Missed samples > 0 read `MISSED SAMPLES` with the count in `accentRecord` (white on the take plate); otherwise the row reads `NO MISSED WRITES`.
+- Missed samples > 0 read `MISSED SAMPLES` with the count in `accentRecord` (white on the take plate); otherwise the row reads `NO MISSED WRITES`. The host passes the take's count while it rolls and, after STOP, only while that take's session is open (`MainComponent::missedSamplesSession`); any other session gets 0. A device ride-through's silent stretch counts here.
 
 The timer keeps its width. The right-hand column takes what is left, up to 300 px. A row that doesn't fit (under 16 px tall or 136 px wide) isn't drawn; rows give way in the order `MARKERS`, `LAST WRITE`, missed samples, `FREE`.
 

@@ -1,13 +1,47 @@
 # Project Tasks
 
+## Bug audit, 2026-11-11
+
+A second whole-codebase review made 82 findings (1 critical, 4 high, 28 medium, 49 low). All are fixed on six branches (engine, capture, remote, session, EDIT, main window) merged on `integrate/fix-2026-11-11`, two of them in part (below). What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the top ADR of [decisions.md](decisions.md), and the results are in [testing.md](testing.md). The audit list itself stays outside the repository. Installed builds are in [INSTALL.md](INSTALL.md). None of it has run on real hardware.
+
+- [ ] Owner: run *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig. A device-pair take with the monitor output unplugged, a Dante or interface reconfigure mid-take, an OSC tablet STOP button sending a value, 29.97 drop-frame chase, Mackie touch faders, a real Yamaha CL/QL and a recording drive pulled mid-take are the ones no test can stand in for.
+- [ ] Owner: change any tablet layout that sends `/zynforge/stop` with no value. Such a STOP is refused now; the button must send 1 on press and 0 on release, before the token.
+- [ ] Owner: review the choices in the top ADR of [decisions.md](decisions.md), above all: the take runs input-only after a monitor output is lost, with a 5 s grace for the input; a valueless OSC STOP is refused; a remote or surface stop of playback is refused during a selection punch, so a Mackie-only rig ends the punch on the Mac; `/zynforge/scene 0` is a release; the Mackie fader floor is -60 dB; a backup snapshot is refused rather than restored in the app; a Batch Rename closed by a take applies nothing.
+
+Fixed in part:
+
+- [ ] EDIT: RECORD while a session's saved peaks still load keeps the lanes already loaded, drawn from memory, but lanes not loaded yet stay blank until STOP. Nothing reads the take's drive; drawing them during the take would.
+- [ ] Prompts: native file panels (Save As, Move, Handoff, Import, the Welcome's folder pickers) can't be closed for a take: destroying one drops its callback. Save As, Move and Handoff no longer hold RECORD while open (`reserveForPickerAnswer`), so only Import and the Welcome's pickers still stand in front of STOP. The invariants gate leaves `FileChooser::launchAsync` out on purpose.
+
+Found during the fixes, not fixed:
+
+- [ ] 24-bit import goes through float, so samples above half scale come out 1 LSB low. `TrackExporter` already copies integers at the same rate; import could do the same.
+- [ ] "Delete a template…" (a `PopupMenu`) is not marked `closesForTake`.
+- [ ] Control Surfaces ▸ "Request ALL channel names" starts or switches the OSC listener and never puts it back. Same shape as the New Session from Console fix, but started by hand.
+- [ ] Console connect requests names for channels 1 to max(8, track count) by number, so a strip patched to a higher desk channel gets no request.
+- [ ] A helper that authenticates but is wedged still makes `connectCaptureDaemon` switch daemon mode off. Only a truly stuck helper (the relaunch during a long STOP) was fixed.
+- [ ] JUCE 8.0.17's `AudioDeviceManager` drops `audioDeviceError` (`CallbackMaxSizeEnforcer`), so `deviceErrorSeen` and the watchdog's 300 ms after-error path never fire in the app; the helper is likely the same. *EngineFixTests*' error test passes only by calling `audioDeviceError` directly. In the window, ride-through's silent-stop check (no block for 500 ms) now covers the HAL-error case.
+- [ ] The live EDIT waveform shows no ride-through gap until STOP. Cosmetic: the files and the report have it.
+- [ ] DEVICE's output combo shows the first device when no output is open.
+- [ ] An abandoned copy is always described as "stopped responding", even when it reached the 60 s drain limit while still progressing.
+- [ ] `CaptureDaemon` calls `updateDiskHealth (0)`, so the helper never reports DISK STRUGGLING.
+- [ ] The key handler ignores modifiers on some bindings: Cmd+M (marker), Cmd+A (solo with nothing focused), Ctrl+Cmd+Z (undo), Cmd+numpad minus (nudge), Option+Shift+R (arm) and Option+digits (cues). The shortcut sheet lists what they do today.
+- [ ] Space during a rolling punch-out's finalization still says "Wait…". STOP there now keeps playback stopped.
+- [ ] A suite earlier in the run leaves a "Welcome" dialog open. The UI fix tests now close it and log it; find which suite.
+- [ ] `MainComponentMenu.cpp`: Memory Locations (53) refuses only when it opens. Harmless now that the list itself refuses Rename and Delete during a take.
+- [ ] Test flake under load: *session.report.json includes SHA-256 per part file*. At a load around 80 the background hash thread can be starved past the test's 30 s.
+- [ ] `MainComponent::askClosesForTake` could move to `FloatingLaunch.h` beside `closesForTake`, so dialogs outside `MainComponent` can use it.
+- [ ] The new tests use the deprecated `createWriterFor` overloads too (see *JUCE 8.0.17-security* below).
+- [ ] Build: since Xcode 27.2 (installed 2026-11-06) every `cmake -G Xcode` configure hangs in xcodebuild / SWBBuildService, because `clang-stat-cache` sticks in `stat()`. Workaround: `XCODE_XCCONFIG_FILE` naming a file that holds `SDK_STAT_CACHE_ENABLE = NO`, for configure and build; or Unix Makefiles (see [testing.md](testing.md)). Suggested: check in a one-line xcconfig under `tools/` and point the build instructions at it. CI runners are unaffected.
+
 ## Bug audit, 2026-11-04
 
-A whole-codebase review made 75 findings, and all 75 are fixed on `main`. One of them, Add Tracks while a STOP finalizes, was already refused by the code; it keeps a small defensive change. The development Mac has it as `0e1bd8a` (installed 2026-11-04 evening); the mini still has `281c6c0`, and none of it has run on real hardware. What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the top ADR of [decisions.md](decisions.md), and the results are in [testing.md](testing.md).
+A whole-codebase review made 75 findings, and all 75 are fixed on `main`. One of them, Add Tracks while a STOP finalizes, was already refused by the code; it keeps a small defensive change. The development Mac has it as `0e1bd8a` (installed 2026-11-04 evening); the mini still has `281c6c0`, and none of it has run on real hardware. What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the 2026-11-04 ADR of [decisions.md](decisions.md) (*The conservative side…*), and the results are in [testing.md](testing.md).
 
 - [x] Installed `0e1bd8a` on the development Mac (rollback `eca170e`, see [INSTALL.md](INSTALL.md)).
 - [ ] Owner: run *2026-11-04 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig. A helper take with a separate monitor output unplugged, an OSC tablet STOP button, 29.97 non-drop and 23.976 chase, and quitting or logging out while a take closes are the ones no test can stand in for.
-- [ ] Owner: review the conservative choices in the top ADR of [decisions.md](decisions.md), above all `/zynforge/record 0` no longer stopping, the fader value box on a double-click, and RECORD refused with the sessions drive gone.
-- [ ] Flaky test, partly fixed: *Twin recorder host / A daemon take found rolling offers a re-link, and a confirmed STOP reaches the follower* (and the new *A daemon STOP whose "stopped" status arrives before its reply still reaches the follower as a STOP*) can end with "This take ended without STOP". Two causes are fixed and tested: the helper sent a status built before STOP after STOP's reply (now dropped; *A status built before STOP never reaches the window after STOP's reply* failed before the fix), and the window re-adopted a finished take from a leftover "recording" status when STOP's own status was dropped by `CaptureServer::writeLine`'s timed lock (the window now adopts only from a status received after the take it ended). It still fails in about 1 of 12 runs of the group with seven busy CPU loops beside it (3 of 12 before), and passes in normal runs. The failure message now prints the follower's start/stop counts and the window's state: the follower gets one start and one stop, so the window still sees the take roll again briefly after its confirmed STOP. Find that path; until then treat it as a real defect in helper mode with a twin follower under heavy load.
+- [ ] Owner: review the conservative choices in the 2026-11-04 ADR of [decisions.md](decisions.md) (*The conservative side…*), above all `/zynforge/record 0` no longer stopping, the fader value box on a double-click, and RECORD refused with the sessions drive gone.
+- [x] Flaky test: *Twin recorder host / A daemon take found rolling offers a re-link, and a confirmed STOP reaches the follower* (and *A daemon STOP whose "stopped" status arrives before its reply still reaches the follower as a STOP*) could end with "This take ended without STOP". Closed 2026-11-11: it was a test-fixture leak, not a helper-mode defect. The test before it left `leaderTakeActive` set, and `TwinLink::start()` kept the last link's `lastEvent`. `start()` now clears the event and comparison, and the fixtures tick the link after `stop()` and before `start()`. Proven 20 of 20 runs under seven busy CPU loops. The two helper fixes from 2026-11-04 (a status built before STOP is dropped; the window adopts a rolling take only from a status received after the take it ended) stay.
 - [ ] A copy read that hangs for good keeps its resume hash thread (and `runningScans`) alive, so Save As, Move, handoff and relocation wait in `waitForReportHashes` until cancelled. The primary's hashes are now published before that point. Decide what those jobs should wait for.
 - [ ] Save As, Move and Handoff say they wait for hashes, but not how far along they are. "N of M files" needs a new `MultitrackRecorder` call.
 - [ ] A marker dropped while Save As or Move copies goes to the source's `markers.json` (the markers save on their own) and may miss the copy.
@@ -72,7 +106,8 @@ A whole-codebase review made 75 findings, and all 75 are fixed on `main`. One of
 Read in the source, not run or fixed.
 
 - [ ] `SessionRecoveryDialog` first sorts by Size (`sortIndicesBy (3, false)`) while its header shows Modified (`setSortColumnId (4, false)`). The header's sort callback puts the rows right a moment later, so it only shows as a flicker, if at all.
-- [ ] `EditTimeRuler` paints with `timelineRate()` (the session rate when idle), but `mouseDoubleClick` maps with the player's rate and a 48 kHz fallback. With no session loaded on a device at another rate, a double-click to rename can miss the flag it is drawn on. `pixelToSample` is unused and `setHeaderWidth` has no caller.
+- [x] `EditTimeRuler`'s double-click mapped with the player's rate and a 48 kHz fallback while it painted with `timelineRate()`. Closed 2026-11-11: `markerIndexAt` hit-tests at `timelineRate()`, skips markers not drawn, and takes the nearest flag first.
+- [ ] `EditTimeRuler::pixelToSample` is unused and `setHeaderWidth` has no caller.
 
 ## Fix round after `d4a9a57` — 2026-11-03
 

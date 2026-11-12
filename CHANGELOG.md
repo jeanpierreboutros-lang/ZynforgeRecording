@@ -17,7 +17,119 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-Everything from here down to the next rule came from a whole-codebase review on 2026-11-04. All 75 of its findings are closed on `main`; one (Add Tracks while a STOP finalizes) was already refused and keeps a small defensive change. The development Mac has it as `0e1bd8a`; the mini still has `281c6c0`. None of it has run on real hardware. The choices the fixes made where the owner may want otherwise are in the top ADR of [decisions.md](decisions.md).
+Everything from here down to the next rule came from a second whole-codebase review on 2026-11-11. It made 82 findings (1 critical, 4 high, 28 medium, 49 low), fixed on six branches (engine, capture, remote, session, EDIT, main window) and merged on `integrate/fix-2026-11-11`. All 82 are closed except two that are fixed in part: lanes not yet loaded at RECORD stay blank until STOP (EDIT), and native file panels can't be closed for a take (prompts). None of it has run on real hardware. Installed builds are in [INSTALL.md](INSTALL.md). The choices the fixes made where the owner may want otherwise are in the top ADR of [decisions.md](decisions.md).
+
+### Changed — what to know, 2026-11-11 review
+
+- **Generic OSC STOP needs a value.** A tablet button sends `/zynforge/stop 1 <token>` on press and `/zynforge/stop 0 <token>` on release. A STOP with no value is refused, and the status line and the OSC log say why (at most once a second). A button that sent the address alone sent the same packet on press and on release, so one press counted as both STOP taps. Control Surfaces ▸ Open Sound Control says so under the token. The desk macro port is unchanged.
+- **`/zynforge/scene 0` is a release.** A 0 (int or float) on `/zynforge/marker` or `/zynforge/scene` means a button was let go, so scene 0 can't be recalled over Generic OSC. A numeric press drops one marker with an automatic name; a string names it.
+- **Mackie faders.** A fader under your hand is left to it: the app sends it no position while it is touched, and one when you let go. The bottom of travel is the engine's -60 dB floor (it was -65, which the engine could not hold, so the motor pushed back up). Unity sits at about 83 % of travel instead of 84 %.
+- **A selection punch ends with STOP only.** During one, a tablet PLAY release, a remote PLAY toggle and the Mackie STOP and PLAY buttons are refused ("STOP ends it"). A remote STOP still ends the punch. A Mackie-only rig ends a selection punch on the Mac. Mackie STOP is also refused while a metadata save is pending, like the other remote ways to stop playback.
+- **A take outlives its monitor output.** On a device pair (input and monitor output on different devices), headphones pulled, a display asleep, a headset gone or a CoreAudio restart no longer end the take. It carries on from the input alone until STOP, with no monitoring; see *device and engine* below.
+
+### Fixed — recording, the capture helper and the twin, 2026-11-11 review
+
+- A backup or mirror writing a long silent lead-in after STOP, or while it joins a take, is no longer called "stopped responding" and left behind. It stays in this take and the next. STOP's 60 s limit for a copy now counts from when that copy finished opening.
+- The last take's integrity hashes pause while the next take records, helper takes included, and resume after STOP. They kept reading the recording drive whenever the next take went to another folder.
+- A punch or continue stopped before any audio arrived writes no silent "take" for newly armed tracks.
+- A refused RECORD no longer leaves the last take's report waiting for its hashes until the session is reopened.
+- No false DISK STRUGGLING at the start of a take while a backup or mirror is still opening.
+- A pulled recording drive is no longer called "intact" at STOP: a copy whose writes failed or whose drive is gone is called incomplete. A copy put back at RECORD after an interrupted punch says it sits out this take and joins the next.
+- A strip whose silent lead-in couldn't be written keeps its clips and its length. The STOP banner and the session-open toast name it and say it stays silent until the drive has room (they said it "plays early"). It plays again once there is room and the session is reopened.
+- The Twin panel no longer shows the last link's event or comparison after Disconnect and Connect. The flaky twin test in tasks.md was state left by the test before it, not a helper defect; it is fixed and passed 20 of 20 runs under load.
+- The capture helper starts with none of the window's open files and sockets. Twin and OSC can listen on their ports again after it starts, a relaunched follower window hears the leader's STOP, and the helper no longer holds files the window had open.
+- After the leader's window restarts under a rolling helper take and re-links, both Macs compare the take, and both reports carry the peer's numbers.
+- A window relaunched during a long helper STOP attaches to the helper. It said "Something else answers on port…" and switched daemon mode off.
+- A follower in helper mode that gets the leader's STOP during its own STOP waits for it and reports how it ended, not "capture stop failed".
+- The helper starts when the Mac's default input fails to open. When it can't start, the window gives the real reason: the port only when the helper could not listen, otherwise "quit while starting (exit code N)" or "did not answer within 2 seconds".
+
+### Fixed — device and engine, 2026-11-11 review
+
+- **An in-process take on a device pair keeps rolling when the device stops but its input is still there** (headphones pulled, display asleep, headset gone, a CoreAudio restart, or a failed hardware call that silently stops the pair). The banner reads "AUDIO DEVICE STOPPED -- the take is held open while <input> comes back". The input is opened again on its own, at the take's rate and buffer, and capture goes on. The stretch it missed is written as silence into every track and into `StereoMix.wav`, and counted as missed samples, so every file stays on the clock and the report says how much. The banner then reads "MONITOR OUTPUT LOST -- the take continues on <input> with n s of silence in it; no monitor output until STOP", or "AUDIO DEVICE RESTARTED" when the same pair came back. Monitoring returns by itself after STOP once the output is listed. The take still ends as a device loss when the input itself is gone, is not back within 5 s, or comes back at another rate, input count or a larger buffer. A punch never rides through.
+- RECORD pressed while CoreAudio restarts the device is refused: "the audio device has stopped -- RECORD waits until it runs again". A restart landing on a RECORD press could close the new take with no alarm and freeze the window.
+- PLAY, remote PLAY and timecode chase refuse when the device runs at another rate than the session, and say why; the desk got the show at the wrong speed and pitch. The banner reads "recording blocked, PLAY refused".
+- Virtual Soundcheck reaches outputs past 64. The app opened at most 64, so a strip patched past them sent nothing and was said to have no output. It opens up to 256 at launch, on a reopen and after DEVICE Cancel, and the panel lists up to 256.
+- The buffer size chosen in DEVICE survives a relaunch and an automatic reopen. The rate is still never saved.
+- A device's id is learned even when coreaudiod was slow to answer the first time, and a later Apply no longer erases a saved one.
+- 29.97 drop-frame chase no longer relocates about once a minute over MTC, and BWF stamps under drop-frame chase are frame-accurate.
+- The chased playhead no longer runs 1.5 to 3.5 frames behind the master.
+- LUFS in the header and the QC report use the BS.1770 K-weighting filter. They read 0.1 to 0.26 LU low.
+- Recording `StereoMix.wav` no longer takes a lock in the audio callback, and a failed write to it is reported.
+- Virtual Soundcheck no longer drops blocks when three clips read one file at once after a loop or a clip cue.
+- Closing DEVICE without Apply leaves the master output where it is. It moved it back to where it was when the panel opened, even during a take.
+- DEVICE's input meter shows the device's input. It stayed dead on a working interface, and showed playback during VSC.
+
+### Fixed — console and remotes, 2026-11-11 review
+
+- Desk channel names land on the strips that listen to that desk channel, after a strip move or with a patch that is not one-to-one, as Trim-Follow does. Create Session from Console still names by number.
+- A tablet MARKER button drops one marker per press, not two.
+- Yamaha SCP requests go out with bare parameter paths, and an ERROR reply no longer counts as the desk answering the probe.
+- Junk OSC traffic costs the listener far less time: a refused packet is decoded once, and its refusal text is built only when a report goes out.
+- A head-amp capture is saved when it completes, however long it takes. One that took longer than 1.5 s said "captured" and was never saved.
+- A Yamaha or Allen & Heath desk that drops its TCP link raises an amber "CONSOLE LINK LOST" notice on the banner, and pre-flight says so, until the link is made again.
+- A selection punch stopped early never restarts playback by itself, and says whether anything was replaced ("nothing was replaced", or replaced up to the stop) instead of "Punch complete".
+- New Session from Console puts the OSC listener back as it was, on every way out, and a tablet keeps its token.
+- Pre-flight's To stage button only ever takes the desk out of soundcheck. It toggled, so it could send the desk to the soundcheck patch.
+
+### Fixed — sessions and exports, 2026-11-11 review
+
+- A snapshot folder inside `Session File Backups` no longer opens as a session, from Finder, File ▸ Open or a launch reopen. The refusal names the session it belongs to and how to restore it: close that session, then copy the snapshot's files into it. Retention deletes only snapshot folders that hold nothing but copied documents; any other is kept, takes no place among the 10, and is reported once a run.
+- After a crash, strips added since the last save come back with the session, with default names and patch (a stereo file as a linked pair), and the app says so. A local RECORD saves the mixer into the take's folder before it rolls, and Recover saves the grown mixer.
+- New Session, Export Audio, Export Songs, Session Info, Session Settings, the Welcome, and every session question (replace, close, folder missing, Auto-Save, template name, continue from disk, damaged files, recovery Delete) close as Cancel when a take starts behind them. Session Settings no longer floats over other apps. A damaged-files prompt closed this way says the good copies stay in `Session File Backups`.
+- An open Save As, Move or Handoff folder panel no longer refuses RECORD, twin and desk RECORD included, and no longer blames "saving". The answer is refused, with the reason, if a take started, the session changed or a job took the session meanwhile. A second panel names the one already open.
+- A stereo-mix bounce or a New Session from CSV answered after another session opened does nothing and says why.
+- New Session writes `<folder>.zfproj`, and New Session, Session Info and Save As copies name the session by its folder. Session Info shows the rate the session runs at.
+- A session name over 200 bytes is refused plainly at New Session and Save As. A renamed folder too long to save in says so, instead of "check permissions / free space".
+- The Welcome stays open when an Open or a Create fails, and its Create leaves the audio devices alone unless a picker was changed.
+- A session on read-only media with nothing changed no longer shows AUTO-SAVE FAILED at every interval. A real change still warns.
+- Export Audio ▸ Raw takes writes WAVs with the take's BWF time stamp and channel names. A one-channel export of a stereo strip keeps its own name; a pair from two mono takes names both.
+- Importing a multichannel file reads and resamples it once, not once per channel, so a large poly file imports far faster. A source still imports whole or not at all.
+- Detect Songs fails the scan when a take will not open, and names the file.
+- Default marker names count from 1 in each session.
+- New Session from Template opens the template the menu shows after a template was saved or deleted; one deleted since is refused. The menu's ticks follow a saved default.
+- The ticks on Auto-arm on input detect and Snap edits to zero-crossing change when toggled.
+- The capture helper can't be switched on during an in-process take or while it closes its files.
+- An open "Remove last capture?" no longer refuses a desk or twin RECORD, or makes Cmd+Q name a job that isn't running. It closes as Cancel for a take, and its answer does nothing if the last capture changed meanwhile.
+
+### Fixed — EDIT, 2026-11-11 review
+
+- Every EDIT prompt closes as Cancel when a take starts behind it: Crop, Delete recording, Delete channel, a new marker's name, Add Cue, Rename Cue, Rename clip, clip gain Set value, the strip colour picker, the strip-reorder notice, the ruler's Rename marker, and Memory Locations with its Rename. An Add Cue prompt closed this way still adds the cue under its suggested name. During a take Memory Locations greys Rename and Delete ("after the take") and refuses them at OK too, and a ruler double-click does nothing.
+- A double-click on the ruler renames the marker drawn there, the nearest flag first. With markers close together it renamed an earlier one.
+- Undo or redo of Crop or Ripple Delete no longer duplicates a cue updated since, brings back cues or markers deleted since, or puts back old names. A cue updated or a marker moved since keeps its own place; one only renamed moves with the step, under its new name.
+- A continued take's peaks replace the shorter take's, in memory and in `WaveCache.wfm`. Both grew with every set.
+- Rename clip and Clip gain ▸ Set value act on the clip they were opened on, wherever it now sits. If it is gone, moved, trimmed or can't be told apart, they do nothing and say so.
+- H+ / H- and Cmd+] / Cmd+[ zoom around the playhead when it is on screen, otherwise around the middle of the view; they kept the left edge, so the view jumped. Cmd+[ is now the exact reverse of Cmd+].
+- Quitting while `WaveCache.wfm` is being written no longer loses it: the save runs on, up to its 5 s limit.
+- Cmd+C on a selected clip during a take is refused ("Copy the clip after the take"). It read the take's drive on the main thread.
+- RECORD while a session's saved peaks still load keeps the lanes that had loaded, drawn from memory, and reads nothing from the take's drive. *Fixed in part:* lanes not loaded yet stay blank until STOP.
+- A range drawn on a grouped strip shades every strip that Delete, Cut, Separate, Heal and Consolidate will cut.
+- A loaded setlist with no cue picked reads "(pick a cue)", not "(empty setlist)".
+
+### Fixed — mixer and main window, 2026-11-11 review
+
+- Any prompt open when a take starts from a desk, OSC, Mackie, the twin, the helper or a punch window closes as Cancel, so STOP and Space work: RECORD's device and cursor-punch questions, VSC Repatch, Restore Outputs, Quit, Save / Don't Save / Cancel, About, the capture-helper notice, Batch Rename, Batch Colour, every colour picker, the DEVICE panel and the Recover sessions list. A Batch Rename closed this way applies nothing and says so; Batch Colour and the pickers keep colours already applied. Colour pickers and Track ▸ Colour Selected refuse during a take. The Stop & Quit question and the quit with a lost helper stay up on purpose: they are the take's own ways out. *Fixed in part:* native file panels (Save As, Move, Handoff, Import, the Welcome's folder pickers) can't be closed for a take, because macOS drops their answer; Save As, Move and Handoff no longer hold RECORD meanwhile (above).
+- +CH, and pre-flight's Add, come back after STOP when the session was unlocked during the take.
+- STOP during a rolling punch-out's finalization keeps playback stopped and says so. Playback restarted by itself when it ended. Space still says to wait.
+- A channel name with two spaces stays one alarm in the banner.
+- Help ▸ Keyboard Shortcuts lists every shortcut as the keys really work, and the tour describes the real header.
+- The soundcheck report's spectrum bands are live for the right half of a stereo pair.
+- After STOP the header shows LUFS and true peak again. DROP shows only while a take rolls, and the clock's MISSED SAMPLES stays only while that take's session is open.
+- Toasts wrap long messages by word and grow upward, stay up longer when they wrap, merge notices that differ only in a number (the newest wins), and keep at most 3 waiting, dropping the oldest of the least urgent first. They cut messages at about 50 characters and queued without limit.
+- Mixer undo covers edit-group changes, a link's group change included.
+- Batch Rename and Batch Colour give a stereo pair one row ("In 1-2"). Rename writes only the rows you changed (R gets "name R"), colour goes to both halves, and Return applies.
+- PATCH shows an output past the device's last one as an amber "OFF / NOT ON DEVICE" row with a numbered dot, as MIXER and EDIT show "Out N (off)"; a click there sends the strip to the master.
+- Patch and routing clicks during a take say "Patch is locked while a take records -- change it after STOP". They did nothing and said nothing.
+- The MASTER meter reads after the master fader and MUTE.
+- An output two strips share is marked "N STRIPS" in PATCH, and the VSC question and pre-flight's soundcheck row name it.
+
+### Fixed — tools and build, 2026-11-11 review
+
+- `tools/verify_take.sh` runs its Python isolated, so it is safe to run from any folder.
+- The invariants gate has a 40th rule: every modal in `Source/UI` closes for a take started behind it, or says why it may stay.
+
+---
+
+Everything from here down to the next rule came from a whole-codebase review on 2026-11-04. All 75 of its findings are closed on `main`; one (Add Tracks while a STOP finalizes) was already refused and keeps a small defensive change. The development Mac has it as `0e1bd8a`; the mini still has `281c6c0`. None of it has run on real hardware. The choices the fixes made where the owner may want otherwise are in the 2026-11-04 ADR of [decisions.md](decisions.md).
 
 ### Fixed — recording and the capture helper, 2026-11-04 review
 

@@ -56,7 +56,7 @@ ChannelStrip (int index, TrackState& state,
 
 ## States
 
-The host wires `canChangeArm` to recording eligibility. If a take is active (local or daemon), an arm click is refused and the toggle is restored to the actual state; `onAfterArmedToggle` is not a way to bypass this guard. The recorder independently freezes capture participation at take start. Before a track-count shrink, the host condemns strips, edit rows and floating meters before releasing `TrackState` references. A condemned strip never comes back: `condemnAllStrips` sets `lastTrackCount = -1`, so the next tick rebuilds the strips even when a refused session open left the count unchanged.
+The host wires `canOpenColourPicker` the same way: the swatch picker is modal and would stand in front of STOP, so it refuses during a take ("Colours wait until the take has stopped"), and a picker already open closes for a take keeping the colour already applied. The host wires `canChangeArm` to recording eligibility. If a take is active (local or daemon), an arm click is refused and the toggle is restored to the actual state; `onAfterArmedToggle` is not a way to bypass this guard. The recorder independently freezes capture participation at take start. Before a track-count shrink, the host condemns strips, edit rows and floating meters before releasing `TrackState` references. A condemned strip never comes back: `condemnAllStrips` sets `lastTrackCount = -1`, so the next tick rebuilds the strips even when a refused session open left the count unchanged.
 
 | State | Visual | Behaviour |
 |---|---|---|

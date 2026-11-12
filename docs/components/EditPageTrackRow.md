@@ -67,7 +67,7 @@ Reads `EditToolsBar::getTool()` to bias hit-testing:
 | Tool | Behaviour |
 |---|---|
 | Smart | Default — clip-edge zones trim, body moves, fade handles fade |
-| Selector | Drag a loop region; sets the player's loop |
+| Selector | Drag a loop region; sets the player's loop. The range band shades every row whose strip or edit-group peer is selected (`clipedit::peerTracks`), which is what the range edits cut |
 | Trim | Edge drag = trim, body click = no-op |
 | Grabber | Body drag = move, edges = no-op |
 | Fade | Click a clip = fade dialog |
@@ -111,7 +111,8 @@ At long time scales, the overview draws one shape: the quadratic mean of 16 shor
 - Each row's thumbnails scan through `scanio::openStream`. The scan threads run at utility priority and read the take past the page cache (`Source/Audio/UncachedFileInput.h`); a read on the message thread (JUCE's detail draw below about 128 samples per pixel) switches that stream to the page cache, one `fcntl` per change.
 - While a take rolls, and until STOP has closed its files, `EditPage::timerCallback` pauses all four scan threads (`scanio::pauseScanThread`, which never waits). They resume after the settle tick has issued the captured rows' rescans (`resumeScanThread`, retried next tick while the paused slice still runs). Each thumbnail keeps its place, so a paused scan goes on where it stopped.
 - A one-file stereo pair scans its file once: `thumbnailR` has no source, and the R lane draws channel 1 of `thumbnailL` (`rightThumb()`), in every paint path.
-- A forced reload (`applyThumbSource (…, true)`) detaches the old scan before it drops the cached entry, so a scan finishing in between cannot store old peaks under the name.
+- A forced reload (`applyThumbSource (…, true)`) detaches the old scan before it drops the cached entry, so a scan finishing in between cannot store old peaks under the name. It drops the entries for every part count the take has had, up to the most, the single-file entry included, so a continued take's peaks replace the shorter take's instead of piling up in memory and `WaveCache.wfm`.
+- While a session's saved peaks load, rows have no files. A RECORD in that time: each row notes its files (`notePendingWaveformFiles`), and when the take cancels the load it draws what had come in, from memory (`showPendingWaveformFromMemory`: a source with no stream, so nothing reads the take's drive). STOP gives the rows their real sources. A lane with nothing loaded stays blank until STOP (`isWaveformFromMemoryForTests`).
 - Peak caches are keyed by path. Every session change empties them (`beginWaveCacheReset`, queued on the cache thread), and the session's rows get no files until that has run. Every strip move or delete clears them too (`rescanWaveforms`). An import names the files it wrote (`sessionMediaAdded (written)`) so their old peaks go.
 
 ## Accessibility

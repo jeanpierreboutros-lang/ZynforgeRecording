@@ -1,5 +1,88 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-11 fix round
+
+The review's 82 findings were fixed on six branches and merged on `integrate/fix-2026-11-11`. Each fix has a regression test, and each test was built and run on the unfixed code first and seen failing there, except ENG-08 (a lock in the callback, which no headless test can observe) and the tour's wording (MAIN-10), checked by eye. Nothing here has run on real hardware; the hardware steps are *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
+
+### Build on this Mac since Xcode 27.2
+
+Xcode was updated to 27.2 on 2026-11-06. From then on every `cmake -G Xcode` configure hung in xcodebuild / SWBBuildService at 0 % CPU, because `clang-stat-cache` sticks in `stat()`. Two ways round it, both used for this round:
+
+```bash
+# Xcode generator: turn the SDK stat cache off for configure and build
+echo 'SDK_STAT_CACHE_ENABLE = NO' > /path/outside/repo/no-stat-cache.xcconfig
+export XCODE_XCCONFIG_FILE=/path/outside/repo/no-stat-cache.xcconfig
+cmake -B build -G Xcode
+cmake --build build --config Release
+
+# Or Unix Makefiles, in a separate build folder (never a half-configured Xcode one)
+cmake -S . -B build-make -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release \
+      -DFETCHCONTENT_SOURCE_DIR_JUCE="$PWD/build/_deps/juce-src"
+cmake --build build-make --target ZynforgeRecordingTests -- -j2
+cmake --build build-make --target ZynforgeRecording -- -j2
+cmake --build build-make --target ZynforgeCapture -- -j2
+open -W -n "build-make/ZynforgeRecordingTests_artefacts/Release/Zynforge Recording Tests.app" \
+     --args --test-report=/private/tmp/zynforge-tests.log
+```
+
+CI on GitHub's runners is unaffected. A checked-in xcconfig is suggested in [tasks.md](tasks.md). Never commit `build-make/`.
+
+### New test files
+
+- `Source/Tests/EngineDeviceTests.cpp`, *Engine device fixes 2026-11-11*, 18 groups; 51 failures on the unfixed code. Device ride-through (a pair losing its output, a CoreAudio restart in place, a silent stop with no error, the 5 s grace, a device back at another rate, punches), RECORD against a device stop, PLAY at a rate the session is not at, 256 outputs, the chosen buffer, device ids read again, `StereoMixWriter` write errors and gaps, the DEVICE panel's close and input meter, and the master meter after the fader. Tests drive `serviceDeviceWatch` with their own clock.
+- `Source/Tests/UiFixTests.cpp`, *Main window, MIXER and PATCH fixes (2026-11-11)*, 28 groups; 48 failures on the unfixed code, from a tests-only commit made first. Prompts closed for a take as Cancel, the shortcut sheet against the key handler (about 400 combinations pressed in MIXER and EDIT), toasts, PATCH's off-device and shared-output rows, batch dialogs, missed samples after STOP, edit groups in mixer undo, and the punch-out restart. The test `MainComponent` runs no timers, so tests call `serviceModalsAroundTakes()` themselves; each window test starts with no modal open, lets a modal's answer run before checking it, and switches views before waiting. A suite earlier in the run left a "Welcome" dialog open; the fixture closes it and logs it (tasks.md).
+
+### New groups in existing files
+
+- *Capture fixes*, *Capture daemon link*, *Capture copies* (`CaptureFixTests.cpp`): lead-in silence ticks progress (`silenceBlockDelayMsForTests` slows it), the drain limit from a copy's open, hash passes paused while a take captures and resumed after a refused start, empty lead-ins dropped, the disk estimate with a copy still opening, "intact" with a failed write or a pulled drive, a strip whose lead-in is owed.
+- *Timecode chase*: drop-frame by frame count both ways and across midnight; the label's age in the chase target. *Engine mix safety*, *Playback jumps*, *Audio callback*: K-weighting (a 997 Hz full-scale sine reads -3.01 LUFS within 0.02 at 48 kHz, 0.05 at 44.1 and 96) and cue release.
+- *OSC remote*: a valueless STOP refused and said once a second, momentary MARKER and SCENE, scene 0 as a release, names by patch, junk packets. *Network state*, *Console transports + dialects*, *Network fixes*: Yamaha bare paths and ERROR, a TCP link lost and latched, head-amp capture saved on completion, New Session from Console restoring OSC, To stage. *MCU protocol*: touch notes and the -60 dB floor.
+- *Twin recorder link* / *Twin recorder host*: a new link starts clean, an adopted take is compared, STOP during this Mac's own STOP. *Capture supervisor*, *Capture helper device and exit*, *Capture link transport*: the helper spawned with nothing of the window's, starting without a default input, the exit code's reason, a reconnecting window greeted during a long STOP.
+- *Session fixes* (`SessionFixTests.cpp`), *Session backup*, *Stereo-pair export*, *Audio import worker*, *Song detection*, *Marker store*: snapshots refused and retention, crash-added strips, session prompts closed for a take, file panels that reserve nothing while open, folder names, 200-byte names, Welcome results, read-only autosave, raw export BWF and names, poly import read once, Detect Songs naming an unreadable take, marker names per session, template menu binding and ticks, the capture-daemon toggle, Remove last capture. Seam: `launchSessionPicker` / `sessionPickerForTests`.
+- *EDIT row fixes* (`EditRowFixTests.cpp`), *EDIT ruler scroll align*, *Timeline edits*, *SetlistBar accessibility*: EDIT prompts closed for a take, Memory Locations during a take, ruler hit-test, Crop and Ripple undo with later cue and marker edits, continued-take peaks, clip prompts finding their clip, zoom around the playhead, the quit-time cache save, clip copy during a take, lanes from memory while peaks load, group shading, "(pick a cue)". 33 failures on the unfixed code.
+- `tools/test_verify_tools.py`: `verify_take.sh` runs Python isolated (the test plants a `json.py`).
+
+### Changed tests
+
+- *A chosen interface that comes back opens at its own rate and buffer* (*Engine repairs*) now picks 256 and expects the chosen 256, not the stand-in's buffer.
+- *OSC remote*: the old "an address with no argument is a press" checks now expect a valueless STOP to be refused.
+- *MCU protocol* round-trips from -60 dB, the new floor.
+- *Review persistence repairs*: Session Info shows the folder name, not the project's.
+- *Strip lifetime and mixer fingerprint*: the field list has `editGroup`.
+
+### Gate
+
+The invariants gate has a 40th rule, *every modal closes for a take started behind it*: any `enterModalState`, `launchAsync`, `launchAsynchronously`, `showAsync` or `showMessageBoxAsync` in `Source/UI` needs `closesForTake` / `launchClosesForTake` / `askClosesForTake` nearby, or a `modal-over-take-ok:` comment, and `showAsync` / `showMessageBoxAsync` always count as unmarked. Native file panels are left out. It was seen failing with the Recover sessions list unmarked and with an allow comment removed.
+
+### Results
+
+Each branch alone, before the merge, Release, built with Unix Makefiles (`main` had 1701):
+
+| Branch | Full suite | Notes |
+|---|---|---|
+| engine | 1719 / 0 | *Engine device fixes* 18 / 0 |
+| capture | 1716 / 0 | |
+| remote | 1722 / 0 | *Twin recorder host* 20 / 20 under seven busy CPU loops; `tools/test_verify_tools.py` OK |
+| session | 1736 / 0 | |
+| EDIT | 1717 / 0 | |
+| main window | 1729 / 0 | *Main window, MIXER and PATCH fixes* 28 / 0; one earlier full run had 3 twin-host failures under load, passed alone 20 / 0, before the remote branch's fixture fix |
+
+Both gates were clean on every branch, and the app and helper built.
+
+**Merged on `main` (all six branches + the lead's gate commit), built with the Xcode generator (`XCODE_XCCONFIG_FILE` workaround above):**
+
+- **Release (universal):** **1834 test groups, 0 failures**, launched through `open`, at `66e7fee`. The two four-branch and six-branch Makefile runs before it were 1795 / 0 and 1834 / 0.
+- **ASan/UBSan (Debug, arm64):** the first full run was 1834 / 0 but UBSan logged a signed overflow in `EditTimeRuler::idleSignature` (summing marker-name hashes; it existed before this round, the new marker tests reached it), fixed in `66e7fee`. The second full run stopped on a stack-use-after-scope in a *Capture path* test: a daemon reader thread ran a test hook after the test's local release flag was gone, which the HELP-04 change (a superseded reader is no longer joined before the next client is served) made possible. The three wait-loop hooks now own their flag (`5c41cbf`, test-only). Final full run at `5c41cbf`: **1834 / 0, no sanitizer reports**.
+- **TSan (Debug, arm64):** full run at `d9461a7`: 1834 groups, 1 failure, no reports. The failure was the new 64 KB Latin-1 OSC timing check (38 ms against a 25 ms bound in the slower Debug build); Debug and sanitizer builds now get 150 ms (`66e7fee`). After that, *OSC remote* 20 / 0 and every *Capture* suite (244 groups) 0 failures, no reports. The full TSan suite was not re-run after those two small commits.
+- Release *Capture* suites at `5c41cbf`: 244 / 0. Both gates are clean (40 invariants rules, the new modal rule among them). The app and helper built universal.
+
+### Not covered headless
+
+- A real device pair losing its output, a real CoreAudio restart and a real HAL error: the tests drive the engine's device callbacks and `serviceDeviceWatch` directly.
+- ENG-08, the lock the callback took: nothing headless can see a mutex taken; the code no longer has one.
+- Mackie touch on a real surface, Yamaha SCP on a real desk, a real twin pair, real file panels.
+- Toast wrapping, PATCH rows and the shortcut sheet at real size: checked by eye (FIELD-TEST.md).
+
 ## 2026-11-04 fix round
 
 The whole-codebase review's 75 findings were fixed on four branches and merged. Each fix has a regression test, and every regression test was built and run on the unfixed code first and seen failing there, with the exceptions listed below. Nothing here has run on real hardware; the hardware steps are *2026-11-04 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
@@ -433,6 +516,8 @@ cmake -B build -G Xcode
 cmake --build build --config Release
 ```
 
+On Xcode 27.2 the Xcode configure can hang; export `XCODE_XCCONFIG_FILE` pointing at a file with `SDK_STAT_CACHE_ENABLE = NO`, or build with Unix Makefiles in `build-make/` (see *2026-11-11 fix round* above).
+
 ### Smoke-test
 
 Stop takes, save, and quit the GUI and helper gracefully before launching a second instance. Use temporary preferences for a development smoke:
@@ -470,7 +555,7 @@ tail -1 /private/tmp/zynforge-tests.log   # "[zynforge tests] N test groups, 0 f
 
 ```bash
 tools/design_audit.sh       # 7 brand rules   -- raw colours/fonts/alphas/radii/tints, spacing ratchet
-tools/invariants_audit.sh   # 39 correctness rules -- recurring bug classes
+tools/invariants_audit.sh   # 40 correctness rules -- recurring bug classes
 tools/install_hooks.sh      # once per clone: wires both as a pre-commit hook (hooks aren't in git)
 ```
 

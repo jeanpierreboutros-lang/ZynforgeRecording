@@ -6,9 +6,15 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
-References are kept in line with the current headers. The 2026-11-04 pass
-checked every document here against the `821131a` source, after that day's
-review fixes: `BigClockPanel`, `ChannelStrip`, `DialogChrome`,
+References are kept in line with the current headers. The 2026-11-11 pass,
+after that day's review fixes on `integrate/fix-2026-11-11`, updated
+`BigClockPanel` (missed samples per session), `ChannelStrip` (colour picker
+refused during a take), `EditPage::TrackRow` (peaks during a load, continued-take
+peaks, group shading), `EditTimeRuler` (`markerIndexAt`), `MasterStrip` (meter
+after the fader), `SessionRecoveryDialog` (closes for a take), `Toast` (wrapping,
+merging, a bounded queue), `TransportBar` (a Generic OSC STOP needs a value)
+and `WelcomeDialog` (callbacks return whether they worked). The 2026-11-04 pass checked every document here against the `821131a`
+source, after that day's review fixes: `BigClockPanel`, `ChannelStrip`, `DialogChrome`,
 `EditPage::TrackRow`, `FineFader`, `LedMeter`, `MasterStrip`,
 `SessionRecoveryDialog`, `TransportBar` and `WelcomeDialog` changed;
 `EditTimeRuler`, `EditToolsBar` and `Toast` did not. None of that source has run

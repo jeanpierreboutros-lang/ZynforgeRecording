@@ -38,13 +38,15 @@ struct NewResult {
     double sampleRate;
     juce::String inputDeviceName;
     juce::String outputDeviceName;
+    bool devicePicked { false };   // a device picker was changed by hand
 };
 struct DeviceChoices {
     juce::StringArray inputs, outputs;
     juce::String currentInput, currentOutput;
 };
-using OnCreateNew = std::function<void (const NewResult&)>;
-using OnOpenExisting = std::function<void (const juce::File&)>;
+// Each returns whether it worked; the Welcome closes only on true.
+using OnCreateNew = std::function<bool (const NewResult&)>;
+using OnOpenExisting = std::function<bool (const juce::File&)>;
 static void launch (const juce::File& defaultLocation,
                     double lastSampleRate,
                     CaptureFormat lastCaptureFormat,
@@ -53,7 +55,7 @@ static void launch (const juce::File& defaultLocation,
                     OnOpenExisting onOpen);
 ```
 
-Static `launch` constructs the dialog asynchronously. `DeviceChoices` supplies available input/output devices and the current selections, and creating a session saves that pair as the chosen device (`noteChosenDevice`); empty device names in `NewResult` mean unchanged. `onCreate` fires when the engineer commits a new session; `onOpen` when they pick an existing one. `MainComponent` owns replacement confirmation and filesystem creation: a failed create leaves the current session untouched, while a configured default template is applied and saved only after the new folder exists.
+Static `launch` constructs the dialog asynchronously, through `launchClosesForTake`: a take that starts behind it (a desk macro, OSC, the twin, the helper) closes it as Cancel. Its own folder picker is a native panel and is not closed. `DeviceChoices` supplies available input/output devices and the current selections. Creating a session applies and saves that pair as the chosen device (`noteChosenDevice`) only when a picker was changed by hand (`devicePicked`), so an untouched Welcome never switches the devices; empty device names in `NewResult` mean unchanged. `onCreate` fires when the engineer commits a new session; `onOpen` when they pick an existing one. Each returns whether it worked, and the Welcome stays open on false (a refused open, a create on a missing drive) so the engineer can try again. `MainComponent` owns replacement confirmation and filesystem creation: a failed create leaves the current session untouched, while a configured default template is applied and saved only after the new folder exists.
 
 ## Sidebar
 
@@ -70,8 +72,8 @@ Two items only — `New` and `Open`. Don't add others: anything else doesn't bel
 |---|---|
 | Initial (first launch) | New sidebar selected, name field empty + focused, default-selected for typing |
 | Name entered | Create button enables |
-| Create clicked | Validates name, then `MainComponent::createSessionFolderStructure` creates a unique folder and all required files; a default template is applied to the new session when configured |
-| Open clicked | File picker opens; on selection, fires `onOpen` and closes |
+| Create clicked | Validates name, then `MainComponent::createSessionFolderStructure` creates a unique folder and all required files; a default template is applied to the new session when configured. The Welcome closes only if that worked; a refusal leaves it open with the reason |
+| Open clicked | File picker opens; on selection, fires `onOpen` and closes if it returned true |
 | Cancel / Esc | Closes without firing either callback |
 
 ## Validation

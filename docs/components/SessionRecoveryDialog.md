@@ -10,7 +10,7 @@ A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` (async, nativ
 
 Called from `MainComponent::offerSessionRecovery()` during startup, after a capture-daemon take has been reattached. The host builds the list (`sessionsToRecover`): it drops any session a capture helper holds a take lock on, and the live take's session. While a helper too old to report its locks is running, it offers nothing and says so in the status bar. Skips silently when the list is empty.
 
-Never over a rolling take. While a take rolls (local, or a helper take adopted after a crash), `offerSessionRecovery` sets `recoveryOfferHeld` and returns without scanning the sessions folder, which may be the take's drive; `serviceModalsAroundTakes` offers the list once the take's files are final. The window is marked `closesForTake` (`FloatingLaunch.h`): a take that starts behind it (OSC, a desk macro, the twin, the helper, a punch window) closes it as Skip, and it is offered again after STOP.
+Never over a rolling take. While a take rolls (local, or a helper take adopted after a crash), `offerSessionRecovery` sets `recoveryOfferHeld` and returns without scanning the sessions folder, which may be the take's drive; `serviceModalsAroundTakes` offers the list once the take's files are final. The window is launched with `launchClosesForTake` (`FloatingLaunch.h`): a take that starts behind it (OSC, a desk macro, the twin, the helper, a punch window) closes it as Skip, nothing opened or deleted, and it is offered again after STOP. Its Delete confirm and "Delete failed" alerts are marked `closesForTake` too, so they close as Cancel with it.
 
 ## API
 
@@ -30,7 +30,7 @@ static juce::DialogWindow* launch (juce::Array<juce::File> orphans, OpenCallback
                                    RemoveCallback onRemove, std::function<void()> onClosed = {});
 ```
 
-The static `launch` instantiates the dialog, wires async modal behaviour and returns its window (`nullptr` when there is nothing to show), so the host can mark it to close for a take. `onOpen` fires when the engineer picks Recover; the host owns session loading. `onRemove` fires when a Delete is confirmed; the host owns removal and returns a reason when it refuses. The public constructor takes the same callbacks, with `onRemove` optional. `onClosed` fires when the actual dialog is destroyed and sequences the next startup step. An empty orphan list creates no dialog and does not call `onClosed`.
+The static `launch` instantiates the dialog, launches it through `launchClosesForTake` and returns its window (`nullptr` when there is nothing to show). `onOpen` fires when the engineer picks Recover; the host owns session loading. `onRemove` fires when a Delete is confirmed; the host owns removal and returns a reason when it refuses. The public constructor takes the same callbacks, with `onRemove` optional. `onClosed` fires when the actual dialog is destroyed and sequences the next startup step. An empty orphan list creates no dialog and does not call `onClosed`.
 
 ## Layout
 
@@ -79,7 +79,7 @@ Recovery of an interrupted track-order transaction is handled by the session-ope
 | Initial | Newest orphan pre-selected on row 0 |
 | Row clicked | Selection moves; action buttons act on the new selection |
 | Row double-clicked | Equivalent to clicking "Recover selected" |
-| Delete confirm | `juce::AlertWindow` with explicit `Delete` / `Cancel` buttons + full path in the message |
+| Delete confirm | `juce::AlertWindow` built and marked `closesForTake` (never `showAsync`, which can't be marked), with explicit `Delete` (1) / `Cancel` (0, Esc) buttons + full path in the message. Only 1 deletes |
 
 ## Accessibility
 

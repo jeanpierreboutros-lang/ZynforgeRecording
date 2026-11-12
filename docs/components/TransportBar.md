@@ -43,10 +43,12 @@ that is already playing or recording. This does not authorize starting playback,
 changing a finalizing take, bypassing LOCK, or skipping ordinary two-tap STOP.
 Remote STOP returns pending until required media/metadata completion; an idle
 capture flag alone is not the acknowledgment. Generic OSC taps reach the same
-two-tap guard: `/zynforge/stop 0` and `/zynforge/record 0` are releases and
-count for nothing, STOP presses within 250 ms of the last one count once, and
-stopping over Generic OSC is `/zynforge/stop` only (`/zynforge/play 0` still
-stops playback).
+two-tap guard: a press is `/zynforge/stop 1`, `/zynforge/stop 0` and
+`/zynforge/record 0` are releases and count for nothing, a `/zynforge/stop`
+with no value is refused (since 2026-11-11), STOP presses within 250 ms of the
+last one count once, and stopping over Generic OSC is `/zynforge/stop` only
+(`/zynforge/play 0` still stops playback, except during a selection punch,
+when a remote stop of playback is refused: STOP ends the punch).
 
 After a daemon STOP, a status the helper built before the command is dropped,
 and the window adopts a rolling take only from a status received after the take

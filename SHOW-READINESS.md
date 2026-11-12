@@ -1,5 +1,15 @@
 # Show readiness — planned SD5 recording
 
+## Decision as of 2026-11-11
+
+A second whole-codebase review made 82 findings; all are fixed on `integrate/fix-2026-11-11`, two in part (see *Bug audit, 2026-11-11* in [tasks.md](tasks.md)). None of it has run on real hardware, and [INSTALL.md](INSTALL.md) says which Mac has it. Do not take it to a show until it has been installed on purpose and has passed *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md), as well as the earlier rounds named below.
+
+Three changes matter on show day:
+
+- A take on a device pair (inputs from one device, monitoring on another) no longer ends when the monitor output goes away. It carries on from the input alone, with no monitoring, until STOP; the stretch the device was away is silence counted as missed samples, so `tools/verify_take.sh` fails that take, as it should. A lost interface still ends the take. *Device pair, monitor output unplugged* is the step no test can stand in for.
+- A Generic OSC STOP needs a value (`/zynforge/stop 1 <token>` on press, 0 on release). Reprogram any tablet that sends the address alone: its STOP is refused now.
+- PLAY, remote PLAY and chase refuse when the device runs at another rate than the session, so the desk never gets the show at the wrong speed.
+
 ## Decision as of 2026-11-03
 
 `main` now also carries a further round of fixes: which device a take records from, punch only where the timeline is the take file, failed reads treated as failures, backups and mirrors following strip moves, an alarm banner that shows every alarm, and the desk reading STAGE and Restore Gains back. **Only one take has run on real hardware (below).** The development Mac has it, now as `0e1bd8a`. The mini and the current DMG have `281c6c0` / protocol 4, so everything below about that build stands.

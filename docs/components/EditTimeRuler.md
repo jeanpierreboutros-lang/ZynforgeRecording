@@ -40,6 +40,7 @@ explicit EditTimeRuler (AudioEngine& engine);
 | `setScrollOffsetX(int)` | The wave viewport's `getViewPositionX()`. Subtracted from every time→x map (`rulerTimeToX`/`rulerXToTime`) so the fixed-width ruler tracks the scrolling lanes below it. `EditPage` pushes it on `viewport.onScroll` (manual + programmatic/auto-scroll) and in `resized()`. |
 | `rulerPxPerSec(double totalSec)` / `rulerTimeToX(double sec, double pxPerSec)` / `rulerXToTime(int x, double pxPerSec)` | The shared time↔x mapping. Uses the lanes' `brand::space::editWaveInset` on each side, so ruler and lanes land on the same x |
 | `timelineRate()` | Sample rate the labels describe (see above) |
+| `markerIndexAt(int x)` | The marker a click at `x` on the marker strip means, or -1: a drawn flag within 6 px wins, the nearest first; then the names, from the last painted. Mapped at `timelineRate()`, as paint does. Public as a test seam |
 | `idleSignature()` | Hash of everything drawn at idle (position, length, loop, edit cursor, markers) |
 | `static formatTime(double sec, int decimals)` | Label text: `M:SS` below an hour, `H:MM:SS` above; `decimals` > 0 adds tenths, rounded before the split so .95 rolls over. Public as a test seam |
 
@@ -47,7 +48,7 @@ The setters update the shared mapping and request repaint; scroll offset is clam
 
 ## Strip 1 — Markers (top, 20 px)
 
-Reads `engine.getMarkers().getAll()`. Each marker paints as a brand-orange downward triangle (8 px wide, 10 px tall) anchored to the bottom of the strip, with the name extending 120 px to the right (clipped). Double-clicking anywhere from 6 px left of the flag to the end of the name opens a "Rename marker" dialog (text pre-selected, OK / Cancel). An empty name is ignored, and the marker is found again by id when the dialog closes, so one removed meanwhile is left alone. The rename is saved at once. Engineer drops markers via `M` from anywhere in the app.
+Reads `engine.getMarkers().getAll()`. Each marker paints as a brand-orange downward triangle (8 px wide, 10 px tall) anchored to the bottom of the strip, with the name extending 120 px to the right (clipped). Markers paint first to last, so a later marker's flag and name sit on top of an earlier one's name. A double-click goes through `markerIndexAt`: a flag within 6 px wins, the nearest first, then a name, from the last painted, so the marker renamed is the one drawn there. It opens a "Rename marker" dialog (text pre-selected, OK / Cancel), marked `closesForTake`: a take started behind it closes it as Cancel, and an OK during a take does nothing. A double-click during a take does nothing. An empty name is ignored, and the marker is found again by id when the dialog closes, so one removed meanwhile is left alone. The rename is saved at once. Engineer drops markers via `M` from anywhere in the app.
 
 With a loop / selection region set, this strip also shows a readout pill: `Sel start ▸ end (length)` in `M:SS.mmm`, placed at the region's left edge and kept on screen.
 

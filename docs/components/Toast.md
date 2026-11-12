@@ -10,22 +10,26 @@ A queued, time-limited pill that fades in, holds, fades out. Used to surface eve
 
 ## When to use
 
-One instance per `MainComponent`, laid out at the bottom-right with `(width 320, height 56)` and an `18 px` margin from the window edges. Host calls `toast.show(message, kind)` on the message thread; the toast handles queue ordering and timing on its own.
+One instance per `MainComponent`, given a slot at the bottom-right of `(width 320, height 56)` with an `18 px` margin from the window edges. The slot's width and bottom-right corner hold; a message that needs more lines grows the toast upward, up to 200 px. Host calls `toast.show(message, kind)` on the message thread; the toast handles queue ordering and timing on its own.
 
 ## API
 
 ```cpp
 enum class Kind { Info, Success, Warning, Error };
+static constexpr int kMaxWaiting = 3;
 void show    (const juce::String& message, Kind kind = Kind::Info);
 void showNow (const juce::String& message, Kind kind = Kind::Info);
 const juce::String& getCurrentMessage() const noexcept;
+int  waitingCount() const noexcept;                  // messages behind the one showing
+bool isWaiting (const juce::String& message) const;
+bool showsWholeMessage() const;                       // nothing of the showing message cut off
 ```
 
-`show` appends to the queue. `showNow` is for a prompt that would be out of date by the time the queue reached it: it replaces what is showing at once and goes ahead of everything waiting (the "Tap STOP again to end the recording" warning uses it). `getCurrentMessage` returns the message most recently taken off the queue; it still holds the last one after the pill hides.
+`show` appends to the queue (an empty message is ignored). `waitingCount`, `isWaiting` and `showsWholeMessage` are for tests. `showNow` is for a prompt that would be out of date by the time the queue reached it: it replaces what is showing at once and goes ahead of everything waiting (the "Tap STOP again to end the recording" warning uses it). `getCurrentMessage` returns the message most recently taken off the queue; it still holds the last one after the pill hides.
 
 | Param | Type | Notes |
 |---|---|---|
-| `message` | `juce::String` | Single-line display text; long messages end in an ellipsis at the available width. ` -- ` is drawn as an em dash |
+| `message` | `juce::String` | Display text, wrapped by word. ` -- ` is drawn as an em dash |
 | `kind` | `Kind` | `Info` (grey body, teal stripe), `Success` (green), `Warning` (amber), `Error` (red); selects body and edge colours |
 
 ## Lifecycle
@@ -35,7 +39,7 @@ Each pushed message has four phases:
 | Phase | Duration | Behaviour |
 |---|---|---|
 | **In** | `brand::motion::quickFadeMs` (200 ms) | Alpha 0 → 1 |
-| **Hold** | `brand::motion::toastHoldMs` (2800 ms) | Fully opaque, no movement |
+| **Hold** | `brand::motion::toastHoldMs` (2800 ms), plus 1200 ms for each line past the first | Fully opaque, no movement |
 | **Out** | `brand::motion::fadeOutMs` (320 ms) | Alpha 1 → 0 |
 | **Idle** | — | Component invisible, timer stopped |
 
@@ -43,7 +47,9 @@ While a toast is in any non-Idle phase, the timer runs at 60 Hz (kTickMs = 16 ms
 
 ## Queue semantics
 
-Multiple `show()` calls during a single display cycle queue up. The next message appears after the current one's `Out` phase completes. Queue is FIFO, except that `showNow` jumps to the front and cuts the current message short. No deduplication — pushing the same message twice shows it twice.
+Multiple `show()` calls during a single display cycle queue up. The next message appears after the current one's `Out` phase completes. Queue is FIFO, except that `showNow` jumps to the front and cuts the current message short.
+
+Two notices of the same kind are one when they differ only in their numbers (and the plural those bring): "3 strips selected", then "4 strips selected". The newer takes the older's place, whether that one is showing (its hold starts again) or waiting. At most `kMaxWaiting` (3) wait; past that the oldest of the least urgent goes (`Info`/`Success` before `Warning` before `Error`), so neutral news never pushes out an error.
 
 ## States
 
@@ -60,7 +66,7 @@ Multiple `show()` calls during a single display cycle queue up. The next message
 - Flat solid body: `bgElevated` for Info, kind accent sunk 30 % (`sink(accent, 0.30)`) for Success/Warning/Error
 - 4 px left edge in the `Kind` colour (`featureEngaged`, `accentPlay`, `alertAmber`, or `accentRecord`), `radius::sm`
 - 1 px outline: the body lifted 45 % at `alpha::scrim`
-- `brand::type::uiLabel()` text in `textPrimary`, 14 px from the left, centred vertically
+- `brand::type::uiLabel()` text in `textPrimary`, 14 px from the left and 10 px from the right, wrapped by word and centred vertically in its area
 
 ## Tokens used
 
@@ -80,4 +86,4 @@ Hard capture failures use Error feedback alongside the latched health/report sta
 | Use Toast for calm acknowledgements (`"Saved"`, `"Loaded"`, `"5 cues stored"`) | Use Toast for blocking decisions — use an AlertWindow / DialogChrome dialog instead |
 | Use `Warning` kind sparingly — engineer should pause when they see amber | Spam `Warning` for routine non-issues |
 | Queue messages with `show()` on the message thread | Call the component directly from worker/audio threads; marshal to the UI first |
-| Keep messages to one line, ~60 characters | Push paragraphs — Toast clips at the pill width |
+| Keep messages short; a long one wraps and grows the toast | Push paragraphs — the toast stops growing at 200 px |
