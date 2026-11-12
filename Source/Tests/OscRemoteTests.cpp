@@ -6,7 +6,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <functional>
 #include <limits>
+#include <optional>
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -152,7 +155,7 @@ namespace zynforge
                 osc.setDialect (OscRemote::Dialect::Generic);
 
                 osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 1));
-                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop"));
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop", (juce::int32) 1));
                 expectEquals ((int) actions.size(), 3);
                 if (actions.size() == 3)
                 {
@@ -195,9 +198,34 @@ namespace zynforge
                 // A second, deliberate press is the second tap.
                 osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop", (juce::int32) 1), 11200.0);
                 expectEquals (stopTaps (actions), 2, "a second press was not a STOP tap");
-                // An address with no argument is a press.
-                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop"), 13000.0);
-                expectEquals (stopTaps (actions), 3);
+            }
+
+            beginTest ("An OSC STOP with no value is refused, so one held press can't end a take, and setup sees why");
+            {
+                AudioEngine engine;
+                std::vector<AudioEngine::RemoteTransportAction> actions;
+                engine.setRemoteTransportHandler ([&] (auto action, juce::String&) -> std::optional<bool>
+                {
+                    actions.push_back (action);
+                    return true;
+                });
+                juce::StringArray said;
+                engine.getRemotes().setHost ({ [&] (const juce::String& s) { said.add (s); }, {}, {} });
+                engine.getRemotes().setOscDebug (true);
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::Generic);
+                // A tablet button set to send only the address and token sends
+                // the same packet on press and on release. Held for 400 ms, the
+                // release passed the repeat filter and was the second tap.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop"), 30000.0);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/stop"), 30400.0);
+                expectEquals (stopTaps (actions), 0, "a STOP with no value reached the host");
+                expect (said.joinIntoString (" | ").containsIgnoreCase ("value"),
+                        "the refusal was silent: " + said.joinIntoString (" | "));
+                expect (engine.getRemotes().getOscLog().joinIntoString ("\n").containsIgnoreCase ("value"),
+                        "the refusal is not in the OSC log");
+                engine.getRemotes().setOscDebug (false);
+                engine.getRemotes().clearOscLog();
             }
 
             beginTest ("A momentary OSC RECORD button never stops a take, however often it is pressed");
@@ -263,6 +291,90 @@ namespace zynforge
                 }
                 expect (handle->load (std::memory_order_acquire) == nullptr,
                         "a queued callback could dereference a destroyed AudioEngine");
+            }
+
+            beginTest ("A momentary OSC MARKER or SCENE button gives one per press");
+            {
+                AudioEngine engine;
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-osc-marker-" + juce::Uuid().toString());
+                expect (dir.createDirectory().wasOk());
+                const juce::ScopeGuard remove { [&] { dir.deleteRecursively(); } };
+                auto& markers = engine.getMarkers();
+                markers.setContext (dir, 48000);
+                engine.setEditCursorSample (0);
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::Generic);
+
+                // Press 1, release 0: one marker, and it is not named after the button.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/marker", (juce::int32) 1), 40000.0);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/marker", (juce::int32) 0), 40150.0);
+                expectEquals (markers.getCount(), 1, "a press and its release dropped two markers");
+                if (markers.getCount() > 0)
+                {
+                    const auto name = markers.getLast().name;
+                    expect (name != "0" && name != "1", "the button's value became the marker name: " + name);
+                }
+                // A float release, as TouchOSC sends it.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/marker", 1.0f), 41000.0);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/marker", 0.0f), 41100.0);
+                expectEquals (markers.getCount(), 2, "a float release dropped a marker");
+                // A bounce of one press.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/marker", (juce::int32) 1), 42000.0);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/marker", (juce::int32) 1), 42100.0);
+                expectEquals (markers.getCount(), 3, "a repeat of one press dropped a second marker");
+                // A name still names it.
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/marker", juce::String ("Verse")), 43000.0);
+                expectEquals (markers.getCount(), 4);
+                expectEquals (markers.getLast().name, juce::String ("Verse"));
+
+                // Scenes: count what reached Scene Follow's rule (it logs every recall).
+                engine.getRemotes().setOscDebug (true);
+                engine.getRemotes().clearOscLog();
+                const auto recalls = [&engine]
+                {
+                    int n = 0;
+                    for (const auto& line : engine.getRemotes().getOscLog())
+                        if (line.contains ("scene: Console scene")) ++n;
+                    return n;
+                };
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/scene", (juce::int32) 2), 50000.0);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/scene", (juce::int32) 0), 50150.0);
+                expectEquals (recalls(), 1, "a scene button's release was a second recall");
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/scene", (juce::int32) 3), 51000.0);
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/scene", (juce::int32) 3), 51100.0);
+                expectEquals (recalls(), 2, "a repeat of one scene press recalled twice");
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/scene", (juce::int32) 3), 52000.0);
+                expectEquals (recalls(), 3, "a deliberate second press was lost");
+                engine.getRemotes().setOscDebug (false);
+                engine.getRemotes().clearOscLog();
+            }
+
+            beginTest ("A desk channel's name lands on the strip that hears that channel");
+            {
+                AudioEngine engine;
+                engine.clearAllStripOverrides();
+                const juce::ScopeGuard cleanup { [&] { engine.clearAllStripOverrides(); } };
+                engine.setStripCount (3);
+                for (int i = 0; i < 3; ++i) engine.setTrackName (i, "strip " + juce::String (i + 1));
+                // Strip 1 was dragged to the end: strip positions no longer
+                // match the desk channels they hear.
+                engine.setTrackInputRouting (0, 1);   // hears desk channel 2
+                engine.setTrackInputRouting (1, 2);   // hears desk channel 3
+                engine.setTrackInputRouting (2, 0);   // hears desk channel 1
+                auto& remotes = engine.getRemotes();
+                remotes.onConsoleChannelName (1, "Kick");
+                remotes.onConsoleChannelName (2, "Snare");
+                remotes.onConsoleChannelName (3, "Vox");
+                expectEquals (engine.getRecorder().getTrack (2).getNameThreadSafe(), juce::String ("Kick"));
+                expectEquals (engine.getRecorder().getTrack (0).getNameThreadSafe(), juce::String ("Snare"));
+                expectEquals (engine.getRecorder().getTrack (1).getNameThreadSafe(), juce::String ("Vox"));
+
+                // A strip with no input hears no desk channel.
+                engine.setTrackInputRouting (1, -1);
+                remotes.onConsoleChannelName (2, "Bass");
+                expectEquals (engine.getRecorder().getTrack (1).getNameThreadSafe(), juce::String ("Vox"),
+                              "a strip with no input took a desk channel's name");
             }
 
             beginTest ("Console name capture collects names for create-from-console");
@@ -429,6 +541,63 @@ namespace zynforge
                 const auto badBlob = patched (msgBytes, msgBytes.getSize() - 12, 0x7ffffff0);
                 expect (! oscwire::parsePacket (badBlob.getData(), badBlob.getSize()).has_value(),
                         "an oversized blob length was accepted");
+            }
+
+            beginTest ("A 64 KB packet of non-UTF-8 text costs the listener next to nothing");
+            {
+                // OSC-string: the bytes, a NUL, zero padding to 4.
+                const auto oscString = [] (juce::MemoryOutputStream& out, const juce::MemoryBlock& bytes)
+                {
+                    out.write (bytes.getData(), bytes.getSize());
+                    const auto pad = 4 - (bytes.getSize() % 4);
+                    for (size_t i = 0; i < pad; ++i) out.writeByte (0);
+                };
+                const auto latin1 = [] (const char* lead, size_t count)
+                {
+                    juce::MemoryBlock b (lead, std::strlen (lead));
+                    juce::MemoryBlock fill (count, false);
+                    std::memset (fill.getData(), 0xE9, count);   // 'e acute' in Latin-1, never valid UTF-8 alone
+                    b.append (fill.getData(), fill.getSize());
+                    return b;
+                };
+                const auto fastest = [] (const std::function<void()>& work)
+                {
+                    double best = 1.0e9;
+                    for (int run = 0; run < 3; ++run)
+                    {
+                        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+                        work();
+                        best = juce::jmin (best, juce::Time::getMillisecondCounterHiRes() - t0);
+                    }
+                    return best;
+                };
+
+                // A name the parser keeps, as a desk's Latin-1 channel name.
+                juce::MemoryOutputStream kept;
+                oscString (kept, juce::MemoryBlock ("/x", 2));
+                oscString (kept, juce::MemoryBlock (",s", 2));
+                oscString (kept, latin1 ("", 64000));
+                int parsedLength = -1;
+                const auto parseMs = fastest ([&]
+                {
+                    const auto parsed = oscwire::parsePacket (kept.getData(), kept.getDataSize());
+                    parsedLength = parsed.has_value() && parsed->isMessage() && parsed->getMessage().size() == 1
+                                 ? parsed->getMessage()[0].getString().length() : -1;
+                });
+                expectEquals (parsedLength, 64000, "the Latin-1 packet was refused or cut");
+                expect (parseMs < 25.0, "64 KB of Latin-1 took " + juce::String (parseMs, 1) + " ms to parse");
+
+                // A packet the parser refuses, which the log describes.
+                juce::MemoryOutputStream refused;
+                oscString (refused, latin1 ("/", 64000));
+                oscString (refused, juce::MemoryBlock (",d", 2));
+                const auto describeMs = fastest ([&]
+                {
+                    if (oscwire::parsePacket (refused.getData(), refused.getDataSize()).has_value())
+                        expect (false, "a packet with a double was accepted");
+                    oscwire::describeRefused (refused.getData(), refused.getDataSize());
+                });
+                expect (describeMs < 25.0, "refusing 64 KB of Latin-1 took " + juce::String (describeMs, 1) + " ms");
             }
 
             beginTest ("A deeply nested OSC bundle cannot crash the OSC listener");

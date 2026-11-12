@@ -189,9 +189,18 @@ namespace zynforge
         // The other console path refuses everything under LOCK. Names have no
         // reason to differ from it, unlike a scene that marks a locked take.
         if (engine.areControlsLocked()) return;
-        const int i = oneBasedIndex - 1;
-        if (i >= 0 && i < engine.getRecorder().getNumTracks())
-            engine.setTrackName (i, name);
+        // A desk channel's name belongs to the strip that hears that channel,
+        // as trim-follow's gain does (setDeskChannelGain): after a strip drag
+        // or a PATCH change, strip N is not desk channel N.
+        const int deskChannel = oneBasedIndex - 1;
+        if (deskChannel < 0) return;
+        auto& recorder = engine.getRecorder();
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        const int numInputs = engine.getCurrentDeviceInputCount();
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+            if (listenedInput (i, recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed), numInputs)
+                == deskChannel)
+                engine.setTrackName (i, name);
     }
 
     std::map<int, juce::String> RemoteControl::takeCapturedConsoleNames()

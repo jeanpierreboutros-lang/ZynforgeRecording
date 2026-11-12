@@ -84,8 +84,21 @@ namespace zynforge
                     s = juce::String::fromUTF8 (chars, (int) len);
                 else
                 {
-                    s.clear();
-                    for (size_t i = 0; i < len; ++i) s += (juce::juce_wchar) start[i];
+                    // Built in one go. One character at a time copied the
+                    // whole string each time: a 64 KB packet cost ~0.1 s.
+                    juce::HeapBlock<char> utf8 (len * 2 + 1);
+                    size_t out = 0;
+                    for (size_t i = 0; i < len; ++i)
+                    {
+                        const auto c = start[i];
+                        if (c < 0x80) utf8[out++] = (char) c;
+                        else
+                        {
+                            utf8[out++] = (char) (0xC0 | (c >> 6));
+                            utf8[out++] = (char) (0x80 | (c & 0x3F));
+                        }
+                    }
+                    s = juce::String::fromUTF8 (utf8.get(), (int) out);
                 }
                 pos += padded;
                 return true;
@@ -377,13 +390,15 @@ namespace zynforge
             Source source;
         };
 
-        // Reader thread.
-        void reportRefused (double& nextReportMs, juce::String description, Source from)
+        // Reader thread. The description is built only for a report that
+        // goes out: a flood of refused packets is thinned before it costs.
+        template <typename Describe>
+        void reportRefused (double& nextReportMs, Describe&& describe, Source from)
         {
             const auto now = juce::Time::getMillisecondCounterHiRes();
             if (now < nextReportMs) return;
             nextReportMs = now + kRefusedReportMs;
-            postMessage (new RefusedPacket (std::move (description), std::move (from)));
+            postMessage (new RefusedPacket (describe(), std::move (from)));
         }
 
         // Reader thread. False when the backlog is full.
@@ -425,7 +440,8 @@ namespace zynforge
                         lastDroppedSource = from.ip;
                     }
                     if (reportForeignSources)
-                        reportRefused (nextRefusedReportMs, "ignored: not from the address this link is pinned to",
+                        reportRefused (nextRefusedReportMs,
+                                       [] { return juce::String ("ignored: not from the address this link is pinned to"); },
                                        std::move (from));
                     continue;
                 }
@@ -433,15 +449,16 @@ namespace zynforge
                                               : std::nullopt;
                 if (! element.has_value())
                 {
-                    reportRefused (nextRefusedReportMs, oscwire::describeRefused (buffer.getData(), (size_t) got),
+                    reportRefused (nextRefusedReportMs,
+                                   [&] { return oscwire::describeRefused (buffer.getData(), (size_t) got); },
                                    std::move (from));
                 }
                 else if (! enqueue (*element, from, (size_t) got))
                 {
                     const auto dropped = overflowed.fetch_add (1, std::memory_order_relaxed) + 1;
                     reportRefused (nextRefusedReportMs,
-                                   "dropped: arriving faster than they can be handled ("
-                                       + juce::String (dropped) + " so far)",
+                                   [dropped] { return "dropped: arriving faster than they can be handled ("
+                                                      + juce::String (dropped) + " so far)"; },
                                    std::move (from));
                 }
             }
