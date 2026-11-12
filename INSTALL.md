@@ -158,9 +158,9 @@ protocol-4 capture helper at `/Applications/Zynforge Recording.app`.
   Rollback:
   `/Applications/Zynforge Recording.app.backup-20261029-221655-before-281c6c0`
   (`443c769`). The mini had restarted about 15 minutes before installation.
-- **DMG:** [universal DMG](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg)
-  and [checksum](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg.sha256),
-  also in the mini's `~/Downloads/`. DMG SHA-256: `232a28c8e8f4132dc89ac286bb0150204777b9aad88f158220ab40e47e535d9d`. `hdiutil verify`
+- **DMG:** `Zynforge-Recording-281c6c0-macOS-universal.dmg` and its checksum
+  were in `dist/` until 2026-11-12, when they were removed; they were also copied
+  to the mini's `~/Downloads/`. DMG SHA-256: `232a28c8e8f4132dc89ac286bb0150204777b9aad88f158220ab40e47e535d9d`. `hdiutil verify`
   passes, and the mounted app matches the installed development bundle exactly
   and passes signature verification.
 - **Processes during replacement:** no Recording GUI or capture helper was

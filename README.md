@@ -13,9 +13,9 @@ On 2026-11-11 a second whole-codebase review made 82 findings. All are fixed on 
 Installed builds: the development Mac has `08fccd7` (2026-11-12), `main` with the 2026-11-11 review's fixes.
 It passes **1588 test groups in Release and CI** and has recorded
 nothing yet; `577592c` and `5c7a3e4`, before it, recorded the takes above (see
-[testing.md](testing.md)). The Mac mini and the
-[universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg) still have
-verified `281c6c0` and its matching protocol-4 helper. That older build contains
+[testing.md](testing.md)). The Mac mini still has
+verified `281c6c0` and its matching protocol-4 helper (its installer DMG was
+removed from `dist/` on 2026-11-12). That older build contains
 every fix from the October bug hunt (punch, capture and session safety, network
 hardening, engine/playback, EDIT view, clip editing), RECORD no longer waiting on
 lead-in silence, and exact splits inside fades. It passes **689 test groups in

@@ -29,7 +29,8 @@ What selling a closed-source app requires, from the EULA:
 
 The AGPLv3 route means conveying the whole app's source under the AGPLv3, which cannot coexist with an
 all-rights-reserved closed product. `LICENSE` says all rights reserved, so distribution now rests on the JUCE
-licence, and that includes the DMGs already in `dist/` on this public repository.
+licence, and that includes the DMGs once committed to `dist/` on this public repository (removed from `main` on
+2026-11-12, but still in its git history).
 
 ## Apple
 
