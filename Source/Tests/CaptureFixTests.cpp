@@ -1471,6 +1471,8 @@ namespace zynforge
             emptyPassOwesNoLeadIn();
             openingCopyIsNotExpectedToWrite();
             punchPutBackOnACopy();
+            hashesWaitForTheNextTake();
+            refusedStartResumesHashes();
         }
 
         // A lead-in is silence the length of the take so far: gigabytes on a
@@ -1649,6 +1651,108 @@ namespace zynforge
             rec.stopRecording();
             expect (! rec.anyMirrorFailed(), "the mirror did not join the next take: "
                                                  + rec.getCopyProblems().joinIntoString ("|"));
+        }
+
+        // The last take's hashes read the drive the next take writes to. In
+        // another folder nothing used to stop them: every helper take is one.
+        void hashesWaitForTheNextTake()
+        {
+            beginTest ("The last take's hash pass reads nothing while the next take, in another folder, captures");
+            {
+                Dirs first, second;
+                auto gate      = std::make_shared<juce::WaitableEvent> (true);
+                auto published = std::make_shared<std::atomic<bool>> (false);
+                auto hooks = std::make_shared<MultitrackRecorder::ReportTestHooks>();
+                hooks->beforeScan   = [gate] { gate->wait (10000); };
+                hooks->afterPublish = [published] { published->store (true); };
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.reportTestHooks = hooks;
+                expect (rec.startRecording (first.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks (40, { 0 });
+                rec.stopRecording();
+                rec.reportTestHooks = {};
+
+                expect (rec.startRecording (second.session), rec.getStartError());
+                gate->signal();                            // the first take's pass may read now
+                Feeder next { rec, 1 };
+                for (int i = 0; i < 30; ++i) { next.blocks (2, { 0 }); juce::Thread::sleep (10); }
+                expect (! published->load(), "the hash pass read the drive while the next take captured");
+                expect ((bool) juce::JSON::parse (first.session.getChildFile ("session.report.json"))["sha256Pending"]);
+                rec.stopRecording();
+
+                const auto end = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+                while (! published->load() && juce::Time::getMillisecondCounterHiRes() < end) juce::Thread::sleep (5);
+                expect (published->load(), "the hash pass never came back after the take");
+                expect (! (bool) juce::JSON::parse (first.session.getChildFile ("session.report.json"))["sha256Pending"]);
+            }
+
+            beginTest ("A resumed hash pass reads nothing while a take captures, and finishes after it");
+            {
+                Dirs first, second;
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (kRate, kBlock, 1);
+                    rec.getTrack (0).armed.store (true);
+                    expect (rec.startRecording (first.session));
+                    Feeder feeder { rec, 1 };
+                    feeder.blocks (40, { 0 });
+                    rec.stopRecording();
+                }
+                std::atomic<bool> stop { false };
+                expect (MultitrackRecorder::waitForReportHashes (first.session, stop, true));
+                expect (MultitrackRecorder::editSessionReport (first.session, [] (juce::DynamicObject& live)
+                { live.setProperty ("sha256Pending", true); }));
+
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.startRecording (second.session));
+                auto done = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder::resumeReportHashes (first.session, [done] { done->signal(); });
+                Feeder feeder { rec, 1 };
+                for (int i = 0; i < 30; ++i) { feeder.blocks (2, { 0 }); juce::Thread::sleep (10); }
+                expect (! done->wait (0), "the resumed pass read the drive while a take captured");
+                rec.stopRecording();
+                expect (done->wait (10000), "the resumed pass never finished");
+                expect (! (bool) juce::JSON::parse (first.session.getChildFile ("session.report.json"))["sha256Pending"]);
+            }
+        }
+
+        void refusedStartResumesHashes()
+        {
+            beginTest ("A RECORD refused after it touched the take puts the last take's hashes back to work");
+            Dirs dirs;
+            auto gate = std::make_shared<juce::WaitableEvent> (true);
+            auto hooks = std::make_shared<MultitrackRecorder::ReportTestHooks>();
+            hooks->beforeScan = [gate] { gate->wait (10000); };
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 1);
+            rec.getTrack (0).armed.store (true);
+            rec.reportTestHooks = hooks;
+            expect (rec.startRecording (dirs.session));
+            Feeder feeder { rec, 1 };
+            feeder.blocks (40, { 0 });
+            rec.stopRecording();
+            rec.reportTestHooks = {};
+
+            // The continuation's file cannot be created: RECORD is refused after
+            // it claimed the session's report.
+            const auto blocker = dirs.session.getChildFile ("Audio Files").getChildFile ("Track_01_part02.wav");
+            expect (blocker.createDirectory().wasOk());
+            rec.armContinue (feeder.frame);
+            expect (! rec.startRecording (dirs.session), "the fixture did not refuse the start");
+            gate->signal();
+            expect (blocker.deleteRecursively());
+
+            const auto report = [&dirs] { return juce::JSON::parse (dirs.session.getChildFile ("session.report.json")); };
+            const auto end = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+            while ((bool) report()["sha256Pending"] && juce::Time::getMillisecondCounterHiRes() < end)
+                juce::Thread::sleep (10);
+            expect (! (bool) report()["sha256Pending"], "the last take's hashes stayed pending after a refused RECORD");
+            expectEquals (report()["tracks"][0]["sha256"][0].toString().length(), 64);
         }
 
         void copiesOpenBehindTheTake()

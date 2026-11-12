@@ -863,6 +863,14 @@ namespace zynforge
         static void resumeReportHashes (const juce::File& sessionDir,
                                         const std::function<void()>& finishedForTests = {},
                                         const std::function<void()>& beforePublishForTests = {});
+    private:
+        // afterCancelledScan: a start that claimed this session's report was
+        // refused, and the pass it cancelled may still be ending. This one
+        // waits for that pass instead of giving way to it.
+        static void startResumedHashes (const juce::File& sessionDir, bool afterCancelledScan,
+                                        const std::function<void()>& finishedForTests,
+                                        const std::function<void()>& beforePublishForTests);
+    public:
         static bool deleteSessionAfterCancellingReports (const juce::File& sessionDir);
         // Runs `remove` once no report for this session can still be published.
         static bool removeSessionAfterCancellingReports (const juce::File& sessionDir,
@@ -920,6 +928,17 @@ namespace zynforge
         std::shared_ptr<ReportTestHooks> reportTestHooks;
         std::function<void()> beforeFinalizationForTests;
         std::atomic<bool> finalizing { false };
+    public:
+        // Takes capturing in this process, on any recorder. A report hash pass
+        // reads nothing while there is one (see hashing pauses in the .cpp).
+        static inline std::atomic<int> capturingTakes { 0 };
+    private:
+        std::atomic<bool> countedAsCapturing { false };
+        void noteCapturing (bool capturing) noexcept
+        {
+            if (countedAsCapturing.exchange (capturing, std::memory_order_acq_rel) != capturing)
+                capturingTakes.fetch_add (capturing ? 1 : -1, std::memory_order_acq_rel);
+        }
 
         double sampleRate { 48000.0 };
         int    blockSize  { 512 };

@@ -131,6 +131,7 @@ namespace zynforge
     MultitrackRecorder::~MultitrackRecorder()
     {
         stopRecording();
+        noteCapturing (false);
         // Unhook clients before joining so a thread isn't iterating a
         // stale client list while the destructor unwinds.
         for (auto& sh : shards)
@@ -899,6 +900,17 @@ namespace zynforge
 
         TakeStart take;
         take.sessionDir = sessionDir;
+        // A refusal after this start claimed the session's report stopped the
+        // last take's hash pass, and nothing else would start it again until
+        // the session is reopened: put it back to work, and leave the last
+        // take's report failure as it was.
+        const bool reportFailedBefore = reportAsyncState->failed.load (std::memory_order_relaxed);
+        const juce::ScopeGuard resumeCancelledReport { [&]
+        {
+            if (wentLive || take.reportToken == nullptr) return;
+            reportAsyncState->failed.store (reportFailedBefore, std::memory_order_relaxed);
+            startResumedHashes (take.sessionDir, true, {}, {});
+        } };
         if (! validateTakeStart (take))
             return refuse ("Recording refused: the backup folder is inside this session; choose another backup folder.");
         if (! createTakeFolders (take))
@@ -2218,6 +2230,7 @@ namespace zynforge
             punchCaptureOrigin.store (-1, std::memory_order_relaxed);
             recording.store (true, std::memory_order_release);
         }
+        noteCapturing (true);
         preparePreRollDump();
         beginChannelAlarms();
         for (auto& copy : copies) copy->start (copy);
@@ -2439,6 +2452,7 @@ namespace zynforge
         if (finalizing.load() || ! recording.load()) return false;
         finalizing.store (true, std::memory_order_release);
         recording.store (false, std::memory_order_release);
+        noteCapturing (false);
         return true;
     }
 
@@ -3546,6 +3560,22 @@ namespace zynforge
         return juce::JSON::toString (juce::var (report.get()), true);
     }
 
+    // A take capturing in this process has the drives to itself. The next set
+    // is often in another folder on the same drive as the last one's files (a
+    // helper take always is), and its claim cancels only its own session's
+    // pass, so the last set's hashes read on at ~15 MiB/s beside the capture.
+    // A pass waits between reads instead, and anything that supersedes it
+    // still ends it at once.
+    static bool readWhileNoTakeCaptures (const std::function<bool()>& current)
+    {
+        while (MultitrackRecorder::capturingTakes.load (std::memory_order_acquire) > 0)
+        {
+            if (! current()) return false;
+            juce::Thread::sleep (50);
+        }
+        return current();
+    }
+
     // Publish session.report.json: the metadata report synchronously (so it
     // exists the instant recording stops), then the SHA-256 manifest from a
     // background thread that yields to newer reports for the same session.
@@ -3626,7 +3656,7 @@ namespace zynforge
                 {
                     return reportState->generation.load (std::memory_order_acquire) == myGen;
                 };
-                hashing::ReadPolicy readPolicy { current, 50 };
+                hashing::ReadPolicy readPolicy { [current] { return readWhileNoTakeCaptures (current); }, 50 };
                 std::map<juce::String, juce::String> shaByPath;
                 bool hashingFailed = false, copyHashesFailed = false, copyHashesMissing = false;
                 const auto hashAll = [&] (const std::vector<juce::File>& files, bool areCopies)
@@ -3709,12 +3739,23 @@ namespace zynforge
                                                  const std::function<void()>& finishedForTests,
                                                  const std::function<void()>& beforePublishForTests)
     {
+        startResumedHashes (sessionDir, false, finishedForTests, beforePublishForTests);
+    }
+
+    void MultitrackRecorder::startResumedHashes (const juce::File& sessionDir, bool afterCancelledScan,
+                                                 const std::function<void()>& finishedForTests,
+                                                 const std::function<void()>& beforePublishForTests)
+    {
         const auto state = sessionReportState (sessionDir);
         const auto file = sessionDir.getChildFile ("session.report.json");
-        if (state->runningScans.load (std::memory_order_acquire) > 0 || ! file.existsAsFile()) return;
-        // A helper hashes in its own process after STOP, where the count above
-        // cannot see it, and two passes would read the whole take twice.
-        if (capture::identity::ScanClaim::isHeld (sessionDir)) return;
+        if (! file.existsAsFile()) return;
+        // A helper hashes in its own process after STOP, where the count below
+        // cannot see it, and two passes would read the whole take twice. After
+        // a refused start the pass it cancelled still holds both until it ends,
+        // and the thread below waits for it.
+        if (! afterCancelledScan
+            && (state->runningScans.load (std::memory_order_acquire) > 0
+                || capture::identity::ScanClaim::isHeld (sessionDir))) return;
         const auto report = juce::JSON::parse (file);
         // Owed copy hashes alone (their drive was gone) leave the primary's
         // final, and only the copies are read again.
@@ -3726,20 +3767,26 @@ namespace zynforge
 
         state->runningScans.fetch_add (1, std::memory_order_acq_rel);
         juce::Thread::launch ([state, token, generation, report, stoppedAt, sessionDir, primaryDone,
-                               finishedForTests, beforePublishForTests]
+                               afterCancelledScan, finishedForTests, beforePublishForTests]
         {
             const juce::ScopeGuard done { [&]
             {
                 state->runningScans.fetch_sub (1, std::memory_order_acq_rel);
                 if (finishedForTests) finishedForTests();
             } };
+            const auto current = [&] { return token->load (std::memory_order_acquire) == generation; };
+            // The cancelled pass ends at its next read; one pass at a time.
+            while (afterCancelledScan && state->runningScans.load (std::memory_order_acquire) > 1)
+            {
+                if (! current()) return;
+                juce::Thread::sleep (10);
+            }
             capture::identity::ScanClaim scanning;
             if (! scanning.hold (sessionDir)) return;   // another process got there first
            #if JUCE_MAC
             pthread_set_qos_class_self_np (QOS_CLASS_BACKGROUND, 0);
            #endif
-            const auto current = [&] { return token->load (std::memory_order_acquire) == generation; };
-            hashing::ReadPolicy policy { current, 50 };
+            hashing::ReadPolicy policy { [&current] { return readWhileNoTakeCaptures (current); }, 50 };
             std::map<juce::String, juce::String> hashes;
             // The primary and the copies fail apart: a backup that is gone or
             // will not read says nothing about the take on the primary. A copy
