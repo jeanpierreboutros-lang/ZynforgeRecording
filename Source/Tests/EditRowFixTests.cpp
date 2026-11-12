@@ -180,6 +180,7 @@ namespace zynforge
             // 2026-11-11 audit
             promptsLetATakeThrough (main);
             cueEditsSurviveTimelineUndo (main);
+            continuedTakesKeepOneWaveform();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1384,6 +1385,41 @@ namespace zynforge
             }
             main.cues.clear();
             main.currentCueIndex = -1;
+        }
+
+        static int cacheEntries (juce::AudioThumbnailCache& cache)
+        {
+            juce::MemoryOutputStream out;
+            cache.writeToStream (out);
+            juce::MemoryInputStream in (out.getData(), out.getDataSize(), false);
+            in.readInt();            // magic
+            return in.readInt();     // entry count
+        }
+
+        void continuedTakesKeepOneWaveform()
+        {
+            beginTest ("A continued take's waveform replaces the shorter one in memory and in WaveCache.wfm");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const auto take = takeIn (s.dir, 1);
+                row.setWaveformFiles (take, {});
+                expect (pumpUntil ([&] { return row.waveformsLoaded() && cacheEntries (s.cache) == 1; }, 5000),
+                        "setup: the first take never scanned");
+                for (int part = 2; part <= 3; ++part)
+                {
+                    expect (writeWav (take.getSiblingFile ("Track_01_part" + juce::String::formatted ("%02d", part) + ".wav"), kRate),
+                            "setup: the continued part");
+                    row.reloadCurrentWaveformFiles();
+                    expect (pumpUntil ([&] { return row.waveformsLoaded()
+                                                 && row.getWaveformSecondsForTests() > part - 0.5; }, 5000),
+                            "setup: the continued take never scanned");
+                    pumpUntil ([&] { return cacheEntries (s.cache) == 1; }, 1000);
+                    expectEquals (cacheEntries (s.cache), 1,
+                                  "the shorter take's peaks stayed cached beside the continued take");
+                }
+            }
         }
     };
 

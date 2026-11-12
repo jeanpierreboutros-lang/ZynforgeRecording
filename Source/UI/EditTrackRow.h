@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -490,6 +491,16 @@ namespace zynforge
         // The thumbnail the R lane draws from.
         juce::AudioThumbnail& rightThumb() noexcept { return stereoOneFile ? thumbnailL : thumbnailR; }
 
+        // The cache key of a take's peaks. One part is the file's own hash (what
+        // juce::FileInputSource uses); more parts get a stable combined hash so
+        // the multi-part thumb caches across reopen without colliding with the
+        // single-file entry.
+        static juce::int64 takePeaksHash (const juce::File& main, size_t parts)
+        {
+            return parts <= 1 ? main.hashCode()
+                              : main.hashCode() ^ ((juce::int64) parts << 48) ^ 0x5bd1e995LL;
+        }
+
         // Point a thumbnail at a take. A single file -> scanio::FileSource (cached
         // by file hash, as before). A MULTI-PART take (Track_NN + its
         // Track_NN_partXX continuations from auto-split / continue-recording) ->
@@ -503,17 +514,25 @@ namespace zynforge
             const auto parts = findTakeParts (main);
             // force: detach the old scan before dropping its entry. A scan that
             // completes while it is detached stores its (old) peaks, and
-            // setSource would then find them.
+            // setSource would then find them. Every shorter or longer reading
+            // of the same take goes too: a continue adds a part, so each set of
+            // a show left the last set's whole-take peaks behind, in memory and
+            // in WaveCache.wfm, and Remove Last Capture takes one away.
+            auto& known = partCountsSeen[main.getFullPathName()];
+            known = juce::jmax (known, (int) parts.size());
+            if (force)
+            {
+                thumb.clear();
+                for (int n = 1; n <= known; ++n)
+                    thumbCache.removeThumb (takePeaksHash (main, (size_t) n));
+                known = (int) parts.size();
+            }
             if (parts.size() <= 1)
             {
-                if (force) { thumb.clear(); thumbCache.removeThumb (main.hashCode()); }
                 thumb.setSource (new scanio::FileSource (main));
                 return;
             }
-            // Stable combined hash so the multi-part thumb caches across reopen
-            // without colliding with the single-file entry.
-            const juce::int64 h = main.hashCode() ^ ((juce::int64) parts.size() << 48) ^ 0x5bd1e995LL;
-            if (force) { thumb.clear(); thumbCache.removeThumb (h); }
+            const auto h = takePeaksHash (main, parts.size());
             if (auto r = ConcatReader::createForScan (formats, parts))
                 thumb.setReader (r.release(), h);
             else
@@ -3161,6 +3180,9 @@ namespace zynforge
         AudioEngine&              engine;
         juce::AudioFormatManager& formats;       // for building multi-part thumbnail readers
         juce::AudioThumbnailCache& thumbCache;   // shared; used to drop stale thumbs
+        // The most parts each take this row has drawn had, by path: a forced
+        // reload drops the peaks of every count up to it.
+        std::map<juce::String, int> partCountsSeen;
         juce::AudioThumbnail      thumbnailL;
         juce::AudioThumbnail      thumbnailR;
         struct CachedOverview
