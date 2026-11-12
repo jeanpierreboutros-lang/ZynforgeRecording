@@ -1460,6 +1460,77 @@ namespace zynforge
             boundedFinishing();
             primaryHolesAreCounted();
             copiesOpenBehindTheTake();
+            openingCopyIsNotExpectedToWrite();
+            punchPutBackOnACopy();
+        }
+
+        // The expected write rate is what is writing: a copy still opening
+        // writes nothing yet, and counting it read as a struggling disk.
+        void openingCopyIsNotExpectedToWrite()
+        {
+            beginTest ("A copy still opening is not counted in the disk rate the take expects");
+            Dirs dirs;
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 1);
+            rec.getTrack (0).armed.store (true);
+            rec.setBackupDirectory (dirs.backup);
+            expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+            struct Gate { ~Gate() { released.signal(); } juce::WaitableEvent released { true }; };
+            auto gate = std::make_shared<Gate>();
+            auto opening = std::make_shared<std::atomic<int>> (0);
+            rec.beforeCopyOpenForTests = [gate, opening] (Copy&)
+            {
+                opening->fetch_add (1);
+                gate->released.wait (-1);
+            };
+            expect (rec.startRecording (dirs.session));
+            for (int i = 0; i < 5000 && opening->load() < 2; ++i) juce::Thread::sleep (1);
+            expectEquals (opening->load(), 2, "both copies should be opening");
+            const auto primaryOnly = (juce::int64) (kRate * 3);   // one mono 24-bit track
+            expectEquals (rec.estimateBytesPerSecondForArmedTracks(), primaryOnly,
+                          "copies that are still opening were expected to write");
+            gate->released.signal();
+            Feeder feeder { rec, 1 };
+            feeder.blocks (10, { 0, 1, 2 });
+            expectEquals (rec.estimateBytesPerSecondForArmedTracks(), primaryOnly * 3, "the copies that opened were left out");
+            rec.stopRecording();
+        }
+
+        void punchPutBackOnACopy()
+        {
+            beginTest ("A copy that had an interrupted punch put back sits out one take and joins the next");
+            Dirs dirs;
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 1);
+            rec.getTrack (0).armed.store (true);
+            expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+            expect (rec.startRecording (dirs.session));
+            Feeder feeder { rec, 1 };
+            feeder.blocks (20, { 0, 2 });
+            rec.stopRecording();
+
+            // A crash in the middle of a punch on the mirror.
+            const auto mirrorAudio = dirs.mirror.getChildFile ("take").getChildFile ("Audio Files");
+            const auto take = mirrorAudio.getChildFile ("Track_01.wav");
+            expect (take.copyFileTo (mirrorAudio.getChildFile ("Track_01.punchbase.wav")));
+
+            rec.armContinue (feeder.frame);
+            expect (rec.startRecording (dirs.session), rec.getStartError());
+            feeder.blocks (10, { 0 });
+            const auto end = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+            while (! rec.anyMirrorFailed() && juce::Time::getMillisecondCounterHiRes() < end) juce::Thread::sleep (2);
+            rec.stopRecording();
+            const auto problems = rec.getCopyProblems().joinIntoString ("|");
+            expect (problems.contains ("interrupted punch put back"), problems);
+            expect (problems.contains ("joins the next"), "the line does not say what happens next: " + problems);
+            expect (! problems.contains ("reopen"), "reopening the session does nothing for a copy: " + problems);
+
+            rec.armContinue (feeder.frame);
+            expect (rec.startRecording (dirs.session), rec.getStartError());
+            feeder.blocks (10, { 0, 2 });
+            rec.stopRecording();
+            expect (! rec.anyMirrorFailed(), "the mirror did not join the next take: "
+                                                 + rec.getCopyProblems().joinIntoString ("|"));
         }
 
         void copiesOpenBehindTheTake()

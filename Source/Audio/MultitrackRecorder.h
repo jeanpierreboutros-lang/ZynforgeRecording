@@ -439,6 +439,13 @@ namespace zynforge
         // STOP found the session folder gone from where the take began (renamed
         // or moved during the take): the take was not finished and has no report.
         bool hasSessionFolderLost() const noexcept { return sessionFolderLost.load (std::memory_order_relaxed); }
+        // ... and its audio is not intact: its drive is gone (unplugged), or a
+        // write to it failed during the take. A folder only renamed or moved
+        // kept every write through its open files.
+        bool isLostSessionFolderIncomplete() const noexcept
+        {
+            return sessionFolderIncomplete.load (std::memory_order_relaxed);
+        }
         bool hasReportWriteFailed() const noexcept
         {
             return reportWriteFailed.load (std::memory_order_relaxed)
@@ -991,7 +998,9 @@ namespace zynforge
         // the operator loses the take's integrity manifest.
         std::atomic<bool> recoveryMarkerFailed { false };
         std::atomic<bool> reportWriteFailed { false };
-        std::atomic<bool> sessionFolderLost { false };
+        std::atomic<bool> sessionFolderLost { false }, sessionFolderIncomplete { false };
+        // "/Volumes/<drive>" of this folder is no longer mounted. Asks the disk.
+        static bool driveIsGone (const juce::File& folder);
         // The final hash/write runs after stopRecording returns and cannot
         // capture `this`: the recorder may be destroyed before it finishes.
         // Each new take invalidates older completion notifications.

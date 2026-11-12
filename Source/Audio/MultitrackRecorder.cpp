@@ -865,7 +865,7 @@ namespace zynforge
         // and so do the lines naming which copy lost what.
         const bool hadFailed[] { recoveryMarkerFailed.load(), reportWriteFailed.load(), punchSpliceFailed.load(),
                                  primaryFailed.load(), backupFailed.load(), mirrorFailed.load(),
-                                 sessionFolderLost.load() };
+                                 sessionFolderLost.load(), sessionFolderIncomplete.load() };
         const auto skippedBefore = mirrorsSkippedAtStart.load();
         auto copiesBefore = copies;
         auto droppedBefore = droppedCopies;
@@ -880,6 +880,7 @@ namespace zynforge
             backupFailed.store (hadFailed[4]);
             mirrorFailed.store (hadFailed[5]);
             sessionFolderLost.store (hadFailed[6]);
+            sessionFolderIncomplete.store (hadFailed[7]);
             mirrorsSkippedAtStart.store (skippedBefore);
             // This start's copies never started a thread (goLive starts them).
             copies = std::move (copiesBefore);
@@ -955,6 +956,7 @@ namespace zynforge
         backupFailed.store (false, std::memory_order_relaxed);
         mirrorFailed.store (false, std::memory_order_relaxed);
         sessionFolderLost.store (false, std::memory_order_relaxed);
+        sessionFolderIncomplete.store (false, std::memory_order_relaxed);
         backupActive.store (false, std::memory_order_relaxed);
         captureArms.clear();
         for (const auto& track : tracks)
@@ -1565,8 +1567,10 @@ namespace zynforge
                 return left ("has an interrupted punch that could not be put back");
             if (leadInsOwed)
                 return left ("still owes a silent lead-in it could not write");
+            // Put back here, on its own folder: nothing more to do, and the next
+            // RECORD finds it ready. Reopening the session repairs the primary only.
             if (recovered > 0)
-                return left ("had an interrupted punch put back, so it needs the session reopened");
+                return label + " had an interrupted punch put back; it sits out this take and joins the next one";
 
             // Everything from here names files by strip: after the recovery
             // above, which reads the names this copy has now.
@@ -2503,6 +2507,16 @@ namespace zynforge
         // no stamp, lead-in, manifest or report reaches it. Say so by name.
         const bool folderLost = ! activeSessionDir.getChildFile ("Audio Files").isDirectory();
         sessionFolderLost.store (folderLost, std::memory_order_relaxed);
+        // Renamed or moved, every write went on through the open files. A drive
+        // pulled failed every write after the pull, and nothing closed: that
+        // take is not intact, whatever brings the folder back. The primary's
+        // close check fails either way (it measures the old path), so only a
+        // write that failed, or the drive itself gone, says which.
+        const auto* primaryCopy = copyAt (0);
+        sessionFolderIncomplete.store (folderLost
+                                           && ((primaryCopy != nullptr && primaryCopy->writeFailed.load())
+                                               || driveIsGone (activeSessionDir)),
+                                       std::memory_order_relaxed);
 
         closeWriters();
         backupActive.store (false, std::memory_order_relaxed);
@@ -3801,6 +3815,14 @@ namespace zynforge
         return describeCopyProblems();
     }
 
+    bool MultitrackRecorder::driveIsGone (const juce::File& folder)
+    {
+        const auto path = folder.getFullPathName();
+        if (! path.startsWith ("/Volumes/")) return false;   // the boot volume cannot be pulled
+        const auto drive = path.fromFirstOccurrenceOf ("/Volumes/", false, false).upToFirstOccurrenceOf ("/", false, false);
+        return drive.isNotEmpty() && ! juce::File ("/Volumes/" + drive).isDirectory();
+    }
+
     juce::StringArray MultitrackRecorder::describeCopyProblems() const
     {
         // Only a copy that joined the take and has lost nothing, no track and no
@@ -3827,9 +3849,14 @@ namespace zynforge
             problems.addArray (latches->dropped);
         }
         if (sessionFolderLost.load (std::memory_order_relaxed))
-            problems.add ("The session folder " + activeSessionDir.getFullPathName()
-                          + " was renamed or moved during the take, so STOP could not finish the take there and it has no report. "
-                            "Its audio is intact: move the folder back and reopen it");
+            problems.add (sessionFolderIncomplete.load (std::memory_order_relaxed)
+                ? "The session folder " + activeSessionDir.getFullPathName()
+                      + " went away during the take (renamed, moved or its drive unplugged) and writing to it failed, "
+                        "so the take there is incomplete and has no report. Reconnect the drive or move the folder back, "
+                        "then reopen it to see what it holds"
+                : "The session folder " + activeSessionDir.getFullPathName()
+                      + " was renamed or moved during the take, so STOP could not finish the take there and it has no report. "
+                        "Its audio is intact: move the folder back and reopen it");
         else if (const auto watch = std::atomic_load (&diskWatch))
             for (const auto& watched : watch->volumes)
                 if (watched.copy->copyIndex == 0)
@@ -3932,9 +3959,14 @@ namespace zynforge
         // bytesPerSec for a single armed mono track = sampleRate * bitsPerSample / 8.
         const int bytesPerSampPrimary = bytesPerSampleOf (captureFormat);
         const int bytesPerSampBackup  = bytesPerSampleOf (backupCaptureFormat);
+        // While a take rolls, only a copy that is writing: one still opening
+        // writes nothing yet, and counting it read as a struggling disk.
+        const auto writing = [] (const CaptureCopy* copy)
+        { return copy != nullptr && ! copy->opening.load (std::memory_order_acquire); };
         const bool backupOn = isRecording()
                                 ? (backupActive.load (std::memory_order_relaxed)
-                                   && ! backupFailed.load (std::memory_order_relaxed))
+                                   && ! backupFailed.load (std::memory_order_relaxed)
+                                   && writing (copyAt (1)))
                                 : backupDir.isDirectory();
 
         const int captureChannels = armedCaptureChannels();
@@ -3950,7 +3982,7 @@ namespace zynforge
         if (isRecording())
         {
             for (size_t mi = 0; mi < activeMirrors.size(); ++mi)
-                if (const auto* copy = copyAt (2 + (int) mi))
+                if (const auto* copy = copyAt (2 + (int) mi); writing (copy))
                     mirrorChannelBytes += copy->liveChannels.load (std::memory_order_relaxed)
                                         * bytesPerSampleOf (activeMirrors[mi].format);
         }
