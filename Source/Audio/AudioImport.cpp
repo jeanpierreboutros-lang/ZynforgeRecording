@@ -13,59 +13,78 @@ namespace zynforge::audioimport
             return flag != nullptr && flag->load (std::memory_order_relaxed);
         }
 
-        bool writeConverted (juce::AudioFormatReader& reader,
-                             const juce::File& destination,
-                             double targetRate,
-                             int outputChannels,
-                             int monoSourceChannel,
-                             const std::atomic<bool>* cancel,
-                             bool* clipped)
+        // One take file made from the source: one channel, or a stereo pair.
+        struct Output
         {
-            if (cancelled (cancel)) return false;
+            juce::File destination;
+            int firstSourceChannel { 0 };
+            int channels { 1 };
+        };
+
+        // Every output in ONE pass over the source: one read, one resampler.
+        // A 64-channel show file used to be read and resampled 64 times, which
+        // took hours and held the session the whole time. All outputs land, or
+        // none: a failure or cancel removes every partial and installed file.
+        bool writeConvertedOutputs (juce::AudioFormatReader& reader,
+                                    const std::vector<Output>& outputs,
+                                    double targetRate,
+                                    const std::atomic<bool>* cancel,
+                                    bool* clipped)
+        {
+            if (cancelled (cancel) || outputs.empty()) return false;
             // Import appends tracks. A stale/unexpected destination is user
             // media, not permission to overwrite it.
-            if (destination.exists()) return false;
+            for (const auto& output : outputs)
+                if (output.destination.exists()) return false;
 
-            const auto temporary = destination.getSiblingFile (
-                "." + destination.getFileNameWithoutExtension() + "-"
-                + juce::Uuid().toString() + ".partial.wav");
-
+            struct Open
+            {
+                juce::File temporary;
+                CheckedFileStream::Failed closeFailed;
+                std::unique_ptr<juce::AudioFormatWriter> writer;
+            };
+            std::vector<Open> open (outputs.size());
+            std::vector<juce::File> installed;
             bool complete = false;
             const juce::ScopeGuard removePartial { [&]
             {
-                if (! complete) temporary.deleteFile();
+                if (complete) return;
+                for (auto& o : open) { o.writer.reset(); o.temporary.deleteFile(); }
+                for (const auto& f : installed) f.deleteFile();
             } };
 
             const int sourceChannels = juce::jmax (1, (int) reader.numChannels);
             const double sourceRate = reader.sampleRate > 0.0 ? reader.sampleRate : targetRate;
 
             juce::WavAudioFormat wav;
-            const auto closeFailed = CheckedFileStream::makeFailedFlag();
-            auto output = CheckedFileStream::open (temporary, closeFailed);
-            if (output == nullptr) return false;
-            juce::StringPairArray metadata;
-            std::unique_ptr<juce::AudioFormatWriter> writer (
-                wav.createWriterFor (output.get(), targetRate,
-                                     (unsigned int) outputChannels, 24, metadata, 0));
-            if (writer == nullptr) return false;
-            output.release();
+            for (size_t i = 0; i < outputs.size(); ++i)
+            {
+                const auto& destination = outputs[i].destination;
+                open[i].temporary = destination.getSiblingFile (
+                    "." + destination.getFileNameWithoutExtension() + "-"
+                    + juce::Uuid().toString() + ".partial.wav");
+                open[i].closeFailed = CheckedFileStream::makeFailedFlag();
+                auto stream = CheckedFileStream::open (open[i].temporary, open[i].closeFailed);
+                if (stream == nullptr) return false;
+                open[i].writer.reset (wav.createWriterFor (stream.get(), targetRate,
+                                                           (unsigned int) outputs[i].channels, 24, {}, 0));
+                if (open[i].writer == nullptr) return false;
+                stream.release();
+            }
 
             constexpr int chunk = 16384;
             juce::AudioBuffer<float> buffer (sourceChannels, chunk);
             auto writeBlock = [&] (int count)
             {
                 if (clipped != nullptr && buffer.getMagnitude (0, count) > 1.0f) *clipped = true;
-                if (outputChannels == 2)
+                for (size_t i = 0; i < outputs.size(); ++i)
                 {
-                    const int sourceRight = juce::jmin (1, sourceChannels - 1);
-                    const float* channels[2] = { buffer.getReadPointer (0),
-                                                 buffer.getReadPointer (sourceRight) };
-                    return writer->writeFromFloatArrays (channels, 2, count);
+                    const int first = juce::jlimit (0, sourceChannels - 1, outputs[i].firstSourceChannel);
+                    const float* channels[2] = { buffer.getReadPointer (first),
+                                                 buffer.getReadPointer (juce::jmin (first + 1, sourceChannels - 1)) };
+                    if (! open[i].writer->writeFromFloatArrays (channels, outputs[i].channels, count)) return false;
                 }
-                const float* mono[1] = {
-                    buffer.getReadPointer (juce::jlimit (0, sourceChannels - 1,
-                                                         monoSourceChannel)) };
-                return writer->writeFromFloatArrays (mono, 1, count);
+                return true;
             };
 
             if (juce::approximatelyEqual (sourceRate, targetRate))
@@ -79,6 +98,7 @@ namespace zynforge::audioimport
                     if (! reader.read (&buffer, 0, count, position, true, true)
                         || ! writeBlock (count))
                         return false;
+                    sourceFramesReadForTests += count;
                     position += count;
                 }
             }
@@ -101,16 +121,38 @@ namespace zynforge::audioimport
                     juce::AudioSourceChannelInfo info (&buffer, 0, count);
                     resampler.getNextAudioBlock (info);
                     if (source.hasFailed() || ! writeBlock (count)) return false;
+                    sourceFramesReadForTests += count;
                     written += count;
                 }
                 resampler.releaseResources();
             }
 
-            writer.reset(); // close/flush before preserving the destination
-            if (closeFailed->load() || destination.exists()
-                || ! temporary.moveFileTo (destination)) return false;
+            for (auto& o : open)
+            {
+                o.writer.reset(); // close/flush before preserving the destination
+                if (o.closeFailed->load()) return false;
+            }
+            for (size_t i = 0; i < outputs.size(); ++i)
+            {
+                if (outputs[i].destination.exists() || ! open[i].temporary.moveFileTo (outputs[i].destination))
+                    return false;
+                installed.push_back (outputs[i].destination);
+            }
             complete = true;
             return true;
+        }
+
+        bool writeConverted (juce::AudioFormatReader& reader,
+                             const juce::File& destination,
+                             double targetRate,
+                             int outputChannels,
+                             int monoSourceChannel,
+                             const std::atomic<bool>* cancel,
+                             bool* clipped)
+        {
+            return writeConvertedOutputs (reader, { { destination, outputChannels == 2 ? 0 : monoSourceChannel,
+                                                      outputChannels == 2 ? 2 : 1 } },
+                                          targetRate, cancel, clipped);
         }
     }
 
@@ -159,28 +201,36 @@ namespace zynforge::audioimport
 
             // Files with more than two channels are split into one mono take
             // per source channel. Importing only L/R silently discarded the
-            // rest of a console multitrack. Stage the whole source as a unit;
-            // on a failed channel, remove only the files created for this source.
+            // rest of a console multitrack. Each pass writes up to
+            // kChannelsPerPass of them from one read of the source: open files
+            // stay well inside the process limit, and a 64-channel show file is
+            // read once. A failure removes every file made for this source.
+            constexpr int kChannelsPerPass = 64;
             std::vector<juce::File> created;
             std::vector<ImportedTrack> staged;
             const int outputTracks = sourceChannels > 2 ? sourceChannels : 1;
             bool failedSource = false, clipped = false;
-            for (int channel = 0; channel < outputTracks; ++channel)
+            for (int first = 0; first < outputTracks && ! failedSource; first += kChannelsPerPass)
             {
-                const int index = nextTrack + channel;
-                const auto destination = audioFilesDir.getChildFile (
-                    "Track_" + juce::String (index + 1).paddedLeft ('0', 2) + ".wav");
-                if (! writeConverted (*reader, destination, targetSampleRate,
-                                      stereo ? 2 : 1, channel, cancel, &clipped))
+                std::vector<Output> pass;
+                for (int channel = first; channel < juce::jmin (outputTracks, first + kChannelsPerPass); ++channel)
+                    pass.push_back ({ audioFilesDir.getChildFile (
+                                          "Track_" + juce::String (nextTrack + channel + 1).paddedLeft ('0', 2) + ".wav"),
+                                      channel, stereo ? 2 : 1 });
+                if (! writeConvertedOutputs (*reader, pass, targetSampleRate, cancel, &clipped))
                 {
                     failedSource = true;
                     break;
                 }
-                created.push_back (destination);
-                staged.push_back ({ index, stereo,
-                    sourceChannels > 2
-                        ? source.getFileNameWithoutExtension() + " Ch " + juce::String (channel + 1)
-                        : source.getFileNameWithoutExtension() });
+                for (size_t i = 0; i < pass.size(); ++i)
+                {
+                    const int channel = first + (int) i;
+                    created.push_back (pass[i].destination);
+                    staged.push_back ({ nextTrack + channel, stereo,
+                        sourceChannels > 2
+                            ? source.getFileNameWithoutExtension() + " Ch " + juce::String (channel + 1)
+                            : source.getFileNameWithoutExtension() });
+                }
             }
             if (failedSource)
             {
