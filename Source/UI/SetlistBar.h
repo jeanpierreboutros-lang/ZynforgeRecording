@@ -37,6 +37,15 @@ namespace zynforge
             bool  soloed       { false };
             bool  monitor      { false };
             bool  armed        { false };
+
+            // Exact: it tells a re-captured snapshot from the one it replaced.
+            bool operator== (const StripSnapshot& o) const noexcept
+            {
+                return stripId == o.stripId && juce::exactlyEqual (gainDb, o.gainDb)
+                    && juce::exactlyEqual (pan, o.pan) && inputRouting == o.inputRouting
+                    && outputRouting == o.outputRouting && muted == o.muted && soloed == o.soloed
+                    && monitor == o.monitor && armed == o.armed;
+            }
         };
 
         struct Cue
@@ -44,7 +53,11 @@ namespace zynforge
             juce::String name;
             juce::int64  samplePos { 0 };
             std::vector<StripSnapshot> strips;   // length = recorder.getNumTracks() at capture time
-
+            // Which cue this is, whatever it is called or wherever it sits.
+            // Runtime only, never saved (the undo stack does not outlive the
+            // session either); copies keep it. A timeline undo matches cues by
+            // it (timelinecarry::carryForward).
+            juce::String runtimeId { juce::Uuid().toString() };
         };
 
         SetlistBar();

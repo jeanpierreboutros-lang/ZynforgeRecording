@@ -8,13 +8,17 @@
 #include "../Audio/AudioEngine.h"
 #include "../UI/ChannelStrip.h"
 #include "../UI/EditPage.h"
+#include "../UI/EditTimeRuler.h"
 #include "../UI/EditTrackRow.h"
+#include "../UI/FloatingLaunch.h"
 #include "../UI/MainComponent.h"
+#include "../UI/MarkerListDialog.h"
 #include "../UI/PatchPage.h"
 #include "../UI/RenameLabel.h"
 #include "../UI/SessionProjPath.h"
 #include "../UI/WaveCacheFile.h"
 
+#include <atomic>
 #include <cmath>
 #include <functional>
 #include <set>
@@ -173,6 +177,17 @@ namespace zynforge
             liveEnvelopeMeetsThePlayhead();
             scanRepaintsOnceMore();
             fadeToolGrabs();
+
+            // 2026-11-11 audit
+            promptsLetATakeThrough (main);
+            cueEditsSurviveTimelineUndo (main);
+            continuedTakesKeepOneWaveform();
+            clipPromptsFollowTheirClip();
+            zoomStepsKeepThePlayhead (main);
+            copyWaitsForTheTake (main);
+            quitKeepsTheCacheBeingWritten();
+            recordWhileLoadingKeepsTheLanes();
+            groupedRangeShadesWhatItCuts();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1088,6 +1103,567 @@ namespace zynforge
                     inputs->mouseDown (leftAt (*inputs, dot (1, 5, colW)));
                     expectEquals (patchOf (show.engine, 2), juce::String ("-1/-1"),
                                   "an input cleared by hand clears both, as before");
+                }
+            }
+        }
+
+        // ── 2026-11-11 audit ────────────────────────────────────────────────
+
+        static int modalCount() { return juce::ModalComponentManager::getInstance()->getNumModalComponents(); }
+        static juce::Component* topModal() { return juce::ModalComponentManager::getInstance()->getModalComponent (0); }
+
+        // Ends every open modal by its Cancel-style result and lets it clean up.
+        static void dismissModals()
+        {
+            auto* modals = juce::ModalComponentManager::getInstance();
+            for (int i = modals->getNumModalComponents(); --i >= 0;)
+                if (auto* c = modals->getModalComponent (i)) c->exitModalState (0);
+            pumpUntil ([] { return modalCount() == 0; }, 2000);
+        }
+
+        template <class T>
+        static T* findChild (juce::Component& root)
+        {
+            for (auto* child : root.getChildren())
+            {
+                if (auto* hit = dynamic_cast<T*> (child)) return hit;
+                if (auto* deeper = findChild<T> (*child)) return deeper;
+            }
+            return nullptr;
+        }
+
+        static juce::Button* buttonTitled (juce::Component& root, const juce::String& title)
+        {
+            for (auto* child : root.getChildren())
+            {
+                if (auto* b = dynamic_cast<juce::Button*> (child); b != nullptr && b->getTitle() == title) return b;
+                if (auto* deeper = buttonTitled (*child, title)) return deeper;
+            }
+            return nullptr;
+        }
+
+        // Nothing the window started is still writing the session: an edit or a
+        // take waits for that, as it would in the app.
+        static bool settle (Show& show)
+        {
+            return pumpUntil ([&]
+            {
+                return ! show.main.sessionIoBusy.load() && show.main.pendingMetadataSaves == 0
+                    && ! show.engine.isSessionTransitionActive() && ! show.engine.isCaptureFinalizing();
+            }, 10000);
+        }
+
+        // A continued take on the open session, as a desk or the twin would start it.
+        bool startTakeIn (Show& show, const juce::File& dir)
+        {
+            expect (settle (show), "setup: the session never settled");
+            show.engine.armContinue (show.engine.getCaptureLengthSamples());
+            const bool started = show.engine.startRecording (dir);
+            expect (started, "setup: " + show.engine.getRecorder().getStartError());
+            return started;
+        }
+
+        bool stopTake (Show& show)
+        {
+            show.main.stopActiveCaptureAsync (false);
+            return pumpUntil ([&]
+            {
+                return ! show.engine.isRecording() && ! show.engine.isCaptureFinalizing()
+                    && ! show.main.captureMetadataPending && show.main.pendingMetadataSaves == 0;
+            }, 10000);
+        }
+
+        // Where the ruler's double-click finds the marker at `seconds`, mapped the
+        // way the ruler maps it at that moment.
+        static int rulerFlagX (EditTimeRuler& ruler, AudioEngine& engine, double seconds)
+        {
+            const auto& player = engine.getPlayer();
+            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+            const auto total = player.getTotalLengthSamples();
+            const double totalSec = total > 0 ? (double) total / sr : kNotionalEmptyLaneSec;
+            return ruler.rulerTimeToX (seconds, ruler.rulerPxPerSec (totalSec));
+        }
+
+        void promptsLetATakeThrough (MainComponent& main)
+        {
+            beginTest ("Every prompt EDIT opens closes as Cancel when a take starts behind it");
+            {
+                Show show (main);
+                main.confirmForTests = nullptr;
+                show.session ({ "KICK", "SNARE" }, false, false);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                dismissModals();
+                auto& engine = show.engine;
+                const auto marked = [&] (const juce::String& what, const std::function<void()>& open)
+                {
+                    open();
+                    const bool opened = pumpUntil ([] { return modalCount() > 0; }, 2000);
+                    expect (opened, what + ": setup: nothing opened");
+                    if (opened)
+                        expect ((bool) topModal()->getProperties()[kClosesForTake],
+                                what + " would stand in front of STOP for a take started behind it");
+                    dismissModals();
+                };
+
+                engine.getPlayer().setLoopRegion (4800, 9600);
+                marked ("Crop to loop range", [&] { main.editCropToLoopRange(); });
+                marked ("Delete recording",   [&] { main.confirmDeleteRecording (false, [] {}); });
+                marked ("Delete channel",     [&] { main.confirmDeleteChannels (1, [] {}); });
+                engine.getPlayer().clearLoopRegion();
+                marked ("New marker name",    [&] { main.dropMarkerAndPromptName(); });
+                marked ("Add cue",            [&] { main.addCueAtTransport(); });
+                SetlistBar::Cue intro;
+                intro.name = "Intro";
+                main.cues = { intro };
+                main.currentCueIndex = 0;
+                marked ("Rename cue",         [&] { main.renameCurrentCue(); });
+                marked ("Memory Locations",   [&] { MarkerListDialog::launch (engine); });
+
+                const auto row = [&] (int i) { return rowsOf (show.page())[(size_t) i]; };
+                expectEquals ((int) rowsOf (show.page()).size(), 2, "setup: two rows");
+                if (rowsOf (show.page()).size() == 2)
+                {
+                    marked ("Rename clip",  [&] { row (0)->applyClipMenuChoice (0, 412); });
+                    marked ("Clip gain",    [&] { row (0)->applyClipMenuChoice (0, 510); });
+                    marked ("Strip colour", [&] { row (0)->openColourPicker(); });
+                    marked ("Strip reorder notice", [&]
+                    {
+                        auto& r = *row (1);
+                        const juce::Point<int> swatch (5, 30);
+                        r.mouseDown (mouseAt (r, swatch, swatch, false));
+                        engine.getPlayer().start();
+                        r.mouseDrag (mouseAt (r, swatch + juce::Point<int> (0, 20), swatch, true));
+                        engine.getPlayer().stop();
+                        r.mouseUp (mouseAt (r, swatch + juce::Point<int> (0, 20), swatch, true));
+                    });
+                }
+                if (auto* ruler = findChild<EditTimeRuler> (show.page()))
+                {
+                    engine.getMarkers().drop (kRate / 2, "Chorus");
+                    const int x = rulerFlagX (*ruler, engine, 0.5);
+                    marked ("Rename marker", [&] { ruler->mouseDoubleClick (mouseAt (*ruler, { x, 10 }, { x, 10 }, false)); });
+                }
+                else
+                    expect (false, "setup: no ruler");
+                main.cues.clear();
+                main.currentCueIndex = -1;
+            }
+
+            beginTest ("A take closes the prompt it starts behind, and nothing renames or deletes a marker during it");
+            {
+                Show show (main);
+                main.confirmForTests = nullptr;
+                const auto dir = show.session ({ "KICK" }, false, true);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                dismissModals();
+                auto& engine = show.engine;
+                engine.getMarkers().drop (kRate / 2, "Chorus");
+                const auto markerId = engine.getMarkers().lastDroppedId;
+                main.cues.clear();
+                main.currentCueIndex = -1;
+
+                main.addCueAtTransport();
+                expect (pumpUntil ([] { return modalCount() > 0; }, 2000), "setup: the cue prompt");
+                if (startTakeIn (show, dir))
+                {
+                    main.serviceModalsAroundTakes();   // the window's 10 Hz tick (no timers in a test window)
+                    expect (pumpUntil ([] { return modalCount() == 0; }, 2000),
+                            "the cue prompt still stands in front of STOP");
+                    expect (pumpUntil ([&] { return main.cues.size() == 1; }, 1000),
+                            "the cue asked for was dropped with its prompt");
+
+                    MarkerListDialog list (engine);
+                    list.applyMenuChoice (2, markerId);
+                    expect (engine.getMarkers().indexOfId (markerId) >= 0,
+                            "Memory Locations deleted a marker during the take");
+                    list.applyMenuChoice (1, markerId);
+                    expectEquals (modalCount(), 0, "Memory Locations opened Rename over the take");
+
+                    if (auto* ruler = findChild<EditTimeRuler> (show.page()))
+                    {
+                        const int x = rulerFlagX (*ruler, engine, 0.5);
+                        ruler->mouseDoubleClick (mouseAt (*ruler, { x, 10 }, { x, 10 }, false));
+                        expectEquals (modalCount(), 0, "the ruler opened Rename over the take");
+                    }
+                    dismissModals();
+                    expect (stopTake (show), "setup: the take never stopped");
+                }
+                dismissModals();
+                main.cues.clear();
+                main.currentCueIndex = -1;
+            }
+        }
+
+        void cueEditsSurviveTimelineUndo (MainComponent& main)
+        {
+            const auto cue = [] (const juce::String& name, juce::int64 at)
+            {
+                SetlistBar::Cue c;
+                c.name = name;
+                c.samplePos = at;
+                return c;
+            };
+            const auto names = [&main]
+            {
+                juce::StringArray out;
+                for (const auto& c : main.cues) out.add (c.name + "@" + juce::String (c.samplePos));
+                return out.joinIntoString (",");
+            };
+
+            beginTest ("Undo and redo of Ripple Delete keep a cue updated since, once, where it was updated");
+            {
+                Show show (main);
+                show.session ({ "KICK" }, false, false);
+                auto& engine = show.engine;
+                main.cues = { cue ("Intro", 4800), cue ("Song 2", 36000) };
+                main.currentCueIndex = -1;
+                expect (settle (show), "setup: the session never settled");
+                main.flushMixerUndo();   // the setup's mixer changes are not the step undone
+                expect (main.rippleTimeline ("Ripple Delete", engine.allTimelineTracks(), 9600, 14400) > 0,
+                        "setup: the ripple");
+                expectEquals (names(), juce::String ("Intro@4800,Song 2@31200"), "setup: the cue moved with the audio");
+
+                main.currentCueIndex = 1;
+                engine.getPlayer().setPositionSamples (24000);
+                main.updateCueAtTransport();
+                settle (show);
+                main.editUndo();
+                expectEquals (names(), juce::String ("Intro@4800,Song 2@24000"),
+                              "undo brought back the cue as it was before its Update");
+                settle (show);
+                main.editRedo();
+                expectEquals (names(), juce::String ("Intro@4800,Song 2@24000"),
+                              "redo kept the stale copy of the updated cue");
+            }
+
+            beginTest ("Undo of Ripple Delete keeps a cue's new name, and a cue deleted since stays deleted");
+            {
+                Show show (main);
+                show.session ({ "KICK" }, false, false);
+                auto& engine = show.engine;
+                main.cues = { cue ("Intro", 4800), cue ("Song 2", 36000) };
+                main.currentCueIndex = -1;
+                expect (settle (show), "setup: the session never settled");
+                main.flushMixerUndo();   // the setup's mixer changes are not the step undone
+                expect (main.rippleTimeline ("Ripple Delete", engine.allTimelineTracks(), 9600, 14400) > 0,
+                        "setup: the ripple");
+                main.cues[1].name = "Encore";              // what Rename Cue does
+                main.currentCueIndex = 0;
+                main.setlistBar.onDeleteCue();             // Delete cue on "Intro"
+                settle (show);
+                main.editUndo();
+                expectEquals (names(), juce::String ("Encore@36000"),
+                              "undo revived a deleted cue or the old name of a renamed one");
+                settle (show);
+                main.editRedo();
+                expectEquals (names(), juce::String ("Encore@31200"), "redo lost the rename");
+            }
+
+            beginTest ("Undo of Ripple Delete keeps a marker's new name and does not revive a deleted one");
+            {
+                Show show (main);
+                show.session ({ "KICK" }, false, false);
+                auto& engine = show.engine;
+                main.cues.clear();
+                main.currentCueIndex = -1;
+                auto& markers = engine.getMarkers();
+                markers.replaceAll ({});
+                markers.drop (36000, "Verse");
+                const auto verse = markers.lastDroppedId;
+                markers.drop (40000, "Bridge");
+                const auto bridge = markers.lastDroppedId;
+                expect (settle (show), "setup: the session never settled");
+                main.flushMixerUndo();   // the setup's mixer changes are not the step undone
+                expect (main.rippleTimeline ("Ripple Delete", engine.allTimelineTracks(), 9600, 14400) > 0,
+                        "setup: the ripple");
+                markers.renameMarker (markers.indexOfId (verse), "Chorus");
+                markers.removeById (bridge);
+                settle (show);
+                main.editUndo();
+                expectEquals (markers.getCount(), 1, "undo revived a marker deleted since");
+                const int at = markers.indexOfId (verse);
+                expect (at >= 0, "the renamed marker went");
+                if (at >= 0)
+                {
+                    expectEquals (markers.getMarker (at).name, juce::String ("Chorus"), "undo put the old name back");
+                    expectEquals (markers.getMarker (at).sampleOffset, (juce::int64) 36000, "the marker did not move back");
+                }
+                markers.replaceAll ({});
+            }
+            main.cues.clear();
+            main.currentCueIndex = -1;
+        }
+
+        static int cacheEntries (juce::AudioThumbnailCache& cache)
+        {
+            juce::MemoryOutputStream out;
+            cache.writeToStream (out);
+            juce::MemoryInputStream in (out.getData(), out.getDataSize(), false);
+            in.readInt();            // magic
+            return in.readInt();     // entry count
+        }
+
+        void continuedTakesKeepOneWaveform()
+        {
+            beginTest ("A continued take's waveform replaces the shorter one in memory and in WaveCache.wfm");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const auto take = takeIn (s.dir, 1);
+                row.setWaveformFiles (take, {});
+                expect (pumpUntil ([&] { return row.waveformsLoaded() && cacheEntries (s.cache) == 1; }, 5000),
+                        "setup: the first take never scanned");
+                for (int part = 2; part <= 3; ++part)
+                {
+                    expect (writeWav (take.getSiblingFile ("Track_01_part" + juce::String::formatted ("%02d", part) + ".wav"), kRate),
+                            "setup: the continued part");
+                    row.reloadCurrentWaveformFiles();
+                    expect (pumpUntil ([&] { return row.waveformsLoaded()
+                                                 && row.getWaveformSecondsForTests() > part - 0.5; }, 5000),
+                            "setup: the continued take never scanned");
+                    pumpUntil ([&] { return cacheEntries (s.cache) == 1; }, 1000);
+                    expectEquals (cacheEntries (s.cache), 1,
+                                  "the shorter take's peaks stayed cached beside the continued take");
+                }
+            }
+        }
+
+        void clipPromptsFollowTheirClip()
+        {
+            const auto prompt = [] { return dynamic_cast<juce::AlertWindow*> (topModal()); };
+
+            beginTest ("Rename clip and Set gain land on the clip they opened on, whatever moved under them");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                for (juce::int64 at : { 12000, 24000, 36000 }) s.engine.splitTrackAtSample (0, at);
+                expectEquals ((int) s.clips (0).size(), 4, "setup: four clips");
+                const auto clipAt24k = [&]() -> const Clip*
+                {
+                    for (const auto& c : s.clips (0)) if (c.timelineStartSamples == 24000) return &c;
+                    return nullptr;
+                };
+
+                row.applyClipMenuChoice (2, 412);
+                if (auto* aw = prompt())
+                {
+                    s.engine.deleteClip (0, 0);   // the list shifts under the prompt
+                    aw->getTextEditor ("name")->setText ("KEEP");
+                    aw->exitModalState (1);
+                }
+                else expect (false, "setup: the rename prompt");
+                // The answer arrives a moment after the prompt leaves.
+                pumpUntil ([&] { return clipAt24k() != nullptr && clipAt24k()->name == "KEEP"; }, 1000);
+                expect (clipAt24k() != nullptr && clipAt24k()->name == "KEEP", "the clip the prompt was for kept its name");
+                for (const auto& c : s.clips (0))
+                    if (c.timelineStartSamples != 24000)
+                        expect (c.name != "KEEP", "another clip took the name");
+
+                const int idx = (int) (clipAt24k() - s.clips (0).data());
+                row.applyClipMenuChoice (idx, 510);
+                if (auto* aw = prompt())
+                {
+                    s.engine.deleteClip (0, 0);
+                    aw->getTextEditor ("dB")->setText ("-7");
+                    aw->exitModalState (1);
+                }
+                else expect (false, "setup: the gain prompt");
+                pumpUntil ([&] { return clipAt24k() != nullptr && std::abs (clipAt24k()->gainDb + 7.0f) < 0.01f; }, 1000);
+                expect (clipAt24k() != nullptr && std::abs (clipAt24k()->gainDb + 7.0f) < 0.01f,
+                        "the gain missed the clip the prompt was for");
+                for (const auto& c : s.clips (0))
+                    if (c.timelineStartSamples != 24000)
+                        expect (std::abs (c.gainDb) < 0.01f, "another clip took the gain");
+            }
+
+            beginTest ("A clip prompt whose clip went changes nothing");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                s.engine.splitTrackAtSample (0, 16000);
+                s.engine.splitTrackAtSample (0, 32000);
+                expectEquals ((int) s.clips (0).size(), 3, "setup: three clips");
+                row.applyClipMenuChoice (1, 510);
+                if (auto* aw = prompt())
+                {
+                    s.engine.deleteClip (0, 1);
+                    aw->getTextEditor ("dB")->setText ("-7");
+                    aw->exitModalState (1);
+                }
+                else expect (false, "setup: the gain prompt");
+                pumpUntil ([] { return false; }, 300);   // the answer arrives a moment after the prompt leaves
+                for (const auto& c : s.clips (0))
+                    expect (std::abs (c.gainDb) < 0.01f, "a gain meant for a deleted clip landed on another");
+            }
+        }
+
+        void zoomStepsKeepThePlayhead (MainComponent& main)
+        {
+            beginTest ("H+ and Cmd+] zoom around the playhead, not from the left edge");
+            {
+                Show show (main);
+                show.session ({ "KICK" }, false, false);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                auto& engine = show.engine;
+                auto& page = show.page();
+                auto* viewport = findChild<juce::Viewport> (page);
+                auto* hIn = buttonTitled (page, "Horizontal zoom in");
+                expect (viewport != nullptr && hIn != nullptr, "setup: the viewport and H+");
+                if (viewport != nullptr && hIn != nullptr && viewport->getViewedComponent() != nullptr)
+                {
+                    const auto playheadOnScreen = [&]
+                    {
+                        constexpr int headerW = brand::space::editHeaderW;
+                        const int contentW = viewport->getViewedComponent()->getWidth();
+                        const double frac = (double) engine.getPlayer().getPositionSamples()
+                                          / (double) juce::jmax ((juce::int64) 1, engine.getPlayer().getTotalLengthSamples());
+                        const int x = headerW + 4 + (int) (frac * (contentW - headerW - 8));
+                        const int viewX = viewport->getViewPositionX();
+                        return x >= viewX + headerW && x < viewX + viewport->getViewWidth();
+                    };
+                    engine.getPlayer().setPositionSamples (kRate * 95 / 100);   // where STOP leaves it
+                    expect (playheadOnScreen(), "setup: the playhead shows at fit");
+                    hIn->onClick();
+                    expect (page.getZoom() > 1.0f, "setup: H+ zoomed in");
+                    expect (playheadOnScreen(), "H+ zoomed the playhead off screen");
+                    main.keyPressed (juce::KeyPress (']', juce::ModifierKeys::commandModifier, 0), nullptr);
+                    expect (page.getZoom() > 1.5f, "setup: Cmd+] zoomed in");
+                    expect (playheadOnScreen(), "Cmd+] zoomed the playhead off screen");
+                    page.setZoom (1.0f);
+                }
+            }
+        }
+
+        void copyWaitsForTheTake (MainComponent& main)
+        {
+            beginTest ("Cmd+C on a clip waits for the take: it reads nothing on the take's drive");
+            {
+                Show show (main);
+                const auto dir = show.session ({ "KICK" }, false, true);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                main.clipClipboard = juce::var();
+                show.page().setSelectedClip (0, 0);
+                if (startTakeIn (show, dir))
+                {
+                    main.editClipboardCut (false);
+                    expect (! main.clipClipboard.isObject(), "a clip was copied off the take's drive during the take");
+                    expect (stopTake (show), "setup: the take never stopped");
+                }
+                show.page().setSelectedClip (0, 0);
+                main.editClipboardCut (false);
+                expect (main.clipClipboard.isObject(), "copy stayed refused after the take");
+                main.clipClipboard = juce::var();
+            }
+        }
+
+        void quitKeepsTheCacheBeingWritten()
+        {
+            beginTest ("Quitting while the waveform cache is being written keeps it");
+            {
+                Session s (1, { kRate });
+                std::atomic<bool> started { false };
+                {
+                    auto page = std::make_unique<EditPage> (s.engine);
+                    page->setBounds (0, 0, 1400, 300);
+                    page->beforeWaveCacheSaveForTests = [&started]
+                    {
+                        started = true;
+                        juce::Thread::sleep (300);   // a slow drive: quit lands mid-write
+                    };
+                    page->refresh();
+                    expect (pumpUntil ([&] { return started.load(); }, 10000), "setup: the cache save never started");
+                    page.reset();
+                }
+                expect (wavecache::fileIn (s.dir).existsAsFile(),
+                        "quitting threw away the waveform cache it was writing");
+            }
+        }
+
+        void recordWhileLoadingKeepsTheLanes()
+        {
+            beginTest ("RECORD while the saved waveforms load still shows the other lanes' audio");
+            {
+                Session s (2, { kRate, 0 });
+                {
+                    EditPage first (s.engine);
+                    first.setBounds (0, 0, 1400, 300);
+                    first.refresh();
+                    expect (pumpUntil ([&] { return wavecache::fileIn (s.dir).existsAsFile()
+                                                 && first.waveCacheIdleForTests(); }, 10000),
+                            "setup: the waveforms were never saved");
+                }
+                {
+                    // Reopened: the saved peaks load, and RECORD comes before the
+                    // page has handed them to the rows.
+                    EditPage page (s.engine);
+                    page.setBounds (0, 0, 1400, 300);
+                    const auto end = juce::Time::getMillisecondCounterHiRes() + 5000;
+                    while (! page.waveCacheResetRanForTests() && juce::Time::getMillisecondCounterHiRes() < end)
+                        juce::Thread::sleep (5);
+                    expect (page.waveCacheResetRanForTests(), "setup: the saved peaks never loaded");
+                    s.engine.getRecorder().getTrack (1).armed.store (true);
+                    expect (s.engine.startRecording (s.dir), "setup: " + s.engine.getRecorder().getStartError());
+                    const auto firstRow = [&]() -> Row*
+                    {
+                        const auto rows = rowsOf (page);
+                        return rows.size() == 2 ? rows[0] : nullptr;
+                    };
+                    expect (firstRow() != nullptr, "setup: two rows");
+                    expect (pumpUntil ([&] { auto* r = firstRow(); return r != nullptr && r->getWaveformSecondsForTests() > 0.9; }, 2000),
+                            "an earlier take's lane stays blank for the whole take");
+                    s.engine.stopRecording();
+                    expect (pumpUntil ([&]
+                    {
+                        auto* r = firstRow();
+                        return ! s.engine.isCaptureFinalizing() && r != nullptr
+                            && r->getWaveformSecondsForTests() > 0.9 && r->waveformsLoaded();
+                    }, 5000), "the lane lost its waveform after the take");
+                    s.engine.getRecorder().getTrack (1).armed.store (false);
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (s.dir);
+            }
+        }
+
+        void groupedRangeShadesWhatItCuts()
+        {
+            beginTest ("A range on a grouped strip shades every strip it will cut");
+            {
+                Session s (3, { kRate, kRate, kRate });
+                s.engine.setTrackEditGroup (0, 2);
+                s.engine.setTrackEditGroup (2, 2);
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                std::set<int> selected { 0 };
+                page.isTrackSelected = [&selected] (int t) { return selected.count (t) > 0; };
+                page.isStripSelectionEmpty = [&selected] { return selected.empty(); };
+                const auto rows = rowsOf (page);
+                expectEquals ((int) rows.size(), 3, "setup: three rows");
+                if (rows.size() == 3)
+                {
+                    const auto render = [] (Row& row)
+                    {
+                        juce::Image img (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                        juce::Graphics g (img);
+                        row.paint (g);
+                        return img;
+                    };
+                    const auto shaded = [&] (Row& row, const juce::Image& plain)
+                    {
+                        const auto now = render (row);
+                        for (int x = row.getHeaderWidth() + 8; x < row.getWidth(); x += 2)
+                            if (now.getPixelAt (x, 2) != plain.getPixelAt (x, 2)) return true;
+                        return false;
+                    };
+                    const auto plain0 = render (*rows[0]), plain1 = render (*rows[1]), plain2 = render (*rows[2]);
+                    s.engine.getPlayer().setLoopRegion (12000, 24000);
+                    expect (shaded (*rows[0], plain0), "setup: the selected strip shows its range");
+                    expect (shaded (*rows[2], plain2), "a grouped strip the range will cut shows no range");
+                    expect (! shaded (*rows[1], plain1), "a strip outside the group shows a range it is not cut by");
+                    s.engine.getPlayer().clearLoopRegion();
                 }
             }
         }

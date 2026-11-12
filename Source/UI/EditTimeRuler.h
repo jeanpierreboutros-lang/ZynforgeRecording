@@ -2,8 +2,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <cstdlib>
+#include <limits>
+#include <vector>
+
 #include "../Audio/AudioEngine.h"
 #include "EditTimeline.h"
+#include "FloatingLaunch.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -79,38 +84,58 @@ namespace zynforge
                                         / juce::jmax (1.0, pxPerSec));
         }
 
-        // Double-click a marker flag (or its name label) -> rename
-        // dialog. The hit-test mirrors the paint layout: the flag is
-        // an 8 px-wide triangle at the marker's x; the name extends
-        // 120 px to the right of the flag tip.
+        // Double-click a marker flag (or its name label) -> rename dialog.
         void mouseDoubleClick (const juce::MouseEvent& e) override
         {
             if (e.y >= kMarkerStripH) return;   // double-clicks on the time scale ignored
+            if (engine.isRecording()) return;   // a rename prompt would stand in front of STOP
+            if (const int i = markerIndexAt (e.x); i >= 0)
+                openRenameDialog (i);
+        }
 
+        // The marker a click at x on the marker strip means, or -1. The flag
+        // is an 8 px triangle at the marker's x and its name runs 120 px to the
+        // right, and markers paint first to last, so a later marker's flag and
+        // name sit on top of an earlier one's name. A flag within 6 px wins,
+        // the nearest first; then the names, from the last painted. Mapped the
+        // way paint() maps an idle ruler (rename is refused during a take).
+        int markerIndexAt (int x) const
+        {
             const auto& player = engine.getPlayer();
-            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-            const auto totalLoaded = player.getTotalLengthSamples();
-            const double totalSec = totalLoaded > 0 ? (double) totalLoaded / sr : kNotionalEmptyLaneSec;
+            const double sr = timelineRate();
+            const auto total = player.getTotalLengthSamples();
+            const double totalSec = total > 0 ? (double) total / sr : kNotionalEmptyLaneSec;
             const double pxPerSec = rulerPxPerSec (totalSec);
 
-            auto& markers = engine.getMarkers();
-            const auto& list = markers.getAll();
-            for (int i = 0; i < (int) list.size(); ++i)
+            const auto& list = engine.getMarkers().getAll();
+            std::vector<int> drawnX (list.size(), std::numeric_limits<int>::min());
+            for (size_t i = 0; i < list.size(); ++i)
             {
-                const double tSec = (double) list[(size_t) i].sampleOffset / sr;
+                const double tSec = (double) list[i].sampleOffset / sr;
                 if (tSec < 0.0 || tSec > totalSec) continue;
                 const int markerX = rulerTimeToX (tSec, pxPerSec);
-
-                // Flag is 8 px wide centered on markerX. Name label
-                // extends ~120 px to the right. Use that whole span as
-                // the hit zone so the engineer can grab anywhere they
-                // can see for that marker.
-                if (e.x < markerX - 6) continue;
-                if (e.x > markerX + 6 + 120) continue;
-
-                openRenameDialog (i);
-                return;
+                if (markerX < headerW || markerX >= getWidth()) continue;   // not drawn
+                drawnX[i] = markerX;
             }
+
+            int best = -1, bestDistance = 7;
+            for (int i = (int) list.size(); --i >= 0;)
+                if (drawnX[(size_t) i] != std::numeric_limits<int>::min())
+                    if (const int d = std::abs (x - drawnX[(size_t) i]); d < bestDistance)
+                    {
+                        best = i;
+                        bestDistance = d;
+                    }
+            if (best >= 0) return best;
+
+            for (int i = (int) list.size(); --i >= 0;)
+            {
+                const int markerX = drawnX[(size_t) i];
+                if (markerX != std::numeric_limits<int>::min() && list[(size_t) i].name.isNotEmpty()
+                    && x >= markerX + 6 && x < markerX + 6 + 120)
+                    return i;
+            }
+            return -1;
         }
 
     private:
@@ -133,13 +158,14 @@ namespace zynforge
             }
             aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
             aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            closesForTake (aw);   // a take started behind it closes it, as Cancel
 
             juce::Component::SafePointer<EditTimeRuler> self (this);
             aw->enterModalState (true,
                 juce::ModalCallbackFunction::create ([aw, self, markerId = marker.runtimeId] (int r)
                 {
                     std::unique_ptr<juce::AlertWindow> dispose (aw);
-                    if (r != 1 || self == nullptr) return;
+                    if (r != 1 || self == nullptr || self->engine.isRecording()) return;
                     const auto typed = dispose->getTextEditorContents ("n").trim();
                     if (typed.isEmpty()) return;
                     const int index = self->engine.getMarkers().indexOfId (markerId);

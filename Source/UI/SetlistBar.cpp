@@ -111,6 +111,8 @@ namespace zynforge
     {
         suppressComboCallback = true;
         cueCombo.clear (juce::dontSendNotification);
+        // An opened session's setlist starts with no cue picked; it is not empty.
+        cueCombo.setTextWhenNothingSelected (cues.empty() ? "(empty setlist)" : "(pick a cue)");
         for (size_t i = 0; i < cues.size(); ++i)
         {
             // Numbered prefix so the engineer can read the order even on

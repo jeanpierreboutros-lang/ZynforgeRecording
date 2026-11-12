@@ -9,6 +9,7 @@
 #include "ClipEditTargets.h"
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
+#include "FloatingLaunch.h"
 #include "LivePeakHistory.h"
 #include "WaveCacheFile.h"
 #include "WaveformOverview.h"
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -458,6 +460,10 @@ namespace zynforge
         void setWaveformFiles (const juce::File& fL, const juce::File& fRin, int monoChannel = 0)
         {
             monoFileChannel = monoChannel;
+            pendingWaveform.reset();
+            // Peaks shown from memory during a take have no file to read; the
+            // real sources replace them now.
+            const bool redo = std::exchange (provisionalWaveform, false);
             // Native interleaved stereo: the pair is ONE 2-channel file with
             // no separate R file. Point BOTH lanes at it (each draws its own
             // channel) so the stereo image still shows two lanes. Legacy
@@ -465,18 +471,18 @@ namespace zynforge
             stereoOneFile = stereo && fL.existsAsFile() && ! fRin.existsAsFile();
             const juce::File fR = stereoOneFile ? fL : fRin;
 
-            if (fL != currentFileL || fR != currentFileR)
+            if (fL != currentFileL || fR != currentFileR || redo)
             {
                 overviewCache.clear();
                 ownThumbs.clear();
             }
 
-            if (fL != currentFileL)
+            if (fL != currentFileL || redo)
             {
                 currentFileL = fL;
                 applyThumbSource (thumbnailL, fL, false);
             }
-            if (fR != currentFileR)
+            if (fR != currentFileR || redo)
             {
                 currentFileR = fR;
                 // One file: the R lane draws its channel 1 from thumbnailL, so
@@ -486,8 +492,55 @@ namespace zynforge
             repaint();
         }
 
+        // The files this row will show once the session's saved peaks are in,
+        // noted while they load. Stats and lists the take folder, so only
+        // between takes. The row stays blank meanwhile (setWaveformFiles ({})
+        // first): another session's peaks must not show under these names.
+        void notePendingWaveformFiles (const juce::File& fL, const juce::File& fRin, int monoChannel = 0)
+        {
+            PendingWaveform p;
+            p.oneFile = stereo && fL.existsAsFile() && ! fRin.existsAsFile();
+            p.left    = fL;
+            p.right   = p.oneFile ? juce::File() : fRin;
+            p.channel = monoChannel;
+            p.partsL  = fL.existsAsFile() ? findTakeParts (fL).size() : 0;
+            p.partsR  = p.right.existsAsFile() ? findTakeParts (p.right).size() : 0;
+            pendingWaveform = p;
+        }
+
+        // A take started before the saved peaks reached the rows. Show the
+        // noted files from the peaks already in memory, touching no file: a
+        // lane whose peaks did not come in before the take stays blank until
+        // STOP, when the row gets its real sources.
+        void showPendingWaveformFromMemory()
+        {
+            if (! pendingWaveform || currentFileL != juce::File() || currentFileR != juce::File()) return;
+            const auto p = *pendingWaveform;
+            pendingWaveform.reset();
+            overviewCache.clear();
+            ownThumbs.clear();
+            monoFileChannel = p.channel;
+            stereoOneFile   = p.oneFile;
+            currentFileL    = p.left;
+            currentFileR    = p.oneFile ? p.left : p.right;
+            if (p.partsL > 0) thumbnailL.setSource (new PeaksFromMemory (takePeaksHash (p.left, p.partsL)));
+            if (p.partsR > 0) thumbnailR.setSource (new PeaksFromMemory (takePeaksHash (p.right, p.partsR)));
+            provisionalWaveform = true;
+            repaint();
+        }
+
         // The thumbnail the R lane draws from.
         juce::AudioThumbnail& rightThumb() noexcept { return stereoOneFile ? thumbnailL : thumbnailR; }
+
+        // The cache key of a take's peaks. One part is the file's own hash (what
+        // juce::FileInputSource uses); more parts get a stable combined hash so
+        // the multi-part thumb caches across reopen without colliding with the
+        // single-file entry.
+        static juce::int64 takePeaksHash (const juce::File& main, size_t parts)
+        {
+            return parts <= 1 ? main.hashCode()
+                              : main.hashCode() ^ ((juce::int64) parts << 48) ^ 0x5bd1e995LL;
+        }
 
         // Point a thumbnail at a take. A single file -> scanio::FileSource (cached
         // by file hash, as before). A MULTI-PART take (Track_NN + its
@@ -502,17 +555,25 @@ namespace zynforge
             const auto parts = findTakeParts (main);
             // force: detach the old scan before dropping its entry. A scan that
             // completes while it is detached stores its (old) peaks, and
-            // setSource would then find them.
+            // setSource would then find them. Every shorter or longer reading
+            // of the same take goes too: a continue adds a part, so each set of
+            // a show left the last set's whole-take peaks behind, in memory and
+            // in WaveCache.wfm, and Remove Last Capture takes one away.
+            auto& known = partCountsSeen[main.getFullPathName()];
+            known = juce::jmax (known, (int) parts.size());
+            if (force)
+            {
+                thumb.clear();
+                for (int n = 1; n <= known; ++n)
+                    thumbCache.removeThumb (takePeaksHash (main, (size_t) n));
+                known = (int) parts.size();
+            }
             if (parts.size() <= 1)
             {
-                if (force) { thumb.clear(); thumbCache.removeThumb (main.hashCode()); }
                 thumb.setSource (new scanio::FileSource (main));
                 return;
             }
-            // Stable combined hash so the multi-part thumb caches across reopen
-            // without colliding with the single-file entry.
-            const juce::int64 h = main.hashCode() ^ ((juce::int64) parts.size() << 48) ^ 0x5bd1e995LL;
-            if (force) { thumb.clear(); thumbCache.removeThumb (h); }
+            const auto h = takePeaksHash (main, parts.size());
             if (auto r = ConcatReader::createForScan (formats, parts))
                 thumb.setReader (r.release(), h);
             else
@@ -667,6 +728,7 @@ namespace zynforge
         void reloadCurrentWaveformFiles()
         {
             ++waveformReloads;
+            provisionalWaveform = false;   // the files get their real sources here
             overviewCache.clear();
             // setSource consults the AudioThumbnailCache by file hash and, if
             // it finds an entry that claims to be fully loaded, returns it
@@ -1529,10 +1591,17 @@ namespace zynforge
                         // selected (a global loop set via , / .). The Selector
                         // tool selects the track you drag on, so a single-track
                         // range only highlights that track -- not all of them.
+                        // A range edit also cuts every edit-group peer of a
+                        // selected strip (MainComponent::tracksToEditPhysical),
+                        // so a peer shades too: the band shows what Delete cuts.
                         bool drawHere = true;
                         if (auto* pg = findParentComponentOfClass<EditPage>())
-                            drawHere = (pg->isStripSelectionEmpty && pg->isStripSelectionEmpty())
-                                    || (pg->isTrackSelected && pg->isTrackSelected (index));
+                        {
+                            drawHere = pg->isStripSelectionEmpty && pg->isStripSelectionEmpty();
+                            if (! drawHere && pg->isTrackSelected)
+                                for (int peer : clipedit::peerTracks (engine, index))
+                                    if (pg->isTrackSelected (peer)) { drawHere = true; break; }
+                        }
                         if (xB > xA && drawHere)
                         {
                             const juce::Rectangle<int> band (xA, 0, xB - xA, getHeight());
@@ -2341,15 +2410,15 @@ namespace zynforge
                     // files the player has open. Say so once, up front.
                     if (engine.getPlayer().isPlaying())
                     {
-                        juce::AlertWindow::showAsync (
-                            juce::MessageBoxOptions()
-                                .withIconType (juce::MessageBoxIconType::NoIcon)
-                                .withTitle ("Strip reorder paused")
-                                .withMessage ("Stop playback before reordering strips -- "
-                                              "moving a strip renames take files the "
-                                              "player has open.")
-                                .withButton ("OK"),
-                            nullptr);
+                        // The notice showAsync would show, marked so a take
+                        // started behind it closes it (it can be shown again).
+                        auto* notice = getLookAndFeel().createAlertWindow (
+                            "Strip reorder paused",
+                            "Stop playback before reordering strips -- moving a strip "
+                            "renames take files the player has open.",
+                            "OK", {}, {}, juce::MessageBoxIconType::NoIcon, 1, nullptr);
+                        closesForTake (notice);
+                        notice->enterModalState (true, nullptr, true);
                         reorderArmed = false;
                         return;
                     }
@@ -2620,7 +2689,8 @@ namespace zynforge
             // (header floats at headerOriginX while the timeline is scrolled).
             const auto screenArea = localAreaToGlobal (
                 juce::Rectangle<int> (headerOriginX(), 0, swatchW, getHeight()));
-            juce::CallOutBox::launchAsynchronously (std::move (picker), screenArea, nullptr);
+            // Each pick applies at once, so closing it for a take drops nothing.
+            closesForTake (&juce::CallOutBox::launchAsynchronously (std::move (picker), screenArea, nullptr));
         }
 
         int  getHeaderWidth() const noexcept { return headerW; }
@@ -2648,6 +2718,7 @@ namespace zynforge
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
         float        getWaveformPeakForTests() const { return thumbnailL.getApproximatePeak(); }
         juce::int64  getRightThumbnailHashForTests() const { return thumbnailR.getHashCode(); }
+        bool         isWaveformFromMemoryForTests() const noexcept { return provisionalWaveform; }
         int          getOverviewBuildsForTests() const noexcept { return overviewBuilds; }
         int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }
 
@@ -2767,17 +2838,25 @@ namespace zynforge
                     dialog::primeNameEditor (*aw, "name");
                     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                    closesForTake (aw);
                     juce::Component::SafePointer<TrackRow> rowSafe (self);
                     aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [aw, rowSafe, clipIdx] (int r)
+                        [aw, rowSafe, prints = clipedit::printsOf (self->engine, targets)] (int r)
                     {
                         std::unique_ptr<juce::AlertWindow> own (aw);
                         if (r != 1 || rowSafe == nullptr || ! rowSafe->timelineEditAllowed()) return;
                         const auto nm = own->getTextEditorContents ("name").trim();
                         if (nm.isEmpty()) return;
+                        const auto clips = clipedit::findPrinted (rowSafe->engine, prints);
                         auto* page = rowSafe->findParentComponentOfClass<EditPage>();
+                        if (! clips)
+                        {
+                            if (page != nullptr && page->onStatus)
+                                page->onStatus ("The clip changed while its name was asked -- nothing renamed");
+                            return;
+                        }
                         if (page != nullptr) page->beginClipEdit();
-                        for (auto [p, pi] : rowSafe->peerClipTargets (clipIdx))
+                        for (auto [p, pi] : *clips)
                             rowSafe->engine.setClipName (p, pi, nm);
                         if (page != nullptr) page->commitClipEdit ("Rename clip");
                         rowSafe->repaint();
@@ -2803,17 +2882,25 @@ namespace zynforge
                     dialog::primeNameEditor (*aw, "dB");
                     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                    closesForTake (aw);
                     juce::Component::SafePointer<TrackRow> rowSafe (self);
                     aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [aw, rowSafe, clipIdx] (int r)
+                        [aw, rowSafe, prints = clipedit::printsOf (self->engine, targets)] (int r)
                     {
                         std::unique_ptr<juce::AlertWindow> own (aw);
                         if (r != 1 || rowSafe == nullptr || ! rowSafe->timelineEditAllowed()) return;
                         const auto txt = own->getTextEditorContents ("dB");
                         const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
+                        const auto clips = clipedit::findPrinted (rowSafe->engine, prints);
                         auto* page = rowSafe->findParentComponentOfClass<EditPage>();
+                        if (! clips)
+                        {
+                            if (page != nullptr && page->onStatus)
+                                page->onStatus ("The clip changed while its gain was asked -- nothing changed");
+                            return;
+                        }
                         if (page != nullptr) page->beginClipEdit();
-                        for (auto [p, pi] : rowSafe->peerClipTargets (clipIdx))
+                        for (auto [p, pi] : *clips)
                             rowSafe->engine.setClipGainDb (p, pi, dB);
                         if (page != nullptr) page->commitClipEdit ("Clip gain");
                         rowSafe->repaint();
@@ -3157,6 +3244,29 @@ namespace zynforge
         AudioEngine&              engine;
         juce::AudioFormatManager& formats;       // for building multi-part thumbnail readers
         juce::AudioThumbnailCache& thumbCache;   // shared; used to drop stale thumbs
+
+        // A take's peaks by cache key alone. It has no stream, so a cache miss
+        // reads nothing and the lane stays blank (showPendingWaveformFromMemory).
+        struct PeaksFromMemory final : public juce::InputSource
+        {
+            explicit PeaksFromMemory (juce::int64 key) : hash (key) {}
+            juce::InputStream* createInputStream() override { return nullptr; }
+            juce::InputStream* createInputStreamFor (const juce::String&) override { return nullptr; }
+            juce::int64 hashCode() const override { return hash; }
+            juce::int64 hash;
+        };
+        struct PendingWaveform
+        {
+            juce::File left, right;
+            int    channel { 0 };
+            bool   oneFile { false };
+            size_t partsL { 0 }, partsR { 0 };
+        };
+        std::optional<PendingWaveform> pendingWaveform;   // notePendingWaveformFiles
+        bool provisionalWaveform { false };               // showing peaks from memory, no source
+        // The most parts each take this row has drawn had, by path: a forced
+        // reload drops the peaks of every count up to it.
+        std::map<juce::String, int> partCountsSeen;
         juce::AudioThumbnail      thumbnailL;
         juce::AudioThumbnail      thumbnailR;
         struct CachedOverview

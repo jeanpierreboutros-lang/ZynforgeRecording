@@ -51,6 +51,30 @@ namespace zynforge
                 bar.paint (g);   // smoke
                 expect (true);
             }
+
+            beginTest ("A loaded setlist with no cue picked asks for one; only an empty one reads empty");
+            {
+                SetlistBar bar;
+                juce::ComboBox* combo = nullptr;
+                walk (bar, [&] (juce::Component& c)
+                {
+                    if (c.getTitle() == "Setlist cue") combo = dynamic_cast<juce::ComboBox*> (&c);
+                });
+                expect (combo != nullptr, "setup: the cue list");
+                if (combo != nullptr)
+                {
+                    SetlistBar::Cue intro, encore;
+                    intro.name = "Intro";
+                    encore.name = "Encore";
+                    bar.setCues ({ intro, encore }, -1);
+                    expectEquals (combo->getTextWhenNothingSelected(), juce::String ("(pick a cue)"),
+                                  "a loaded setlist reads as empty");
+                    bar.setCues ({ intro, encore }, 1);
+                    expectEquals (combo->getText(), juce::String ("02  Encore"));
+                    bar.setCues ({}, -1);
+                    expectEquals (combo->getTextWhenNothingSelected(), juce::String ("(empty setlist)"));
+                }
+            }
         }
     };
 

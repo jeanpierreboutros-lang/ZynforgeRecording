@@ -301,7 +301,11 @@ namespace zynforge
         // capture writes), but every OTHER row keeps showing its existing
         // waveform -- so arming one track and rolling no longer blanks the
         // already-recorded tracks.
-        void setWaveformsFromSession (const juce::File& sessionDir, bool skipArmedRows = false)
+        // noteOnly: the session's saved peaks are still loading. The rows stay
+        // blank and only note their files, for a take that starts before the
+        // peaks arrive (showPendingWaveforms).
+        void setWaveformsFromSession (const juce::File& sessionDir, bool skipArmedRows = false,
+                                      bool noteOnly = false)
         {
             waveformSession = sessionDir;
             if (! sessionDir.isDirectory())
@@ -328,6 +332,12 @@ namespace zynforge
                 }
                 return base.getChildFile (stem + ".wav");
             };
+            const auto show = [noteOnly] (TrackRow& r, const juce::File& fL, const juce::File& fR, int channel)
+            {
+                if (! noteOnly) { r.setWaveformFiles (fL, fR, channel); return; }
+                r.setWaveformFiles ({}, {});
+                r.notePendingWaveformFiles (fL, fR, channel);
+            };
             for (auto& r : rows)
             {
                 if (skipArmedRows && rowIsArmed (*r))
@@ -338,15 +348,24 @@ namespace zynforge
                 const int trackIdx = r->getTrackIndex();
                 if (r->isStereoPair())
                 {
-                    r->setWaveformFiles (findTrackFile (trackIdx), findTrackFile (trackIdx + 1));
+                    show (*r, findTrackFile (trackIdx), findTrackFile (trackIdx + 1), 0);
                     continue;
                 }
                 // Resolved the way playback resolves it: after an unlink, a
                 // mono row can be the right channel of the file on its left.
                 int channel = 0;
                 const auto file = engine.getTrackAudioFile (trackIdx, &channel);
-                r->setWaveformFiles (file.existsAsFile() ? file : findTrackFile (trackIdx), {}, channel);
+                show (*r, file.existsAsFile() ? file : findTrackFile (trackIdx), {}, channel);
             }
+        }
+
+        // A take is on disk and the saved peaks the rows waited for are as far
+        // in as they will get before STOP: show the noted files from memory.
+        void showPendingWaveforms (bool skipArmedRows)
+        {
+            for (auto& r : rows)
+                if (! (skipArmedRows && rowIsArmed (*r)))
+                    r->showPendingWaveformFromMemory();
         }
 
         // The same outcome for a take on disk, with no disk: resolving a file
@@ -712,8 +731,8 @@ namespace zynforge
         addAndMakeVisible (followButton);
         syncFollowButton();
 
-        zoomHIn .onClick = [this] { pauseFollowForZoom(); setZoom (steppedTimelineZoom (zoom, true)); };
-        zoomHOut.onClick = [this] { pauseFollowForZoom(); setZoom (steppedTimelineZoom (zoom, false)); };
+        zoomHIn .onClick = [this] { stepZoom (true); };
+        zoomHOut.onClick = [this] { stepZoom (false); };
 
         // Pro Tools-style Min:Secs time ruler perched above the track
         // list. Reads session length + sample rate from the engine via
@@ -740,7 +759,16 @@ namespace zynforge
     EditPage::~EditPage()
     {
         stopTimer();
-        cancelWaveCacheWork();
+        // Quit waits a few seconds for the waveform cache at most: an
+        // unfinished write leaves the old file, and quit does not wait on a
+        // rescan's worth of peaks on a slow drive.
+        const auto giveUp = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+        waveCacheGiveUpMs = giveUp;
+        // A save in flight finishes inside that bound: cancelled, it left the
+        // file from before the take, which the next open throws away (it
+        // predates the audio) and rescans the whole session for. Anything else
+        // on the cache thread -- a load, a reset -- stops now.
+        if (! waveCacheSaving.load()) cancelWaveCacheWork();
         waveCacheThread.dropAndWait();
         // ~TimeSliceThread would kill a scan after two seconds. A scan on a
         // slow drive can easily run that long, and it holds locks.
@@ -748,20 +776,19 @@ namespace zynforge
             cache->getTimeSliceThread().stopThread (-1);
         // Flush the waveform cache to WaveCache.wfm in whichever session is
         // active. Best-effort: failure here only means the next launch
-        // re-scans waveforms, no data loss -- so SKIP it when the timer
-        // already wrote this session's cache (the common case), rather than
-        // paying a cache-sized synchronous write on every quit. Not while the
-        // session's saved peaks are still coming in: the caches hold part of
-        // them, and that part would replace the whole file. And never longer
-        // than a few seconds on a slow drive: an unfinished write leaves the
-        // old file, and quit does not wait on a rescan's worth of peaks.
+        // re-scans waveforms, no data loss -- so SKIP it when the timer's save
+        // already wrote this session's cache whole (the common case), rather
+        // than paying a cache-sized synchronous write on every quit. A save
+        // that was queued and never ran, failed, or ran out of time is not
+        // that. Not while the session's saved peaks are still coming in: the
+        // caches hold part of them, and that part would replace the whole file.
+        const bool written = waveCacheSaved && waveCacheSaveJob != 0
+                          && waveCacheWrittenJob.load() == waveCacheSaveJob;
         const auto sessionDir = engine.getActiveSessionDir();
-        if (! waveCacheSaved && ! waveCacheLoading && ! engine.isTakeOnDisk() && sessionDir.isDirectory())
-        {
-            const auto giveUp = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+        if (! written && ! waveCacheLoading && ! engine.isTakeOnDisk() && sessionDir.isDirectory()
+            && juce::Time::getMillisecondCounterHiRes() < giveUp)
             wavecache::save (sessionDir, thumbnailCaches,
                              [giveUp] { return juce::Time::getMillisecondCounterHiRes() > giveUp; });
-        }
     }
 
     void EditPage::cancelWaveCacheWork()
@@ -815,10 +842,16 @@ namespace zynforge
     {
         cancelWaveCacheWork();
         const auto job = ++waveCacheWork;
+        waveCacheSaveJob = job;
         waveCacheSaving = true;
         waveCacheThread.add ([this, sessionDir, job]
         {
-            wavecache::save (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
+            if (beforeWaveCacheSaveForTests) beforeWaveCacheSaveForTests();
+            // Stops when a take, a session change or new media cancels it, or
+            // when quit's bound runs out; only a whole file counts as written.
+            if (wavecache::save (sessionDir, thumbnailCaches,
+                                 [this, job] { return waveCacheWork.load() != job || waveCacheSaveTimedOut(); }))
+                waveCacheWrittenJob = job;
             waveCacheSaving = false;
         });
     }
@@ -1026,11 +1059,17 @@ namespace zynforge
             // existing file is stable -- keep showing its waveform.
             const bool isContinue = engine.getRecorder().getRecordBaseSamples() > 0;
             list->holdWaveformsForTake (sessionDir, /*skipArmedRows*/ ! isContinue);
+            // A take that started while the session's saved peaks were loading
+            // cancelled the load, and the rows had no files yet. Once the
+            // cancelled load has stopped, they show what came in, from memory:
+            // otherwise every earlier set stays blank for the whole take.
+            if (! waveCacheLoading) list->showPendingWaveforms (/*skipArmedRows*/ ! isContinue);
         }
         else
             // Rows blank until the saved peaks are in: the previous session's
-            // waveforms must not sit under this session's names.
-            list->setWaveformsFromSession (waveCacheLoading ? juce::File() : sessionDir);
+            // waveforms must not sit under this session's names. They note
+            // their files meanwhile, for a take that starts before then.
+            list->setWaveformsFromSession (sessionDir, false, /*noteOnly*/ waveCacheLoading);
 
         if (resetCaches)
             beginWaveCacheReset (sessionDir, loadSaved ? CacheReset::load : CacheReset::clear);
@@ -1583,6 +1622,42 @@ namespace zynforge
     {
         pauseFollowForZoom();
         setZoom (z);
+    }
+
+    void EditPage::stepZoom (bool zoomIn)
+    {
+        pauseFollowForZoom();
+        if (list == nullptr) { setZoom (steppedTimelineZoom (zoom, zoomIn)); return; }
+
+        // The lane maps the timeline across content x [headerW + 4,
+        // contentW - 4]; the pinned header covers the first headerW px of the view.
+        constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
+        const auto laneWidth = [this] { return (double) juce::jmax (1, list->getWidth() - kHeaderW - 8); };
+        const int viewX = viewport.getViewPositionX();
+        const int viewW = viewport.getViewWidth();
+
+        int anchor = kHeaderW + juce::jmax (0, viewW - kHeaderW) / 2;   // in the view
+        const auto& player = engine.getPlayer();
+        const bool rec = engine.isRecording();
+        const double liveRate = engine.getDeviceSampleRate() > 0.0
+            ? engine.getDeviceSampleRate()
+            : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+        const auto pos = rec ? (engine.isCaptureWindowActive() && player.isPlaying()
+                                    ? player.getPositionSamples() : engine.getRecordTimelineSamples())
+                             : player.getPositionSamples();
+        const auto total = rec ? recordingTimelineSpanSamples (pos, player.getTotalLengthSamples(), liveRate)
+                               : player.getTotalLengthSamples();
+        if (total > 0 && (rec || player.isLoaded()))
+        {
+            const int playheadX = kHeaderW + 4 + (int) ((double) pos / (double) total * laneWidth()) - viewX;
+            if (playheadX >= kHeaderW && playheadX < viewW) anchor = playheadX;
+        }
+
+        const double frac = (double) (viewX + anchor - kHeaderW - 4) / laneWidth();
+        setZoom (steppedTimelineZoom (zoom, zoomIn));
+        const int maxX = juce::jmax (0, list->getWidth() - viewW);
+        viewport.setViewPosition (juce::jlimit (0, maxX, (int) std::lround (kHeaderW + 4 + frac * laneWidth() - anchor)),
+                                  viewport.getViewPositionY());
     }
 
     void EditPage::setVerticalZoom (float z)

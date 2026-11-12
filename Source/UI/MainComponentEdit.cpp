@@ -12,9 +12,11 @@
 #include "MainComponent.h"
 #include "../Theme/DialogChrome.h"
 #include "ClipEditTargets.h"
+#include "FloatingLaunch.h"
 #include "MarkerListDialog.h"
 #include "MixerSnapshot.h"
 #include "RecordPosition.h"
+#include "TimelineCarry.h"
 
 #include <algorithm>
 #include <map>
@@ -156,17 +158,6 @@ namespace
         bool firstRun { true };
     };
 
-    // Markers and cues are not on the undo stack, so one added since the step
-    // (a take's scene marker, say) must not vanish with it.
-    template <class Item, class Same>
-    void keepAddedSince (std::vector<Item>& target, const std::vector<Item>& stepState,
-                         const std::vector<Item>& current, Same same)
-    {
-        for (const auto& item : current)
-            if (std::none_of (stepState.begin(), stepState.end(),
-                              [&] (const Item& known) { return same (known, item); }))
-                target.push_back (item);
-    }
 }
 
 void MainComponent::pushClipUndo (const juce::String& label, const juce::var& before)
@@ -183,18 +174,31 @@ MainComponent::TimelineSnapshot MainComponent::captureTimeline() const
     return { engine.captureTimelineState(), cues };
 }
 
+// Markers and cues are not on the undo stack: a marker or cue added, renamed,
+// updated or deleted since the step keeps that through its undo and redo
+// (a take's scene marker must not vanish with a Cmd+Z, and a stale copy of an
+// updated cue would recall the old mix).
 void MainComponent::restoreTimeline (TimelineSnapshot target, const TimelineSnapshot& replaced)
 {
-    keepAddedSince (target.engineState.markers, replaced.engineState.markers,
-                    engine.getMarkers().getAll(),
-                    [] (const Marker& a, const Marker& b) { return a.runtimeId == b.runtimeId; });
-    keepAddedSince (target.cues, replaced.cues, cues,
-                    [] (const SetlistBar::Cue& a, const SetlistBar::Cue& b)
-                    { return a.name == b.name && a.samplePos == b.samplePos; });
+    target.engineState.markers = zynforge::timelinecarry::carryForward (
+        target.engineState.markers, replaced.engineState.markers, engine.getMarkers().getAll(),
+        [] (const Marker& m) { return m.runtimeId; },
+        [] (const Marker& then, const Marker& now) { return then.sampleOffset != now.sampleOffset; },
+        [] (Marker now, const Marker& back) { now.sampleOffset = back.sampleOffset; return now; });
+    target.cues = zynforge::timelinecarry::carryForward (
+        target.cues, replaced.cues, cues,
+        [] (const SetlistBar::Cue& c) { return c.runtimeId; },
+        [] (const SetlistBar::Cue& then, const SetlistBar::Cue& now)
+        { return then.samplePos != now.samplePos || then.strips != now.strips; },
+        [] (SetlistBar::Cue now, const SetlistBar::Cue& back) { now.samplePos = back.samplePos; return now; });
 
+    const auto picked = currentCueIndex >= 0 && currentCueIndex < (int) cues.size()
+                      ? cues[(size_t) currentCueIndex].runtimeId : juce::String();
     engine.restoreTimelineState (target.engineState);
     cues = std::move (target.cues);
-    if (currentCueIndex >= (int) cues.size()) currentCueIndex = -1;
+    currentCueIndex = -1;
+    for (int i = 0; i < (int) cues.size(); ++i)
+        if (cues[(size_t) i].runtimeId == picked) currentCueIndex = i;
     setlistBar.setCues (cues, currentCueIndex);
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     saveCueChanges ({});
@@ -359,6 +363,19 @@ void MainComponent::pollMixerUndo()
     mixerChangeStableTicks = 0;
 }
 
+// The Delete / Cancel question AlertWindow::showAsync would ask, marked so a
+// take started behind it closes it as Cancel. (showAsync enters its modal state
+// a moment later, out of reach of the mark.) The LookAndFeel gives the first of
+// two buttons commandID 1 and the second 0 -- so "Delete" returns 1, not 0.
+static void askDelete (juce::Component& owner, const juce::String& title, const juce::String& message,
+                       std::function<void (int)> answered)
+{
+    auto* aw = owner.getLookAndFeel().createAlertWindow (title, message, "Delete", "Cancel", {},
+                                                         juce::MessageBoxIconType::WarningIcon, 2, nullptr);
+    zynforge::closesForTake (aw);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (std::move (answered)), true);
+}
+
 void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> onConfirm)
 {
     // Asked over a rolling take, this would stand in front of STOP for an edit
@@ -366,21 +383,16 @@ void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> o
     if (! canMutateTimeline ("deleting audio")) return;
     if (confirmForTests) { confirmForTests (std::move (onConfirm)); return; }
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle ("Delete recording?")
-            .withMessage (juce::String (ripple
-                ? "Delete the selected audio and close the gap?"
-                : "Delete the selected audio?")
-                + "\n\nThe recorded file stays on disk -- this only removes it "
-                  "from the arrangement, and Cmd+Z restores it.")
-            .withButton ("Delete")
-            .withButton ("Cancel"),
-        // LookAndFeel_V2::createAlertWindow gives the FIRST of two buttons
-        // commandID 1 and the second 0 -- so "Delete" returns 1, not 0.
-        [self, onConfirm] (int result)
-        { if (result == 1 && self != nullptr && onConfirm) onConfirm(); });
+    askDelete (*this, "Delete recording?",
+               juce::String (ripple ? "Delete the selected audio and close the gap?"
+                                    : "Delete the selected audio?")
+                   + "\n\nThe recorded file stays on disk -- this only removes it "
+                     "from the arrangement, and Cmd+Z restores it.",
+               [self, onConfirm] (int result)
+               {
+                   if (result == 1 && self != nullptr && self->canMutateTimeline ("deleting audio") && onConfirm)
+                       onConfirm();
+               });
 }
 
 void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
@@ -394,21 +406,17 @@ void MainComponent::confirmDeleteChannels (int n, std::function<void()> onConfir
     if (confirmForTests) { confirmForTests (std::move (onConfirm)); return; }
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle (n > 1 ? "Delete channels?" : "Delete channel?")
-            .withMessage (juce::String (n > 1
-                ? "Delete the " + juce::String (n) + " selected channels?"
-                : "Delete this channel?")
-                + "\n\nRecorded files stay on disk -- this removes the "
-                  "channel(s) from the session. It clears the undo history, "
-                  "so Cmd+Z cannot bring them back.")
-            .withButton ("Delete")
-            .withButton ("Cancel"),
-        // First of two buttons gets commandID 1 -- "Delete" returns 1.
-        [self, onConfirm] (int result)
-        { if (result == 1 && self != nullptr && onConfirm) onConfirm(); });
+    askDelete (*this, n > 1 ? "Delete channels?" : "Delete channel?",
+               juce::String (n > 1 ? "Delete the " + juce::String (n) + " selected channels?"
+                                   : "Delete this channel?")
+                   + "\n\nRecorded files stay on disk -- this removes the "
+                     "channel(s) from the session. It clears the undo history, "
+                     "so Cmd+Z cannot bring them back.",
+               [self, onConfirm] (int result)
+               {
+                   if (result == 1 && self != nullptr && self->canMutateTimeline ("deleting a channel") && onConfirm)
+                       onConfirm();
+               });
 }
 
 void MainComponent::editUndo()
@@ -633,6 +641,7 @@ void MainComponent::editCropToLoopRange()
     aw->setLookAndFeel (&laf);
     aw->addButton ("Crop",   kCrop,   juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
         juce::ModalCallbackFunction::create ([self, aw, a, b, cut, dir] (int result)
@@ -753,6 +762,7 @@ void MainComponent::dropMarkerAndPromptName()
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     dialog::primeNameEditor (*aw, "markerName");   // focus + select-all + Enter = OK
+    zynforge::closesForTake (aw);   // closed by a take, the marker keeps its default name
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
@@ -1118,6 +1128,11 @@ void MainComponent::editClipboardCut (bool cut)
     if (currentView == View::Edit && editPage != nullptr
         && editPage->getSelectedClipTrack() >= 0)
     {
+        // Copying names each clip's file, and finding a take's file stats and
+        // opens it -- on the message thread, on the take's own drive, which
+        // may be the one that stopped answering.
+        if (engine.isTakeOnDisk())
+        { showStatus ("Copy the clip after the take -- its file is still being written"); return; }
         const auto sel = selectedClipTargets();
         if (cut && zynforge::clipedit::anyLocked (engine, sel))
         { showStatus ("Clip is locked -- unlock before cutting"); return; }
