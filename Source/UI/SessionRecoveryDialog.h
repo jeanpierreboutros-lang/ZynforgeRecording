@@ -156,7 +156,9 @@ namespace zynforge
             opts.escapeKeyTriggersCloseButton = true;
             opts.useNativeTitleBar            = true;
             opts.resizable                    = true;
-            return opts.launchAsync();
+            // Dropping the list is Cancel: nothing is opened or deleted, and the
+            // Session menu offers it again after the take.
+            return launchClosesForTake (opts);
         }
 
     private:

@@ -1629,6 +1629,7 @@ void MainComponent::confirmAndQuit()
         aw->addButton ("Quit, Leave It Rolling", kQuit);
         aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
         juce::Component::SafePointer<MainComponent> self (this);
+        // modal-over-take-ok: this is the way out of a take the window cannot stop.
         aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
@@ -1649,6 +1650,7 @@ void MainComponent::confirmAndQuit()
         aw->addButton ("Stop & Quit", kStopQuit, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel",      kCancel,   juce::KeyPress (juce::KeyPress::escapeKey));
         juce::Component::SafePointer<MainComponent> self (this);
+        // modal-over-take-ok: Stop & Quit is the take's own way out.
         aw->enterModalState (true,
             juce::ModalCallbackFunction::create ([self, aw, activeDir] (int result)
             {

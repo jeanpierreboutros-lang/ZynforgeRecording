@@ -558,6 +558,40 @@ report "whole-file scans and hashes read past the page cache" \
        "open them with uncached::FileInput (UncachedFileInput.h); start scan threads with scanio::startScanThread" \
        "$HITS"
 
+# ── Nothing modal stays in front of a take that starts behind it ───────────
+# A take can start behind an open prompt (desk macro, OSC, Mackie, twin,
+# helper, punch window). A modal swallows the click on STOP and takes Space.
+# The 2026-11-11 audit found ~40 prompts across five areas that stayed up
+# for the whole take after the 11-04 fix marked only one area's. Every modal
+# entry in Source/UI must be marked closesForTake / launchClosesForTake /
+# askClosesForTake within the 14 lines above it (or 3 below), or carry a
+# "modal-over-take-ok:" comment saying why it may stay (the take's own ways
+# out). AlertWindow::showAsync and showMessageBoxAsync open a message later
+# and can never be marked, so they count as unmarked. Native file panels
+# (FileChooser::launchAsync) can't be closed without losing their callback
+# and are out of scope.
+HITS=""
+for f in $(grep -rlE 'enterModalState|launchAsync *\(|launchAsynchronously|showAsync *\(|showMessageBoxAsync' \
+           Source/UI --include='*.cpp' --include='*.h' 2>/dev/null | grep -v 'FloatingLaunch.h'); do
+    out=$(awk -v F="$f" '
+        { raw[NR] = $0; code = $0; sub(/\/\/.*/, "", code); c[NR] = code }
+        END {
+            for (i = 1; i <= NR; i++) {
+                if (c[i] !~ /enterModalState *\(|\.launchAsync *\(|launchAsynchronously|showAsync *\(|showMessageBoxAsync/) continue
+                if (c[i] ~ /[Cc]hooser->launchAsync/) continue
+                ok = 0
+                for (j = i - 14; j <= i + 3; j++)
+                    if (j > 0 && j <= NR && (c[j] ~ /closesForTake|askClosesForTake/ || raw[j] ~ /modal-over-take-ok:/)) ok = 1
+                if (c[i] ~ /showAsync *\(|showMessageBoxAsync/) ok = 0
+                if (! ok) printf "%s:%d: %s\n", F, i, substr(raw[i], 1, 110)
+            }
+        }' "$f")
+    [[ -n "$out" ]] && HITS+="$out"$'\n'
+done
+report "every modal closes for a take started behind it" \
+       "mark it with closesForTake / launchClosesForTake / askClosesForTake (FloatingLaunch.h), or say why with a modal-over-take-ok: comment" \
+       "$HITS"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     green "invariants audit: CLEAN"

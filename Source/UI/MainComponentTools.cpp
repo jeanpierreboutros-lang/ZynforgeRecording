@@ -761,6 +761,8 @@ void MainComponent::toggleCaptureDaemon()
             aw->addButton ("Turn Off, Leave It Rolling", kTurnOff);
             aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
             juce::Component::SafePointer<MainComponent> self (this);
+            // modal-over-take-ok: asked only while a lost daemon may own the take, so
+            // no local take can start behind it; Cancel is the default answer.
             aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int result)
             {
                 std::unique_ptr<juce::AlertWindow> dispose (aw);
