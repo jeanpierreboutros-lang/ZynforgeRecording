@@ -451,6 +451,63 @@ namespace zynforge
                 e.setChaseMode (AudioEngine::ChaseMode::Off);
                 main.serviceTimecodeChase();
             }
+
+            // RECORD over a selection: pre-roll, punch in, punch out, post-roll.
+            const auto rollSelectionPunch = [&main] (Bench& b)
+            {
+                b.engine().setTrackArmed (0, true);
+                b.engine().getPlayer().selectRange (kRangeIn, kRangeOut);
+                MainComponent::RecordStartPlan plan;
+                plan.dir = b.session;
+                plan.continueTake = true;
+                plan.numTracks = b.recorder().getNumTracks();
+                plan.armed = 1;
+                main.runRecordPlan (plan);
+                return main.punchSessionActive && b.engine().isRecording() && b.engine().isPlaying();
+            };
+
+            beginTest ("A remote PLAY release or surface STOP can't cut a selection punch short");
+            {
+                Bench b (main);
+                expect (rollSelectionPunch (b), "fixture: no selection punch rolled -- " + main.statusLabel.getText());
+                juce::String error;
+                expect (! b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::StopPlay, error),
+                        "a tablet's PLAY release stopped the transport under a punch");
+                expect (error.containsIgnoreCase ("punch"), error);
+                expect (! b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::TogglePlay, error),
+                        "a remote PLAY toggle stopped the transport under a punch");
+                MidiControlSurface surface (b.engine());
+                surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::noteOn (1, mcu::Stop, (juce::uint8) 127));
+                surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::noteOn (1, mcu::Play, (juce::uint8) 127));
+                expect (b.engine().isPlaying(), "the surface stopped the transport under a punch");
+                expect (main.punchSessionActive && b.engine().isRecording(), "the punch was cut short");
+                expect (main.statusLabel.getText().containsIgnoreCase ("punch"), main.statusLabel.getText());
+
+                // STOP still ends it, as on the host.
+                expect (b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::StopAll, error)
+                        || error.containsIgnoreCase ("finalization"), error);
+                expect (! main.punchSessionActive, "a remote STOP no longer ends a punch");
+                pumpUntil ([&] { return ! b.engine().isRecording() && ! main.captureMetadataPending
+                                        && main.pendingMetadataSaves == 0; });
+                expect (! b.engine().isPlaying());
+            }
+
+            beginTest ("A punch whose transport stopped before its end does not play on by itself, or claim a replacement");
+            {
+                Bench b (main);
+                expect (rollSelectionPunch (b), "fixture: no selection punch rolled -- " + main.statusLabel.getText());
+                // The transport stops in the pre-roll, by any road.
+                b.engine().stopPlayback();
+                main.servicePunch();
+                pumpUntil ([&] { return ! b.engine().isRecording() && ! main.captureMetadataPending
+                                        && main.pendingMetadataSaves == 0; });
+                if (main.punchSessionActive) main.servicePunchSession();
+                expect (! b.engine().isPlaying(), "playback restarted by itself after the punch was stopped");
+                expect (! main.punchSessionActive, "the punch never ended");
+                expect (! main.statusLabel.getText().containsIgnoreCase ("Punch complete"),
+                        "nothing was replaced, yet: " + main.statusLabel.getText());
+                expect (main.statusLabel.getText().containsIgnoreCase ("nothing"), main.statusLabel.getText());
+            }
         }
 
         // ── Is anyone there ────────────────────────────────────────────────

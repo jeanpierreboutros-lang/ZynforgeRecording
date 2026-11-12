@@ -701,6 +701,7 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
             engine.stopPlayback();
             player.setPositionSamples (juce::jmax ((juce::int64) 0, in - preRollS));
             engine.setPunchModeOn (true);
+            punchInSample     = in;
             punchOutSample    = out;
             punchPostRollEnd  = out + postRollS;
             // Open the take before transport rolls. The audio callback admits
@@ -1139,6 +1140,16 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     {
         if (captureMetadataPending || pendingMetadataSaves != 0)
         { error = "session finalization or saving is pending"; return false; }
+        // A selection punch ends with STOP, which splices what it caught and
+        // stops the transport. Stopping playback under it (a tablet's PLAY
+        // release, a surface STOP) cut the punch short and rolled on by itself.
+        const bool stopsPlayback = action == A::StopPlay || (action == A::TogglePlay && engine.isPlaying());
+        if (stopsPlayback && punchSessionActive)
+        {
+            error = "a selection punch is running; STOP ends it";
+            showStatus ("Remote stop of playback refused -- a selection punch is running; use STOP");
+            return false;
+        }
         // Rolling into the selected range in PUNCH mode opens a punch, and no
         // remote may start one.
         if (action != A::StopPlay && engine.isPunchModeOn() && ! engine.isPlaying())

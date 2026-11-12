@@ -407,6 +407,7 @@ private:
     // the in/out record; servicePunchSession() runs the post-roll + teardown.
     void servicePunchSession();
     bool        punchSessionActive { false };
+    juce::int64 punchInSample      { 0 };
     juce::int64 punchOutSample     { 0 };
     juce::int64 punchPostRollEnd   { 0 };
     bool playheadLockedForPunch();

@@ -200,14 +200,19 @@ namespace zynforge
                 {
                     auto* eng = engineHandle->load (std::memory_order_acquire);
                     if (eng == nullptr || eng->areControlsLocked()) return;
+                    juce::String refused;
+                    // Through the host's door as well: stopping the transport
+                    // under a selection punch would cut it short (the host
+                    // refuses that, and says STOP ends a punch).
                     if (a == mcu::Action::Stop || (a == mcu::Action::Play && eng->isPlaying()))
                     {
-                        eng->stopPlayback();
+                        if (! eng->performRemoteTransport (AudioEngine::RemoteTransportAction::StopPlay, refused)
+                            && refused.isNotEmpty())
+                            eng->getRemotes().showHostStatus ("Surface STOP refused -- " + refused);
                         return;
                     }
                     // The host's door, like every other remote: it refuses in
                     // PUNCH mode, where rolling into the range opens a punch.
-                    juce::String refused;
                     if (a == mcu::Action::Play
                         && ! eng->performRemoteTransport (AudioEngine::RemoteTransportAction::StartPlay, refused)
                         && refused.isNotEmpty())

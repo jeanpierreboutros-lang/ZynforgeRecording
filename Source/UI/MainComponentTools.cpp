@@ -68,7 +68,26 @@ void MainComponent::servicePunch()
         // Selection recording opened before pre-roll began. The audio callback
         // admitted exactly [in,out), so this timer only finalises the file and
         // starts post-roll; it no longer decides which samples hit disk.
-        if (engine.isRecording() && (pos >= punchOutSample || ! player.isPlaying()))
+        if (engine.isRecording() && pos < punchOutSample && ! player.isPlaying())
+        {
+            // The transport stopped short of the out point, whatever stopped
+            // it: the punch ends here, as STOP ends it. No post-roll, no
+            // playback starting by itself, and only what was crossed replaced.
+            const bool nothingReplaced = pos <= punchInSample;
+            juce::Component::SafePointer<MainComponent> self (this);
+            stopActiveCaptureAsync (false, [self, nothingReplaced] (bool saved)
+            {
+                if (self == nullptr || ! saved) return;
+                self->showStatus (nothingReplaced
+                    ? "Punch stopped before the punch-in -- nothing was replaced"
+                    : "Punch stopped early -- replaced from the punch-in to where the transport stopped");
+            });
+            engine.stopPlayback();
+            engine.setPunchModeOn (false);
+            punchSessionActive = false;
+            return;
+        }
+        if (engine.isRecording() && pos >= punchOutSample)
         {
             juce::Component::SafePointer<MainComponent> self (this);
             stopActiveCaptureAsync (false, [self] (bool saved)
