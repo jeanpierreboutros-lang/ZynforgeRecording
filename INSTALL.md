@@ -2,9 +2,25 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `0e1bd8a`, `main` on 2026-11-04 with every fix of that day. The Mac mini still has `281c6c0`; no DMG holds `0e1bd8a`, and it has not run on real hardware.
+The development Mac now has `08fccd7`, `main` on 2026-11-12 with every fix of the 2026-11-11 review. The Mac mini still has `281c6c0`; no DMG holds `08fccd7`, and it has not run on real hardware.
 
-## Development Mac update — 2026-11-04, the review's fixes
+## Development Mac update — 2026-11-12, the 2026-11-11 review's fixes
+
+The development Mac (MacBook Pro) now has `08fccd7`: `0e1bd8a` plus all 82 fixes of the 2026-11-11 review (two in part), the new modal gate rule and two merge-time fixes (top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). The code is that of `5c41cbf`; the commits after it change only docs. The Mac mini still has `281c6c0`, and no DMG was made for this build.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `5c6f0e5f016176f562ac9f97600431e454c57c36393e881a5b7879fc8c257974` |
+| Capture helper | `1a4c7b4ec761a2aa4cc79432f70ef49935ee9f1b29edbd0dc2ddc4af2d7f647a` |
+
+- **Built with:** the Xcode generator under Xcode 27.2 with `XCODE_XCCONFIG_FILE` pointing at an xcconfig holding `SDK_STAT_CACHE_ENABLE = NO` (without it every Xcode configure hangs on this Mac; see [testing.md](testing.md)). Release, universal.
+- **Tests before install:** Release 1834 test groups / 0 failures; ASan/UBSan 1834 / 0 with no sanitizer reports; TSan full run 1834 with one Debug-only timing failure, fixed, then the affected suites 0 failures with no reports (see [testing.md](testing.md)). Both gates clean. The built app launched with `--isolated-settings`, sat near 87 MiB and 0.2% CPU, quit by itself after 186 s (most of it the microphone prompt a new ad-hoc identity brings) and left no crash report.
+- **Install:** neither the app nor the helper was running. The installed copy passes deep/strict verification and matches the stage (`diff -qr`). Both executables are universal (x86_64, arm64). Copied with `ditto --norsrc --noextattr --noqtn`.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261112-080844-before-08fccd7` (`0e1bd8a`).
+- **Signing:** ad-hoc with the hardened runtime and the audio-input entitlement. macOS will likely ask for the microphone again at the first launch.
+- **After install:** the installed app was not opened; no take has been recorded on it. The checks for this build are under *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
+
+## Previous development Mac update — 2026-11-04, the review's fixes
 
 The development Mac (MacBook Pro) now has `0e1bd8a`: `eca170e` plus the waveform scans past the page cache at utility priority, the ember scrollbars, the 2026-11-04 review's fixes and the two capture-helper/window fixes made at the merge (top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). The Mac mini still has `281c6c0`, and no DMG was made for this build.
 

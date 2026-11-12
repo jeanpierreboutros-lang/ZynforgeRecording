@@ -2,9 +2,9 @@
 
 Reconciled on 2026-11-12 against `main`, after the 2026-11-11
 review's fixes (and on 2026-11-04 against `main` at `821131a`, after that day's). Documentation commits do not change the installed binaries: see the
-status in the [README](../README.md). The development Mac has `0e1bd8a` (on JUCE
+status in the [README](../README.md). The development Mac has `08fccd7` (on JUCE
 8.0.17-security, with that day's scan, scrollbar and review fixes), and the
-Mac mini and the current DMG have `281c6c0`, all protocol 4. `0e1bd8a` has not run
+Mac mini and the current DMG have `281c6c0`, all protocol 4. `08fccd7` has not run
 on real hardware. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
 rollback. Refer to the owning documents below instead of copying
 package hashes, test counts or acceptance claims into new guides.
