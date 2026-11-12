@@ -135,6 +135,7 @@ namespace zynforge
 
             explicit Window (int tracks = 2, int blocks = 200) : main (*shared)
             {
+                dismissModals();   // these tests count modals: start with none
                 session = tempDir ("session");
                 dirs.add (session);
                 recordBaseTake (session, tracks, blocks);
@@ -227,6 +228,9 @@ namespace zynforge
             testaudio::useSilentDevice (main.engine);
             main.setSize (1320, 820);
             Window::shared = &main;
+            // A modal another suite left behind would throw every count off.
+            for (auto* stray = topModal(); stray != nullptr; stray = nullptr)
+                logMessage ("A modal was open before this suite: " + stray->getName() + " / " + stray->getTitle());
 
             promptsCloseForATake();
             batchDialogsCloseForATake();
