@@ -7,6 +7,7 @@
 #include "SessionProjPath.h"
 #include <condition_variable>
 #include <deque>
+#include <mutex>
 #include <thread>
 
 namespace zynforge
@@ -19,6 +20,9 @@ namespace zynforge
         // Mixer-derived state is only ever written to that session.
         juce::File mixerOwner;
         bool backup = true;
+        // Auto-save: documents that already hold this state are left alone, so
+        // a session on read-only media with nothing changed reports nothing.
+        bool skipWhenUnchanged = false;
     };
 
     struct SessionMetadataResult
@@ -29,6 +33,35 @@ namespace zynforge
         juce::String notice;     // the save worked, and the engineer should hear this too
     };
 
+    // Snapshots retention leaves alone because they hold more than session
+    // documents, said once per run each: every later save finds them again.
+    inline juce::String keptSnapshotsNotice (const juce::Array<juce::File>& kept)
+    {
+        static std::mutex lock;
+        static juce::StringArray told;
+        juce::StringArray fresh;
+        {
+            const std::lock_guard<std::mutex> guard (lock);
+            for (const auto& folder : kept)
+                if (! told.contains (folder.getFullPathName()))
+                {
+                    told.add (folder.getFullPathName());
+                    fresh.add (folder.getFileName());
+                }
+        }
+        if (fresh.isEmpty()) return {};
+        return "Session File Backups/" + fresh.joinIntoString (", ")
+             + " holds more than a backup's files (a take?), so it is kept, not pruned";
+    }
+
+    inline bool backupSnapshot (const juce::File& dir, juce::String& notice)
+    {
+        juce::Array<juce::File> kept;
+        const bool ok = sessionbackup::writeSnapshot (dir, 10, juce::Time::getCurrentTime(), &kept).isDirectory();
+        notice = keptSnapshotsNotice (kept);
+        return ok;
+    }
+
     // The worker receives serialized values, never engine/UI objects or shared
     // mutable JSON. All project read/merge/write and snapshot I/O happens here.
     inline SessionMetadataResult writeSessionMetadata (const SessionMetadataSnapshot& snapshot)
@@ -36,6 +69,11 @@ namespace zynforge
         if (! snapshot.directory.isDirectory()) return { false, "Session folder is unavailable" };
         const auto project = findSessionProj (snapshot.directory);
         if (project == juce::File()) return { false, "Session project is unavailable" };
+        // Renamed in Finder past what a save can derive from it: the plain disk
+        // error would send the engineer to check permissions and free space.
+        if (const auto why = sessionrepair::nameTooLongToSave (snapshot.directory, project, snapshot.backup);
+            why.isNotEmpty())
+            return { false, why };
         const auto patch = juce::JSON::parse (snapshot.projectPatchJson);
         if (! patch.isObject()) return { false, "Invalid session metadata snapshot" };
         // Cues and takes come from the same in-memory session as the mixer: a
@@ -59,10 +97,39 @@ namespace zynforge
         // sibling metadata so the original project remains recoverable.
         if (project.exists() && ! existing.isObject())
             return { false, "Existing session project could not be read; original metadata was preserved" };
+        const auto projectBefore = existing.isObject() ? juce::JSON::toString (existing) : juce::String();
         juce::DynamicObject::Ptr merged = existing.isObject() ? existing.getDynamicObject()
                                                             : new juce::DynamicObject();
         for (const auto& property : patch.getDynamicObject()->getProperties())
             merged->setProperty (property.name, property.value);
+        // An auto-save of a state the documents already hold writes nothing,
+        // so a session on read-only media (a locked card, a disk image, a
+        // read-only share) is not reported as failing every interval. Its save
+        // time is not a change.
+        if (snapshot.skipWhenUnchanged && existing.isObject())
+        {
+            const auto stable = [] (const juce::String& json)
+            {
+                auto value = juce::JSON::parse (json);
+                if (auto* object = value.getDynamicObject()) object->removeProperty ("updatedAt");
+                return juce::JSON::toString (value);
+            };
+            const auto holds = [&snapshot] (const char* name, const juce::String& json)
+            {
+                const auto file = snapshot.directory.getChildFile (name);
+                return json.isEmpty() || (file.existsAsFile() && file.loadFileAsString() == json);
+            };
+            if (holds ("session_settings.json", snapshot.settingsJson) && holds (sessionmix::kFileName, snapshot.mixJson)
+                && stable (projectBefore) == stable (juce::JSON::toString (juce::var (merged.get()))))
+            {
+                // Media that cannot be written has no backup to take and nothing to lose.
+                juce::String notice;
+                if (snapshot.backup && snapshot.directory.hasWriteAccess()
+                    && ! backupSnapshot (snapshot.directory, notice))
+                    return { false, "Could not save session backup snapshot" };
+                return { true, {}, false, notice };
+            }
+        }
         // A file damaged since the session opened: opening already moved aside
         // anything damaged then. The replacement must not be its only trace.
         juce::StringArray keptAside;
@@ -83,8 +150,10 @@ namespace zynforge
             return { false, mixError };
         if (! atomicfile::writeText (project, juce::JSON::toString (juce::var (merged.get()))))
             return { false, "Could not save session project" };
-        if (snapshot.backup && ! sessionbackup::writeSnapshot (snapshot.directory).isDirectory())
+        juce::String keptSnapshots;
+        if (snapshot.backup && ! backupSnapshot (snapshot.directory, keptSnapshots))
             return { false, "Could not save session backup snapshot" };
+        if (keptSnapshots.isNotEmpty()) keptAside.add (keptSnapshots);
         return { true, {}, false, keptAside.joinIntoString ("; ") };
     }
 

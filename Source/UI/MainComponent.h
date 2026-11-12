@@ -184,8 +184,9 @@ private:
     bool helperHoldsSession (const juce::File& dir) const;
     bool unprovenHelperAlive() const;
     void showStartupWelcome();
-    void createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
-    void openSessionFromWelcome (const juce::File&);
+    // Each returns whether it worked; the Welcome stays up when it did not.
+    bool createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
+    bool openSessionFromWelcome (const juce::File&);
     void showKeyboardShortcuts();
     void showAboutDialog();
     void showFirstRunTutorial (std::function<void()> onFinished = {});
@@ -193,6 +194,7 @@ private:
     void launchNewSessionDialog (juce::File templateFile = {});
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
     juce::String sessionCreateFailureMessage() const;
+    juce::String sessionCreateRefusal;   // why the last create refused, in plain words; empty otherwise
     // Canonical "open this session folder" sequence: pin the active dir,
     // restore setlist + UI layout, load the audio, restore the full mixer
     // state, force a strip rebuild. Returns the track count loaded. Used by
@@ -201,6 +203,7 @@ private:
     // restored backup changed its files. Nothing else may, because a reload
     // replaces every unsaved edit.
     int  openSessionFolder (const juce::File& dir, bool reload = false);
+    int  restoreUnsavedStrips (const juce::File& dir, int playerTracks);
     bool isSessionOpen (const juce::File& dir) const;
     void reportDamagedFiles (const juce::File& dir, const std::vector<zynforge::sessionrepair::DamagedFile>& files);
     bool restoreDamagedFiles (const juce::File& dir, const std::vector<zynforge::sessionrepair::DamagedFile>& files);
@@ -596,7 +599,13 @@ private:
     juce::File  templatesDir() const;
     juce::File  templatesDirForTests;
     juce::Array<juce::File> listSessionTemplates() const;
+    // The templates the File menu was last built with, in its order: a click
+    // on item 200+i or 2000+i means the file shown there, whatever was saved
+    // or deleted since (macOS keeps showing the menu it was handed).
+    juce::Array<juce::File> menuTemplateFiles;
+    int  templateMenuRevision { 0 };   // in the menu signature; bumped on save / delete / default
     void  promptSaveSessionTemplate();
+    bool  saveSessionTemplate (const juce::String& name);
     void  applySessionTemplate (const juce::File& templateFile);
     juce::String sessionTemplateJson (const juce::String& name);
     void  promptDeleteSessionTemplate();
@@ -743,6 +752,20 @@ private:
     bool uiLayoutSavePending { false };   // a layout change arrived during a session job
 
     std::unique_ptr<juce::FileChooser> chooser;
+    // A file or folder panel that answers a session job (Save As, Move,
+    // Handoff, mix bounce, CSV). It reserves nothing while it is up: the
+    // engineer can leave it open for minutes, and a desk or twin RECORD must
+    // still start. Its answer re-checks the take, the job slot and the session.
+    // `chooser` is created by the caller first.
+    void launchSessionPicker (const juce::String& what, int flags, std::function<void (const juce::File&)> answer);
+    // The open session panel's name, or empty.
+    juce::String openSessionPicker() const;
+    bool refuseWhileSessionPickerOpen();
+    bool reserveForPickerAnswer (const juce::String& what, const QuestionScope& scope);
+    juce::String sessionPickerName;
+    const juce::FileChooser* sessionPickerChooser = nullptr;
+    // Stands in for the native panel, which a headless test cannot answer.
+    std::function<void (const juce::String& what, std::function<void (const juce::File&)>)> sessionPickerForTests;
     std::shared_ptr<juce::ChangeListener> batchColourListenerHandle;
 
     zynforge::BigClockPanel bigClock;

@@ -7,6 +7,13 @@
 
 namespace zynforge::audioimport
 {
+    namespace detail
+    {
+        // Frames taken from the source files, for the test that a poly file is
+        // read once rather than once per channel.
+        inline std::atomic<juce::int64> sourceFramesReadForTests { 0 };
+    }
+
     struct ImportedTrack
     {
         int trackIndex { 0 };

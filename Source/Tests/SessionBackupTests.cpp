@@ -218,6 +218,40 @@ namespace zynforge
                                   juce::File::findDirectories, false).size(), 1,
                               "invalid retention changed the backup directory");
             }
+
+            beginTest ("Retention never deletes a snapshot that holds more than session documents");
+            {
+                const auto session = makeSession ("Show");
+                const juce::ScopeGuard cleanup { [&] { session.getParentDirectory().deleteRecursively(); } };
+                const auto backups = session.getChildFile ("Session File Backups");
+                // A snapshot that was opened as a session and recorded into.
+                const auto used = backups.getChildFile ("Show_2000-01-01_00-00-00_0000000000000000000");
+                expect (used.getChildFile ("Audio Files").createDirectory().wasOk());
+                expect (used.getChildFile ("Show.zfproj").replaceWithText ("{}"));
+                const auto take = used.getChildFile ("Audio Files/Track_01.wav");
+                expect (take.replaceWithText ("A TAKE RECORDED INTO THE SNAPSHOT"));
+                // An ordinary old snapshot, plus what Finder leaves in one.
+                const auto plain = backups.getChildFile ("Show_2000-01-01_00-00-01_0000000000000000000");
+                expect (plain.createDirectory().wasOk());
+                expect (plain.getChildFile ("session_mix.json").replaceWithText ("{}"));
+                expect (plain.getChildFile (".DS_Store").replaceWithText ("finder"));
+                expect (plain.getChildFile ("._session_mix.json").replaceWithText ("appledouble"));
+
+                juce::Array<juce::File> kept;
+                for (int i = 0; i < 12; ++i)
+                {
+                    expect (session.getChildFile ("session_mix.json").replaceWithText ("{\"n\":" + juce::String (i) + "}"));
+                    kept.clear();
+                    expect (sessionbackup::writeSnapshot (session, 10, juce::Time::getCurrentTime(), &kept).isDirectory());
+                }
+                expect (take.existsAsFile(), "retention deleted a take recorded into a snapshot");
+                expect (kept.contains (used), "the kept snapshot was not reported");
+                expect (! plain.exists(), "an ordinary snapshot with Finder's files in it was kept for ever");
+                int ordinary = 0;
+                for (const auto& folder : backups.findChildFiles (juce::File::findDirectories, false, "Show_2*"))
+                    if (folder != used) ++ordinary;
+                expectEquals (ordinary, 10, "the kept snapshot took one of the ten places");
+            }
         }
     };
 

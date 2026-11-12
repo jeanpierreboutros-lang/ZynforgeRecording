@@ -1,4 +1,5 @@
 #include "WelcomeDialog.h"
+#include "FloatingLaunch.h"
 #include "RecordPosition.h"
 #include "../Audio/DisplayText.h"
 #include "../Theme/BrandColors.h"
@@ -512,8 +513,7 @@ namespace zynforge
                   openPanel (std::make_unique<OpenPanel> (defaultLocation,
                       [this] (const juce::File& f)
                       {
-                          if (onOpen) onOpen (f);
-                          dismiss();
+                          if (! onOpen || onOpen (f)) dismiss();
                       }, recent))
             {
                 // Side rail items.
@@ -632,8 +632,7 @@ namespace zynforge
                 r.inputDeviceName  = newPanel->getInputDevice();
                 r.outputDeviceName = newPanel->getOutputDevice();
                 r.devicePicked     = newPanel->wasDevicePicked();
-                onCreate (r);
-                dismiss();
+                if (onCreate (r)) dismiss();
             }
 
             void dismiss()
@@ -696,6 +695,8 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
-        opts.launchAsync();
+        // A take behind it (a twin follower, or a bare remote RECORD after
+        // Close Session) closes it, as if cancelled.
+        launchClosesForTake (opts);
     }
 }

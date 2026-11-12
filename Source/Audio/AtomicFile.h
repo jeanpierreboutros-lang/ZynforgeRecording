@@ -27,6 +27,9 @@ namespace zynforge::atomicfile
     // Each caller gets a unique sibling, so overlapping report writers cannot
     // truncate one another's staging file. replaceFileIn maps to same-volume
     // rename on POSIX and leaves an existing target untouched on failure.
+    // The staging name below is the target's name plus this many bytes.
+    inline constexpr int kStagingExtraBytes = 1 + 1 + 32 + 4;
+
     inline bool writeWith (const juce::File& target, const std::function<bool (juce::OutputStream&)>& fill)
     {
         if (! target.getParentDirectory().isDirectory()) return false;

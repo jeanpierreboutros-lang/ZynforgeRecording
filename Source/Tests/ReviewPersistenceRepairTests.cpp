@@ -131,7 +131,8 @@ public:
             const juce::ScopeGuard resetHook { [] { SessionInfoDialog::launchForTests = {}; } };
             const auto before = f.project().loadFileAsString();
             host.showSessionInfo();
-            expectEquals (shown.name, juce::String ("Original"));
+            // The session is named by its folder, whatever its project says.
+            expectEquals (shown.name, f.dir.getFileName());
             expect (pumpUntil ([&] { return host.pendingMetadataSaves == 0; }));
             expectEquals (f.project().loadFileAsString(), before, "showing the session changed its project");
 

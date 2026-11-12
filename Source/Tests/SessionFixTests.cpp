@@ -10,7 +10,11 @@
 #include "../Audio/VirtualSoundcheck.h"
 #include "../UI/ExportDialog.h"
 #include "../UI/ExportSongsDialog.h"
+#include "../UI/FloatingLaunch.h"
 #include "../UI/NewSessionDialog.h"
+#include "../UI/SessionInfoDialog.h"
+#include "../UI/SessionSettingsDialog.h"
+#include "../UI/WelcomeDialog.h"
 #include "SilentAudioDevice.h"
 #include <csignal>
 #include <sys/resource.h>
@@ -1009,6 +1013,626 @@ public:
         }
     }
 
+    // ── 2026-11-11 audit ──────────────────────────────────────────────────
+
+    static void dropModals()
+    {
+        juce::ModalComponentManager::getInstance()->cancelAllModalComponents();
+        pumpUntil ([] { return juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0; }, 3000);
+    }
+
+    // What a take starting behind the open modals would close.
+    static int closedByATake()
+    {
+        const int closed = closeModalsForTake();
+        dropModals();
+        return closed;
+    }
+
+    static juce::TextButton* findButton (juce::Component* in, const juce::String& text)
+    {
+        if (in == nullptr) return nullptr;
+        if (auto* button = dynamic_cast<juce::TextButton*> (in); button != nullptr && button->getButtonText() == text)
+            return button;
+        for (auto* child : in->getChildren())
+            if (auto* found = findButton (child, text)) return found;
+        return nullptr;
+    }
+
+    // Points the sessions root at a test folder, and puts it back.
+    struct SessionsRoot
+    {
+        juce::PropertiesFile* props;
+        juce::String previous;
+        SessionsRoot (MainComponent& host, const juce::File& root)
+            : props (host.engine.getAppProps()), previous (props != nullptr ? props->getValue ("sessionsRoot") : juce::String())
+        {
+            if (props != nullptr) { props->setValue ("sessionsRoot", root.getFullPathName()); props->saveIfNeeded(); }
+        }
+        ~SessionsRoot()
+        {
+            if (props == nullptr) return;
+            if (previous.isEmpty()) props->removeValue ("sessionsRoot"); else props->setValue ("sessionsRoot", previous);
+            props->saveIfNeeded();
+        }
+    };
+
+    // Stands in for the native folder panel.
+    struct Picker
+    {
+        MainComponent& host;
+        juce::String asked;
+        std::function<void (const juce::File&)> answer;
+        explicit Picker (MainComponent& m) : host (m)
+        {
+            host.sessionPickerForTests = [this] (const juce::String& what, std::function<void (const juce::File&)> a)
+            { asked = what; answer = std::move (a); };
+        }
+        ~Picker() { host.sessionPickerForTests = nullptr; }
+        void reply (const juce::File& f) { auto a = std::exchange (answer, nullptr); if (a) a (f); }
+    };
+
+    void testBackupSnapshotsAreNotSessions()
+    {
+        beginTest ("A backup snapshot is refused as a session, from File > Open and from Finder");
+        {
+            Folder f ("Gig"); writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            const auto snapshot = sessionbackup::writeSnapshot (f.dir);
+            expect (snapshot.isDirectory(), "setup: a snapshot");
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (snapshot) < 0, "the snapshot opened as a session");
+            expect (host.statusLabel.getText().contains ("backup of Gig"), host.statusLabel.getText());
+            expect (! host.openSessionDocument (findSessionProj (snapshot)), "a double-click on its project opened it");
+            host.completeOpenFolder (snapshot);
+            expect (host.engine.getActiveSessionDir() != snapshot, "File > Open made the snapshot the session");
+            expect (! snapshot.getChildFile ("Session File Backups").exists(), "something was written into the snapshot");
+            expect (! snapshot.getChildFile ("Audio Files").exists());
+            forget (host);
+        }
+    }
+
+    void testStripsAddedSinceTheLastSave()
+    {
+        beginTest ("Reopening after a crash brings back the strips recorded since the last save");
+        {
+            Folder f; writeSavedShow (f, 2);
+            for (int t = 1; t <= 3; ++t) expect (writeAudio (f.track (t)));
+            expect (writeStereoAudio (f.track (4), 0.25f, -0.5f));
+            Host host (f);
+            auto& recorder = host.main.engine.getRecorder();
+            expectEquals (recorder.getNumTracks(), 5, "strips whose audio is on disk were left out");
+            expectEquals (recorder.getTrack (0).getNameThreadSafe(), juce::String ("Saved 1"));
+            expectEquals (recorder.getTrack (1).getNameThreadSafe(), juce::String ("Saved 2"));
+            if (recorder.getNumTracks() == 5)
+                expect (recorder.getTrack (3).isStereo.load(), "a stereo take came back as two loose strips");
+            expect (host.status().contains ("after the last save"), "the engineer was not told: " + host.status());
+        }
+
+        beginTest ("RECORD writes the mixer into the session before the take rolls");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            auto& engine = host.main.engine;
+            engine.setStripCount (2);
+            engine.setTrackName (1, "Audience");
+            expect (engine.setTrackArmed (1, true));
+            MainComponent::RecordStartPlan plan;
+            plan.dir = f.dir; plan.numTracks = 2; plan.armed = 1;
+            host.main.startLocalTake (plan);
+            expect (engine.isRecording(), host.status());
+            const auto mix = juce::JSON::parse (f.dir.getChildFile ("session_mix.json"));
+            expectEquals ((int) mix.getProperty ("trackCount", 0), 2, "a crash now brings back one strip");
+            if (auto* strips = mix.getProperty ("strips", {}).getArray(); strips != nullptr && strips->size() > 1)
+                expectEquals (savedName (f.dir, 1), juce::String ("Audience"));
+            engine.stopRecording();
+        }
+
+        beginTest ("A RECORD whose mixer write fails still rolls");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            auto& engine = host.main.engine;
+            expect (engine.setTrackArmed (0, true));
+            expect (f.project().deleteFile());   // nothing to write the mixer into
+            MainComponent::RecordStartPlan plan;
+            plan.dir = f.dir; plan.numTracks = 1; plan.armed = 1;
+            host.main.startLocalTake (plan);
+            expect (engine.isRecording(), "the take did not start: " + host.status());
+            engine.stopRecording();
+        }
+    }
+
+    void testSessionModalsCloseForATake()
+    {
+        beginTest ("Session dialogs and prompts close when a take starts behind them");
+        {
+            Folder f; writeSavedShow (f, 1); expect (writeAudio (f.track (1)));
+            Host host (f);
+            auto& main = host.main;
+            main.engine.getMarkers().drop (0, "Opener");
+            const auto expectClosed = [&] (const juce::String& what, std::function<void()> open)
+            {
+                dropModals();
+                open();
+                expect (juce::ModalComponentManager::getInstance()->getNumModalComponents() > 0,
+                        what + ": setup, nothing opened: " + host.status());
+                expectEquals (closedByATake(), 1, what + " stays in front of STOP");
+            };
+            expectClosed ("New Session", [&] { main.launchNewSessionDialog(); });
+            expectClosed ("Export Audio", [&] { main.onExportAudio(); });
+            expectClosed ("Export Songs", [&] { main.exportSongs(); });
+            expectClosed ("Session Info", [&] { main.showSessionInfo(); });
+            expectClosed ("Session Settings", [&] { SessionSettingsDialog::launch (main.engine, {}, {}); });
+            expectClosed ("Welcome", [&] { WelcomeDialog::launch (f.dir.getParentDirectory(), 48000.0,
+                                                                  CaptureFormat::Wav24, {}, {}, {}); });
+            expectClosed ("Replace the session?", [&] { main.confirmSessionReplacement ([] {}); });
+            expectClosed ("Close the session?", [&] { main.closeSession(); });
+            expectClosed ("Folder missing", [&] { main.offerLeaveMissingSession ("Close Without Saving", [] {}); });
+            expectClosed ("Auto-Save", [&] { main.showAutosaveSettings(); });
+            expectClosed ("Template name", [&] { main.promptSaveSessionTemplate(); });
+            expectClosed ("Continue from disk?", [&] { main.offerContinueFromDisk ("Save As", "x", [] {}, [] {}); });
+            expectClosed ("Damaged files", [&] { main.reportDamagedFiles (f.dir, { sessionrepair::DamagedFile() }); });
+            dropModals();
+        }
+
+        beginTest ("Session Settings does not float over other applications");
+        {
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionSettingsDialog::launch (host.engine, {}, {});
+            auto* window = juce::ModalComponentManager::getInstance()->getModalComponent (0);
+            expect (window != nullptr, "setup: the dialog opened");
+            if (window != nullptr) expect (! window->isAlwaysOnTop(), "Session Settings stays above every window");
+            dropModals();
+            forget (host);
+        }
+
+        beginTest ("Session Format & Recording waits for the take like the other dialogs");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            expect (host.main.engine.setTrackArmed (0, true));
+            expect (host.main.engine.startRecording (f.dir));
+            dropModals();
+            host.main.menuItemSelected (255, 3);
+            expectEquals (juce::ModalComponentManager::getInstance()->getNumModalComponents(), 0,
+                          "a modal opened over the rolling take");
+            expect (host.status().contains ("waits until the take has stopped"), host.status());
+            dropModals();
+            host.main.engine.stopRecording();
+        }
+    }
+
+    void testFolderPanelsHoldNothing()
+    {
+        beginTest ("An open Save As, Move or Handoff panel leaves RECORD free and is named");
+        {
+            Folder f; writeSavedShow (f, 1); expect (writeAudio (f.track (1)));
+            Host host (f);
+            Picker picker (host.main);
+            for (int which = 0; which < 3; ++which)
+            {
+                picker.answer = nullptr;
+                if (which == 0) host.main.onSaveSessionAs();
+                if (which == 1) host.main.relocateActiveSession();
+                if (which == 2) host.main.exportShowHandoff();
+                expect (picker.answer != nullptr, "setup: the panel opened: " + host.status());
+                expect (! host.main.sessionIoBusy.load(),
+                        picker.asked + "'s open panel holds the session slot, so a desk or twin RECORD is refused");
+                host.main.statusLabel.setText ({}, juce::dontSendNotification);
+                host.main.onSaveSessionAs();
+                expect (host.status().contains (picker.asked), "the refusal does not name the open panel: " + host.status());
+                picker.reply ({});
+                expect (! host.main.sessionIoBusy.load(), "a cancelled panel kept the slot");
+                expect (host.main.openSessionPicker().isEmpty());
+            }
+        }
+
+        beginTest ("Save As answered after a take started behind its panel copies nothing");
+        {
+            Folder f; writeSavedShow (f, 1);
+            const auto dest = f.dir.getSiblingFile ("Copy");
+            Host host (f);
+            Picker picker (host.main);
+            host.main.onSaveSessionAs();
+            expect (picker.answer != nullptr, "setup: the panel opened");
+            expect (host.main.engine.setTrackArmed (0, true));
+            if (host.main.engine.startRecording (f.dir))
+            {
+                picker.reply (dest);
+                pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 5000);
+                expect (! dest.exists(), "Save As copied a session under a rolling take");
+                expect (host.status().contains ("take"), host.status());
+                host.main.engine.stopRecording();
+            }
+            else expect (false, "setup: the take did not start");
+        }
+
+        beginTest ("Save As answered after another session opened behind its panel copies nothing");
+        {
+            Folder a ("A"), b ("B"); writeSavedShow (a, 1); writeSavedShow (b, 1);
+            const auto dest = a.dir.getSiblingFile ("Copy");
+            Host host (a);
+            Picker picker (host.main);
+            host.main.onSaveSessionAs();
+            expect (picker.answer != nullptr, "setup: the panel opened");
+            host.main.openSessionFolder (b.dir);
+            picker.reply (dest);
+            pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 5000);
+            expect (! dest.exists(), "Save As copied the first session and carried the second one's mixer into it");
+            expect (host.main.engine.getActiveSessionDir() == b.dir);
+            expect (host.status().contains ("changed"), host.status());
+        }
+
+        beginTest ("A mix bounce answered after another session opened bounces nothing");
+        {
+            Folder a ("A"), b ("B"); writeSavedShow (a, 1); writeSavedShow (b, 1);
+            expect (writeAudio (a.track (1)) && writeAudio (b.track (1)));
+            Host host (a);
+            Picker picker (host.main);
+            host.main.onBounceStereoMix();
+            expect (picker.answer != nullptr, "setup: the panel opened");
+            host.main.openSessionFolder (b.dir);
+            const auto target = a.dir.getChildFile ("Export Files/A - Mix.wav");
+            picker.reply (target);
+            pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 10000);
+            expect (! target.exists(), "the second session's mix went into the file named for the first");
+            expect (host.status().contains ("changed"), host.status());
+        }
+
+        beginTest ("New Session from CSV answered after another session opened leaves that session alone");
+        {
+            Folder a ("A"), b ("B"), root ("Sessions", false), input ("Input", false);
+            writeSavedShow (a); writeSavedShow (b);
+            const auto csv = input.dir.getChildFile ("Channels.csv");
+            expect (csv.replaceWithText ("Kick\nSnare\n"));
+            Host host (a);
+            SessionsRoot sessions (host.main, root.dir);
+            Picker picker (host.main);
+            host.main.createSessionFromCsv();
+            expect (picker.answer != nullptr, "setup: the panel opened");
+            host.main.openSessionFolder (b.dir);
+            picker.reply (csv);
+            expect (host.main.engine.getActiveSessionDir() == b.dir, "the CSV session replaced the one opened behind its panel");
+            expectEquals (root.dir.getNumberOfChildFiles (juce::File::findDirectories), 0, "a session was created anyway");
+            expect (host.status().contains ("changed"), host.status());
+        }
+    }
+
+    void testSessionNames()
+    {
+        beginTest ("A new session takes its folder's name everywhere");
+        {
+            Folder root ("Sessions", false);
+            expect (root.dir.getChildFile ("Show").createDirectory().wasOk());   // the name is taken
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            NewSessionDialog::ResultCallback answer;
+            NewSessionDialog::launchForTests = [&answer] (NewSessionDialog::ResultCallback cb) { answer = std::move (cb); };
+            host.launchNewSessionDialog();
+            NewSessionDialog::launchForTests = nullptr;
+            NewSessionDialog::Result r;
+            r.name = "Show"; r.location = root.dir; r.sampleRate = 48000.0;
+            if (answer != nullptr) answer (r);
+            const auto dir = host.engine.getActiveSessionDir();
+            expect (dir.getParentDirectory() == root.dir && dir.getFileName() != "Show", "setup: " + dir.getFullPathName());
+            expect (host.statusLabel.getText().contains ("'" + dir.getFileName() + "'"), host.statusLabel.getText());
+            const auto project = findSessionProj (dir);
+            expectEquals (project.getFileName(), dir.getFileName() + ".zfproj");
+            expectEquals (juce::JSON::parse (project).getProperty ("name", {}).toString(), dir.getFileName());
+            forget (host);
+        }
+
+        beginTest ("A CSV session's line names the folder it made");
+        {
+            Folder root ("Sessions", false), input ("Input", false);
+            expect (root.dir.getChildFile ("Channels").createDirectory().wasOk());
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            const auto csv = input.dir.getChildFile ("Channels.csv");
+            expect (csv.replaceWithText ("Kick\nSnare\n"));
+            host.completeSessionFromCsv (csv);
+            const auto dir = host.engine.getActiveSessionDir();
+            expect (host.statusLabel.getText().contains ("'" + dir.getFileName() + "'"), host.statusLabel.getText());
+            forget (host);
+        }
+
+        beginTest ("Session Info names the folder and the rate the session runs at");
+        {
+            Folder f ("Copy"); writeSavedShow (f, 1); expect (writeAudio (f.track (1)));
+            expect (f.project().replaceWithText (R"({"zynforgeSession":true,"name":"Original","sampleRate":44100.0,"setlist":[],"playlists":[]})"));
+            Host host (f);
+            SessionInfoDialog::Fields shown;
+            SessionInfoDialog::launchForTests = [&shown] (SessionInfoDialog::Fields x) { shown = x; };
+            host.main.showSessionInfo();
+            SessionInfoDialog::launchForTests = nullptr;
+            expectEquals (shown.name, juce::String ("Copy"));
+            expectEquals (shown.sampleRate, juce::String ("48.0 kHz"));
+        }
+
+    }
+
+    void testLongSessionNames()
+    {
+        beginTest ("A session name too long for the files derived from it is refused in plain words");
+        {
+            Folder root ("Sessions", false);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            NewSessionDialog::Result r;
+            r.name = juce::String::repeatedString (juce::String::fromUTF8 ("\xd8\xb9"), 120);   // 240 bytes
+            r.location = root.dir; r.sampleRate = 48000.0;
+            const auto made = host.createSessionFolderStructure (r);
+            expect (! made.isDirectory(), "a session was made that can never be saved");
+            expect (host.sessionCreateFailureMessage().contains ("too long"), host.sessionCreateFailureMessage());
+            expectEquals (root.dir.getNumberOfChildFiles (juce::File::findFilesAndDirectories), 0);
+            forget (host);
+        }
+
+        beginTest ("Saving into a folder renamed too long says why");
+        {
+            Folder f (juce::String::repeatedString ("x", 212));
+            writeSavedShow (f, 1);
+            Host host (f);
+            expect (! host.main.saveSessionStateTo (f.dir), "setup: the save went through");
+            expect (host.main.lastMetadataSaveError.contains ("too long"), host.main.lastMetadataSaveError);
+        }
+
+        beginTest ("Save As refuses a folder name too long to save into");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            const auto dest = f.dir.getSiblingFile (juce::String::repeatedString ("y", 205));
+            expect (host.main.sessionJobs.reserve());
+            host.main.completeSaveAs (f.dir, dest);
+            pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 10000);
+            expect (! dest.exists(), "Save As made a copy whose folder name is too long");
+            expect (host.status().contains ("too long"), host.status());
+        }
+    }
+
+    // Two devices: the one in use, and the one a picker lists first.
+    class NamedDevice final : public juce::AudioIODevice
+    {
+    public:
+        explicit NamedDevice (const juce::String& name) : juce::AudioIODevice (name, "Two") {}
+        juce::StringArray getOutputChannelNames() override { return { "1", "2" }; }
+        juce::StringArray getInputChannelNames() override { return { "1", "2" }; }
+        juce::Array<double> getAvailableSampleRates() override { return { 48000.0 }; }
+        juce::Array<int> getAvailableBufferSizes() override { return { 256 }; }
+        int getDefaultBufferSize() override { return 256; }
+        juce::String open (const juce::BigInteger&, const juce::BigInteger&, double, int) override { opened = true; return {}; }
+        void close() override { opened = false; }
+        bool isOpen() override { return opened; }
+        void start (juce::AudioIODeviceCallback*) override { started = true; }
+        void stop() override { started = false; }
+        bool isPlaying() override { return started; }
+        juce::String getLastError() override { return {}; }
+        int getCurrentBufferSizeSamples() override { return 256; }
+        double getCurrentSampleRate() override { return 48000.0; }
+        int getCurrentBitDepth() override { return 24; }
+        int getOutputLatencyInSamples() override { return 0; }
+        int getInputLatencyInSamples() override { return 0; }
+        juce::BigInteger getActiveOutputChannels() const override { return 3; }
+        juce::BigInteger getActiveInputChannels() const override { return 3; }
+    private:
+        bool opened { false }, started { false };
+    };
+
+    class TwoDeviceType final : public juce::AudioIODeviceType
+    {
+    public:
+        TwoDeviceType() : juce::AudioIODeviceType ("Two") {}
+        void scanForDevices() override {}
+        juce::StringArray getDeviceNames (bool) const override { return { "Laptop", "Interface" }; }
+        int getDefaultDeviceIndex (bool) const override { return 0; }
+        int getIndexOfDevice (juce::AudioIODevice* d, bool) const override
+        { return d == nullptr ? -1 : getDeviceNames (true).indexOf (d->getName()); }
+        bool hasSeparateInputsAndOutputs() const override { return true; }
+        juce::AudioIODevice* createDevice (const juce::String& out, const juce::String& in) override
+        { return new NamedDevice (out.isNotEmpty() ? out : in); }
+    };
+
+    void testWelcome()
+    {
+        beginTest ("The Welcome stays open when its Create or Open fails");
+        {
+            Folder recent ("Recent Show");
+            bool created = false, opened = false;
+            dropModals();
+            WelcomeDialog::launch (recent.dir.getParentDirectory(), 48000.0, CaptureFormat::Wav24, {},
+                                   [&] (const WelcomeDialog::NewResult&) { created = true; return false; },
+                                   [&] (const juce::File&) { opened = true; return false; },
+                                   { recent.dir });
+            juce::Component::SafePointer<juce::Component> window (juce::ModalComponentManager::getInstance()->getModalComponent (0));
+            expect (window != nullptr, "setup: the Welcome opened");
+            if (auto* create = findButton (window, "Create")) create->onClick();
+            expect (created, "setup: Create did not answer");
+            pumpUntil ([] { return false; }, 200);
+            expect (window != nullptr && window->isCurrentlyModal(), "a Create that failed closed the Welcome");
+            if (auto* pick = findButton (window, recent.dir.getFileName())) pick->onClick();
+            expect (opened, "setup: the recent session did not answer");
+            pumpUntil ([] { return false; }, 200);
+            expect (window != nullptr && window->isCurrentlyModal(), "an Open that failed closed the Welcome");
+            dropModals();
+        }
+
+        beginTest ("Welcome Create keeps the devices the engineer did not touch");
+        {
+            Folder root ("Sessions", false);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            auto& manager = host.engine.getDeviceManager();
+            manager.addAudioDeviceType (std::make_unique<TwoDeviceType>());
+            manager.setCurrentAudioDeviceType ("Two", true);
+            juce::AudioDeviceManager::AudioDeviceSetup setup;
+            setup.outputDeviceName = setup.inputDeviceName = "Interface";
+            setup.sampleRate = 48000.0; setup.bufferSize = 256;
+            expect (manager.setAudioDeviceSetup (setup, false).isEmpty(), "setup: the interface did not open");
+            WelcomeDialog::NewResult r;
+            r.name = "Gig"; r.location = root.dir; r.sampleRate = 48000.0;
+            r.inputDeviceName = r.outputDeviceName = "Laptop";   // what the untouched pickers read
+            r.devicePicked = false;
+            host.createSessionFromWelcome (r);
+            expectEquals (manager.getAudioDeviceSetup().inputDeviceName, juce::String ("Interface"),
+                          "Create moved the input to a device nobody chose");
+            expectEquals (manager.getAudioDeviceSetup().outputDeviceName, juce::String ("Interface"));
+            r.name = "Gig 2"; r.devicePicked = true;
+            host.createSessionFromWelcome (r);
+            expectEquals (manager.getAudioDeviceSetup().inputDeviceName, juce::String ("Laptop"),
+                          "a device picked by hand was not applied");
+            forget (host);
+        }
+    }
+
+    void testReadOnlySessionAutosave()
+    {
+        beginTest ("A session on read-only media with nothing changed auto-saves quietly; a change still warns");
+        {
+            Folder f; writeSavedShow (f, 2);
+            Host host (f);
+            expect (host.main.saveSessionStateTo (f.dir), "setup: " + host.main.lastMetadataSaveError);
+            expect (f.dir.setReadOnly (true, true));
+            const juce::ScopeGuard writable { [&] { f.dir.setReadOnly (false, true); } };
+            const auto autosave = [&]
+            {
+                if (auto* props = host.main.engine.getAppProps()) props->setValue ("autosaveMinutes", 1);
+                host.main.lastAutosaveMs = juce::Time::getMillisecondCounter() - 120000;
+                host.main.statusLabel.setText ({}, juce::dontSendNotification);
+                host.main.serviceAutosave();
+                pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 5000);
+            };
+            autosave();
+            expect (! host.status().contains ("FAILED"), "an unchanged session failed to auto-save: " + host.status());
+            host.main.engine.setTrackName (0, "Changed");
+            autosave();
+            expect (host.status().contains ("AUTO-SAVE FAILED"), "a change that cannot be saved went unreported: " + host.status());
+            if (auto* props = host.main.engine.getAppProps()) props->setValue ("autosaveMinutes", 5);
+        }
+    }
+
+    void testTemplateMenu()
+    {
+        const auto writeTemplate = [] (const juce::File& dir, const juce::String& name)
+        {
+            return dir.getChildFile (name + ".zftemplate").replaceWithText (
+                "{\"trackCount\":1,\"strips\":[{\"name\":\"" + name + "\",\"inRoute\":0,\"outRoute\":0}]}");
+        };
+        const auto clickTemplate = [] (MainComponent& host, int id, const juce::File& root)
+        {
+            NewSessionDialog::ResultCallback answer;
+            NewSessionDialog::launchForTests = [&answer] (NewSessionDialog::ResultCallback cb) { answer = std::move (cb); };
+            host.menuItemSelected (id, 0);
+            NewSessionDialog::launchForTests = nullptr;
+            if (answer == nullptr) return juce::String ("(nothing opened)");
+            NewSessionDialog::Result r;
+            r.name = "Gig " + juce::String (id); r.location = root; r.sampleRate = 48000.0;
+            answer (r);
+            return host.engine.getRecorder().getNumTracks() > 0
+                ? host.engine.getRecorder().getTrack (0).getNameThreadSafe() : juce::String ("(no strips)");
+        };
+
+        beginTest ("A template menu item opens the template it showed, after another was saved");
+        {
+            Folder dir ("Templates", false), root ("Sessions", false);
+            expect (writeTemplate (dir.dir, "Show A") && writeTemplate (dir.dir, "Show C"));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            host.templatesDirForTests = dir.dir;
+            host.getMenuForIndex (0, {});           // the menu macOS shows: A at 200, C at 201
+            expect (writeTemplate (dir.dir, "Show B"));
+            expectEquals (clickTemplate (host, 201, root.dir), juce::String ("Show C"),
+                          "the item reading Show C opened another template");
+            forget (host);
+        }
+
+        beginTest ("A template menu item opens the template it showed, after another was deleted");
+        {
+            Folder dir ("Templates", false), root ("Sessions", false);
+            expect (writeTemplate (dir.dir, "Show A") && writeTemplate (dir.dir, "Show B") && writeTemplate (dir.dir, "Show C"));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            host.templatesDirForTests = dir.dir;
+            host.getMenuForIndex (0, {});
+            expect (dir.dir.getChildFile ("Show A.zftemplate").deleteFile());
+            expectEquals (clickTemplate (host, 202, root.dir), juce::String ("Show C"));
+            forget (host);
+        }
+
+        beginTest ("Saving or starring a template, auto-arm and zero-crossing snap refresh the menu");
+        {
+            Folder dir ("Templates", false);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.templatesDirForTests = dir.dir;
+            host.engine.setStripCount (1);
+            host.refreshMenuStateIfChanged();
+            auto sig = host.lastMenuStateSig;
+            const auto changed = [&] (const juce::String& what)
+            {
+                host.refreshMenuStateIfChanged();
+                expect (host.lastMenuStateSig != sig, what + " left the menu as macOS last drew it");
+                sig = host.lastMenuStateSig;
+            };
+            expect (host.saveSessionTemplate ("Show D"));
+            changed ("Saving a template");
+            host.setDefaultTemplate (dir.dir.getChildFile ("Show D.zftemplate"));
+            changed ("Setting the default template");
+            const bool autoArm = host.engine.isAutoArmOnInputDetect();
+            host.engine.setAutoArmOnInputDetect (! autoArm);
+            changed ("Auto-arm on input detect");
+            host.engine.setAutoArmOnInputDetect (autoArm);
+            host.zeroCrossSnap = ! host.zeroCrossSnap;
+            changed ("Snap edits to zero-crossing");
+            host.zeroCrossSnap = ! host.zeroCrossSnap;
+            host.setDefaultTemplate ({});
+            forget (host);
+        }
+    }
+
+    void testDaemonSwitchMidTake()
+    {
+        beginTest ("The capture daemon cannot be switched on in the middle of a take");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            auto& main = host.main;
+            main.captureSupervisor.setBinaryPath (juce::File ("/usr/bin/false"));
+            main.captureDaemonPort = 1;   // nothing answers there
+            const juce::ScopeGuard settingOff { [&main]
+            {
+                updateSettings (main.engine.getAppProps(), [] (juce::PropertiesFile& p) { p.setValue ("useCaptureDaemon", false); });
+                main.useCaptureDaemon = false;
+            } };
+            expect (main.engine.setTrackArmed (0, true));
+            expect (main.engine.startRecording (f.dir), "setup: the take did not start");
+            for (const auto& row : walk (main.getMenuForIndex (3, {})))
+                if (row.id == 958) expect (! row.enabled, "the menu offers the daemon in the middle of a take");
+            main.toggleCaptureDaemon();
+            expect (! main.useCaptureDaemon);
+            expect (main.statusLabel.getText().contains ("take"), main.statusLabel.getText());
+            main.engine.stopRecording();
+        }
+    }
+
+    void testRemoveLastCaptureQuestion()
+    {
+        beginTest ("Remove last capture? holds nothing while it waits, and a take closes it");
+        {
+            Folder take;
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.setStripCount (1);
+            expect (host.engine.setTrackArmed (0, true));
+            expect (host.engine.startRecording (take.dir));
+            host.engine.stopRecording();
+            expect (host.engine.getLastCapture() == take.dir, "setup: no last capture");
+            dropModals();
+            host.removeLastCapture();
+            expect (! host.sessionIoBusy.load(), "the question holds the session slot: RECORD and Quit are refused meanwhile");
+            expectEquals (closedByATake(), 1, "the question stays in front of STOP");
+            expect (take.dir.isDirectory());
+            host.engine.forgetLastCapture();
+            forget (host);
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -1032,6 +1656,17 @@ public:
         testRestoreFindsTheProject();
         testRecordNeedsLocalStorage();
         testRawExportOfAnUnlinkedPair();
+        testBackupSnapshotsAreNotSessions();
+        testStripsAddedSinceTheLastSave();
+        testReadOnlySessionAutosave();
+        testLongSessionNames();
+        testSessionModalsCloseForATake();
+        testFolderPanelsHoldNothing();
+        testRemoveLastCaptureQuestion();
+        testSessionNames();
+        testWelcome();
+        testTemplateMenu();
+        testDaemonSwitchMidTake();
     }
 };
 

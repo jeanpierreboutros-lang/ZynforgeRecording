@@ -140,7 +140,126 @@ namespace zynforge
                 expectEquals (audioDir.findChildFiles (juce::File::findFiles, false,
                                                        "*.partial.wav").size(), 0);
             }
+            testPolyFileReadOnce (sourceDir);
             root.deleteRecursively();
+        }
+
+        // Every channel a different signal, so a channel landing on the wrong
+        // track or a sample shifted shows. Below half scale: JUCE reads 24-bit
+        // as n / 2^23 and writes x * (2^23 - 1), so louder samples come back one
+        // step lower on any 24-bit round trip, import or not.
+        static float polySample (int channel, juce::int64 frame)
+        {
+            return (float) (((frame * (channel + 3) + channel * 977) % 2001) - 1000) / 2048.0f;
+        }
+
+        static bool writePoly (const juce::File& file, double sampleRate, int channels, juce::int64 frames)
+        {
+            std::unique_ptr<juce::FileOutputStream> output (file.createOutputStream());
+            if (output == nullptr) return false;
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> writer (
+                wav.createWriterFor (output.get(), sampleRate, (unsigned int) channels, 24, {}, 0));
+            if (writer == nullptr) return false;
+            output.release();
+            juce::AudioBuffer<float> block (channels, 1000);
+            for (juce::int64 done = 0; done < frames;)
+            {
+                const int count = (int) juce::jmin ((juce::int64) 1000, frames - done);
+                for (int c = 0; c < channels; ++c)
+                    for (int i = 0; i < count; ++i) block.setSample (c, i, polySample (c, done + i));
+                if (! writer->writeFromAudioSampleBuffer (block, 0, count)) return false;
+                done += count;
+            }
+            return true;
+        }
+
+        void testPolyFileReadOnce (const juce::File& sourceDir)
+        {
+            juce::AudioFormatManager formats;
+            formats.registerBasicFormats();
+            const auto readAll = [&formats] (const juce::File& file, juce::AudioBuffer<float>& into)
+            {
+                std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+                if (reader == nullptr) return false;
+                into.setSize ((int) reader->numChannels, (int) reader->lengthInSamples);
+                return reader->read (&into, 0, (int) reader->lengthInSamples, 0, true, true);
+            };
+
+            beginTest ("A poly file is read once, not once per channel, and every channel stays exact");
+            {
+                constexpr int channels = 8;
+                constexpr juce::int64 frames = 48000;
+                const auto poly = sourceDir.getChildFile ("Show 8ch.wav");
+                const auto audioDir = sourceDir.getSiblingFile ("Poly Audio Files");
+                expect (audioDir.createDirectory().wasOk());
+                expect (writePoly (poly, 48000.0, channels, frames));
+                audioimport::detail::sourceFramesReadForTests = 0;
+                const auto result = audioimport::importFiles ({ poly }, audioDir, 0, 48000.0);
+                expectEquals (result.importedFiles, 1);
+                expectEquals ((int) result.tracks.size(), channels);
+                expect (audioimport::detail::sourceFramesReadForTests.load() <= frames + 16384,
+                        "the source was read " + juce::String (audioimport::detail::sourceFramesReadForTests.load())
+                        + " frames for a file of " + juce::String (frames));
+                juce::AudioBuffer<float> source;
+                expect (readAll (poly, source));
+                for (int c = 0; c < channels; ++c)
+                {
+                    juce::AudioBuffer<float> take;
+                    const auto file = audioDir.getChildFile ("Track_" + juce::String (c + 1).paddedLeft ('0', 2) + ".wav");
+                    expect (readAll (file, take), file.getFileName());
+                    expectEquals (take.getNumChannels(), 1);
+                    expectEquals (take.getNumSamples(), (int) frames);
+                    int wrong = 0;
+                    for (int i = 0; i < juce::jmin (take.getNumSamples(), source.getNumSamples()); ++i)
+                        if (take.getSample (0, i) != source.getSample (c, i)) ++wrong;
+                    expectEquals (wrong, 0, "channel " + juce::String (c + 1) + " changed on the way in");
+                }
+                audioDir.deleteRecursively();
+            }
+
+            beginTest ("A poly file at another rate gives each channel what its own conversion would");
+            {
+                constexpr int channels = 4;
+                constexpr juce::int64 frames = 44100;
+                const auto poly = sourceDir.getChildFile ("Show 4ch 44k.wav");
+                const auto audioDir = sourceDir.getSiblingFile ("Poly 44k Audio Files");
+                const auto alone = sourceDir.getSiblingFile ("Alone Audio Files");
+                expect (audioDir.createDirectory().wasOk() && alone.createDirectory().wasOk());
+                expect (writePoly (poly, 44100.0, channels, frames));
+                const auto result = audioimport::importFiles ({ poly }, audioDir, 0, 48000.0);
+                expectEquals ((int) result.tracks.size(), channels);
+                juce::AudioBuffer<float> source;
+                expect (readAll (poly, source));
+                for (int c = 0; c < channels; ++c)
+                {
+                    // The same channel, on its own, through the mono path.
+                    const auto single = alone.getChildFile ("ch" + juce::String (c) + ".wav");
+                    {
+                        std::unique_ptr<juce::FileOutputStream> output (single.createOutputStream());
+                        juce::WavAudioFormat wav;
+                        std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (output.get(), 44100.0, 1, 24, {}, 0));
+                        expect (writer != nullptr);
+                        if (writer == nullptr) continue;
+                        output.release();
+                        const float* plane[1] = { source.getReadPointer (c) };
+                        expect (writer->writeFromFloatArrays (plane, 1, source.getNumSamples()));
+                    }
+                    const auto monoDir = alone.getChildFile ("out" + juce::String (c));
+                    expect (monoDir.createDirectory().wasOk());
+                    audioimport::importFiles ({ single }, monoDir, 0, 48000.0);
+                    juce::AudioBuffer<float> fromPoly, fromMono;
+                    expect (readAll (audioDir.getChildFile ("Track_0" + juce::String (c + 1) + ".wav"), fromPoly));
+                    expect (readAll (monoDir.getChildFile ("Track_01.wav"), fromMono));
+                    expectEquals (fromPoly.getNumSamples(), fromMono.getNumSamples());
+                    int wrong = 0;
+                    for (int i = 0; i < juce::jmin (fromPoly.getNumSamples(), fromMono.getNumSamples()); ++i)
+                        if (fromPoly.getSample (0, i) != fromMono.getSample (0, i)) ++wrong;
+                    expectEquals (wrong, 0, "channel " + juce::String (c + 1) + " differs from its own conversion");
+                }
+                audioDir.deleteRecursively();
+                alone.deleteRecursively();
+            }
         }
     };
 

@@ -20,6 +20,7 @@
 #include "../Audio/WavRepair.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/TrackFileTransaction.h"
+#include "../Audio/MultiPartReader.h"
 #include "../Audio/PathSafety.h"
 #include "../Audio/ShowHandoff.h"
 #include "../Audio/VirtualSoundcheck.h"
@@ -28,12 +29,25 @@
 #include "NewSessionDialog.h"
 #include "WaveCacheFile.h"
 #include "ExportDialog.h"
+#include "FloatingLaunch.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
 
 namespace
 {
+// A notice with nothing to answer: a take that starts behind it closes it.
+void showNoticeClosingForTake (juce::Component* owner, juce::LookAndFeel& laf,
+                               const juce::String& title, const juce::String& text)
+{
+    auto* aw = new juce::AlertWindow (title, text, juce::MessageBoxIconType::NoIcon, owner);
+    aw->setLookAndFeel (&laf);
+    aw->addButton ("OK", 0, juce::KeyPress (juce::KeyPress::returnKey), juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }), false);
+}
+
 juce::String applicationVersion()
 {
     auto* app = juce::JUCEApplicationBase::getInstance();
@@ -167,6 +181,10 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (engine.isCaptureFinalizing())
     { showStatus ("Wait for recording finalization before switching sessions"); return -1; }
     if (! dir.isDirectory()) return 0;
+    // Every way in (File > Open, Finder, the Welcome, the launch reopen, a
+    // recent session) comes here: a backup is never made the live session.
+    if (zynforge::sessionrepair::isInsideBackups (dir))
+    { showStatus (zynforge::sessionrepair::backupFolderRefusal (dir)); return -1; }
     // Everything below repairs and rewrites: nothing here may run under a helper
     // that is writing this folder, adopted or not.
     if (helperHoldsSession (dir))
@@ -221,15 +239,25 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     // Size one strip per loaded audio track so the channels (and the menus)
     // come back. A mix saved with no strips over a session that has audio is
     // the same case, not an authoritative empty mixer.
+    int addedSinceSave = 0;
     if (! loadedMix || (engine.getRecorder().getNumTracks() == 0 && n > 0))
         engine.setStripCount (n);
+    else if (n > engine.getRecorder().getNumTracks())
+        addedSinceSave = restoreUnsavedStrips (dir, n);
     restoreSessionDocuments (dir);
     engine.claimMixerFor (dir);
     if (n > 0)
     {
-        statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
+        statusLabel.setText ("Loaded " + juce::String (n) + " tracks"
+                                 + (addedSinceSave > 0 ? "; " + zynforge::counted (addedSinceSave, "strip")
+                                                           + " recorded after the last save came back with default names and patch"
+                                                       : juce::String()),
+                             juce::dontSendNotification);
         warnIfSampleRateMismatch();
     }
+    if (addedSinceSave > 0)
+        toast.show (zynforge::counted (addedSinceSave, "strip") + " recorded after the last save came back;"
+                    " check their names and patch", Toast::Kind::Warning);
     if (unrepairedHeaders > 0)
         toast.show (zynforge::counted (unrepairedHeaders, "take file") + " from a crash could not be repaired;"
                     " they read short until the drive is writable", Toast::Kind::Warning);
@@ -249,6 +277,29 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (! damaged.empty()) reportDamagedFiles (dir, damaged);
     zynforge::MultitrackRecorder::resumeReportHashes (dir);
     return n;
+}
+
+// Takes on disk past the saved mixer's strips: strips added since the last save
+// and recorded before a crash. They come back after the saved ones with default
+// names and patch, and a take recorded as one stereo file comes back as a pair.
+// Returns how many strips were added.
+int MainComponent::restoreUnsavedStrips (const juce::File& dir, int playerTracks)
+{
+    const int saved = engine.getRecorder().getNumTracks();
+    engine.setStripCount (playerTracks);
+    const int now = engine.getRecorder().getNumTracks();
+    const auto audioDir = dir.getChildFile ("Audio Files");
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    for (int i = saved; i + 1 < now; ++i)
+    {
+        const auto take = zynforge::findTrackMedia (audioDir.isDirectory() ? audioDir : dir, i);
+        if (! take.existsAsFile()) continue;
+        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (take));
+        if (reader != nullptr && reader->numChannels >= 2)
+            engine.setTrackStereo (i++, true);
+    }
+    return juce::jmax (0, now - saved);
 }
 
 void MainComponent::keepRemovedFeatureData (const juce::File& dir)
@@ -292,12 +343,19 @@ void MainComponent::reportDamagedFiles (const juce::File& dir,
     aw->setLookAndFeel (&laf);
     if (canRestore) aw->addButton ("Restore Backup", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton (canRestore ? "Keep Going" : "OK", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    // A take that starts behind it closes it as Keep Going; the backups stay
+    // in Session File Backups, and the line says so.
+    zynforge::closesForTake (aw);
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
-        [self, aw, dir, files] (int result)
+        [self, aw, dir, files, canRestore] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (self != nullptr && result == 1) self->restoreDamagedFiles (dir, files);
+            if (self == nullptr) return;
+            if (result == 1) self->restoreDamagedFiles (dir, files);
+            else if (canRestore && self->engine.isRecording())
+                self->toast.show ("Damaged session files: their good copies stay in Session File Backups",
+                                  Toast::Kind::Warning);
         }), false);
 }
 
@@ -487,6 +545,7 @@ void MainComponent::confirmSessionReplacement (std::function<void()> continuatio
     aw->addButton ("Save & Continue", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Continue Without Saving", 2);
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);   // closed by a take = Cancel
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [self, aw, dir, continuation = std::move (continuation)] (int result) mutable
@@ -550,6 +609,7 @@ void MainComponent::closeSession()
     aw->addButton ("Save & Close",         1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Close Without Saving", 2);
     aw->addButton ("Cancel",               0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);   // closed by a take = Cancel
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [self, aw, sessionDir] (int result)
         {
@@ -615,6 +675,7 @@ void MainComponent::offerLeaveMissingSession (const juce::String& leaveLabel, st
     aw->setLookAndFeel (&laf);
     aw->addButton (leaveLabel, 1);
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::returnKey), juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);   // closed by a take = Cancel
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw, leave = std::move (leave)] (int result)
         {
@@ -891,7 +952,11 @@ void MainComponent::serviceAutosave()
         return;
     }
     juce::Component::SafePointer<MainComponent> self (this);
-    enqueueMetadataSave (dir, "Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
+    // Documents that already hold this state are not written again: an
+    // archived show on read-only media would otherwise fail every interval.
+    auto snapshot = captureMetadataSnapshot (dir);
+    snapshot.skipWhenUnchanged = true;
+    enqueueMetadataSnapshot (std::move (snapshot), "Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
         [self, intervalMs] (bool ok)
         {
             if (self == nullptr) return;
@@ -925,6 +990,7 @@ void MainComponent::showAutosaveSettings()
 
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);   // closed by a take = Cancel
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
@@ -1294,6 +1360,7 @@ void MainComponent::completeBounceStems (juce::File dest, const std::vector<int>
 
 void MainComponent::onBounceStereoMix()
 {
+    if (refuseWhileSessionPickerOpen()) return;
     if (sessionIoBusy.load()) { showStatus ("Another session operation is already running"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before bouncing a mix"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
@@ -1304,14 +1371,55 @@ void MainComponent::onBounceStereoMix()
     const auto suggested = exportDir.getChildFile (sessionDir.getFileName() + " - Mix.wav");
     chooser = std::make_unique<juce::FileChooser> ("Bounce stereo mix to...", suggested, "*.wav");
     juce::Component::SafePointer<MainComponent> chooserSelf (this);
-    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+    launchSessionPicker ("mix bounce", juce::FileBrowserComponent::saveMode
                           | juce::FileBrowserComponent::canSelectFiles
                           | juce::FileBrowserComponent::warnAboutOverwriting,
-        [chooserSelf, this] (const juce::FileChooser& fc)
+        [chooserSelf, scope = questionScope()] (const juce::File& dest)
     {
         if (chooserSelf == nullptr) return;
-        completeBounceStereoMix (fc.getResult());
+        // The file is named for this session; the mix is whatever is open.
+        if (dest.getFullPathName().isNotEmpty() && ! chooserSelf->stillInScope (scope)) return;
+        chooserSelf->completeBounceStereoMix (dest);
     });
+}
+
+void MainComponent::launchSessionPicker (const juce::String& what, int flags,
+                                         std::function<void (const juce::File&)> answer)
+{
+    sessionPickerName = what;
+    sessionPickerChooser = chooser.get();
+    juce::Component::SafePointer<MainComponent> self (this);
+    const auto* owner = sessionPickerChooser;
+    auto deliver = [self, owner, answer = std::move (answer)] (const juce::File& result)
+    {
+        if (self == nullptr) return;
+        if (self->sessionPickerChooser == owner)
+        {
+            self->sessionPickerName.clear();
+            self->sessionPickerChooser = nullptr;
+        }
+        answer (result);
+    };
+    if (sessionPickerForTests) { sessionPickerForTests (what, std::move (deliver)); return; }
+    if (chooser == nullptr) { deliver ({}); return; }
+    chooser->launchAsync (flags, [deliver = std::move (deliver)] (const juce::FileChooser& fc)
+                          { deliver (fc.getResult()); });
+}
+
+// Only while the panel launchSessionPicker opened is still the one up: any
+// other panel replaces `chooser`, which closes this one without an answer.
+juce::String MainComponent::openSessionPicker() const
+{
+    return sessionPickerChooser != nullptr && (sessionPickerForTests || chooser.get() == sessionPickerChooser)
+        ? sessionPickerName : juce::String();
+}
+
+bool MainComponent::refuseWhileSessionPickerOpen()
+{
+    const auto open = openSessionPicker();
+    if (open.isEmpty()) return false;
+    showStatus ("The " + open + " panel is still open -- answer or cancel it first");
+    return true;
 }
 
 void MainComponent::completeBounceStereoMix (juce::File dest)
@@ -1602,7 +1710,10 @@ void MainComponent::onSaveSessionAs()
                     + "; reconnect its drive before Save As");
         return;
     }
-    if (! sessionJobs.reserve())
+    if (refuseWhileSessionPickerOpen()) return;
+    // Checked here so no panel is offered behind a running job, and again,
+    // with the reservation, when the panel answers.
+    if (sessionIoBusy.load())
     {
         showStatus ("Another session file operation is already running");
         return;
@@ -1625,17 +1736,46 @@ void MainComponent::onSaveSessionAs()
                      | juce::FileBrowserComponent::canSelectDirectories;
 
     juce::Component::SafePointer<MainComponent> chooserSelf (this);
-    chooser->launchAsync (flags, [chooserSelf, this, source] (const juce::FileChooser& fc)
+    launchSessionPicker ("Save As", flags, [chooserSelf, source, scope = questionScope()] (const juce::File& dest)
     {
-        if (chooserSelf == nullptr) return;
-        const auto dest = fc.getResult();
-        if (dest.getFullPathName().isEmpty()) { sessionJobs.release(); return; }
-        completeSaveAs (source, dest);
+        if (chooserSelf == nullptr || dest.getFullPathName().isEmpty()) return;
+        if (chooserSelf->reserveForPickerAnswer ("Save As", scope))
+            chooserSelf->completeSaveAs (source, dest);
     });
+}
+
+// The panel reserved nothing while it was up. Everything it reserved against
+// is asked now: a take, another session, a job. True with the slot reserved.
+bool MainComponent::reserveForPickerAnswer (const juce::String& what, const QuestionScope& scope)
+{
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording() || engine.isCaptureFinalizing())
+    {
+        showStatus (what + " cancelled -- a take started while its panel was open");
+        return false;
+    }
+    if (! stillInScope (scope)) return false;
+    if (! sessionJobs.reserve())
+    {
+        const auto job = sessionJobs.runningJob();
+        showStatus (what + " cancelled -- " + (job.isNotEmpty() ? "the " + job + " is running"
+                                                                : juce::String ("a session save is finishing"))
+                    + "; try again when it ends");
+        return false;
+    }
+    return true;
 }
 
 void MainComponent::completeSaveAs (const juce::File& source, const juce::File& dest)
 {
+    // The copy is saved under its folder's name: one too long for what a save
+    // derives from it could never be saved.
+    if (const auto tooLong = zynforge::sessionrepair::nameTooLongForNewSession (dest.getFileName());
+        source != dest && tooLong.isNotEmpty())
+    {
+        sessionJobs.release();
+        showStatus ("Save As refused -- " + tooLong);
+        return;
+    }
     if (source == dest)
     {
         const bool ok = saveSessionStateTo (dest);
@@ -1792,6 +1932,7 @@ void MainComponent::offerContinueFromDisk (const juce::String& action, const juc
     aw->setLookAndFeel (&laf);
     aw->addButton ("Continue", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel",   0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);   // closed by a take = Cancel, which releases the job
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw, proceed = std::move (proceed), cancel = std::move (cancel)] (int result)
         {
@@ -1894,15 +2035,12 @@ void MainComponent::warnIfSampleRateMismatch()
     if (sessSR <= 0.0 || devSR <= 0.0) return;
     if (std::abs (sessSR - devSR) < 0.5) return;
 
-    juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::NoIcon,
-        "Sample-rate mismatch",
+    showNoticeClosingForTake (this, laf, "Sample-rate mismatch",
         "This session was recorded at " + juce::String ((int) sessSR)
             + " Hz but your audio device is set to " + juce::String ((int) devSR)
             + " Hz.\n\nPlayback will be pitched + sped up / slowed down. "
               "Open DEVICE and switch to "
-            + juce::String ((int) sessSR) + " Hz for clean playback.",
-        "OK");
+            + juce::String ((int) sessSR) + " Hz for clean playback.");
 }
 
 void MainComponent::applySessionSampleRate (double sr)
@@ -2075,9 +2213,8 @@ void MainComponent::exportDawProject (zynforge::projectexport::Format format)
                               + (result.notes.isEmpty() ? juce::String()
                                                         : " -- " + zynforge::counted (result.notes.size(), "note")));
             if (! result.notes.isEmpty())
-                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon,
-                                                        "Exported " + result.file.getFileName(),
-                                                        result.notes.joinIntoString ("\n\n"), "OK");
+                showNoticeClosingForTake (self.getComponent(), self->laf, "Exported " + result.file.getFileName(),
+                                          result.notes.joinIntoString ("\n\n"));
         };
     }, "Project Export");
 }
@@ -2167,7 +2304,8 @@ void MainComponent::exportShowHandoff()
     if (! source.isDirectory())
     { showStatus (noFolderText ("No active session to hand off", "creating a handoff")); return; }
     if (refuseUnloadedSession ("creating a handoff")) return;
-    if (! sessionJobs.reserve())
+    if (refuseWhileSessionPickerOpen()) return;
+    if (sessionIoBusy.load())
     { showStatus ("Another session operation is already running"); return; }
 
     chooser = std::make_unique<juce::FileChooser> (
@@ -2176,12 +2314,11 @@ void MainComponent::exportShowHandoff()
     const auto flags = juce::FileBrowserComponent::saveMode
                      | juce::FileBrowserComponent::canSelectDirectories;
     juce::Component::SafePointer<MainComponent> self (this);
-    chooser->launchAsync (flags, [self, source] (const juce::FileChooser& fc)
+    launchSessionPicker ("handoff", flags, [self, source, scope = questionScope()] (const juce::File& dest)
     {
-        if (self == nullptr) return;
-        const auto dest = fc.getResult();
-        if (dest == juce::File()) { self->sessionJobs.release(); return; }
-        self->completeShowHandoff (source, dest);
+        if (self == nullptr || dest == juce::File()) return;
+        if (self->reserveForPickerAnswer ("The handoff", scope))
+            self->completeShowHandoff (source, dest);
     });
 }
 
@@ -2297,21 +2434,20 @@ void MainComponent::startHandoffCopy (const juce::File& source, const juce::File
 
 void MainComponent::relocateActiveSession()
 {
-    if (! sessionJobs.reserve())
+    if (refuseWhileSessionPickerOpen()) return;
+    if (sessionIoBusy.load())
     {
         showStatus ("Another session file operation is already running");
         return;
     }
     if (engine.isRecording())
     {
-        sessionJobs.release();
         showStatus ("Stop recording before moving the session.");
         return;
     }
     const auto oldDir = engine.getActiveSessionDir();
     if (! oldDir.isDirectory())
     {
-        sessionJobs.release();
         showStatus (noFolderText ("No active session to move -- record or open one first.", "moving it"));
         return;
     }
@@ -2321,14 +2457,13 @@ void MainComponent::relocateActiveSession()
         oldDir.getParentDirectory(), "");
 
     juce::Component::SafePointer<MainComponent> chooserSelf (this);
-    chooser->launchAsync (juce::FileBrowserComponent::canSelectDirectories
+    launchSessionPicker ("Move", juce::FileBrowserComponent::canSelectDirectories
                           | juce::FileBrowserComponent::openMode,
-        [chooserSelf, this, oldDir] (const juce::FileChooser& fc)
+        [chooserSelf, oldDir, scope = questionScope()] (const juce::File& newParent)
         {
-            if (chooserSelf == nullptr) return;
-            const auto newParent = fc.getResult();
-            if (! newParent.isDirectory()) { sessionJobs.release(); return; }
-            completeRelocate (oldDir, newParent);
+            if (chooserSelf == nullptr || ! newParent.isDirectory()) return;
+            if (chooserSelf->reserveForPickerAnswer ("Move", scope))
+                chooserSelf->completeRelocate (oldDir, newParent);
         });
 }
 
@@ -2555,6 +2690,7 @@ void MainComponent::promptSaveSessionTemplate()
     aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     dialog::primeNameEditor (*aw, "name");   // focus + select-all + Enter = Save
+    zynforge::closesForTake (aw);   // closed by a take = Cancel; the name is typed again
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw, self] (int r)
@@ -2563,13 +2699,19 @@ void MainComponent::promptSaveSessionTemplate()
         if (r != 1 || self == nullptr) return;
         const auto name = aw->getTextEditorContents ("name").trim();
         if (name.isEmpty()) return;
-
-        const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
-        const auto out = self->templatesDir().getChildFile (safeName + ".zftemplate");
-        self->showStatus (zynforge::atomicfile::writeText (out, self->sessionTemplateJson (name))
-                            ? "Template saved -> " + out.getFileName()
-                            : "Template NOT saved -- check permissions / free space");
+        self->saveSessionTemplate (name);
     }));
+}
+
+bool MainComponent::saveSessionTemplate (const juce::String& name)
+{
+    const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
+    const auto out = templatesDir().getChildFile (safeName + ".zftemplate");
+    const bool ok = zynforge::atomicfile::writeText (out, sessionTemplateJson (name));
+    ++templateMenuRevision;   // the File menu lists it from the next build on
+    showStatus (ok ? "Template saved -> " + out.getFileName()
+                   : "Template NOT saved -- check permissions / free space");
+    return ok;
 }
 
 void MainComponent::applySessionTemplate (const juce::File& templateFile)
@@ -2666,6 +2808,7 @@ void MainComponent::setDefaultTemplate (const juce::File& templateFile)
 {
     zynforge::updateSettings (engine.getAppProps(), [&templateFile] (juce::PropertiesFile& props)
                               { props.setValue ("defaultTemplateFile", templateFile.getFullPathName()); });
+    ++templateMenuRevision;   // the tick moves
     showStatus (templateFile == juce::File{}
                   ? juce::String ("Default template cleared")
                   : "Default template -> " + templateFile.getFileNameWithoutExtension());
@@ -2687,6 +2830,7 @@ void MainComponent::promptDeleteSessionTemplate()
         if (idx < list.size())
         {
             list[idx].deleteFile();
+            ++self->templateMenuRevision;
             self->showStatus ("Template deleted: " + list[idx].getFileNameWithoutExtension());
         }
     });
@@ -2735,6 +2879,7 @@ juce::String MainComponent::missingLocalStorage() const
 
 juce::String MainComponent::sessionCreateFailureMessage() const
 {
+    if (sessionCreateRefusal.isNotEmpty()) return sessionCreateRefusal;
     return engine.isRecording() || engine.isCaptureFinalizing()
         ? "Recording -- the new session was not created. Stop the take first."
         : "Couldn't create session -- check permissions / free space";
@@ -2746,6 +2891,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // console) gets here after an async step, and a take can start meanwhile
     // (a remote RECORD). Clearing the strips would re-patch that take live,
     // and STOP would then save the wiped state over the real session.
+    sessionCreateRefusal.clear();
     if (engine.isRecording() || engine.isCaptureFinalizing())
         return {};
 
@@ -2761,6 +2907,10 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         return {};
 
     const juce::File sessionFolder = r.location.getNonexistentChildFile (safeName, {}, false);
+    // Bytes, not characters: a name that fits the folder can still be too long
+    // for what a save derives from it, and every save would fail.
+    sessionCreateRefusal = zynforge::sessionrepair::nameTooLongForNewSession (sessionFolder.getFileName());
+    if (sessionCreateRefusal.isNotEmpty()) return {};
     if (sessionFolder.createDirectory().failed() || ! sessionFolder.isDirectory())
         return {};
 
@@ -2781,13 +2931,14 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // (Equivalent of Pro Tools' .ptx; we use .zfproj for clarity.)
     {
         juce::DynamicObject::Ptr m (new juce::DynamicObject());
+        // The folder's name, which "Show" taken already makes "Show2".
         m->setProperty ("zynforgeSession", true);
-        m->setProperty ("name",            safeName);
+        m->setProperty ("name",            sessionFolder.getFileName());
         m->setProperty ("createdAt",       juce::Time::getCurrentTime().toISO8601 (true));
         m->setProperty ("sampleRate",      r.sampleRate);
         m->setProperty ("captureFormat",   (int) r.captureFormat);
         if (! zynforge::atomicfile::writeText (
-                sessionFolder.getChildFile (safeName + ".zfproj"),
+                sessionFolder.getChildFile (sessionFolder.getFileName() + ".zfproj"),
                 juce::JSON::toString (juce::var (m.get()))))
         {
             sessionFolder.deleteRecursively();

@@ -135,6 +135,9 @@ namespace zynforge
         sessionDir = dir;
         sampleRate = sr > 0 ? sr : sampleRate;
         markers.clear();
+        // Default names count within this session: the next "Marker N" follows
+        // its own markers, not the last session's.
+        markerCounter = 0;
         load();
     }
 
@@ -142,6 +145,7 @@ namespace zynforge
     {
         sessionDir = juce::File();
         markers.clear();
+        markerCounter = 0;
     }
 
     void MarkersManager::sortByPosition()

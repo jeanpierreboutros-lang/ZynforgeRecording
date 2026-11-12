@@ -749,6 +749,13 @@ void MainComponent::toggleCaptureDaemon()
         return;
     }
 
+    // An in-process take is rolling: the helper would open the device beside
+    // it, and connecting holds this window for seconds. The menu greys it too.
+    if (engine.isRecording() || engine.isCaptureFinalizing() || captureMetadataPending)
+    {
+        showStatus ("The capture daemon can be turned on after the take has stopped");
+        return;
+    }
     useCaptureDaemon = true;
     connectCaptureDaemon (true);
     zynforge::updateSettings (engine.getAppProps(), [this] (juce::PropertiesFile& p)
@@ -887,14 +894,17 @@ void MainComponent::detectSongsToMarkers()
         const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
         double sr = 48000.0;
         bool readFailed = false;
-        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel, &readFailed);
+        juce::String unreadable;
+        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel, &readFailed, &unreadable);
         if (cancel.load (std::memory_order_relaxed))
             return [self] { if (self != nullptr) self->showStatus ("Song detection stopped: a take started"); };
         if (readFailed)
-            return [self, sessionDir]
+            return [self, sessionDir, unreadable]
             {
                 if (self != nullptr && self->analysisResultWanted (sessionDir))
-                    self->showStatus ("Song detection failed: a take could not be read. Check the session's drive; no markers were added");
+                    self->showStatus ("Song detection failed: "
+                                      + (unreadable.isNotEmpty() ? unreadable : juce::String ("a take"))
+                                      + " could not be read. Check the session's drive; no markers were added");
             };
         const auto found = zynforge::songs::detect (flags, sr, params);
 
@@ -988,25 +998,6 @@ void MainComponent::showSessionInfo()
         return;
     }
 
-    const auto proj = findSessionProj (sessionDir);
-
-    juce::var parsed;
-    if (proj.existsAsFile())
-        parsed = juce::JSON::parse (proj);
-    juce::DynamicObject::Ptr obj;
-    if (parsed.isObject())
-        obj = parsed.getDynamicObject();
-    else
-        obj = new juce::DynamicObject();
-
-    auto readString = [&] (const juce::Identifier& k, const juce::String& fallback = {}) -> juce::String
-    {
-        if (obj == nullptr) return fallback;
-        const auto v = obj->getProperty (k);
-        if (v.isString()) return v.toString();
-        return fallback;
-    };
-
     // Convert the persisted captureFormat int back to a readable label.
     auto formatLabel = [] (int code) -> juce::String
     {
@@ -1026,9 +1017,13 @@ void MainComponent::showSessionInfo()
     };
 
     SessionInfoDialog::Fields fields;
-    fields.name = readString ("name", sessionDir.getFileName());
+    // The folder's name is the session's (title bar, status line, recent list);
+    // a Save As copy's project still carries the source's. The rate is the one
+    // the session runs at now, not the one it was created with.
+    fields.name = sessionDir.getFileName();
     {
-        const auto sr = obj ? (double) obj->getProperty ("sampleRate") : 0.0;
+        const auto sr = engine.getPlayer().isLoaded() && engine.getPlayer().getSampleRate() > 0.0
+                            ? engine.getPlayer().getSampleRate() : engine.getSessionSampleRate();
         fields.sampleRate = sr > 0.0
             ? juce::String (sr / 1000.0, 1) + " kHz"
             : juce::String ("--");

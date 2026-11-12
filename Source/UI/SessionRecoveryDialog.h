@@ -6,6 +6,7 @@
 #include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "FloatingLaunch.h"
 
 #include <functional>
 #include <vector>
@@ -206,22 +207,27 @@ namespace zynforge
             const auto dir  = r->dir;
             const auto name = r->name;
             juce::Component::SafePointer<SessionRecoveryDialog> self (this);
-            juce::AlertWindow::showAsync (
-                juce::MessageBoxOptions()
-                    .withIconType (juce::MessageBoxIconType::WarningIcon)
-                    .withTitle ("Delete session?")
-                    .withMessage ("This will permanently delete:\n\n"
-                                  + dir.getFullPathName()
-                                  + "\n\nThe audio in this session will be lost.")
-                    .withButton ("Delete")
-                    .withButton ("Cancel"),
-                [self, dir] (int chosen)
+            // The list closes when a take starts, and its questions with it
+            // (as Cancel): nothing is deleted behind a rolling take.
+            auto* ask = new juce::AlertWindow ("Delete session?",
+                                               "This will permanently delete:\n\n" + dir.getFullPathName()
+                                                   + "\n\nThe audio in this session will be lost.",
+                                               juce::MessageBoxIconType::WarningIcon);
+            ask->addButton ("Delete", 1);
+            ask->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            closesForTake (ask);
+            ask->enterModalState (true, juce::ModalCallbackFunction::create (
+                [self, dir, ask] (int chosen)
                 {
+                    std::unique_ptr<juce::AlertWindow> dispose (ask);
                     if (chosen != 1 || self == nullptr || self->removeCb == nullptr) return;
                     if (const auto refusal = self->removeCb (dir); refusal.isNotEmpty())
                     {
-                        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                                "Delete failed", refusal);
+                        auto* failed = new juce::AlertWindow ("Delete failed", refusal, juce::MessageBoxIconType::WarningIcon);
+                        failed->addButton ("OK", 0, juce::KeyPress (juce::KeyPress::returnKey), juce::KeyPress (juce::KeyPress::escapeKey));
+                        closesForTake (failed);
+                        failed->enterModalState (true, juce::ModalCallbackFunction::create (
+                            [failed] (int) { std::unique_ptr<juce::AlertWindow> gone (failed); }), false);
                         return;
                     }
                     // Drop the row from our local model so the table
@@ -243,7 +249,7 @@ namespace zynforge
                             if (auto* dw = self->findParentComponentOfClass<juce::DialogWindow>())
                                 dw->exitModalState (0);
                     }
-                });
+                }), false);
         }
 
         int getNumRows() override { return (int) sortedIndices.size(); }

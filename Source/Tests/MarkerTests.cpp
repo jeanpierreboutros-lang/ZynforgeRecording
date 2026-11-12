@@ -138,6 +138,31 @@ namespace zynforge
                 expectEquals (m.getCount(), 0);
                 expect (m.getAll().empty());
             }
+
+            beginTest ("Default marker names count from the session's own markers");
+            {
+                const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                      .getChildFile ("zf-marker-names-" + juce::Uuid().toString());
+                const auto first = root.getChildFile ("First"), second = root.getChildFile ("Second");
+                expect (first.createDirectory().wasOk() && second.createDirectory().wasOk());
+                {
+                    MarkersManager m;
+                    m.setContext (first, 48000.0);
+                    for (int i = 0; i < 12; ++i) m.drop (1000 * i);
+                    m.setContext (second, 48000.0);
+                    m.drop (0);
+                    expectEquals (m.getAll()[0].name, juce::String ("Marker 1"),
+                                  "the new session's first marker counted on from the last session");
+                    m.clearContext();
+                    m.drop (0);
+                    expectEquals (m.getAll()[0].name, juce::String ("Marker 1"));
+                    m.setContext (first, 48000.0);
+                    m.drop (99000);
+                    expectEquals (m.getAll().back().name, juce::String ("Marker 13"),
+                                  "reopening a session must not reuse a name it already has");
+                }
+                root.deleteRecursively();
+            }
         }
     };
 

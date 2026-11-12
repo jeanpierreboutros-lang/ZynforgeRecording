@@ -106,6 +106,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // The ids after 200-249 are other commands, so the list stops there.
         // "Delete a template..." shows every one, which is the way back to the rest.
         const int tShown = juce::jmin (tList.size(), kMenuTemplateSlots);
+        // macOS keeps showing this build of the menu until the next one: a
+        // click resolves to the file shown, not to the list as it is then.
+        menuTemplateFiles.clearQuick();
+        for (int i = 0; i < tShown; ++i) menuTemplateFiles.add (tList[i]);
         for (int i = 0; i < tShown; ++i)
         {
             const bool isDefault = (tList[i] == starred);
@@ -255,13 +259,16 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                : juce::String ("Transport Sync (MTC / LTC)..."),
                        ! rolling);
             m.addSeparator();
+            // Turning it on mid-take would open a second capture of the device
+            // beside the take, and freeze this window while it connects.
             m.addItem (958, useCaptureDaemon
                                ? (lostDaemonTakeUnknown()
                                       ? "Capture daemon: NOT ANSWERING (turn off...)"
                                       : captureSupervisor.isDaemonRecording()
                                       ? "Capture daemon: TAKE ROLLING (stop to disable)"
                                       : "Capture daemon: ON (experimental)")
-                               : juce::String ("Capture daemon: off (experimental)..."));
+                               : juce::String ("Capture daemon: off (experimental)..."),
+                       useCaptureDaemon || ! (rolling || engine.isCaptureFinalizing() || captureMetadataPending));
             m.addItem (975, "Reconnect Capture Daemon",
                        useCaptureDaemon && ! captureSupervisor.isAttached());
             menu.addSubMenu ("Recording & Sync", m);
@@ -395,6 +402,11 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording())
         << '|' << (int) engine.isTakeOnDisk()
         << '|' << sessionJobs.runningJob()
+        // Ticks and items macOS keeps from the last build of the menu.
+        << '|' << (int) engine.isAutoArmOnInputDetect()
+        << '|' << (int) zeroCrossSnap
+        << '|' << templateMenuRevision
+        << '|' << (int) engine.isCaptureFinalizing()
         << '|' << (int) songExportRunning;
 
     if (sig != lastMenuStateSig)
@@ -466,19 +478,29 @@ void MainComponent::registerMenuCommands()
     m.add (71,  [this] { printSetlist(); });
     m.addRange (200, 200 + kMenuTemplateSlots - 1, [this] (int offset)
     {
-        const auto list = listSessionTemplates();
-        if (offset < list.size())
+        if (offset >= menuTemplateFiles.size()) return;
+        const auto selected = menuTemplateFiles[offset];
+        if (! selected.existsAsFile())
         {
-            const auto selected = list[offset];
-            confirmSessionReplacement ([this, selected] { launchNewSessionDialog (selected); });
+            ++templateMenuRevision;
+            showStatus ("Template " + selected.getFileNameWithoutExtension() + " is gone; nothing was opened");
+            return;
         }
+        confirmSessionReplacement ([this, selected] { launchNewSessionDialog (selected); });
     });
     m.add (250, [this] { promptDeleteSessionTemplate(); });
     m.add (260, [this] { setDefaultTemplate ({}); });
     m.addRange (2000, 2099, [this] (int offset)
     {
-        const auto list = listSessionTemplates();
-        if (offset < list.size()) setDefaultTemplate (list[offset]);
+        if (offset >= menuTemplateFiles.size()) return;
+        const auto selected = menuTemplateFiles[offset];
+        if (! selected.existsAsFile())
+        {
+            ++templateMenuRevision;
+            showStatus ("Template " + selected.getFileNameWithoutExtension() + " is gone; the default was not changed");
+            return;
+        }
+        setDefaultTemplate (selected);
     });
     m.add (61,  [this] { onBackupClicked(); });
     m.add (99,  [this] { confirmAndQuit(); });
@@ -501,9 +523,10 @@ void MainComponent::registerMenuCommands()
         showStatus (engine.isAutoArmOnInputDetect() ? "Auto-arm on input detect: ON"
                                                     : "Auto-arm on input detect: OFF");
     });
-    m.add (251, [this] { showSessionInfo(); });
+    m.add (251, [this] { if (! waitsForTake ("Session Info")) showSessionInfo(); });
     m.add (255, [this]
     {
+        if (waitsForTake ("Session Format & Recording")) return;
         SessionSettingsDialog::launch (engine,
             [self = juce::Component::SafePointer<MainComponent> (this)] { if (self != nullptr) self->relocateActiveSession(); },
             [self = juce::Component::SafePointer<MainComponent> (this)] (double sr) { if (self != nullptr) self->applySessionSampleRate (sr); });

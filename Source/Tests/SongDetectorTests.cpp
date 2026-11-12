@@ -160,6 +160,38 @@ namespace zynforge
                 expectEquals (heard ({ voice (0), voice (1) }), 1, "the pair's strips did not each hear their own channel");
                 dir.deleteRecursively();
             }
+
+            beginTest ("A take that cannot be opened fails the scan instead of leaving its strip out");
+            {
+                auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getChildFile ("zf-songs-" + juce::Uuid().toString());
+                dir.createDirectory();
+                const auto good = dir.getChildFile ("Track_01.wav");
+                const auto broken = dir.getChildFile ("Track_02.wav");
+                const int len = (int) (2.0 * sr);
+                {
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (
+                        good.createOutputStream().release(), sr, 1, 24, {}, 0));
+                    juce::AudioBuffer<float> buf (1, len);
+                    buf.clear();
+                    for (int i = 0; i < len; ++i) buf.setSample (0, i, 0.5f);
+                    if (w != nullptr) w->writeFromAudioSampleBuffer (buf, 0, len);
+                }
+                expect (broken.replaceWithText ("this is not a WAV file any more"));
+                Clip whole;
+                whole.fileLengthSamples = len;
+                std::vector<songs::Voice> voices (2);
+                voices[0].ownFile = good;   voices[0].clips.push_back (whole);
+                voices[1].ownFile = broken; voices[1].clips.push_back (whole);
+                double rate = sr;
+                bool readFailed = false;
+                juce::String unreadable;
+                songs::scanVoices (voices, p, rate, nullptr, &readFailed, &unreadable);
+                expect (readFailed, "a take that would not open counted as a quiet one");
+                expectEquals (unreadable, juce::String ("Track_02.wav"), "the strip that could not be read is not named");
+                dir.deleteRecursively();
+            }
         }
     };
 
