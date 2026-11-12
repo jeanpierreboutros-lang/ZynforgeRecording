@@ -217,7 +217,16 @@ namespace zynforge
             // push may not. Drop a leading verb so `address` is the parameter.
             int first = 0;
             const auto lead = tok[0].toUpperCase();
-            if (lead == "OK" || lead == "NOTIFY" || lead == "ERROR" || lead == "OKM")
+            // An ERROR repeats the request the desk refused. It answers
+            // nothing, so it must never read as the parameter it names: as a
+            // handshake, or as a channel name. It keeps ERROR as its address
+            // and the rest as one text argument, for the log.
+            if (lead == "ERROR")
+            {
+                tok.remove (0);
+                return ConsoleMessage ("ERROR", { juce::var (tok.joinIntoString (" ")) });
+            }
+            if (lead == "OK" || lead == "NOTIFY" || lead == "OKM")
                 first = 1;
             if (first >= tok.size()) return {};
             // "get"/"set" may follow the status verb; skip that too.
