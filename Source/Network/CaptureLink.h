@@ -10,7 +10,9 @@
 #include <functional>
 #include <mutex>
 #include <chrono>
+#include <memory>
 #include <thread>
+#include <vector>
 
 namespace zynforge { struct ConcurrencyAuditAccess; }
 
@@ -48,15 +50,21 @@ namespace zynforge::capture
         std::function<void (const Command&)> onCommand;
 
         // Push to the connected GUI. Thread-safe; no-op if no client. Returns
-        // false if the write failed (peer gone).
+        // false if the write failed (peer gone). A reply sent from inside a
+        // command goes only to the connection that command came in on: a
+        // window superseded while its command ran never hears it, and nor does
+        // the window that superseded it.
         bool sendStatus (const EngineStatus&);
         bool sendReply  (const Reply&);
 
     private:
         void acceptLoop();
-        void readLoop (std::unique_ptr<juce::StreamingSocket>, Command hello,
-                       juce::String serverProof);
-        bool writeLine (const juce::var&);
+        void readLoop (std::shared_ptr<juce::StreamingSocket>, Command hello,
+                       juce::String serverProof, std::shared_ptr<std::atomic<bool>> finished);
+        bool writeLine (const juce::var&, bool isReply);
+        // Joins readers of superseded connections that have finished; with
+        // `all`, waits for every one.
+        void joinRetiredReaders (bool all);
 
         std::unique_ptr<juce::StreamingSocket> listener;
         identity::Endpoint endpointIdentity;
@@ -70,6 +78,12 @@ namespace zynforge::capture
         // GUI wedged the daemon. A timed acquire fails fast instead.
         std::timed_mutex       writeLock;            // serialises writes to `client`
         std::thread            acceptThread, readThread;
+        std::shared_ptr<std::atomic<bool>> readerFinished;   // readThread's own flag
+        // A superseded connection's reader can still be inside a command (a
+        // STOP closing every file on every copy). The new window is served at
+        // once beside it; it is joined once done. Accept thread and stop() only.
+        struct RetiredReader { std::thread thread; std::shared_ptr<std::atomic<bool>> finished; };
+        std::vector<RetiredReader> retiredReaders;
         std::atomic<bool>      running { false };
         std::atomic<bool>      clientConnected { false };
         std::atomic<int>       listenPort { -1 };
