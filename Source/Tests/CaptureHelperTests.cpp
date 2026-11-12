@@ -106,6 +106,8 @@ namespace zynforge
 
             juce::StringArray outputs { "Interface", "Headphones" };
             std::atomic<int> opens { 0 }, starts { 0 };
+            // Every open fails, as when another app hogs the Mac's default input.
+            std::atomic<bool> refuseOpens { false };
             std::mutex threadLock;
             std::vector<std::thread::id> openThreads;
             RigDevice* live { nullptr };
@@ -117,6 +119,7 @@ namespace zynforge
                 const std::lock_guard<std::mutex> g (type.threadLock);
                 type.openThreads.push_back (std::this_thread::get_id());
             }
+            if (type.refuseOpens.load()) return "the device is in use by another application";
             ++type.opens;
             activeInputs = hasInputs ? ins : juce::BigInteger();
             activeOutputs = hasOutputs ? outs : juce::BigInteger();
@@ -223,6 +226,36 @@ namespace zynforge
         void runTest() override
         {
             using namespace capture;
+
+            beginTest ("The helper starts when the Mac's default input won't open, and opens the real one when told");
+            {
+                CaptureDaemon daemon;
+                auto owned = std::make_unique<RigType>();
+                auto* type = owned.get();
+                type->refuseOpens.store (true);
+                daemon.useDeviceTypeForTests (std::move (owned));
+                juce::Random random;
+                bool listening = false;
+                for (int attempt = 0; attempt < 5 && ! listening; ++attempt)
+                    listening = daemon.start (50000 + random.nextInt (9000), 1);
+                expect (listening, "a default input that would not open kept the helper from starting");
+                if (! listening) return;
+
+                // The window's ConfigureCapture names the show interface.
+                type->refuseOpens.store (false);
+                daemon.handleCommand (configureCommand (true, 0));
+                auto* device = daemon.deviceManager.getCurrentAudioDevice();
+                expect (device != nullptr, "the configured device never opened");
+                if (device != nullptr) expectEquals (device->getName(), juce::String ("Interface"));
+                const auto session = tempSession ("no-default");
+                Command start; start.action = Action::StartRecording; start.sessionDir = session.getFullPathName();
+                daemon.handleCommand (start);
+                expect (daemon.isRecording(), "the helper can't record once configured");
+                Command stop; stop.action = Action::StopRecording;
+                daemon.handleCommand (stop);
+                daemon.stop();
+                session.deleteRecursively();
+            }
 
             beginTest ("The helper records from the input alone, so losing the window's monitor output leaves its take rolling");
             {

@@ -77,8 +77,10 @@ int main (int argc, char* argv[])
     if (noDevice) daemon.setTestModeNoDevice (true);
     if (! daemon.start (port, juce::jlimit (1, 256, inputs)))
     {
-        juce::Logger::writeToLog ("[capture] failed to start (port " + juce::String (port) + ")");
-        return 1;
+        // The only way start fails: no device yet is not a failure. The window
+        // reads this exit code to say why (CaptureSupervisor::connectOrLaunch).
+        juce::Logger::writeToLog ("[capture] could not listen (port " + juce::String (port) + ")");
+        return zynforge::capture::helperexit::kExitCannotListen;
     }
     if (noDevice)
         daemon.prepareForTests (48000.0, 256, juce::jlimit (1, 256, inputs));

@@ -32,15 +32,15 @@ namespace zynforge::capture
 
         if (! testMode.load())
         {
-            // Inputs only -- the daemon never plays back.
+            // Inputs only -- the daemon never plays back. The Mac's default
+            // input is only a starting point: the window's ConfigureCapture
+            // names the show's interface. A default that won't open (hogged by
+            // another app, a Bluetooth mic gone, an aggregate missing a member)
+            // is no device yet, not a helper that can't start; RECORD refuses
+            // until a device is running ("capture audio device is stopped").
             const auto err = deviceManager.initialiseWithDefaultDevices (numInputs, 0);
             if (err.isNotEmpty())
-            {
-                juce::Logger::writeToLog ("[capture] device init failed: " + err);
-                opening.unlock();
-                stop();
-                return false;
-            }
+                juce::Logger::writeToLog ("[capture] no default input yet: " + err);
             deviceManager.addAudioCallback (this);
         }
         else if (registerCallbackForTests)

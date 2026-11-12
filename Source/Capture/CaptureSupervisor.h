@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <sys/types.h>
 
 namespace zynforge::capture
 {
@@ -19,7 +20,7 @@ namespace zynforge::capture
     //  * connectOrLaunch() tries to ATTACH to an already-running daemon
     //    first -- a restarted GUI re-adopts a rolling take instead of
     //    spawning a second daemon. Only when nothing answers does it launch
-    //    the binary (juce::ChildProcess) and connect.
+    //    the binary (HelperProcess, below) and connect.
     //  * tick() is the GUI-side watchdog (call from the UI timer): it
     //    detects a dead daemon / dropped link and reports via onDaemonDied
     //    -- LOUDLY if it died mid-take. It never auto-relaunches mid-take
@@ -34,6 +35,27 @@ namespace zynforge::capture
     // Message-thread only, like the rest of the engine surface; status
     // pushes arrive on the client reader thread and are double-buffered
     // under statusLock.
+
+    // The helper process as launched, with nothing of the window's but what it
+    // is given. juce::ChildProcess forks and execs with every descriptor the
+    // window holds still open, so a helper it launched kept the window's twin
+    // and OSC listeners (and open audio files) for as long as it lived: the
+    // window could not listen on those ports again. This spawns with
+    // POSIX_SPAWN_CLOEXEC_DEFAULT, so the helper gets /dev/null for stdin,
+    // stdout and stderr and nothing else. Destroying it never stops the helper.
+    class HelperProcess
+    {
+    public:
+        bool start (const juce::StringArray& arguments);
+        bool isRunning();
+        // The exit status once it has exited (a signal reads as 128 + signal), else -1.
+        int  exitCode() const noexcept { return lastExitCode; }
+
+    private:
+        pid_t pid { 0 };
+        int   lastExitCode { -1 };
+    };
+
     class CaptureSupervisor
     {
     public:
@@ -116,7 +138,7 @@ namespace zynforge::capture
 
     private:
         CaptureClient      client;
-        juce::ChildProcess process;
+        HelperProcess      process;
         juce::File         binaryPath;
         int                port      { 0 };
         bool               launched  { false };

@@ -139,6 +139,55 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("The helper keeps none of the window's sockets, so the window can listen on its ports again");
+            {
+                const auto bin = CaptureSupervisor::discoverBinary();
+                expect (bin.existsAsFile(), "ZynforgeCapture binary not found relative to the test executable");
+                if (! bin.existsAsFile()) return;
+
+                // What the window holds when the helper starts: the twin
+                // follower's listener and the OSC remote's port.
+                auto tcp = std::make_unique<juce::StreamingSocket>();
+                expect (tcp->createListener (0, "127.0.0.1"));
+                const int tcpPort = tcp->getBoundPort();
+                auto udp = std::make_unique<juce::DatagramSocket> (false);
+                expect (udp->bindToPort (0));
+                const int udpPort = udp->getBoundPort();
+
+                CaptureSupervisor sup;
+                sup.setBinaryPath (bin);
+                expect (sup.connectOrLaunch (49746, { "--no-device", "--inputs", "1" }), sup.lastConnectError);
+                expect (sup.didLaunch(), "should have launched (nothing was on the port)");
+
+                // Disconnect and Listen again in the Twin panel; OSC off and on.
+                tcp.reset();
+                udp.reset();
+                juce::StreamingSocket tcpAgain;
+                expect (tcpAgain.createListener (tcpPort, "127.0.0.1"),
+                        "the helper still holds the window's twin port " + juce::String (tcpPort));
+                juce::DatagramSocket udpAgain (false);
+                expect (udpAgain.bindToPort (udpPort),
+                        "the helper still holds the window's OSC port " + juce::String (udpPort));
+
+                sup.shutdown();   // idle, and this supervisor launched it: it quits
+                expect (waitUntil ([&]
+                {
+                    CaptureClient probe;
+                    const bool up = probe.connect ("127.0.0.1", 49746) && probe.hello (300).ok;
+                    probe.disconnect();
+                    return ! up;
+                }, 5000), "helper did not exit after Quit -- would leak across runs");
+            }
+
+            beginTest ("A helper that quits while starting is not blamed on a busy port");
+            {
+                CaptureSupervisor sup;
+                sup.setBinaryPath (juce::File ("/usr/bin/false"));   // exits at once, port untouched
+                expect (! sup.connectOrLaunch (49748));
+                expect (! sup.lastConnectError.containsIgnoreCase ("busy"), sup.lastConnectError);
+                expect (sup.lastConnectError.containsIgnoreCase ("quit"), sup.lastConnectError);
+            }
+
             beginTest ("watchdog reports a dead daemon (loud when it was recording)");
             {
                 CaptureDaemon fake;
