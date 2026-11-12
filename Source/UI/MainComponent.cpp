@@ -1233,7 +1233,9 @@ void MainComponent::applyLockState()
     vscButton    .setEnabled (e);
     patchButton  .setEnabled (e);
     metersButton .setEnabled (e);
-    addChannelButton.setEnabled (e && ! engine.isRecording());
+    // LOCK alone greys + CH. Its click refuses a take itself, and nothing turns
+    // it back on at STOP: greyed here by an UNLOCK during a take, it stayed grey.
+    addChannelButton.setEnabled (e);
     setlistBar.setEnabled (e);
     if (transportBar != nullptr) transportBar->setEnabled (e);
     if (masterStrip != nullptr) masterStrip->setEnabled (e);
