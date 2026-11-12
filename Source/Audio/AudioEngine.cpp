@@ -876,7 +876,8 @@ namespace zynforge
                                 ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 48000.0);
         const auto start = chaseStartLabel.load (std::memory_order_relaxed);
         // Both ends converted alike: a pulled-down rate's labels are not seconds.
-        double secs = timecodeChase.timeOfDaySeconds (0) - timecodeChase.secondsAt (start, 0);
+        // The master is where its last label was plus that label's age.
+        double secs = timecodeChase.timeOfDayNow() - timecodeChase.secondsAt (start, 0);
         // House timecode wraps at midnight; a show running across it is still
         // the same show.
         const double kDay = timecodeChase.secondsAt (24u << 24, 0);
@@ -946,8 +947,9 @@ namespace zynforge
     {
         if (! isChaseLive()) return false;
         const bool ltc = getChaseMode() == ChaseMode::Ltc;
-        anchor = { timecodeChase.timeOfDaySeconds (ltc ? 1 : 2),
-                   juce::Time::getHighResolutionTicks(), ltc ? "ltc" : "mtc" };
+        // The label's age (1 frame for LTC, 2 for MTC, and the time since it
+        // came) is counted, so the stamp is the master's time now.
+        anchor = { timecodeChase.timeOfDayNow(), juce::Time::getHighResolutionTicks(), ltc ? "ltc" : "mtc" };
         return true;
     }
 

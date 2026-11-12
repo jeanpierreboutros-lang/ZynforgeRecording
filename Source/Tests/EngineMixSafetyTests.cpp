@@ -9,6 +9,7 @@
 #include "../Audio/MixKernel.h"
 #include "../Audio/PlaybackReader.h"
 #include "../Audio/SessionPlayer.h"
+#include "LtcTestSignal.h"
 
 #include <atomic>
 #include <functional>
@@ -593,6 +594,20 @@ namespace zynforge
                 e.getTimecodeChase().feedMtcFullFrame (0, 0, 1, 0, 25.0f);
                 expectWithinAbsoluteError ((double) e.getChaseTargetSamples(), 3.0 * rate, 1.0,
                                            "a show running over midnight lost its place");
+
+                // 29.97 drop-frame: the label is a frame count, not label seconds.
+                expect (e.setChaseStartTimecode ("00:00:00:00"));
+                e.getTimecodeChase().feedMtcFullFrame (0, 0, 59, 29, 29.97f, true);
+                expectWithinAbsoluteError ((double) e.getChaseTargetSamples(), 1799.0 * 1001.0 / 30000.0 * rate, 1.0,
+                                           "drop-frame chase is off by what its labels skip");
+
+                // A running master: a quarter-frame run's time is two frames old
+                // when it completes, and older by the time the poll reads it.
+                expect (e.setChaseStartTimecode ("01:00:00:00"));
+                for (const auto message : ltctest::mtcQuarterFrames ({ 1, 0, 0, 10 }, 1))
+                    e.getTimecodeChase().feedMtcQuarterFrame (message);
+                expectWithinAbsoluteError ((double) e.getChaseTargetSamples(), 12.0 / 25.0 * rate, 0.005 * rate,
+                                           "chase runs behind a running master");
 
                 expect (e.setChaseStartTimecode ("10:20:30:04"));
                 e.claimMixerFor (f.dir);

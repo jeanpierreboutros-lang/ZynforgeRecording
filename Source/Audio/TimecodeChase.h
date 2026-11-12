@@ -47,7 +47,7 @@ namespace zynforge
         void reset() noexcept
         {
             running       .store (false, std::memory_order_relaxed);
-            label         .store (0, std::memory_order_relaxed);
+            labelWord     .store (0, std::memory_order_relaxed);
             ltcFps        .store (0.0f, std::memory_order_relaxed);
             ltcDropFrame  .store (false, std::memory_order_relaxed);
             lastMtcTickMs .store (0, std::memory_order_relaxed);
@@ -95,8 +95,13 @@ namespace zynforge
         // can't chatter around zero), each interval between two of them is
         // classified as a half or full bit cell, and complete frames are
         // decoded on their sync word.
-        void feedLtc (const float* samples, int n, double sampleRate) noexcept
+        void feedLtc (const float* samples, int n, double sampleRate,
+                      double nowMs = juce::Time::getMillisecondCounterHiRes()) noexcept
         {
+            // `nowMs` is the end of this block: a frame decoded inside it came
+            // that much earlier (see decodeFrame).
+            feedNowMs = nowMs;
+            feedEndSample = sampleClock + n;
             if (samples == nullptr || n <= 0 || sampleRate <= 0.0) return;
 
             float blockPeak = 0.0f;
@@ -185,7 +190,7 @@ namespace zynforge
                 ltcFps.store (fps, std::memory_order_relaxed);
                 ltcDropFrame.store (dropFrame, std::memory_order_relaxed);
             }
-            publishLabel (hr, mn, sc, fr);
+            publishLabel (hr, mn, sc, fr, 0, 0.0);   // a cue: where, not a running clock
             mtcAcc = MtcAcc{};   // restart the QF accumulator
         }
 
@@ -212,23 +217,43 @@ namespace zynforge
             return (juce::uint32) (juce::Time::getMillisecondCounter() - last) <= kLtcTimeoutMs;
         }
         bool isRunning() const noexcept { return isMtcRunning() || isLtcLocked(); }
-        juce::uint8 getHours()   const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 24); }
-        juce::uint8 getMinutes() const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 16); }
-        juce::uint8 getSeconds() const noexcept { return (juce::uint8) (label.load (std::memory_order_relaxed) >> 8); }
-        juce::uint8 getFrames()  const noexcept { return (juce::uint8)  label.load (std::memory_order_relaxed); }
+        juce::uint8 getHours()   const noexcept { return (juce::uint8) (currentLabel() >> 24); }
+        juce::uint8 getMinutes() const noexcept { return (juce::uint8) (currentLabel() >> 16); }
+        juce::uint8 getSeconds() const noexcept { return (juce::uint8) (currentLabel() >> 8); }
+        juce::uint8 getFrames()  const noexcept { return (juce::uint8)  currentLabel(); }
         // Detected frame rate (23.976, 24, 25, 29.97, 30) -- 0 until a frame
         // decodes. 29.97 is drop-frame when isDropFrame(), pulled-down
         // non-drop otherwise.
         float getFps() const noexcept { return ltcFps.load (std::memory_order_relaxed); }
         bool  isDropFrame() const noexcept { return ltcDropFrame.load (std::memory_order_relaxed); }
 
-        // The time of day the timecode stands for now, in seconds. A label is
+        // The time of day the last label stands for, in seconds. A label is
         // only known once its frame has passed: framesLate is that age (1 for
         // LTC, whose sync word ends the frame; 2 for MTC, whose eight
         // quarter-frames span two).
         double timeOfDaySeconds (int framesLate) const noexcept
         {
-            return secondsAt (label.load (std::memory_order_relaxed), framesLate);
+            return secondsAt (currentLabel(), framesLate);
+        }
+
+        // The time of day the master is at NOW (`nowMs` on the millisecond
+        // counter): the last label, how late it was known when it came (1 frame
+        // for LTC, 2 for an MTC run), and how long ago it came. Reading the
+        // bare label put the chase 1.5-3.5 frames behind the master. A cue (an
+        // MTC full frame) is where a parked master is, so it does not age, and
+        // neither does a label old enough that the master has stopped.
+        double timeOfDayNow (double nowMs = juce::Time::getMillisecondCounterHiRes()) const noexcept
+        {
+            const auto word = labelWord.load (std::memory_order_acquire);
+            const int  late = (int) ((word >> 32) & 0x3);
+            double seconds = secondsAt ((juce::uint32) word, late);
+            if (late > 0)
+            {
+                const auto now = (juce::uint64) (juce::int64) std::floor (nowMs * kArrivalUnitsPerMs);
+                const double age = (double) ((now - (word >> 34)) & kArrivalMask) / kArrivalUnitsPerMs / 1000.0;
+                if (age < kLabelAgeLimitSeconds) seconds += age;
+            }
+            return seconds;
         }
 
         // The seconds a label (hh mm ss ff, one byte each) stands for at the
@@ -241,6 +266,17 @@ namespace zynforge
             const double rate = getFps() > 0.0f ? (double) getFps() : 30.0;
             const int h = (int) (at >> 24), m = (int) ((at >> 16) & 0xFF);
             const int s = (int) ((at >> 8) & 0xFF), f = (int) (at & 0xFF);
+            if (isDropFrame())
+            {
+                // 29.97 drop-frame skips labels 00 and 01 at the start of each
+                // minute but every tenth, so its labels run 30 to the second
+                // and stay near the clock only on average: read as label
+                // seconds a label is up to 60 ms off within each minute. Its
+                // frame count is exact, each frame 1001/30000 s (SMPTE 12M).
+                const juce::int64 minutes = (juce::int64) h * 60 + m;
+                const juce::int64 frames = (minutes * 60 + s) * 30 + f - 2 * (minutes - minutes / 10);
+                return (double) (frames + framesLate) * 1001.0 / 30000.0;
+            }
             if (isPulledDown (rate))
             {
                 const int nominal = (int) std::lround (rate);
@@ -253,6 +289,18 @@ namespace zynforge
         juce::uint32 labelAt (double seconds) const noexcept
         {
             const double rate = getFps() > 0.0f ? (double) getFps() : 30.0;
+            if (isDropFrame())
+            {
+                // The frame count back to its label: add back the labels the
+                // count skipped, 18 every ten minutes and 2 every other minute.
+                constexpr juce::int64 kFramesPerDay = 2589408, kPerTenMinutes = 17982, kPerMinute = 1798;
+                auto n = (juce::int64) std::floor (seconds * 30000.0 / 1001.0 + 1.0e-6);
+                n = ((n % kFramesPerDay) + kFramesPerDay) % kFramesPerDay;
+                const auto tens = n / kPerTenMinutes, rest = n % kPerTenMinutes;
+                n += 18 * tens + (rest < 2 ? 0 : 2 * ((rest - 2) / kPerMinute));
+                return ((juce::uint32) ((n / 108000) % 24) << 24) | ((juce::uint32) ((n / 1800) % 60) << 16)
+                     | ((juce::uint32) ((n / 30) % 60) << 8) | (juce::uint32) (n % 30);
+            }
             juce::int64 whole = 0;
             int frame = 0;
             if (isPulledDown (rate))
@@ -280,13 +328,25 @@ namespace zynforge
             int direction { 0 };   // +1 forwards, -1 backwards, 0 no run yet
         };
 
-        // One atomic word: a reader between stores of four separate fields
-        // could take the hour from one frame and the minute from the next.
-        void publishLabel (juce::uint8 hr, juce::uint8 mn, juce::uint8 sc, juce::uint8 fr) noexcept
+        // One atomic word: a reader between stores of separate fields could
+        // take the hour from one frame and the minute from the next, or one
+        // label's time with another's arrival. Bits 0-31 the label (hh mm ss
+        // ff), 32-33 how many frames late it was known (0: a cue, never aged),
+        // 34-63 when it came, in tenths of a millisecond (wraps after ~30 h;
+        // only the last second is ever used).
+        void publishLabel (juce::uint8 hr, juce::uint8 mn, juce::uint8 sc, juce::uint8 fr,
+                           int framesLate, double arrivedMs) noexcept
         {
-            label.store (((juce::uint32) hr << 24) | ((juce::uint32) mn << 16)
-                             | ((juce::uint32) sc << 8) | (juce::uint32) fr,
-                         std::memory_order_relaxed);
+            const auto label = ((juce::uint32) hr << 24) | ((juce::uint32) mn << 16)
+                             | ((juce::uint32) sc << 8) | (juce::uint32) fr;
+            const auto when = (juce::uint64) (juce::int64) std::floor (arrivedMs * kArrivalUnitsPerMs) & kArrivalMask;
+            labelWord.store ((juce::uint64) label | ((juce::uint64) (framesLate & 0x3) << 32) | (when << 34),
+                             std::memory_order_release);
+        }
+
+        juce::uint32 currentLabel() const noexcept
+        {
+            return (juce::uint32) labelWord.load (std::memory_order_relaxed);
         }
 
         // A rate that is not a whole number and not drop-frame: 23.976 or
@@ -310,7 +370,10 @@ namespace zynforge
             const auto mn = (juce::uint8) (mtcAcc.nibbles[4] |  (mtcAcc.nibbles[5] << 4));
             const auto sc = (juce::uint8) (mtcAcc.nibbles[2] |  (mtcAcc.nibbles[3] << 4));
             const auto fr = (juce::uint8) (mtcAcc.nibbles[0] | ((mtcAcc.nibbles[1] & 0x01) << 4));
-            publishLabel (hr, mn, sc, fr);
+            // A forward run labels the frame of its first message and completes
+            // two frames on. A master shuttling backwards is not a clock to run
+            // forward from, so its label stands as it is.
+            publishLabel (hr, mn, sc, fr, mtcAcc.direction > 0 ? 2 : 0, nowMs);
             running.store (true, std::memory_order_relaxed);
 
             // Frame-rate lives in the hour-MS nibble (type 7): bits 1-2.
@@ -511,7 +574,9 @@ namespace zynforge
             if (drop) fps = 29.97f;
             else if (ltcPulledDown) fps = (float) (nominal * 1000.0 / 1001.0);
 
-            publishLabel (hr, mn, sc, fr);
+            // The sync word just ended this frame, `feedEndSample - at` samples
+            // before the end of the block being fed.
+            publishLabel (hr, mn, sc, fr, 1, feedNowMs - (double) (feedEndSample - at) * 1000.0 / sr);
             ltcDropFrame.store (drop, std::memory_order_relaxed);
             ltcFps      .store (fps, std::memory_order_relaxed);
 
@@ -562,7 +627,16 @@ namespace zynforge
         // Cross-thread atomics.
         std::atomic<bool>  running       { false };   // MTC only
         std::atomic<bool>  ltcLocked     { false };
-        std::atomic<juce::uint32> label     { 0 };   // hh mm ss ff, one byte each
+        std::atomic<juce::uint64> labelWord { 0 };   // see publishLabel
+        static constexpr double       kArrivalUnitsPerMs = 10.0;
+        static constexpr juce::uint64 kArrivalMask = ((juce::uint64) 1 << 30) - 1;
+        // Older than this, the master stopped (MTC times out in 250 ms, LTC in
+        // 300): its last label is where it stopped, not a clock to run on.
+        static constexpr double       kLabelAgeLimitSeconds = 1.0;
+        // The block feedLtc is decoding: when it ends, on the millisecond
+        // counter and in samples fed. Audio thread only.
+        double      feedNowMs { 0.0 };
+        juce::int64 feedEndSample { 0 };
         std::atomic<float>       ltcFps     { 0.0f };
         std::atomic<bool>        ltcDropFrame { false };
         // Wall-clock ms of the last MTC tick (0 = never). Read on the

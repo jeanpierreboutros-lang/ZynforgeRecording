@@ -280,6 +280,101 @@ namespace zynforge
                 expectWithinAbsoluteError (tc.getFps(), 29.97f, 0.01f);
                 expect (tc.isDropFrame());
                 expectTime (tc, { 0, 1, 0, 16 });   // :25..:29 (5), then :02..:16 (15)
+                // 00:01:00;16 is frame 1814 of 1001/30000 s: the labels skipped
+                // are not time.
+                expectWithinAbsoluteError (tc.timeOfDaySeconds (0), 1814.0 * 1001.0 / 30000.0, 1.0e-9);
+            }
+
+            beginTest ("29.97 drop-frame labels convert by their frame count, both ways");
+            {
+                TimecodeChase tc;
+                tc.feedMtcFullFrame (0, 0, 0, 0, 29.97f, true);
+                expect (tc.isDropFrame());
+                const auto label = [] (int h, int m, int s, int f)
+                {
+                    return ((juce::uint32) h << 24) | ((juce::uint32) m << 16) | ((juce::uint32) s << 8) | (juce::uint32) f;
+                };
+                // The standard drop-frame label of frame N (SMPTE 12M).
+                const auto dfLabel = [&label] (juce::int64 n)
+                {
+                    const auto tens = n / 17982, rest = n % 17982;
+                    n += 18 * tens + (rest < 2 ? 0 : 2 * ((rest - 2) / 1798));
+                    return label ((int) ((n / 108000) % 24), (int) ((n / 1800) % 60), (int) ((n / 30) % 60), (int) (n % 30));
+                };
+                const auto real = [] (juce::int64 frames) { return (double) frames * 1001.0 / 30000.0; };
+
+                // The last label of a minute is about 60 ms past what its digits say.
+                expectWithinAbsoluteError (tc.secondsAt (label (0, 0, 59, 29), 0), real (1799), 1.0e-9,
+                                           "a drop-frame label was read as label seconds");
+                expectWithinAbsoluteError (tc.secondsAt (label (0, 1, 0, 2), 0), real (1800), 1.0e-9,
+                                           "the frame after the dropped labels");
+                expectWithinAbsoluteError (tc.secondsAt (label (0, 10, 0, 0), 0), real (17982), 1.0e-9,
+                                           "a tenth minute drops nothing");
+                expectWithinAbsoluteError (tc.secondsAt (label (1, 0, 0, 0), 0), real (107892), 1.0e-9);
+                expectWithinAbsoluteError (tc.secondsAt (label (0, 0, 59, 29), 1), real (1800), 1.0e-9,
+                                           "a frame late is one real frame, not a label");
+                expectWithinAbsoluteError (tc.secondsAt (24u << 24, 0), real (2589408), 1.0e-6,
+                                           "a drop-frame day is 2589408 frames");
+
+                int wrongLabel = 0, wrongTime = 0;
+                for (juce::int64 n = 0; n < 2589408; n += 97)
+                {
+                    const auto expected = dfLabel (n);
+                    if (tc.labelAt (real (n)) != expected) ++wrongLabel;
+                    if (std::abs (tc.secondsAt (expected, 0) - real (n)) > 1.0e-6) ++wrongTime;
+                }
+                for (const juce::int64 n : { (juce::int64) 1798, (juce::int64) 1799, (juce::int64) 1800,
+                                             (juce::int64) 17981, (juce::int64) 17982, (juce::int64) 17983,
+                                             (juce::int64) 19781, (juce::int64) 19782, (juce::int64) 2589407 })
+                {
+                    if (tc.labelAt (real (n)) != dfLabel (n)) ++wrongLabel;
+                    if (std::abs (tc.secondsAt (dfLabel (n), 0) - real (n)) > 1.0e-6) ++wrongTime;
+                }
+                expectEquals (wrongLabel, 0, "a time of day read back as the wrong drop-frame label");
+                expectEquals (wrongTime, 0, "a drop-frame label read as the wrong time");
+            }
+
+            beginTest ("The chase time counts how late a label was known and how long ago it came");
+            {
+                const double sr = 48000.0;
+                // LTC: a label is known when its sync word ends the frame, one
+                // frame after it began, and the playhead keeps moving after that.
+                {
+                    TimecodeChase tc;
+                    const auto sig = ltcSignal (sr, 25.0, false, { 1, 0, 0, 0 }, 50);
+                    const double base = 100000.0;
+                    for (size_t pos = 0; pos < sig.size(); pos += 512)
+                    {
+                        const int n = (int) juce::jmin ((size_t) 512, sig.size() - pos);
+                        tc.feedLtc (sig.data() + pos, n, sr, base + (double) (pos + (size_t) n) * 1000.0 / sr);
+                    }
+                    expect (tc.isRunning());
+                    const double end = base + (double) sig.size() * 1000.0 / sr;
+                    // Frame 0 began at the signal's first sample.
+                    expectWithinAbsoluteError (tc.timeOfDayNow (end), 3600.0 + (double) sig.size() / sr, 0.002,
+                                               "the LTC chase target runs behind the master");
+                    expectWithinAbsoluteError (tc.timeOfDayNow (end + 25.0), 3600.0 + (double) sig.size() / sr + 0.025,
+                                               0.002, "the label's age since it came is not counted");
+                }
+                // MTC: a quarter-frame run labels the frame of its first message;
+                // the whole time is known two frames later.
+                {
+                    TimecodeChase tc;
+                    const double base = 5000.0;
+                    for (int type = 0; type < 8; ++type)
+                        tc.feedMtcQuarterFrame (quarterFrame (type, 1, 0, 0, 10, 1), base + type * 10.0);
+                    expect (tc.isRunning());
+                    const double last = base + 70.0;
+                    expectWithinAbsoluteError (tc.timeOfDayNow (last + 30.0), 3600.0 + 12.0 / 25.0 + 0.030, 1.0e-6,
+                                               "the MTC chase target runs behind the master");
+                }
+                // A full frame is a cue from a parked master: where, not a clock.
+                {
+                    TimecodeChase tc;
+                    tc.feedMtcFullFrame (1, 0, 0, 10, 25.0f);
+                    expectWithinAbsoluteError (tc.timeOfDayNow (juce::Time::getMillisecondCounterHiRes() + 500.0),
+                                               3600.0 + 10.0 / 25.0, 1.0e-9, "a cue was run forward");
+                }
             }
 
             beginTest ("LTC at 29.97 non-drop is told from 30, and its time counts real seconds");
