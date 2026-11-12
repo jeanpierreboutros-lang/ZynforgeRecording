@@ -501,9 +501,10 @@ void MainComponent::registerMenuCommands()
         showStatus (engine.isAutoArmOnInputDetect() ? "Auto-arm on input detect: ON"
                                                     : "Auto-arm on input detect: OFF");
     });
-    m.add (251, [this] { showSessionInfo(); });
+    m.add (251, [this] { if (! waitsForTake ("Session Info")) showSessionInfo(); });
     m.add (255, [this]
     {
+        if (waitsForTake ("Session Format & Recording")) return;
         SessionSettingsDialog::launch (engine,
             [self = juce::Component::SafePointer<MainComponent> (this)] { if (self != nullptr) self->relocateActiveSession(); },
             [self = juce::Component::SafePointer<MainComponent> (this)] (double sr) { if (self != nullptr) self->applySessionSampleRate (sr); });

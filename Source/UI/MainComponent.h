@@ -745,6 +745,20 @@ private:
     bool uiLayoutSavePending { false };   // a layout change arrived during a session job
 
     std::unique_ptr<juce::FileChooser> chooser;
+    // A file or folder panel that answers a session job (Save As, Move,
+    // Handoff, mix bounce, CSV). It reserves nothing while it is up: the
+    // engineer can leave it open for minutes, and a desk or twin RECORD must
+    // still start. Its answer re-checks the take, the job slot and the session.
+    // `chooser` is created by the caller first.
+    void launchSessionPicker (const juce::String& what, int flags, std::function<void (const juce::File&)> answer);
+    // The open session panel's name, or empty.
+    juce::String openSessionPicker() const;
+    bool refuseWhileSessionPickerOpen();
+    bool reserveForPickerAnswer (const juce::String& what, const QuestionScope& scope);
+    juce::String sessionPickerName;
+    const juce::FileChooser* sessionPickerChooser = nullptr;
+    // Stands in for the native panel, which a headless test cannot answer.
+    std::function<void (const juce::String& what, std::function<void (const juce::File&)>)> sessionPickerForTests;
     std::shared_ptr<juce::ChangeListener> batchColourListenerHandle;
 
     zynforge::BigClockPanel bigClock;

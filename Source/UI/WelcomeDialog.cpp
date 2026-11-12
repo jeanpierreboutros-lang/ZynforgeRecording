@@ -1,4 +1,5 @@
 #include "WelcomeDialog.h"
+#include "FloatingLaunch.h"
 #include "RecordPosition.h"
 #include "../Audio/DisplayText.h"
 #include "../Theme/BrandColors.h"
@@ -696,6 +697,8 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
-        opts.launchAsync();
+        // A take behind it (a twin follower, or a bare remote RECORD after
+        // Close Session) closes it, as if cancelled.
+        launchClosesForTake (opts);
     }
 }

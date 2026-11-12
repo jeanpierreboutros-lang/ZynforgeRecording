@@ -4,6 +4,7 @@
 // inside the menu dispatcher; it now reaches the host only through callbacks.
 
 #include "SessionSettingsDialog.h"
+#include "FloatingLaunch.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
@@ -222,10 +223,9 @@ void SessionSettingsDialog::launch (AudioEngine& engine,
     opts.escapeKeyTriggersCloseButton = true;
     opts.useNativeTitleBar            = true;
     opts.resizable                    = false;
-    if (auto* dw = opts.launchAsync())
-    {
-        dw->setAlwaysOnTop (true);
+    // Modal over the window, not on top of every application. A take that
+    // starts behind it closes it, as Cancel: Apply already refuses during one.
+    if (auto* dw = launchClosesForTake (opts))
         dw->toFront (true);
-    }
 }
 }

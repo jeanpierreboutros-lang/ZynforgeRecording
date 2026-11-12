@@ -15,6 +15,7 @@
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
 #include "SessionInfoDialog.h"
+#include "FloatingLaunch.h"
 #include "SessionProjPath.h"
 #include "RecordPosition.h"
 
@@ -1469,21 +1470,29 @@ void MainComponent::removeLastCapture()
         showStatus ("No recorded capture to remove -- it has been removed or moved, or nothing was recorded");
         return;
     }
-    if (! sessionJobs.reserve()) { showStatus ("Wait for the session operation to finish"); return; }
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session operation to finish"); return; }
+    // Nothing is reserved while the question is up: a desk or twin RECORD must
+    // still start, and Quit must not wait on it. A take that starts closes it
+    // (as Cancel). The answer is checked against the capture it asked about,
+    // and deleteCaptureSession refuses under a take or a session job.
+    auto* aw = new juce::AlertWindow ("Remove last capture?", lastCapturePrompt (target),
+                                      juce::MessageBoxIconType::NoIcon, this);
+    aw->setLookAndFeel (&laf);
+    aw->addButton ("Move to Trash", 1);
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::NoIcon)
-            .withTitle ("Remove last capture?")
-            .withMessage (lastCapturePrompt (target))
-            .withButton ("Move to Trash")
-            .withButton ("Cancel"),
-        [self, target] (int result)
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw, target] (int result)
     {
-        if (self == nullptr) return;
-        self->sessionJobs.release();
-        if (result == 1) self->deleteCaptureSession (target);
-    });
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (self == nullptr || result != 1) return;
+        if (self->engine.getLastCapture() != target)
+        {
+            self->showStatus ("The last capture changed while that question was open -- nothing was removed");
+            return;
+        }
+        self->deleteCaptureSession (target);
+    }), false);
 }
 
 juce::File MainComponent::testTrashFolder()

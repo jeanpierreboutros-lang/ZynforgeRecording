@@ -1,4 +1,5 @@
 #include "ExportDialog.h"
+#include "FloatingLaunch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -347,6 +348,7 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
-        opts.launchAsync();
+        // A take that starts behind it (desk, OSC, twin, helper) closes it, as if cancelled.
+        launchClosesForTake (opts);
     }
 }

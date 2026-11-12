@@ -1142,6 +1142,162 @@ public:
         }
     }
 
+    void testSessionModalsCloseForATake()
+    {
+        beginTest ("Session dialogs and prompts close when a take starts behind them");
+        {
+            Folder f; writeSavedShow (f, 1); expect (writeAudio (f.track (1)));
+            Host host (f);
+            auto& main = host.main;
+            main.engine.getMarkers().drop (0, "Opener");
+            const auto expectClosed = [&] (const juce::String& what, std::function<void()> open)
+            {
+                dropModals();
+                open();
+                expect (juce::ModalComponentManager::getInstance()->getNumModalComponents() > 0,
+                        what + ": setup, nothing opened: " + host.status());
+                expectEquals (closedByATake(), 1, what + " stays in front of STOP");
+            };
+            expectClosed ("New Session", [&] { main.launchNewSessionDialog(); });
+            expectClosed ("Export Audio", [&] { main.onExportAudio(); });
+            expectClosed ("Export Songs", [&] { main.exportSongs(); });
+            expectClosed ("Session Info", [&] { main.showSessionInfo(); });
+            expectClosed ("Session Settings", [&] { SessionSettingsDialog::launch (main.engine, {}, {}); });
+            expectClosed ("Welcome", [&] { WelcomeDialog::launch (f.dir.getParentDirectory(), 48000.0,
+                                                                  CaptureFormat::Wav24, {}, {}, {}); });
+            expectClosed ("Replace the session?", [&] { main.confirmSessionReplacement ([] {}); });
+            expectClosed ("Close the session?", [&] { main.closeSession(); });
+            expectClosed ("Folder missing", [&] { main.offerLeaveMissingSession ("Close Without Saving", [] {}); });
+            expectClosed ("Auto-Save", [&] { main.showAutosaveSettings(); });
+            expectClosed ("Template name", [&] { main.promptSaveSessionTemplate(); });
+            expectClosed ("Continue from disk?", [&] { main.offerContinueFromDisk ("Save As", "x", [] {}, [] {}); });
+            expectClosed ("Damaged files", [&] { main.reportDamagedFiles (f.dir, { sessionrepair::DamagedFile() }); });
+            dropModals();
+        }
+
+        beginTest ("Session Settings does not float over other applications");
+        {
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionSettingsDialog::launch (host.engine, {}, {});
+            auto* window = juce::ModalComponentManager::getInstance()->getModalComponent (0);
+            expect (window != nullptr, "setup: the dialog opened");
+            if (window != nullptr) expect (! window->isAlwaysOnTop(), "Session Settings stays above every window");
+            dropModals();
+            forget (host);
+        }
+
+        beginTest ("Session Format & Recording waits for the take like the other dialogs");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            expect (host.main.engine.setTrackArmed (0, true));
+            expect (host.main.engine.startRecording (f.dir));
+            dropModals();
+            host.main.menuItemSelected (255, 3);
+            expectEquals (juce::ModalComponentManager::getInstance()->getNumModalComponents(), 0,
+                          "a modal opened over the rolling take");
+            expect (host.status().contains ("waits until the take has stopped"), host.status());
+            dropModals();
+            host.main.engine.stopRecording();
+        }
+    }
+
+    void testFolderPanelsHoldNothing()
+    {
+        beginTest ("An open Save As, Move or Handoff panel leaves RECORD free and is named");
+        {
+            Folder f; writeSavedShow (f, 1); expect (writeAudio (f.track (1)));
+            Host host (f);
+            Picker picker (host.main);
+            for (int which = 0; which < 3; ++which)
+            {
+                picker.answer = nullptr;
+                if (which == 0) host.main.onSaveSessionAs();
+                if (which == 1) host.main.relocateActiveSession();
+                if (which == 2) host.main.exportShowHandoff();
+                expect (picker.answer != nullptr, "setup: the panel opened: " + host.status());
+                expect (! host.main.sessionIoBusy.load(),
+                        picker.asked + "'s open panel holds the session slot, so a desk or twin RECORD is refused");
+                host.main.statusLabel.setText ({}, juce::dontSendNotification);
+                host.main.onSaveSessionAs();
+                expect (host.status().contains (picker.asked), "the refusal does not name the open panel: " + host.status());
+                picker.reply ({});
+                expect (! host.main.sessionIoBusy.load(), "a cancelled panel kept the slot");
+                expect (host.main.openSessionPicker().isEmpty());
+            }
+        }
+
+        beginTest ("Save As answered after a take started behind its panel copies nothing");
+        {
+            Folder f; writeSavedShow (f, 1);
+            const auto dest = f.dir.getSiblingFile ("Copy");
+            Host host (f);
+            Picker picker (host.main);
+            host.main.onSaveSessionAs();
+            expect (picker.answer != nullptr, "setup: the panel opened");
+            expect (host.main.engine.setTrackArmed (0, true));
+            if (host.main.engine.startRecording (f.dir))
+            {
+                picker.reply (dest);
+                pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 5000);
+                expect (! dest.exists(), "Save As copied a session under a rolling take");
+                expect (host.status().contains ("take"), host.status());
+                host.main.engine.stopRecording();
+            }
+            else expect (false, "setup: the take did not start");
+        }
+
+        beginTest ("Save As answered after another session opened behind its panel copies nothing");
+        {
+            Folder a ("A"), b ("B"); writeSavedShow (a, 1); writeSavedShow (b, 1);
+            const auto dest = a.dir.getSiblingFile ("Copy");
+            Host host (a);
+            Picker picker (host.main);
+            host.main.onSaveSessionAs();
+            expect (picker.answer != nullptr, "setup: the panel opened");
+            host.main.openSessionFolder (b.dir);
+            picker.reply (dest);
+            pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 5000);
+            expect (! dest.exists(), "Save As copied the first session and carried the second one's mixer into it");
+            expect (host.main.engine.getActiveSessionDir() == b.dir);
+            expect (host.status().contains ("changed"), host.status());
+        }
+
+        beginTest ("A mix bounce answered after another session opened bounces nothing");
+        {
+            Folder a ("A"), b ("B"); writeSavedShow (a, 1); writeSavedShow (b, 1);
+            expect (writeAudio (a.track (1)) && writeAudio (b.track (1)));
+            Host host (a);
+            Picker picker (host.main);
+            host.main.onBounceStereoMix();
+            expect (picker.answer != nullptr, "setup: the panel opened");
+            host.main.openSessionFolder (b.dir);
+            const auto target = a.dir.getChildFile ("Export Files/A - Mix.wav");
+            picker.reply (target);
+            pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 10000);
+            expect (! target.exists(), "the second session's mix went into the file named for the first");
+            expect (host.status().contains ("changed"), host.status());
+        }
+
+        beginTest ("New Session from CSV answered after another session opened leaves that session alone");
+        {
+            Folder a ("A"), b ("B"), root ("Sessions", false), input ("Input", false);
+            writeSavedShow (a); writeSavedShow (b);
+            const auto csv = input.dir.getChildFile ("Channels.csv");
+            expect (csv.replaceWithText ("Kick\nSnare\n"));
+            Host host (a);
+            SessionsRoot sessions (host.main, root.dir);
+            Picker picker (host.main);
+            host.main.createSessionFromCsv();
+            expect (picker.answer != nullptr, "setup: the panel opened");
+            host.main.openSessionFolder (b.dir);
+            picker.reply (csv);
+            expect (host.main.engine.getActiveSessionDir() == b.dir, "the CSV session replaced the one opened behind its panel");
+            expectEquals (root.dir.getNumberOfChildFiles (juce::File::findDirectories), 0, "a session was created anyway");
+            expect (host.status().contains ("changed"), host.status());
+        }
+    }
+
     void testLongSessionNames()
     {
         beginTest ("A session name too long for the files derived from it is refused in plain words");
@@ -1167,6 +1323,17 @@ public:
             expect (host.main.lastMetadataSaveError.contains ("too long"), host.main.lastMetadataSaveError);
         }
 
+        beginTest ("Save As refuses a folder name too long to save into");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            const auto dest = f.dir.getSiblingFile (juce::String::repeatedString ("y", 205));
+            expect (host.main.sessionJobs.reserve());
+            host.main.completeSaveAs (f.dir, dest);
+            pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 10000);
+            expect (! dest.exists(), "Save As made a copy whose folder name is too long");
+            expect (host.status().contains ("too long"), host.status());
+        }
     }
 
     void testReadOnlySessionAutosave()
@@ -1192,6 +1359,27 @@ public:
             autosave();
             expect (host.status().contains ("AUTO-SAVE FAILED"), "a change that cannot be saved went unreported: " + host.status());
             if (auto* props = host.main.engine.getAppProps()) props->setValue ("autosaveMinutes", 5);
+        }
+    }
+
+    void testRemoveLastCaptureQuestion()
+    {
+        beginTest ("Remove last capture? holds nothing while it waits, and a take closes it");
+        {
+            Folder take;
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.setStripCount (1);
+            expect (host.engine.setTrackArmed (0, true));
+            expect (host.engine.startRecording (take.dir));
+            host.engine.stopRecording();
+            expect (host.engine.getLastCapture() == take.dir, "setup: no last capture");
+            dropModals();
+            host.removeLastCapture();
+            expect (! host.sessionIoBusy.load(), "the question holds the session slot: RECORD and Quit are refused meanwhile");
+            expectEquals (closedByATake(), 1, "the question stays in front of STOP");
+            expect (take.dir.isDirectory());
+            host.engine.forgetLastCapture();
+            forget (host);
         }
     }
 
@@ -1222,6 +1410,9 @@ public:
         testStripsAddedSinceTheLastSave();
         testReadOnlySessionAutosave();
         testLongSessionNames();
+        testSessionModalsCloseForATake();
+        testFolderPanelsHoldNothing();
+        testRemoveLastCaptureQuestion();
     }
 };
 

@@ -683,17 +683,27 @@ void MainComponent::importChannelNamesFromCsv()
 
 void MainComponent::createSessionFromCsv()
 {
+    if (refuseWhileSessionPickerOpen()) return;
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
 
     chooser = std::make_unique<juce::FileChooser> (
         "New session from CSV", getSessionsRoot(), "*.csv;*.txt");
     juce::Component::SafePointer<MainComponent> self (this);
-    chooser->launchAsync (juce::FileBrowserComponent::openMode
+    launchSessionPicker ("New Session from CSV", juce::FileBrowserComponent::openMode
                           | juce::FileBrowserComponent::canSelectFiles,
-        [self] (const juce::FileChooser& fc)
+        [self, scope = questionScope()] (const juce::File& csv)
         {
-            if (self != nullptr) self->completeSessionFromCsv (fc.getResult());
+            if (self == nullptr || ! csv.existsAsFile()) return;
+            // Replacing was confirmed for the session open when the panel
+            // opened, not for one a Finder open put there behind it.
+            if (! self->stillInScope (scope)) return;
+            if (self->sessionIoBusy.load() || self->engine.isRecording())
+            {
+                self->showStatus ("No session was created -- a take or a session job started while the panel was open");
+                return;
+            }
+            self->completeSessionFromCsv (csv);
         });
 }
 

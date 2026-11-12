@@ -1,4 +1,5 @@
 #include "NewSessionDialog.h"
+#include "FloatingLaunch.h"
 #include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -342,6 +343,7 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
-        opts.launchAsync();
+        // A take that starts behind it (desk, OSC, twin, helper) closes it, as if cancelled.
+        launchClosesForTake (opts);
     }
 }
