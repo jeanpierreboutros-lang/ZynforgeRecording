@@ -16,7 +16,9 @@
 // timer never ticks without a running message loop, so construction is cheap.
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <cmath>
+#include <CoreFoundation/CoreFoundation.h>
 
 #include "../UI/EditTimeRuler.h"
 #include "../Audio/AudioEngine.h"
@@ -102,7 +104,100 @@ namespace zynforge
                     }
                 }
             }
+            denseMarkersRenameTheOneClicked();
             AudioEngine::setTestModeSkipAudioInit (false);
+        }
+
+        static juce::Component* topModal() { return juce::ModalComponentManager::getInstance()->getModalComponent (0); }
+        static int modalCount() { return juce::ModalComponentManager::getInstance()->getNumModalComponents(); }
+        static void pump (int ms)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + ms;
+            while (juce::Time::getMillisecondCounterHiRes() < end)
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
+        }
+
+        // Which marker a double-click at x on the marker strip offers to rename.
+        static juce::String renamedAt (EditTimeRuler& ruler, int x)
+        {
+            const auto now = juce::Time::getCurrentTime();
+            const juce::MouseEvent e { juce::Desktop::getInstance().getMainMouseSource(), juce::Point<float> ((float) x, 10.0f),
+                                       juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier),
+                                       juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation,
+                                       juce::MouseInputSource::defaultRotation, juce::MouseInputSource::defaultTiltX,
+                                       juce::MouseInputSource::defaultTiltY, &ruler, &ruler, now,
+                                       juce::Point<float> ((float) x, 10.0f), now, 2, false };
+            ruler.mouseDoubleClick (e);
+            juce::String name;
+            if (auto* aw = dynamic_cast<juce::AlertWindow*> (topModal()))
+            {
+                name = aw->getTextEditorContents ("n");
+                aw->exitModalState (0);
+            }
+            for (int i = 0; i < 400 && modalCount() > 0; ++i) pump (5);
+            return name;
+        }
+
+        void denseMarkersRenameTheOneClicked()
+        {
+            beginTest ("Double-clicking a marker flag renames that marker, however close the others sit");
+            {
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-ruler-" + juce::Uuid().toString());
+                const auto take = dir.getChildFile ("Audio Files/Track_01.wav");
+                take.getParentDirectory().createDirectory();
+                {
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (
+                        take.createOutputStream().release(), 48000.0, 1, 16, {}, 0));
+                    juce::AudioBuffer<float> silence (1, 48000 * 10);
+                    silence.clear();
+                    expect (writer != nullptr && writer->writeFromAudioSampleBuffer (silence, 0, silence.getNumSamples()),
+                            "setup: the take");
+                }
+                {
+                    AudioEngine engine;
+                    engine.clearAllStripOverrides();
+                    engine.prepareForTests (48000.0, 512);
+                    engine.setStripCount (1);
+                    engine.setActiveSessionDir (dir);
+                    engine.claimMixerFor (dir);
+                    engine.loadSession (dir);
+                    engine.setStripCount (1);
+                    expect (engine.getPlayer().getTotalLengthSamples() == 48000 * 10, "setup: a ten-second session");
+
+                    // Twelve markers 20 px apart: 100 px per second on a 1000 px lane.
+                    EditTimeRuler ruler (engine);
+                    ruler.setHeaderWidth (380);
+                    ruler.setContentWidth (380 + 1000 + 2 * EditTimeRuler::kWaveInset);
+                    ruler.setBounds (0, 0, 1400, 46);
+                    auto& markers = engine.getMarkers();
+                    markers.replaceAll ({});
+                    for (int i = 0; i < 12; ++i)
+                        markers.drop ((juce::int64) (48000.0 * (1.0 + 0.2 * i)), "M" + juce::String (i + 1));
+                    const double pps = ruler.rulerPxPerSec (10.0);
+
+                    int right = 0;
+                    for (int i = 0; i < 12; ++i)
+                    {
+                        const int x = ruler.rulerTimeToX (1.0 + 0.2 * i, pps);
+                        if (renamedAt (ruler, x) == "M" + juce::String (i + 1)) ++right;
+                    }
+                    expectEquals (right, 12, "a flag's double-click renamed another marker");
+
+                    // Between two flags, on the name the later marker paints on top.
+                    const int third = ruler.rulerTimeToX (1.4, pps);
+                    expectEquals (renamedAt (ruler, third + 10), juce::String ("M3"),
+                                  "a click on a name renamed a marker painted under it");
+                    const int last = ruler.rulerTimeToX (1.0 + 0.2 * 11, pps);
+                    expectEquals (renamedAt (ruler, last + 60), juce::String ("M12"),
+                                  "a click on the last marker's name renamed an earlier one");
+                    expectEquals (renamedAt (ruler, last + 200), juce::String(),
+                                  "a click past every name renamed something");
+                    markers.replaceAll ({});
+                }
+                dir.deleteRecursively();
+            }
         }
     };
 
