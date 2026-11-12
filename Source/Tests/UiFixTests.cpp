@@ -94,6 +94,14 @@ namespace zynforge
             return modal != nullptr && (bool) modal->getProperties()[kClosesForTake];
         }
 
+        // The modal count drops at once; a modal's answer runs a message later,
+        // so a test that checks what the answer did pumps on a little.
+        void closed()
+        {
+            pumpUntil ([] { return modalCount() == 0; }, 3000);
+            pumpUntil ([] { return false; }, 300);
+        }
+
         void dismissModals()
         {
             while (auto* modal = juce::Component::getCurrentlyModalComponent())
@@ -377,7 +385,7 @@ namespace zynforge
                 expect (marked (topModal()), "the repatch question is not marked");
                 expect (w.roll(), "the take never started");
                 w.main.timerCallback();
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expectEquals (modalCount(), 0, "the repatch question stood over the take");
                 expect (! vsc::hasSavedPatch (w.engine()), "a dropped question repatched");
                 expect (w.stop());
@@ -391,7 +399,7 @@ namespace zynforge
                 expect (pumpUntil ([] { return modalCount() == 1; }, 3000), "the question never opened");
                 expect (marked (topModal()), "the restore question is not marked");
                 closeModalsForTake();
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expectEquals (modalCount(), 0);
                 expect (vsc::hasSavedPatch (w.engine()), "a dropped question restored the outputs");
                 vsc::restore (w.engine());
@@ -413,7 +421,7 @@ namespace zynforge
                 expect (pumpUntil ([] { return modalCount() == 1; }, 3000), "the save question never opened");
                 expect (marked (topModal()), "the save question is not marked");
                 closeModalsForTake();
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expectEquals (modalCount(), 0, "closing the save question opened another");
                 expect (w.main.isEnabled(), "a dropped save question started a save");
                 if (modalCount() > 0) topModal()->exitModalState (2);   // Cancel, never 0: see below
@@ -428,7 +436,7 @@ namespace zynforge
                 expect (pumpUntil ([] { return modalCount() == 1; }, 3000), "the quit question never opened");
                 expect (marked (topModal()), "the quit question is not marked");
                 closeModalsForTake();
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expectEquals (modalCount(), 0, "closing the quit question opened another");
                 // The old box quit on any answer but Cancel's own code.
                 if (modalCount() > 0) topModal()->exitModalState (2);
@@ -444,7 +452,7 @@ namespace zynforge
                 expect (w.main.cursorPunchQuestion != nullptr, "the punch question never opened");
                 expect (marked (topModal()), "the punch question is not marked");
                 closeModalsForTake();
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expect (! w.engine().isRecording(), "a dropped punch question recorded");
                 w.engine().setEditCursorSample (-1);
 
@@ -455,7 +463,7 @@ namespace zynforge
                 expect (w.main.deviceRecordQuestion != nullptr, "the device question never opened");
                 expect (marked (topModal()), "the device question is not marked");
                 closeModalsForTake();
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expect (! w.engine().isRecording(), "a dropped device question recorded");
             }
         }
@@ -473,7 +481,7 @@ namespace zynforge
                 if (! editors.empty()) editors.front()->setText ("Typed but not applied");
                 expect (w.roll(), "the take never started");
                 w.main.timerCallback();
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expectEquals (modalCount(), 0, "Batch Rename stood over a take that started behind it");
                 expectEquals (w.track (0).getNameThreadSafe(), before, "a dropped Batch Rename renamed");
                 expect (w.stop());
@@ -488,7 +496,7 @@ namespace zynforge
                 w.engine().setTrackColour (1, juce::Colour (0xff3366aa));   // as a live pick does
                 expect (w.roll(), "the take never started");
                 w.main.timerCallback();
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expectEquals (modalCount(), 0, "Batch Colour stood over a take that started behind it");
                 expectEquals ((juce::int64) (juce::uint32) w.track (1).colourARGB.load(), (juce::int64) 0xff3366aa,
                               "closing for the take took back the colour on screen");
@@ -646,9 +654,11 @@ namespace zynforge
                     editors.front()->setText ("Keys");
                     editors.front()->keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
                 }
-                pumpUntil ([] { return modalCount() == 0; }, 3000);
+                closed();
                 expectEquals (modalCount(), 0, "Return in a name field did not apply");
-                expectEquals (w.track (0).getNameThreadSafe(), juce::String ("Keys"));
+                // The modal count drops at once; its answer runs a message later.
+                pumpUntil ([&w] { return w.track (0).getNameThreadSafe() == "Keys"; }, 2000);
+                expectEquals (w.track (0).getNameThreadSafe(), juce::String ("Keys"), w.status());
                 expectEquals (w.track (1).getNameThreadSafe(), juce::String ("Keys R"),
                               "the pair's right half kept its old name");
             }
@@ -857,12 +867,15 @@ namespace zynforge
             return out;
         }
 
+        // Back to a quiet window between presses. A view switch saves the
+        // layout, and the window answers every key with "wait" while it does,
+        // so the switch goes before the wait.
         void settle (Window& w, MainComponent::View view)
         {
             dismissModals();
-            pumpUntil ([&w] { return ! w.main.sessionIoBusy.load() && w.main.pendingMetadataSaves == 0; }, 4000);
             w.engine().stopPlayback();
             if (w.main.currentView != view) w.main.switchView (view);
+            pumpUntil ([&w] { return ! w.main.sessionIoBusy.load() && w.main.pendingMetadataSaves == 0; }, 4000);
         }
 
         void shortcutSheetMatchesTheKeys()
