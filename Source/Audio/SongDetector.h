@@ -66,7 +66,15 @@ namespace zynforge::songs
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
         auto reader = zynforge::ConcatReader::create (fm, zynforge::findTakeParts (f));
-        if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate <= 0.0)
+        // Only a strip with audio in the arrangement is scanned, so a take that
+        // will not open is a failure, not a quiet strip: left out, it would
+        // silently lose its vote and the result would look normal.
+        if (reader == nullptr || reader->sampleRate <= 0.0)
+        {
+            if (readFailed != nullptr) *readFailed = true;
+            return flags;
+        }
+        if (reader->lengthInSamples <= 0)
             return flags;
 
         srOut = reader->sampleRate;
@@ -121,9 +129,10 @@ namespace zynforge::songs
 
     // Every voice's envelope on the timeline. Each file is read once however
     // many clips use it. Empty when cancelled or when a take could not be read.
+    // `unreadable` names the first take that could not be read.
     inline std::vector<std::vector<char>> scanVoices (const std::vector<Voice>& voices, const Params& params,
                                                       double& srOut, const std::atomic<bool>* cancel = nullptr,
-                                                      bool* readFailed = nullptr)
+                                                      bool* readFailed = nullptr, juce::String* unreadable = nullptr)
     {
         std::vector<std::vector<char>> tracks;
         std::map<juce::String, std::vector<char>> perFile;
@@ -139,9 +148,15 @@ namespace zynforge::songs
                 if (known == perFile.end())
                 {
                     double fileRate = 0.0;
+                    bool failed = false;
                     known = perFile.emplace (key, envelopeFlags (file, params.thresholdDb, params.windowSec,
-                                                                 fileRate, cancel, readFailed, channel)).first;
+                                                                 fileRate, cancel, &failed, channel)).first;
                     if (fileRate > 0.0) srOut = fileRate;
+                    if (failed)
+                    {
+                        if (readFailed != nullptr) *readFailed = true;
+                        if (unreadable != nullptr && unreadable->isEmpty()) *unreadable = file.getFileName();
+                    }
                 }
                 return &known->second;
             };
