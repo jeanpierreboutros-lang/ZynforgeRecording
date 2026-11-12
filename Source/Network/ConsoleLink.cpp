@@ -56,6 +56,7 @@ namespace zynforge
         }
 
         host      = address;
+        lostHost.clear();
         connectedPort = usePort;
         connected = true;
         dialectConfirmed = false;
@@ -618,10 +619,11 @@ namespace zynforge
         //    thread for up to 2 s). The stashed patch + gains are kept.
         if (transport != nullptr && ! transport->isConnected())
         {
-            const auto lostHost = host;
+            const auto dropped = host;
             disconnect();
+            lostHost = dropped;
             if (onStatus)
-                onStatus (profile.displayName + " link to " + lostHost
+                onStatus (profile.displayName + " link to " + dropped
                           + " lost -- the console stopped answering. Use Console: connect... to reconnect.");
             return;
         }

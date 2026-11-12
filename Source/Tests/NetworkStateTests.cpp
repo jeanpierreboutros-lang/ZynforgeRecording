@@ -627,6 +627,41 @@ namespace zynforge
                 main.consoleLink.disconnect();
                 main.consoleLink.setProfile (ConsoleProfile::Kind::BehringerX32);
             }
+
+            beginTest ("A desk that drops its TCP link stays reported until the link is made again");
+            {
+                Bench b (main);
+                auto& link = main.consoleLink;
+                link.setProfile (ConsoleProfile::Kind::Yamaha);
+                juce::StreamingSocket desk;
+                expect (desk.createListener (0, "127.0.0.1"));
+                expect (link.connect ("127.0.0.1", desk.getBoundPort()), "fixture: no TCP link");
+                {
+                    std::unique_ptr<juce::StreamingSocket> wire (desk.waitForNextConnection());
+                    expect (wire != nullptr);
+                }   // the desk goes away: a power cycle, a switch reboot
+                desk.close();
+                expect (pumpUntil ([&] { link.timerCallback(); return ! link.isConnected(); }, 4000),
+                        "the dropped link was never noticed");
+
+                main.showStatus ("Something else happened since");
+                main.updateCaptureWarnings (EngineStatus());
+                expect (main.alarmBanner.getText().contains ("CONSOLE LINK LOST"),
+                        "the only sign was one status line: " + main.alarmBanner.getText());
+                expect (main.alarmBanner.getLevel() == AlarmBanner::Level::Notice, "a console can't threaten the take");
+                expect (main.deskLinkRow().isProblem(), "pre-flight has no row for the lost desk");
+                expect (main.deskLinkRow().value.containsIgnoreCase ("lost"), main.deskLinkRow().value);
+
+                // Connecting again is the way out.
+                juce::StreamingSocket again;
+                expect (again.createListener (0, "127.0.0.1"));
+                expect (link.connect ("127.0.0.1", again.getBoundPort()));
+                main.updateCaptureWarnings (EngineStatus());
+                expect (! main.alarmBanner.getText().contains ("CONSOLE LINK LOST"), main.alarmBanner.getText());
+                link.disconnect();
+                link.setProfile (ConsoleProfile::Kind::BehringerX32);
+                main.updateCaptureWarnings (EngineStatus());
+            }
         }
 
         // ── Small things a remote did quietly ──────────────────────────────

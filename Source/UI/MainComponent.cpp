@@ -1783,6 +1783,9 @@ zynforge::PreflightRow MainComponent::deskLinkRow() const
 {
     using Row = zynforge::PreflightRow;
     using Health = zynforge::ConsoleLink::Health;
+    if (! consoleLink.isConnected() && consoleLink.wasLinkLost())
+        return { Row::Status::warning, "Desk link",
+                 "lost -- " + consoleLink.getLostHost() + " stopped answering; reconnect from the Console menu" };
     const auto health = consoleLink.getHealth();
     // A dialect nobody has verified may never answer its probe, and a warning
     // that is always up on that rig teaches the engineer to skip this list.
@@ -1892,7 +1895,7 @@ void MainComponent::showPreflightChecklist()
                                            : engine.getPlayer().isPlaying() ? juce::String ("Playing back")
                                                                             : juce::String ("Idle") });
     rows.push_back (Row::fromLine (backupChecklistRow (onSessionDrive (1))));
-    if (consoleLink.isConnected())
+    if (consoleLink.isConnected() || consoleLink.wasLinkLost())
         rows.push_back (deskLinkRow());
     if (consoleLink.isConnected() || consoleLink.isOnSoundcheckPatch())
         rows.push_back (deskPatchRow());
