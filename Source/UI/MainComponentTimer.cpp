@@ -18,6 +18,16 @@ static juce::String samplesToTimecode (juce::int64 samples, double sr)
     return juce::String::formatted ("%02lld:%02lld", seconds / 60, seconds % 60);
 }
 
+// The banner splits alarms where two spaces join them, so text from outside
+// (a channel name, a copy's description) gets one space between words.
+static juce::String singleSpaced (const juce::String& text)
+{
+    juce::StringArray words;
+    words.addTokens (text, " \t\r\n", "");
+    words.removeEmptyStrings();
+    return words.joinIntoString (" ");
+}
+
 void MainComponent::timerCallback()
 {
     // The 10 Hz UI heartbeat (startTimerHz in MainComponentInit). Each step is
@@ -510,9 +520,14 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     const bool estimateStands = rec || (idleEstimateFor.isNotEmpty() && idleEstimateFor == idleEstimateKey());
     const double remainingSec = estimateStands ? (double) status.minutesRemaining * 60.0 : 0.0;
 
+    // Missed samples belong to the take and its session: the clock keeps them
+    // after STOP while that session is open, and nowhere else.
+    if (rec && status.missedSamples > 0) missedSamplesSession = engine.getActiveSessionDir();
+    const bool missedHere = missedSamplesSession != juce::File() && missedSamplesSession == engine.getActiveSessionDir();
+    const juce::int64 missedShown = rec || missedHere ? status.missedSamples : 0;
     bigClock.setDiskInfo (freeGB,
                           status.lastWriteMs,
-                          status.missedSamples,
+                          missedShown,
                           remainingSec,
                           status.primaryDiskStale ? BigClockPanel::DiskReading::PrimaryStale
                           : status.copyDiskStale  ? BigClockPanel::DiskReading::CopyStale
@@ -524,7 +539,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     perfDashboard.setMetrics (status.audioLoadPct,
                               (float) status.diskMBPerSec,
                               status.ringFillPct,
-                              status.missedSamples);
+                              missedShown);
     perfDashboard.setDeviceInfo (status.sampleRate,
                                  status.blockSize);
     perfDashboard.setRecording (rec);
@@ -623,7 +638,9 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         // -- which walks the entries -- structurally cannot see it. Without this
         // the engineer runs the whole show believing they have a copy they don't.
         const int mirrorsSkipped = status.mirrorsSkipped;
-        const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
+        auto channelAlarms = status.channelAlarms;
+        for (auto& alarm : channelAlarms) alarm.name = singleSpaced (alarm.name);
+        const auto inputAlarms = channelalarm::bannerText (channelAlarms);
         const bool primaryNotAnswering = status.primaryDiskStale && status.source != "daemon-unavailable";
         // RECORD only asks for 30 minutes of room, so a long show can get here.
         const int minutesLeft = rec ? status.minutesRemaining : 0;   // 0 = no estimate
@@ -662,10 +679,10 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                      << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
                                                             "or folder unusable  ";
             if (status.copyDiskStale) warn << "! A COPY'S DRIVE IS NOT ANSWERING -- its free space is unknown  ";
-            for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
+            for (const auto& problem : status.copyProblems) warn << "! " << singleSpaced (problem) << "  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent  ";
             if (consoleSilent) warn << "CONSOLE NOT ANSWERING -- scene markers have stopped  ";
-            warn << status.preRollNotice;
+            warn << singleSpaced (status.preRollNotice);
             activeCaptureWarning = warn.trim();
             statusLabel.setText (activeCaptureWarning, juce::dontSendNotification);
         }

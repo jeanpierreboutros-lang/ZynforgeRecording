@@ -28,9 +28,9 @@ namespace zynforge::mixersnapshot
 
     // Names go through getNameThreadSafe(): network surfaces (console link,
     // OSC) rename strips from other threads, so a raw `name` read can tear.
-    inline const std::array<Field, 14>& fields()
+    inline const std::array<Field, 15>& fields()
     {
-        static const std::array<Field, 14> table {{
+        static const std::array<Field, 15> table {{
             { "name",    [] (const TrackState& t) { return juce::var (t.getNameThreadSafe()); } },
             { "colour",  [] (const TrackState& t) { return juce::var ((int) t.colourARGB.load (std::memory_order_relaxed)); } },
             { "gainDb",  [] (const TrackState& t) { return juce::var ((double) t.gainDb.load (std::memory_order_relaxed)); } },
@@ -45,6 +45,7 @@ namespace zynforge::mixersnapshot
             { "mon",     [] (const TrackState& t) { return juce::var (t.monitor.load (std::memory_order_relaxed)); } },
             { "rec",     [] (const TrackState& t) { return juce::var (t.armed.load (std::memory_order_relaxed)); } },
             { "stereo",  [] (const TrackState& t) { return juce::var (t.isStereo.load (std::memory_order_relaxed)); } },
+            { "editGroup", [] (const TrackState& t) { return juce::var (t.editGroup.load (std::memory_order_relaxed)); } },
         }};
         return table;
     }
@@ -93,6 +94,8 @@ namespace zynforge::mixersnapshot
         t.soloed     .store ((bool) obj->getProperty ("solo"),    std::memory_order_relaxed);
         t.monitor    .store ((bool) obj->getProperty ("mon"),     std::memory_order_relaxed);
         if (! eng.isRecording()) t.armed.store ((bool) obj->getProperty ("rec"), std::memory_order_relaxed);
+        // Undo of a group assignment, and of a link, which puts R in L's group.
+        if (obj->hasProperty ("editGroup")) eng.setTrackEditGroup (physical, (int) obj->getProperty ("editGroup"));
     }
 
     // A link is layout, not a strip's setting, so restoreStrip leaves it alone

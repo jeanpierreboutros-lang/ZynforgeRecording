@@ -581,12 +581,15 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
     {
         useCaptureDaemon = false;
         showStatus ("Capture daemon unavailable -- RECORD now runs inside this app, with no crash protection.");
-        if (! s_testConstruct)
-            juce::AlertWindow::showMessageBoxAsync (
-                juce::MessageBoxIconType::WarningIcon, "Recording without the capture daemon",
-                captureSupervisor.lastConnectError
-                    + "\n\nRECORD now runs inside this app, so a crash here ends the take. "
-                      "Turn the capture daemon back on from the Session menu to try again.");
+        if (! s_testConstruct)   // the status line says it too, so a take may close it
+            askClosesForTake (juce::MessageBoxOptions()
+                                  .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                  .withTitle ("Recording without the capture daemon")
+                                  .withMessage (captureSupervisor.lastConnectError
+                                      + "\n\nRECORD now runs inside this app, so a crash here ends the take. "
+                                        "Turn the capture daemon back on from the Session menu to try again.")
+                                  .withButton ("OK"),
+                              {});
         return;
     }
 

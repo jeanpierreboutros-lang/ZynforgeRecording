@@ -209,7 +209,8 @@ namespace zynforge
                 {
                     juce::Graphics::ScopedSaveState clip (g);
                     g.reduceClipRegion (0, bodyY, L.rowHeaderW, bodyH);
-                    for (int row = 0; row < numHw; ++row)
+                    const auto rowInfo = PatchPage::rowsFor (engine, isInput);
+                    for (int row = 0; row < (int) rowInfo.size(); ++row)
                     {
                         const int y = bodyY + row * L.rowH - scrollY;
                         if (y + L.rowH <= bodyY || y >= bodyY + bodyH) continue;
@@ -218,12 +219,22 @@ namespace zynforge
                             g.setColour (brand::bgStrip.withAlpha (zynforge::brand::alpha::scrim));
                             g.fillRect (juce::Rectangle<int> (0, y, L.rowHeaderW, L.rowH));
                         }
-                        const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
-                        g.setColour (isActiveRow ? brand::textPrimary : brand::textSecondary);
+                        const auto& info = rowInfo[(size_t) row];
+                        auto labelArea = juce::Rectangle<int> (14, y, L.rowHeaderW - 18, L.rowH);
+                        g.setColour (info.channel < 0 ? brand::alertAmber
+                                     : info.held      ? brand::textPrimary : brand::textSecondary);
                         g.setFont (brand::type::sectionTitle());
-                        g.drawText ((isInput ? "IN " : "OUT ") + juce::String (row + 1),
-                                    juce::Rectangle<int> (14, y, L.rowHeaderW - 18, L.rowH),
-                                    juce::Justification::centredLeft, false);
+                        if (info.note.isEmpty())
+                        {
+                            g.drawText (info.label, labelArea, juce::Justification::centredLeft, false);
+                            continue;
+                        }
+                        g.drawText (info.label, labelArea.removeFromTop (L.rowH / 2),
+                                    juce::Justification::bottomLeft, false);
+                        g.setColour (brand::alertAmber);
+                        g.setFont (brand::type::caption());
+                        g.drawFittedText (info.note, labelArea.withTrimmedTop (2),
+                                          juce::Justification::topLeft, 1, 0.7f);
                     }
                 }
 
@@ -278,6 +289,26 @@ namespace zynforge
                             }
                         }
                     }
+
+                    // The off-device row: a strip on an output this device lacks
+                    // gets its dot here, numbered, so it never looks unpatched.
+                    if (! isInput && (int) PatchPage::rowsFor (engine, false).size() > numHw)
+                    {
+                        const int y = bodyY + numHw * L.rowH - scrollY;
+                        for (int c = 0; c < numStrips; ++c)
+                        {
+                            const auto& ls = logical[(std::size_t) c];
+                            const int out = PatchPage::offDeviceOutput (engine, ls.trackIndex, ls.stereo);
+                            const int x = bodyX + c * L.colW - scrollX;
+                            if (out < 0 || x + L.colW <= bodyX || x >= bodyX + bodyW) continue;
+                            const auto dot = juce::Rectangle<int> (x, y, L.colW, L.rowH).withSizeKeepingCentre (22, 22).toFloat();
+                            g.setColour (brand::alertAmber);
+                            g.fillEllipse (dot);
+                            g.setColour (brand::onSignal (brand::alertAmber));
+                            g.setFont (brand::type::caption());
+                            g.drawText (juce::String (out + 1), dot, juce::Justification::centred, false);
+                        }
+                    }
                 }
             }
 
@@ -322,7 +353,7 @@ namespace zynforge
                 const auto L = computeLayout();
                 const int viewH = juce::jmax (0, getHeight() - L.colHeaderH - kScrollW);
                 const int viewW = juce::jmax (0, getWidth()  - L.rowHeaderW - kScrollW);
-                const int maxY  = juce::jmax (0, numRows()        * L.rowH - viewH);
+                const int maxY  = juce::jmax (0, displayRows()    * L.rowH - viewH);
                 const int maxX  = juce::jmax (0, numStripsCount() * L.colW - viewW);
                 bool did = false;
                 if (maxY > 0 && w.deltaY != 0.0f)
@@ -367,6 +398,7 @@ namespace zynforge
                     const auto& ls = logical[(std::size_t) col];
                     const int totalTracks = engine.getRecorder().getNumTracks();
                     dragActive = false;
+                    if (refusedForTake()) return;
                     if (! ls.stereo)
                     {
                         // Going mono → stereo. Need a right partner.
@@ -390,9 +422,18 @@ namespace zynforge
                 const int col = x / L.colW;
                 const int row = y / L.rowH;
                 if (col < 0 || col >= numStrips) { dragActive = false; return; }
-                if (row < 0 || row >= numHw)     { dragActive = false; return; }
-
                 const auto& ls = logical[(std::size_t) col];
+                // The off-device row's dot sends the strip back to the master,
+                // as clearing any lit dot does.
+                if (! isInput && row == numHw && PatchPage::offDeviceOutput (engine, ls.trackIndex, ls.stereo) >= 0)
+                {
+                    dragActive = false;
+                    if (! refusedForTake()) { setRoutingLogical (ls, -1); repaint(); }
+                    return;
+                }
+                if (row < 0 || row >= numHw)     { dragActive = false; return; }
+                if (refusedForTake())            { dragActive = false; return; }
+
                 const int newVal = holdsRow (ls, row) ? -1 : row;
                 setRoutingLogical (ls, newVal);
 
@@ -432,19 +473,20 @@ namespace zynforge
 
             void mouseUp (const juce::MouseEvent&) override { dragActive = false; }
 
-            bool isRowRoutedToAnyStrip (int row, const std::vector<LogicalStrip>& logical) const
-            {
-                // A stereo strip lights both of its rows, as it does its dots.
-                for (auto& ls : logical)
-                    if (holdsRow (ls, row)) return true;
-                return false;
-            }
-
         private:
             int numRows() const
             {
                 return isInput ? engine.getCurrentDeviceInputCount()
                                : engine.getCurrentDeviceOutputCount();
+            }
+            // The rows drawn: the device's, and the off-device row when shown.
+            int displayRows() const { return (int) PatchPage::rowsFor (engine, isInput).size(); }
+
+            bool refusedForTake() const
+            {
+                if (! engine.isRecording() && ! engine.isCaptureFinalizing()) return false;
+                engine.getRemotes().showHostStatus (PatchPage::lockedForTake());
+                return true;
             }
             int numStripsCount() const { return (int) logicalStrips().size(); }
 
@@ -456,7 +498,7 @@ namespace zynforge
                 const auto L = computeLayout();
                 const int viewH    = juce::jmax (0, getHeight() - L.colHeaderH - kScrollW);
                 const int viewW    = juce::jmax (0, getWidth()  - L.rowHeaderW - kScrollW);
-                const int contentH = numRows()        * L.rowH;
+                const int contentH = displayRows()    * L.rowH;
                 const int contentW = numStripsCount() * L.colW;
 
                 scrollY = juce::jlimit (0, juce::jmax (0, contentH - viewH), scrollY);
@@ -563,6 +605,62 @@ namespace zynforge
             else if (col >= 0 && col < numCols)   row -= stripIsStereo[(size_t) col] ? 2 : 1;
         }
         return targets;
+    }
+
+    std::vector<PatchPage::RowInfo> PatchPage::rowsFor (AudioEngine& engine, bool inputSide)
+    {
+        auto& rec = engine.getRecorder();
+        const int n = rec.getNumTracks();
+        const int numHw = inputSide ? engine.getCurrentDeviceInputCount() : engine.getCurrentDeviceOutputCount();
+        const auto routing = [&] (int track)
+        {
+            return inputSide ? engine.getEffectiveInputRouting (track)
+                             : rec.getTrack (track).outputRouting.load (std::memory_order_relaxed);
+        };
+        std::vector<std::pair<int, bool>> strips;   // first track, stereo
+        for (int i = 0; i < n; )
+        {
+            const bool stereo = rec.getTrack (i).isStereo.load() && i + 1 < n;
+            strips.push_back ({ i, stereo });
+            i += stereo ? 2 : 1;
+        }
+        std::vector<RowInfo> rows;
+        for (int row = 0; row < numHw; ++row)
+        {
+            RowInfo info;
+            info.channel = row;
+            info.label = (inputSide ? "IN " : "OUT ") + juce::String (row + 1);
+            int holders = 0;   // a stereo strip lights both of its rows, as it does its dots
+            for (const auto& [first, stereo] : strips)
+                if (routing (first) == row || (stereo && routing (first + 1) == row)) ++holders;
+            info.held = holders > 0;
+            // Two strips on one output play into one desk channel, summed.
+            if (! inputSide && holders > 1) info.note = juce::String (holders) + " STRIPS";
+            rows.push_back (info);
+        }
+        // Without a row of its own a strip on an output this device lacks looks
+        // unpatched, as if it went to the master, while it plays nowhere.
+        if (! inputSide)
+            for (const auto& [first, stereo] : strips)
+                if (offDeviceOutput (engine, first, stereo) >= 0)
+                {
+                    rows.push_back ({ -1, "OFF", "NOT ON DEVICE", true });
+                    break;
+                }
+        return rows;
+    }
+
+    int PatchPage::offDeviceOutput (AudioEngine& engine, int firstTrack, bool stereo)
+    {
+        auto& rec = engine.getRecorder();
+        const int outputs = engine.getCurrentDeviceOutputCount();
+        for (int track = firstTrack; track <= firstTrack + (stereo ? 1 : 0); ++track)
+        {
+            if (track < 0 || track >= rec.getNumTracks()) continue;
+            const int out = rec.getTrack (track).outputRouting.load (std::memory_order_relaxed);
+            if (out >= outputs) return out;
+        }
+        return -1;
     }
 
     juce::DialogWindow* PatchPage::launch (AudioEngine& engine)

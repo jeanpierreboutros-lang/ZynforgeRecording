@@ -39,7 +39,7 @@
 #include <vector>
 
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
-namespace zynforge { class MixerFixTests; }
+namespace zynforge { class MixerFixTests; class UiFixTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -189,6 +189,10 @@ private:
     bool openSessionFromWelcome (const juce::File&);
     void showKeyboardShortcuts();
     void showAboutDialog();
+    // The box AlertWindow::showAsync draws, opened now and marked closesForTake,
+    // so a take that starts behind it closes it as its last button (Cancel).
+    // showAsync opens its box on a later message, where nothing can mark it.
+    static void askClosesForTake (const juce::MessageBoxOptions&, std::function<void (int)> answered);
     void showFirstRunTutorial (std::function<void()> onFinished = {});
     void showUserGuide();
     void launchNewSessionDialog (juce::File templateFile = {});
@@ -252,6 +256,9 @@ private:
     int pendingMetadataSaves = 0;
     juce::uint64 metadataRevision = 0;
     bool captureMetadataPending = false; // holds the entire media + metadata STOP operation
+    // A rolling punch-out restarts playback once its files are final; STOP in
+    // that time clears this, and playback stays stopped.
+    bool punchResumePending = false;
     bool restoringUILayout = false;
     bool metadataContinuationReserved = false;
     juce::String lastCaptureFinalizationError;
@@ -322,6 +329,7 @@ private:
     // rebuild). Prevents a freed-memory read in the window before the rebuild.
     void condemnAllStrips();
     void colourSelectedStrips();
+    bool colourPickerMayOpen();
     void moveSelectedStrips (int delta);
     void clearStripSelection();
     void removeStrip (int firstTrack, int width);
@@ -490,6 +498,9 @@ private:
     juce::uint32 lastDiskQueryMs { 0 };
     double       cachedFreeGB { 0.0 };
     bool         sessionsDriveMissing { false };   // the chosen sessions folder's drive is not mounted
+    // The session a take missed samples in. The recorder keeps its count until
+    // the next take; the clock shows it only while that session is open.
+    juce::File   missedSamplesSession;
     // The sessions folder the engineer chose (appProps sessionsRoot); empty for
     // the default. The engine falls back to ~/Music when it can't be made.
     juce::File configuredSessionsRoot() const;
@@ -670,6 +681,7 @@ private:
     juce::String remoteDeviceRefusal;   // or because nobody there can answer for the device
 
     friend class zynforge::MixerFixTests;
+    friend class zynforge::UiFixTests;
     friend class zynforge::CaptureDaemonLinkTests;
     friend class zynforge::CapturePathTests;
     friend class zynforge::MainTransportRegressionTests;

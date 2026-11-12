@@ -159,8 +159,8 @@ namespace zynforge
         auto top = inner.removeFromTop (inner.getHeight() * 0.55f);
         g.setFont (loudnessFont());
 
-        // A dropped sample outranks everything else on this row.
-        if (missed > 0)
+        // A dropped sample outranks everything else on this row while it rolls.
+        if (showsDrop())
         {
             g.setColour (brand::accentRecord);
             g.drawText ("DROP " + juce::String (missed), top, juce::Justification::centredRight, false);

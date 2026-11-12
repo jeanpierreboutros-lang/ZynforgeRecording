@@ -13,6 +13,7 @@
 #include "NewSessionDialog.h"
 #include "RecordPosition.h"
 #include "SessionRecoveryDialog.h"
+#include "ShortcutSheet.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
@@ -47,49 +48,8 @@ namespace
         }
 
     private:
-        struct Row { juce::String shortcut; juce::String description; };
-        struct Section { juce::String title; std::vector<Row> rows; };
-
-        static std::vector<Section> sections()
-        {
-            return {
-                { "Transport", {
-                    { "Space",        "Play / pause (stops recording if armed)" },
-                    { "M",            "Drop marker at playhead" },
-                }},
-                { "Cues", {
-                    { "1 - 9",        "Jump to cue 1 - 9" },
-                }},
-                { "Markers", {
-                    { "Cmd + 1 - 9",  "Jump to marker 1 - 9 (recalls layout if stored)" },
-                }},
-                { "Edit", {
-                    { "A",            "Solo selected strips" },
-                    { "S",            "Smart tool (with the EDIT tools showing)" },
-                    { ",",            "Set range start at playhead" },
-                    { ".",            "Set range end at playhead" },
-                    { "Ctrl + 4",     "Toggle snap mode" },
-                    { "Cmd + Z",      "Undo last clip edit" },
-                    { "Cmd + R",      "Redo" },
-                    { "Cmd + X",      "Cut selected strips" },
-                    { "Cmd + C",      "Copy selected strips" },
-                    { "Cmd + V",      "Paste strips" },
-                }},
-                { "Mixer", {
-                    { "Shift + click", "Toggle multi-selection (additive)" },
-                    { "Cmd + A",      "Select every strip" },
-                    { "Esc",          "Clear strip selection" },
-                    { "Right-click strip",
-                                      "Rename / Colour / Stereo / Stream send / Output-mute" },
-                }},
-                { "Edit view", {
-                    { "Right-click channel name", "Lane shows waveform or markers / Row size / Delete Channel" },
-                    { "Right-click empty lane",   "Lane shows waveform or markers / Row size" },
-                    { "Right-click clip", "Mute / Lock / Duplicate / Delete / Gain / Fade in & out" },
-                    { "Drag swatch",      "Reorder strip (paused only)" },
-                }},
-            };
-        }
+        // The rows live in ShortcutSheet.h, held to the key handler by a test.
+        static const std::vector<shortcuts::Section>& sections() { return shortcuts::sheet(); }
 
         static constexpr int kHeaderH  = 26;
         static constexpr int kRowH     = 24;
@@ -143,7 +103,7 @@ namespace
                         // Left column -- shortcut, mono, light grey.
                         g.setColour (brand::textPrimary);
                         g.setFont (brand::type::mono (brand::type::h_caption, true));
-                        g.drawText (r.shortcut,
+                        g.drawText (r.keys,
                                     row.withTrimmedLeft (kHPad).withWidth (kColSplit - kHPad),
                                     juce::Justification::centredLeft, false);
 
@@ -215,22 +175,23 @@ void MainComponent::showFirstRunTutorial (std::function<void()> onFinished)
           "This 5-step tour shows you how to capture your first session. "
           "You can replay this any time from Help > Quick Start." },
         { "Step 1 of 5 -- Add channels",
-          "Click the green + CH button in the top-right header to add channels. "
-          "Pick a count (e.g. 8 for a basic drum kit) and tick Stereo for pairs. "
+          "Click + CH at the right of the header's top row to add channels. "
+          "Pick a count (e.g. 8 for a basic drum kit) and choose Stereo for pairs. "
           "Channels appear in the mixer left-to-right." },
         { "Step 2 of 5 -- Arm tracks",
-          "On each channel strip, click the red R button to ARM it for recording. "
-          "Click the green I button to also monitor (hear) it through your outputs.\n\n"
+          "On each channel strip, click R to ARM it for recording. "
+          "Click I to also monitor (hear) it through your outputs.\n\n"
           "Tip: Shift-click multiple strips to select them, then bulk-arm / delete / "
           "colour them via Track > Selection. Esc clears the selection." },
         { "Step 3 of 5 -- Record + play back",
-          "Press the red record button in the transport bar (centre-bottom of "
-          "the header) to start recording. To stop, press STOP twice within 2 seconds, "
+          "Press RECORD in the transport, at the left of the header's second row, "
+          "to start recording. To stop, press STOP twice within 2 seconds, "
           "so a stray press can't end a take.\n\n"
-          "When you stop, the session auto-loads for playback. Press play "
-          "(green triangle) or just SPACEBAR to hear what you captured." },
+          "When you stop, the session auto-loads for playback. Press PLAY "
+          "or just SPACEBAR to hear what you captured." },
         { "Step 4 of 5 -- Cue list for shows",
-          "For playback shows, build a setlist with the cue bar at the top. "
+          "For playback shows, press + Cue (beside + CH in the header) to keep a cue; "
+          "from the first cue on, the cue bar sits above the strips. "
           "Each cue snapshots fader / pan / routing--recall via cue "
           "buttons OR number keys 1-""9. Soft-takeover ramps prevent clicks." },
         { "Step 5 of 5 -- Help is always one menu away",
@@ -346,14 +307,15 @@ void MainComponent::showAboutDialog()
     // the badge for any non-NoIcon alert). fromUTF8 so the © and · render as
     // themselves -- the implicit const char* -> String conversion decodes the
     // multi-byte UTF-8 as Latin-1 and shows mojibake ("Â©").
-    juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::InfoIcon,
-        "ZynForge Recording",
-        juce::String::fromUTF8 (
-            "Live multitrack recording + virtual soundcheck.\n\n"
-            "JUCE 8 \xC2\xB7 C++20 \xC2\xB7 macOS Universal\n"
-            "\xC2\xA9 Zynforge"),
-        "OK");
+    askClosesForTake (juce::MessageBoxOptions()
+                          .withIconType (juce::MessageBoxIconType::InfoIcon)
+                          .withTitle ("ZynForge Recording")
+                          .withMessage (juce::String::fromUTF8 (
+                              "Live multitrack recording + virtual soundcheck.\n\n"
+                              "JUCE 8 \xC2\xB7 C++20 \xC2\xB7 macOS Universal\n"
+                              "\xC2\xA9 Zynforge"))
+                          .withButton ("OK"),
+                      {});
 }
 
 bool MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult& r)

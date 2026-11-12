@@ -105,6 +105,7 @@ namespace zynforge
                     { "mon",     [&] { t.monitor.store (! t.monitor.load()); } },
                     { "rec",     [&] { t.armed.store (! t.armed.load()); } },
                     { "stereo",  [&] { t.isStereo.store (! t.isStereo.load()); } },
+                    { "editGroup", [&] { t.editGroup.store (t.editGroup.load() + 1); } },
                 };
                 expectEquals ((int) edits.size(), (int) fieldKeys.size(), "add an edit for every new field");
                 for (const auto& [key, edit] : edits)

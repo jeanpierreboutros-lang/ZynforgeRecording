@@ -746,12 +746,18 @@ void MainComponent::rebuildStrips()
         };
 
         // Stereo routing: L → device[N], R → device[N+1].
+        // The engine refuses a patch change while a take records or saves. Say
+        // so; the box goes back to the patch on the next tick.
         auto inCb = [this, i, step] (int dev)
         {
+            if (engine.isRecording() || engine.isCaptureFinalizing())
+            { showStatus (zynforge::PatchPage::lockedForTake()); return; }
             engine.setStripLinkedRouting (i, step == 2, dev, engine.getCurrentDeviceInputCount());
         };
         auto outCb = [this, i, step] (int dev)
         {
+            if (engine.isRecording() || engine.isCaptureFinalizing())
+            { showStatus (zynforge::PatchPage::lockedForTake()); return; }
             if (dev < 0) { engine.sendStripToMaster (i, step == 2); return; }
             engine.setStripLinkedRouting (i, step == 2, dev, engine.getCurrentDeviceOutputCount());
         };
@@ -786,6 +792,8 @@ void MainComponent::rebuildStrips()
         s->setMenuCallbacks (std::move (deleteCb),
                              std::move (addCb),
                              std::move (linkStereoCb));
+
+        s->canOpenColourPicker = [this] { return colourPickerMayOpen(); };
 
         s->onEditGroupChanged = [this, i, step] (int groupId)
         {

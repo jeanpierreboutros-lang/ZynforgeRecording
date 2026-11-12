@@ -51,6 +51,37 @@ namespace zynforge::vsc
         return silent;
     }
 
+    // Device outputs more than one track plays into, on the soundcheck patch
+    // (where two strips on one input both land on its channel) or on the patch
+    // in use now. The desk hears them summed. Zero-based, lowest first.
+    inline std::vector<int> sharedOutputs (AudioEngine& engine, bool soundcheckPatch)
+    {
+        auto& recorder = engine.getRecorder();
+        const int outputs = engine.getCurrentDeviceOutputCount();
+        std::vector<int> tracksOn ((size_t) juce::jmax (0, outputs), 0);
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            const auto& track = recorder.getTrack (i);
+            const int output = soundcheckPatch ? soundcheckOutput (track, i)
+                                               : track.outputRouting.load (std::memory_order_relaxed);
+            if (output >= 0 && output < outputs) ++tracksOn[(size_t) output];
+        }
+        std::vector<int> shared;
+        for (int output = 0; output < outputs; ++output)
+            if (tracksOn[(size_t) output] > 1) shared.push_back (output);
+        return shared;
+    }
+
+    // "Out 1, Out 5" for a sentence; the first few and a count of the rest.
+    inline juce::String outputList (const std::vector<int>& outputs, int limit = 4)
+    {
+        juce::StringArray names;
+        for (int i = 0; i < (int) outputs.size() && i < limit; ++i) names.add ("Out " + juce::String (outputs[(size_t) i] + 1));
+        auto text = names.joinIntoString (", ");
+        if ((int) outputs.size() > limit) text << " and " << ((int) outputs.size() - limit) << " more";
+        return text;
+    }
+
     // Returns the number of strips repatched. Pressed again it does nothing,
     // or the second press would save the soundcheck patch as the show patch.
     inline int repatch (AudioEngine& engine)

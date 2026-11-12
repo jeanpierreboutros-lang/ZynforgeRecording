@@ -301,6 +301,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TwinLinkHostTests.cpp
     Source/Tests/MixKernelTests.cpp
     Source/Tests/TransportBarAccessibilityTests.cpp
+    Source/Tests/UiFixTests.cpp
 )
 
 target_compile_definitions(ZynforgeRecordingTests PRIVATE
