@@ -220,13 +220,15 @@ namespace zynforge
     // No subscribe: ssrecall_ex is SCP's scene RECALL, and nothing in the read
     // tier may send a verb that can change the desk. Scene notifications are
     // parsed below if the desk pushes them; no desk has confirmed that it does.
+    // Outbound, the verb and the parameter path are keywords and go in the
+    // address, written bare; the transport quotes only string arguments, which
+    // are values (a name). A quoted path is not a parameter SCP knows.
     inline ConsoleDialect yamahaScpDialect()
     {
         ConsoleDialect d;
-        d.probe     = [] { return ConsoleMessage ("devinfo", { juce::String ("productname") }); };
+        d.probe     = [] { return ConsoleMessage ("devinfo productname"); };
         d.queryChannelName = [] (int ch1)
-        { return ConsoleMessage ("get", { juce::String ("MIXER:Current/InCh/Label/Name"),
-                                          ch1 - 1, 0 }); };
+        { return ConsoleMessage ("get MIXER:Current/InCh/Label/Name", { ch1 - 1, 0 }); };
         d.parse = [] (const ConsoleMessage& m) -> ConsoleEvent
         {
             const auto& a = m.address;

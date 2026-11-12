@@ -312,6 +312,11 @@ private:
     // what comes back (the bidirectional console link).
     void createSessionFromConsole();
     void finishSessionFromConsole (const juce::File& sessionAtPress, bool viaLink, int stereoPairsAsked);
+    // The OSC listener as New Session from Console found it: it opens one, or
+    // switches its dialect, to hear the desk, and puts it back when it ends.
+    struct OscBeforeConsoleSession { bool listening; int dialect; };
+    std::optional<OscBeforeConsoleSession> oscBeforeConsoleSession;
+    void restoreOscAfterConsoleSession();
     // Builds the session from what the desk reported. `stereoPairsAsked` is
     // how many link states were requested; 0 means this desk or path can't
     // report them.
@@ -405,6 +410,7 @@ private:
     juce::String consoleLinkSummary() const;
     bool refuseConsoleWriteDuringTake();
     void consoleToggleSoundcheck();
+    void consoleReturnToStage();   // pre-flight's "To stage": never enters soundcheck
     void consoleCheckDeskPatch();
     void consoleCaptureGains();
     void consoleRestoreGains();
@@ -418,6 +424,7 @@ private:
     // the in/out record; servicePunchSession() runs the post-roll + teardown.
     void servicePunchSession();
     bool        punchSessionActive { false };
+    juce::int64 punchInSample      { 0 };
     juce::int64 punchOutSample     { 0 };
     juce::int64 punchPostRollEnd   { 0 };
     bool playheadLockedForPunch();

@@ -727,6 +727,13 @@ void MainComponent::refreshAlarmBanner()
     if (sampleRateWarning.isNotEmpty())
         alarms.push_back ({ sampleRateWarning, engine.isRecording() ? Level::Danger : Level::Notice });
     collectTwinAlarms (twinLink.snapshot(), alarms);
+    // A TCP desk that dropped its link said so once, on the status line. The
+    // names and scene markers stopped with it, so it stands here until the
+    // link is made again. A console can't threaten the take: a notice.
+    if (consoleLink.wasLinkLost() && ! consoleLink.isConnected())
+        alarms.push_back ({ "CONSOLE LINK LOST -- " + consoleLink.getLostHost()
+                                + " stopped answering; names and scene markers have stopped. Reconnect from the Console menu",
+                            Level::Notice });
     if (recordRefusal.isNotEmpty()) alarms.push_back ({ recordRefusal, Level::Notice });
     alarmBanner.show (std::move (alarms), juce::Time::getMillisecondCounter());
 }

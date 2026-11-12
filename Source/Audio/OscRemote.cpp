@@ -93,6 +93,18 @@ namespace zynforge
         engine.performRemoteTransport (AudioEngine::RemoteTransportAction::StopPlay, error);
     }
 
+    // Shown where the tablet is being set up: the status line and the OSC log.
+    // Once a second at most, as a held or repeating button would flood it.
+    void OscRemote::refuseValuelessStop (double nowMs)
+    {
+        if (nowMs - lastValuelessStopNoticeMs < 1000.0) return;
+        lastValuelessStopNoticeMs = nowMs;
+        const juce::String notice ("OSC STOP refused -- /zynforge/stop needs a value: "
+                                   "1 on press, 0 on release. Set the tablet button to send one.");
+        engine.getRemotes().logOsc ("osc: " + notice);
+        engine.getRemotes().showHostStatus (notice);
+    }
+
     void OscRemote::dropMarker (const juce::String& name)
     {
         // Pass the name INTO the drop so it names the just-dropped marker
@@ -190,6 +202,9 @@ namespace zynforge
         // its release must never be two taps of the two-tap STOP, and letting
         // go of RECORD must never be one. STOP is /zynforge/stop. A held or
         // bouncing STOP repeats; repeats are counted from the last one seen.
+        const double nowMs = testNowMs >= 0.0 ? testNowMs : juce::Time::getMillisecondCounterHiRes();
+        const bool releaseValue = payloadCount >= 1 && (m[0].isInt32() || m[0].isFloat32())
+                               && toFloat (m[0]) == 0.0f;
         if (path == "/zynforge/record")
         {
             if (payloadCount < 1) return false;
@@ -204,22 +219,41 @@ namespace zynforge
         }
         if (path == "/zynforge/stop")
         {
-            if (payloadCount >= 1 && ! toBool (m[0])) return true;   // the release
-            const double nowMs = testNowMs >= 0.0 ? testNowMs : juce::Time::getMillisecondCounterHiRes();
+            // STOP must say press (1) or release (0), as RECORD and PLAY do. A
+            // button set to send the address alone sends the same packet on
+            // press and on release, and a press held past the repeat filter
+            // ended a take by itself: its release was the second STOP tap.
+            if (payloadCount < 1)
+            {
+                refuseValuelessStop (nowMs);
+                return true;
+            }
+            if (! toBool (m[0])) return true;   // the release
             if (! stopDebouncer.admit ({ deskmacro::Command::Stop, 1 }, nowMs)) return true;
             playStop(); recordStop();
             return true;
         }
 
+        // A marker or scene button sends its value on press and 0 on release.
+        // The release is nothing; a repeat inside the debounce window is the
+        // same press. The marker's name is a string argument, never the value.
         if (path == "/zynforge/marker")
         {
-            dropMarker (payloadCount > 0 ? toString (m[0]) : juce::String());
+            if (releaseValue) return true;
+            const bool valued = payloadCount >= 1 && ! m[0].isString();
+            const int nameAt = valued ? 1 : 0;
+            const auto name = payloadCount > nameAt && m[nameAt].isString() ? m[nameAt].getString() : juce::String();
+            if (! markerDebouncer.admit ({ deskmacro::Command::Marker, name.hashCode() }, nowMs)) return true;
+            dropMarker (name);
             return true;
         }
         if (path == "/zynforge/scene")
         {
             if (payloadCount < 1) return false;
-            sceneRecalled (toInt (m[0], 0), payloadCount > 1 ? toString (m[1]) : juce::String());
+            if (releaseValue) return true;
+            const int scene = toInt (m[0], 0);
+            if (! sceneDebouncer.admit ({ deskmacro::Command::MarkerGoto, scene }, nowMs)) return true;
+            sceneRecalled (scene, payloadCount > 1 ? toString (m[1]) : juce::String());
             return true;
         }
 

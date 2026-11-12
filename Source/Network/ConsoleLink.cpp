@@ -56,6 +56,7 @@ namespace zynforge
         }
 
         host      = address;
+        lostHost.clear();
         connectedPort = usePort;
         connected = true;
         dialectConfirmed = false;
@@ -548,6 +549,7 @@ namespace zynforge
                     gainCaptureComplete = true;
                     if (onStatus) onStatus (juce::String ((int) gains.size())
                                             + " head-amp gains captured.");
+                    if (onGainCaptureFinished) onGainCaptureFinished (true);
                 }
                 return;
             }
@@ -618,10 +620,11 @@ namespace zynforge
         //    thread for up to 2 s). The stashed patch + gains are kept.
         if (transport != nullptr && ! transport->isConnected())
         {
-            const auto lostHost = host;
+            const auto dropped = host;
             disconnect();
+            lostHost = dropped;
             if (onStatus)
-                onStatus (profile.displayName + " link to " + lostHost
+                onStatus (profile.displayName + " link to " + dropped
                           + " lost -- the console stopped answering. Use Console: connect... to reconnect.");
             return;
         }
@@ -671,6 +674,7 @@ namespace zynforge
                 gainCaptureComplete = false;   // partial -- must NOT be persisted as the show's gains
                 if (onStatus) onStatus ("Head-amp capture timed out (" + juce::String (got)
                                         + " of expected received) -- try again.");
+                if (onGainCaptureFinished) onGainCaptureFinished (false);
             }
         }
 

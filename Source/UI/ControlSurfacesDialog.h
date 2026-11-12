@@ -196,6 +196,15 @@ namespace zynforge
                     addAndMakeVisible (copyTokenB);
                     refreshToken();
                     startTimerHz (2);   // the token changes with each start of the listener
+                    // A button that sends the address alone sends the same
+                    // packet on press and release; for STOP that was two taps.
+                    valueHelp.setText ("Buttons send a value before the token: /zynforge/stop 1 on press, "
+                                       "0 on release. A STOP with no value is refused.",
+                                       juce::dontSendNotification);
+                    valueHelp.setFont (brand::type::caption());
+                    valueHelp.setColour (juce::Label::textColourId, brand::textSecondary);
+                    valueHelp.setJustificationType (juce::Justification::topLeft);
+                    addAndMakeVisible (valueHelp);
                 }
                 if (digico)   // bidirectional console link
                 {
@@ -251,7 +260,7 @@ namespace zynforge
                 closeB.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
                 addAndMakeVisible (applyB); addAndMakeVisible (closeB);
 
-                setSize (520, digico ? 470 : 284);
+                setSize (520, digico ? 470 : 324);
             }
 
             void timerCallback() override { refreshToken(); }
@@ -279,7 +288,9 @@ namespace zynforge
                     tokenKey.setBounds (tr.removeFromLeft (170));
                     copyTokenB.setBounds (tr.removeFromRight (64));
                     tokenVal.setBounds (tr);
-                    b.removeFromTop (10);
+                    b.removeFromTop (6);
+                    valueHelp.setBounds (b.removeFromTop (34));
+                    b.removeFromTop (6);
                 }
                 if (digico)
                 {
@@ -358,7 +369,7 @@ namespace zynforge
             ProtoInfo info;
             std::function<void()> onCreateFromConsole;
             bool digico { false };
-            juce::Label connKey, connVal, portKey, addrKey, addrVal, ipKey, rxKey, statusL, tokenKey, tokenVal;
+            juce::Label connKey, connVal, portKey, addrKey, addrVal, ipKey, rxKey, statusL, tokenKey, tokenVal, valueHelp;
             juce::TextButton copyTokenB;
             juce::TextEditor portEd, ipEd, rxEd;
             juce::TextButton applyB, closeB, reqB, createB, logB;

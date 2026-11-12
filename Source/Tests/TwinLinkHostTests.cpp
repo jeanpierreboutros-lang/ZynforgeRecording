@@ -172,6 +172,10 @@ namespace zynforge
             config.peerAddress = "127.0.0.1";
             config.pairingCode = kCode;
             config.reconnectMs = 50;
+            // Let the link see where the last test left this Mac's take while
+            // it is still unlinked, as the app's own 10 Hz tick would have: a
+            // take that ended between two tests is no business of the new link.
+            main.twinLink.tick();
             juce::String error;
             expect (main.twinLink.start (config, error), error);
             const bool up = settle (main, [&]
@@ -359,6 +363,10 @@ namespace zynforge
                     main.engine.setExternalRecording (false);
                     main.lastCaptureFinalizationError.clear();
                     main.twinLink.stop();
+                    // The app's timer would tick here. Without it the next
+                    // test's link inherited this "rolling" take and, once
+                    // linked, reported it as ended without STOP.
+                    main.twinLink.tick();
                 }
 
                 beginTest ("A daemon take found rolling offers a re-link, and a confirmed STOP reaches the follower");
@@ -539,6 +547,26 @@ namespace zynforge
                     expect (settle (main, [&] { return finished; }, 6000), "the link STOP never completed");
                     expect (clean, main.lastCaptureFinalizationError);
                     expect (session.getChildFile ("session.report.json").existsAsFile());
+                    session.deleteRecursively();
+                }
+
+                beginTest ("A link STOP that lands during this Mac's own STOP waits for it, then says how it went");
+                {
+                    // The operator stopped here and on the leader at the same
+                    // moment. This Mac is stopping normally: the leader must
+                    // not be told its follower failed.
+                    const auto session = tempSession();
+                    rollTake (main, session);
+                    main.lastCaptureFinalizationError.clear();
+                    main.stopActiveCaptureAsync (false);
+                    expect (main.captureMetadataPending, "the fixture's STOP is not in flight");
+                    bool finished = false, clean = false;
+                    juce::String why;
+                    main.twinStopRecord ([&] (bool ok, juce::String text) { finished = true; clean = ok; why = text; });
+                    expect (! finished || clean, "a STOP in progress was answered as a failed one: " + why);
+                    expect (settle (main, [&] { return finished; }, 6000), "the leader never heard how the STOP went");
+                    expect (clean, why);
+                    settleStopped (main);
                     session.deleteRecursively();
                 }
 

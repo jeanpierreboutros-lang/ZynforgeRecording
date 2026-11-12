@@ -86,7 +86,7 @@ def write_wav(path, frames=4800):
 @unittest.skipUnless(all(shutil.which(tool) for tool in ("ffprobe", "jq", "xxd", "shasum")),
                      "verify_take.sh needs ffprobe, jq, xxd and shasum")
 class VerifyTakeFiles(unittest.TestCase):
-    def run_on(self, build, edit_report=None):
+    def run_on(self, build, edit_report=None, cwd=None):
         with tempfile.TemporaryDirectory(prefix="zf-verify-take-") as raw:
             session = pathlib.Path(raw) / "Show"
             audio = session / "Audio Files"
@@ -101,7 +101,7 @@ class VerifyTakeFiles(unittest.TestCase):
             (session / "session.report.json").write_text(json.dumps(report))
             build(audio)
             done = subprocess.run(["/bin/bash", str(TOOLS / "verify_take.sh"), str(session)],
-                                  capture_output=True, text=True, timeout=60)
+                                  capture_output=True, text=True, timeout=60, cwd=cwd)
             return done.returncode, done.stdout + done.stderr
 
     def test_a_healthy_take_passes(self):
@@ -152,6 +152,18 @@ class VerifyTakeFiles(unittest.TestCase):
         status, output = self.run_on(lambda audio: None, primary_failed)
         self.assertEqual(status, 1, output)
         self.assertIn("report hashing failed", output)
+
+    def test_python_in_the_folder_it_is_run_from_never_runs(self):
+        # Run from a folder holding a json.py, the report check imported that
+        # file: the current folder came first on Python's import path.
+        with tempfile.TemporaryDirectory(prefix="zf-verify-cwd-") as raw:
+            planted = pathlib.Path(raw)
+            marker = planted / "ran"
+            (planted / "json.py").write_text(
+                "import pathlib\npathlib.Path(%r).write_text('ran')\n" % str(marker))
+            status, output = self.run_on(lambda audio: None, cwd=str(planted))
+            self.assertFalse(marker.exists(), "verify_take.sh ran Python from the current folder")
+            self.assertEqual(status, 0, output)
 
     def test_a_session_with_only_renders_has_no_take(self):
         def only_renders(audio):

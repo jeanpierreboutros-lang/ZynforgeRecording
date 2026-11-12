@@ -870,18 +870,27 @@ void MainComponent::createSessionFromConsole()
         { showStatus ("Set the Console IP first (Control Surfaces -> console -> Console IP)."); return; }
 
         // Listen on the chosen console's dialect so replies are parsed, capture
-        // incoming names, then nudge the console to report them.
-        if ((! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != dialect)
-            && ! engine.getRemotes().startOsc (oscListenPort(), dialect))
+        // incoming names, then nudge the console to report them. What the
+        // listener was is remembered and put back when this ends, however it
+        // ends: a listener left open takes names, markers and scene recalls
+        // from anyone on the network, with no token.
+        auto& remotes = engine.getRemotes();
+        if (! oscBeforeConsoleSession.has_value())
+            oscBeforeConsoleSession = OscBeforeConsoleSession { remotes.isOscListening(), remotes.getOscDialect() };
+        if (remotes.isOscListening())
+            remotes.setOscDialect (dialect);   // same port, and a tablet keeps its token
+        else if (! remotes.startOsc (oscListenPort(), dialect))
         {
+            restoreOscAfterConsoleSession();
             showStatus ("Couldn't listen for the desk on UDP port " + juce::String (oscListenPort())
                         + " -- another app may hold it");
             return;
         }
-        engine.getRemotes().setConsoleNameCapture (true);
-        if (! engine.getRemotes().requestConsoleChannelNames (ip, rx, dialect))
+        remotes.setConsoleNameCapture (true);
+        if (! remotes.requestConsoleChannelNames (ip, rx, dialect))
         {
-            engine.getRemotes().setConsoleNameCapture (false);
+            remotes.setConsoleNameCapture (false);
+            restoreOscAfterConsoleSession();
             showStatus ("Couldn't reach console at " + ip + ":" + juce::String (rx));
             return;
         }
@@ -901,6 +910,7 @@ void MainComponent::createSessionFromConsole()
 void MainComponent::finishSessionFromConsole (const juce::File& sessionAtPress, bool viaLink, int stereoPairsAsked)
 {
     engine.getRemotes().setConsoleNameCapture (false);
+    restoreOscAfterConsoleSession();
     const auto names = engine.getRemotes().takeCapturedConsoleNames();
     const auto links = engine.getRemotes().takeCapturedStereoLinks();
 
@@ -920,6 +930,16 @@ void MainComponent::finishSessionFromConsole (const juce::File& sessionAtPress, 
         return;
     }
     buildSessionFromConsole (names, links, stereoPairsAsked, viaLink ? "Console " : "DiGiCo ");
+}
+
+void MainComponent::restoreOscAfterConsoleSession()
+{
+    if (! oscBeforeConsoleSession.has_value()) return;
+    const auto before = *oscBeforeConsoleSession;
+    oscBeforeConsoleSession.reset();
+    auto& remotes = engine.getRemotes();
+    if (! before.listening) remotes.stopOsc();
+    else if (remotes.isOscListening()) remotes.setOscDialect (before.dialect);
 }
 
 void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& names,

@@ -708,6 +708,7 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
             engine.stopPlayback();
             player.setPositionSamples (juce::jmax ((juce::int64) 0, in - preRollS));
             engine.setPunchModeOn (true);
+            punchInSample     = in;
             punchOutSample    = out;
             punchPostRollEnd  = out + postRollS;
             // Open the take before transport rolls. The audio callback admits
@@ -1164,6 +1165,16 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     {
         if (captureMetadataPending || pendingMetadataSaves != 0)
         { error = "session finalization or saving is pending"; return false; }
+        // A selection punch ends with STOP, which splices what it caught and
+        // stops the transport. Stopping playback under it (a tablet's PLAY
+        // release, a surface STOP) cut the punch short and rolled on by itself.
+        const bool stopsPlayback = action == A::StopPlay || (action == A::TogglePlay && engine.isPlaying());
+        if (stopsPlayback && punchSessionActive)
+        {
+            error = "a selection punch is running; STOP ends it";
+            showStatus ("Remote stop of playback refused -- a selection punch is running; use STOP");
+            return false;
+        }
         // Rolling into the selected range in PUNCH mode opens a punch, and no
         // remote may start one.
         if (action != A::StopPlay && engine.isPunchModeOn() && ! engine.isPlaying())
@@ -1827,6 +1838,9 @@ zynforge::PreflightRow MainComponent::deskLinkRow() const
 {
     using Row = zynforge::PreflightRow;
     using Health = zynforge::ConsoleLink::Health;
+    if (! consoleLink.isConnected() && consoleLink.wasLinkLost())
+        return { Row::Status::warning, "Desk link",
+                 "lost -- " + consoleLink.getLostHost() + " stopped answering; reconnect from the Console menu" };
     const auto health = consoleLink.getHealth();
     // A dialect nobody has verified may never answer its probe, and a warning
     // that is always up on that rig teaches the engineer to skip this list.
@@ -1936,7 +1950,7 @@ void MainComponent::showPreflightChecklist()
                                            : engine.getPlayer().isPlaying() ? juce::String ("Playing back")
                                                                             : juce::String ("Idle") });
     rows.push_back (Row::fromLine (backupChecklistRow (onSessionDrive (1))));
-    if (consoleLink.isConnected())
+    if (consoleLink.isConnected() || consoleLink.wasLinkLost())
         rows.push_back (deskLinkRow());
     if (consoleLink.isConnected() || consoleLink.isOnSoundcheckPatch())
         rows.push_back (deskPatchRow());
@@ -2078,7 +2092,9 @@ void MainComponent::showPreflightChecklist()
     offer ([] (const juce::String& item) { return item.startsWith ("Mirror "); }, "Backup",
            run ([] (MainComponent& m) { m.onBackupClicked(); }));
     offer (named ({ "Signal on armed inputs" }), "Patch", run ([] (MainComponent& m) { m.openPatchWindow(); }));
-    offer (named ({ "Desk patch" }), "To stage", run ([] (MainComponent& m) { m.consoleToggleSoundcheck(); }));
+    // The checklist stays open while the desk moves; this button only ever
+    // brings it back, whatever the desk did meanwhile.
+    offer (named ({ "Desk patch" }), "To stage", run ([] (MainComponent& m) { m.consoleReturnToStage(); }));
     offer (named ({ "Output patch" }), "Restore", run ([] (MainComponent& m) { m.restoreOutputPatch(); }));
 
     zynforge::PreflightDialog::launch (std::move (rows));

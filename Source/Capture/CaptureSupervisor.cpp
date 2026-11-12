@@ -1,14 +1,68 @@
 #include "CaptureSupervisor.h"
+#include "HelperExit.h"
 
 #include <juce_events/juce_events.h>
 
 #include <array>
+#include <fcntl.h>
 #include <libproc.h>
 #include <signal.h>
+#include <spawn.h>
+#include <string>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
+
+extern char** environ;
 
 namespace zynforge::capture
 {
+    bool HelperProcess::start (const juce::StringArray& arguments)
+    {
+        if (arguments.isEmpty()) return false;
+        std::vector<std::string> storage;
+        for (const auto& argument : arguments)
+            if (argument.isNotEmpty()) storage.push_back (argument.toStdString());
+        std::vector<char*> argv;
+        for (auto& argument : storage) argv.push_back (argument.data());
+        argv.push_back (nullptr);
+
+        posix_spawn_file_actions_t actions;
+        posix_spawnattr_t attributes;
+        if (posix_spawn_file_actions_init (&actions) != 0) return false;
+        if (posix_spawnattr_init (&attributes) != 0)
+        {
+            posix_spawn_file_actions_destroy (&actions);
+            return false;
+        }
+        // Every descriptor not named here is closed in the helper.
+        bool ready = posix_spawnattr_setflags (&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT) == 0;
+        ready = ready && posix_spawn_file_actions_addopen (&actions, STDIN_FILENO,  "/dev/null", O_RDONLY, 0) == 0;
+        ready = ready && posix_spawn_file_actions_addopen (&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0) == 0;
+        ready = ready && posix_spawn_file_actions_addopen (&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) == 0;
+        pid_t child = 0;
+        const bool spawned = ready && posix_spawn (&child, argv[0], &actions, &attributes, argv.data(), environ) == 0;
+        posix_spawnattr_destroy (&attributes);
+        posix_spawn_file_actions_destroy (&actions);
+        if (! spawned) return false;
+        pid = child;
+        lastExitCode = -1;
+        return true;
+    }
+
+    bool HelperProcess::isRunning()
+    {
+        if (pid <= 0) return false;
+        int state = 0;
+        const auto reaped = waitpid (pid, &state, WNOHANG);
+        if (reaped == 0) return true;
+        if (reaped == pid)
+            lastExitCode = WIFEXITED (state) ? WEXITSTATUS (state)
+                         : WIFSIGNALED (state) ? 128 + WTERMSIG (state) : -1;
+        pid = 0;   // exited, or no longer this process's child to ask about
+        return false;
+    }
+
     CaptureSupervisor::~CaptureSupervisor()
     {
         alive->store (false);
@@ -106,6 +160,7 @@ namespace zynforge::capture
         launched = true;
 
         // The daemon needs a beat to bind; retry the connect briefly.
+        bool answeredWrongly = false;
         for (int attempt = 0; attempt < 20; ++attempt)
         {
             juce::Thread::sleep (100);
@@ -123,14 +178,29 @@ namespace zynforge::capture
                     return true;
                 }
                 client.disconnect();
+                answeredWrongly = true;
                 break;
             }
             if (! process.isRunning()) break;   // crashed on startup
         }
+        // Say what happened. Only the helper's own exit code blames the port:
+        // one that quit for another reason, or never answered, says so.
+        const bool exited = ! process.isRunning();
+        const int exitCode = process.exitCode();
         askChildrenToExit (binaryPath.getFileName());
         launched = false;
-        lastConnectError = "The capture daemon started but never answered; port "
-                         + juce::String (port) + " may be busy.";
+        const auto portText = juce::String (port);
+        lastConnectError = exited && exitCode == helperexit::kExitCannotListen
+                             ? "The capture daemon could not listen on port " + portText
+                               + "; another program may hold it."
+                         : exited
+                             ? "The capture daemon quit while starting (exit code " + juce::String (exitCode)
+                               + "), before it answered."
+                         : answeredWrongly
+                             ? "Something answered on port " + portText
+                               + ", but not as a capture daemon this build can talk to."
+                             : "The capture daemon started but did not answer on port " + portText
+                               + " within 2 seconds.";
         return false;
     }
 

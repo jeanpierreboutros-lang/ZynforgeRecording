@@ -46,6 +46,55 @@ namespace zynforge
                 expect (TextLineTransport::parseLine ("   ").isEmpty());
             }
 
+            beginTest ("SCP: a request names its parameter bare, and only a value is quoted");
+            {
+                juce::StreamingSocket desk;
+                expect (desk.createListener (0, "127.0.0.1"));
+                TextLineTransport link;
+                expect (link.connect ("127.0.0.1", desk.getBoundPort()), "connect failed");
+                std::unique_ptr<juce::StreamingSocket> wire (desk.waitForNextConnection());
+                expect (wire != nullptr);
+                if (wire == nullptr) return;
+
+                const auto d = yamahaScpDialect();
+                expect (link.send (d.probe()));
+                expect (link.send (d.queryChannelName (5)));
+                expect (link.send (ConsoleMessage ("set MIXER:Current/InCh/Label/Name",
+                                                   { 0, 0, juce::String ("Kick In") })));
+
+                // What the desk reads, line by line.
+                juce::String received;
+                const auto end = juce::Time::getMillisecondCounterHiRes() + 3000;
+                while (juce::StringArray::fromLines (received.trimEnd()).size() < 3
+                       && juce::Time::getMillisecondCounterHiRes() < end)
+                {
+                    if (wire->waitUntilReady (true, 50) <= 0) continue;
+                    char bytes[512];
+                    const int n = wire->read (bytes, sizeof (bytes), false);
+                    if (n <= 0) break;
+                    received += juce::String::fromUTF8 (bytes, n);
+                }
+                const auto lines = juce::StringArray::fromLines (received.trimEnd());
+                expectEquals (lines[0], juce::String ("devinfo productname"));
+                expectEquals (lines[1], juce::String ("get MIXER:Current/InCh/Label/Name 4 0"));
+                expectEquals (lines[2], juce::String ("set MIXER:Current/InCh/Label/Name 0 0 \"Kick In\""));
+                link.disconnect();
+            }
+
+            beginTest ("SCP: an ERROR reply is never the handshake");
+            {
+                const auto d = yamahaScpDialect();
+                const auto refused = d.parse (TextLineTransport::parseLine (
+                    "ERROR devinfo productname \"unknown parameter\""));
+                expect (refused.type != ConsoleEvent::Type::HandshakeOk,
+                        "a desk that refused the probe confirmed the dialect");
+                const auto refusedName = d.parse (TextLineTransport::parseLine (
+                    "ERROR get MIXER:Current/InCh/Label/Name 4 0 \"WrongFormat\""));
+                expect (refusedName.type == ConsoleEvent::Type::None, "an ERROR became a channel name");
+                const auto answered = d.parse (TextLineTransport::parseLine ("OK devinfo productname \"CL5\""));
+                expect (answered.type == ConsoleEvent::Type::HandshakeOk, "a real answer no longer confirms");
+            }
+
             // ── MIDI framing (Allen & Heath) ────────────────────────────────
             beginTest ("MIDI/TCP: framing handles running bytes, SysEx and split reads");
             {

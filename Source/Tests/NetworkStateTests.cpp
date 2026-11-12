@@ -451,6 +451,63 @@ namespace zynforge
                 e.setChaseMode (AudioEngine::ChaseMode::Off);
                 main.serviceTimecodeChase();
             }
+
+            // RECORD over a selection: pre-roll, punch in, punch out, post-roll.
+            const auto rollSelectionPunch = [&main] (Bench& b)
+            {
+                b.engine().setTrackArmed (0, true);
+                b.engine().getPlayer().selectRange (kRangeIn, kRangeOut);
+                MainComponent::RecordStartPlan plan;
+                plan.dir = b.session;
+                plan.continueTake = true;
+                plan.numTracks = b.recorder().getNumTracks();
+                plan.armed = 1;
+                main.runRecordPlan (plan);
+                return main.punchSessionActive && b.engine().isRecording() && b.engine().isPlaying();
+            };
+
+            beginTest ("A remote PLAY release or surface STOP can't cut a selection punch short");
+            {
+                Bench b (main);
+                expect (rollSelectionPunch (b), "fixture: no selection punch rolled -- " + main.statusLabel.getText());
+                juce::String error;
+                expect (! b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::StopPlay, error),
+                        "a tablet's PLAY release stopped the transport under a punch");
+                expect (error.containsIgnoreCase ("punch"), error);
+                expect (! b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::TogglePlay, error),
+                        "a remote PLAY toggle stopped the transport under a punch");
+                MidiControlSurface surface (b.engine());
+                surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::noteOn (1, mcu::Stop, (juce::uint8) 127));
+                surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::noteOn (1, mcu::Play, (juce::uint8) 127));
+                expect (b.engine().isPlaying(), "the surface stopped the transport under a punch");
+                expect (main.punchSessionActive && b.engine().isRecording(), "the punch was cut short");
+                expect (main.statusLabel.getText().containsIgnoreCase ("punch"), main.statusLabel.getText());
+
+                // STOP still ends it, as on the host.
+                expect (b.engine().performRemoteTransport (AudioEngine::RemoteTransportAction::StopAll, error)
+                        || error.containsIgnoreCase ("finalization"), error);
+                expect (! main.punchSessionActive, "a remote STOP no longer ends a punch");
+                pumpUntil ([&] { return ! b.engine().isRecording() && ! main.captureMetadataPending
+                                        && main.pendingMetadataSaves == 0; });
+                expect (! b.engine().isPlaying());
+            }
+
+            beginTest ("A punch whose transport stopped before its end does not play on by itself, or claim a replacement");
+            {
+                Bench b (main);
+                expect (rollSelectionPunch (b), "fixture: no selection punch rolled -- " + main.statusLabel.getText());
+                // The transport stops in the pre-roll, by any road.
+                b.engine().stopPlayback();
+                main.servicePunch();
+                pumpUntil ([&] { return ! b.engine().isRecording() && ! main.captureMetadataPending
+                                        && main.pendingMetadataSaves == 0; });
+                if (main.punchSessionActive) main.servicePunchSession();
+                expect (! b.engine().isPlaying(), "playback restarted by itself after the punch was stopped");
+                expect (! main.punchSessionActive, "the punch never ended");
+                expect (! main.statusLabel.getText().containsIgnoreCase ("Punch complete"),
+                        "nothing was replaced, yet: " + main.statusLabel.getText());
+                expect (main.statusLabel.getText().containsIgnoreCase ("nothing"), main.statusLabel.getText());
+            }
         }
 
         // ── Is anyone there ────────────────────────────────────────────────
@@ -569,6 +626,41 @@ namespace zynforge
                 main.consoleLink.setMessageHook (nullptr);
                 main.consoleLink.disconnect();
                 main.consoleLink.setProfile (ConsoleProfile::Kind::BehringerX32);
+            }
+
+            beginTest ("A desk that drops its TCP link stays reported until the link is made again");
+            {
+                Bench b (main);
+                auto& link = main.consoleLink;
+                link.setProfile (ConsoleProfile::Kind::Yamaha);
+                juce::StreamingSocket desk;
+                expect (desk.createListener (0, "127.0.0.1"));
+                expect (link.connect ("127.0.0.1", desk.getBoundPort()), "fixture: no TCP link");
+                {
+                    std::unique_ptr<juce::StreamingSocket> wire (desk.waitForNextConnection());
+                    expect (wire != nullptr);
+                }   // the desk goes away: a power cycle, a switch reboot
+                desk.close();
+                expect (pumpUntil ([&] { link.timerCallback(); return ! link.isConnected(); }, 4000),
+                        "the dropped link was never noticed");
+
+                main.showStatus ("Something else happened since");
+                main.updateCaptureWarnings (EngineStatus());
+                expect (main.alarmBanner.getText().contains ("CONSOLE LINK LOST"),
+                        "the only sign was one status line: " + main.alarmBanner.getText());
+                expect (main.alarmBanner.getLevel() == AlarmBanner::Level::Notice, "a console can't threaten the take");
+                expect (main.deskLinkRow().isProblem(), "pre-flight has no row for the lost desk");
+                expect (main.deskLinkRow().value.containsIgnoreCase ("lost"), main.deskLinkRow().value);
+
+                // Connecting again is the way out.
+                juce::StreamingSocket again;
+                expect (again.createListener (0, "127.0.0.1"));
+                expect (link.connect ("127.0.0.1", again.getBoundPort()));
+                main.updateCaptureWarnings (EngineStatus());
+                expect (! main.alarmBanner.getText().contains ("CONSOLE LINK LOST"), main.alarmBanner.getText());
+                link.disconnect();
+                link.setProfile (ConsoleProfile::Kind::BehringerX32);
+                main.updateCaptureWarnings (EngineStatus());
             }
         }
 
@@ -692,6 +784,130 @@ namespace zynforge
                 expect (cs_detail::setProtoEnabled (b.engine(), osc, true).isEmpty(), "a free port was refused");
                 expect (cs_detail::setProtoEnabled (b.engine(), osc, false).isEmpty());
                 updateSettings (b.engine().getAppProps(), [] (juce::PropertiesFile& p) { p.removeValue ("oscListenPort"); });
+            }
+
+            beginTest ("The OSC panel says a tablet button must send a value");
+            {
+                cs_detail::OscSettings panel (main.engine, cs_detail::protocols().front(), {});
+                juce::String shown;
+                for (auto* child : panel.getChildren())
+                    if (auto* label = dynamic_cast<juce::Label*> (child))
+                        shown << label->getText() << "\n";
+                expect (shown.contains ("/zynforge/stop 1"), "the panel never says STOP needs a value: " + shown);
+                expect (shown.containsIgnoreCase ("refused"), shown);
+            }
+
+            beginTest ("New Session from Console leaves the OSC listener as it found it");
+            {
+                Bench b (main);
+                auto& remotes = b.engine().getRemotes();
+                remotes.stopOsc();
+                int port = 0;
+                {
+                    juce::DatagramSocket probe (false);
+                    expect (probe.bindToPort (0));
+                    port = probe.getBoundPort();
+                }
+                updateSettings (b.engine().getAppProps(), [&] (juce::PropertiesFile& p)
+                {
+                    p.setValue ("oscListenPort", port);
+                    p.setValue ("cs_console_dialect", 1);
+                    p.setValue ("cs_console_key", "digico");
+                    p.setValue ("cs_digico_ip", "127.0.0.1");
+                    p.setValue ("cs_digico_port", 9);
+                });
+                const juce::ScopeGuard settingsBack { [&]
+                {
+                    remotes.stopOsc();
+                    updateSettings (b.engine().getAppProps(), [] (juce::PropertiesFile& p)
+                    {
+                        for (const auto* key : { "oscListenPort", "cs_console_dialect", "cs_console_key",
+                                                 "cs_digico_ip", "cs_digico_port" })
+                            p.removeValue (key);
+                    });
+                } };
+
+                // OSC off: it opens to hear the desk, and closes when the session is built or not.
+                main.createSessionFromConsole();
+                expect (remotes.isOscListening(), "fixture: the listener did not open -- " + main.statusLabel.getText());
+                expect (pumpUntil ([&] { return ! remotes.isOscListening(); }, 6000),
+                        "the listener stayed open on the network after New Session from Console");
+
+                // OSC on for a tablet: same port, same token and Generic afterwards.
+                expect (remotes.startOsc (port, 0));
+                const auto token = remotes.getOscAccessToken();
+                main.createSessionFromConsole();
+                expectEquals (remotes.getOscDialect(), 1, "fixture: the desk's dialect was not in use");
+                expect (pumpUntil ([&] { return remotes.getOscDialect() == 0; }, 6000),
+                        "the tablet's listener was left on the desk's dialect");
+                expect (remotes.isOscListening(), "the tablet's listener was closed");
+                expectEquals (remotes.getOscAccessToken(), token, "the tablet's token changed under it");
+
+                // A refusal on the way: the desk's address is no address.
+                remotes.stopOsc();
+                updateSettings (b.engine().getAppProps(), [] (juce::PropertiesFile& p) { p.setValue ("cs_digico_ip", "999.1.1.1"); });
+                main.createSessionFromConsole();
+                expect (! remotes.isOscListening(), "a refused New Session from Console left the listener open");
+            }
+
+            beginTest ("A head-amp capture whose replies come late is still saved");
+            {
+                Bench b (main);
+                FakeDesk desk;
+                desk.attach (main.consoleLink);
+                desk.headamps = { { 0, 0.25f }, { 1, 0.5f }, { 2, 0.75f } };
+                main.consoleLink.setSessionDir (b.session);
+                const auto file = b.session.getChildFile (ConsoleLink::kStateFileName);
+                file.deleteFile();
+                main.consoleCaptureGains();
+                // Slow, not lost: the link's own deadline has not passed.
+                main.consoleLink.gainDeadlineMs = juce::Time::currentTimeMillis() + 60000;
+                pumpUntil ([] { return false; }, 1800);
+                desk.answer();
+                expect (main.consoleLink.isGainCaptureComplete(), "fixture: the capture never completed");
+                expect (pumpUntil ([&] { return file.existsAsFile(); }, 3000),
+                        "a capture that completed was never saved: " + main.statusLabel.getText());
+                main.consoleLink.setMessageHook (nullptr);
+                main.consoleLink.disconnect();
+            }
+
+            beginTest ("Pre-flight's To stage only ever brings the desk back to stage");
+            {
+                Bench b (main);
+                FakeDesk desk;
+                desk.attach (main.consoleLink);
+                main.consoleLink.setSessionDir (b.session);
+                toSoundcheck (main.consoleLink, desk);
+                expect (main.consoleLink.isOnSoundcheckPatch(), "fixture: the desk is not on SOUNDCHECK");
+
+                main.showPreflightChecklist();
+                auto& modals = *juce::ModalComponentManager::getInstance();
+                PreflightDialog* dialog = nullptr;
+                for (int i = 0; i < modals.getNumModalComponents() && dialog == nullptr; ++i)
+                    if (auto* window = dynamic_cast<juce::DialogWindow*> (modals.getModalComponent (i)))
+                        dialog = dynamic_cast<PreflightDialog*> (window->getContentComponent());
+                expect (dialog != nullptr, "fixture: pre-flight did not open");
+                juce::Button* toStage = nullptr;
+                for (int i = 0; dialog != nullptr && i < dialog->getNumFixes(); ++i)
+                    if (dialog->getFixButton (i)->getButtonText() == "To stage") toStage = dialog->getFixButton (i);
+                expect (toStage != nullptr, "fixture: no To stage button");
+
+                // Behind the open checklist, the desk is put back from the menu bar.
+                main.consoleLink.exitSoundcheck();
+                desk.answer();
+                expect (! main.consoleLink.isOnSoundcheckPatch());
+                const auto heard = desk.wire.size();
+
+                if (toStage != nullptr) toStage->onClick();
+                pumpUntil ([] { return false; }, 200);
+                desk.answer();
+                expect (! main.consoleLink.isOnSoundcheckPatch(), "To stage sent the desk to the soundcheck patch");
+                expectEquals ((int) (desk.wire.size() - heard), 0, "To stage talked to a desk already on stage");
+
+                juce::ModalComponentManager::getInstance()->cancelAllModalComponents();
+                pumpUntil ([] { return false; }, 100);
+                main.consoleLink.setMessageHook (nullptr);
+                main.consoleLink.disconnect();
             }
 
             beginTest ("A surface is given its whole state when it connects");

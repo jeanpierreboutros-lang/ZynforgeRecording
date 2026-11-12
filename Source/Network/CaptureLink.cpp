@@ -18,6 +18,8 @@ namespace zynforge::capture
         // nobody gets a full-size line parsed on the accept thread.
         constexpr size_t kMaxHandshakeLineBytes = 16 * 1024;
         thread_local const CaptureServer* currentCaptureReader = nullptr;
+        // The connection the reader on this thread serves.
+        thread_local const juce::StreamingSocket* currentReaderSocket = nullptr;
 
         struct FrameSerializationAborted {};
 
@@ -121,6 +123,7 @@ namespace zynforge::capture
         }
         if (acceptThread.joinable()) acceptThread.join();
         if (readThread.joinable())   readThread.join();
+        joinRetiredReaders (true);
         listener.reset();
         endpointIdentity.reset();
         listenPort.store (-1);
@@ -132,6 +135,19 @@ namespace zynforge::capture
         const std::lock_guard<std::timed_mutex> guard (writeLock);
         if (auto live = std::atomic_load_explicit (&client, std::memory_order_acquire))
             live->close();
+    }
+
+    void CaptureServer::joinRetiredReaders (bool all)
+    {
+        for (auto it = retiredReaders.begin(); it != retiredReaders.end();)
+        {
+            if (all || it->finished->load())
+            {
+                if (it->thread.joinable()) it->thread.join();
+                it = retiredReaders.erase (it);
+            }
+            else ++it;
+        }
     }
 
     void CaptureServer::acceptLoop()
@@ -205,10 +221,10 @@ namespace zynforge::capture
             // Tell the old client it's being superseded ON PURPOSE (a "bye")
             // BEFORE closing its socket, so it distinguishes an intentional
             // kick from a real daemon death and doesn't raise a false mid-take
-            // "daemon died" alarm. Then close the socket so its readLoop exits
-            // -- otherwise the join below would block until the old GUI
-            // disconnected on its own, wedging the accept loop (and the new
-            // connection) indefinitely.
+            // "daemon died" alarm. Then close the socket so its readLoop exits.
+            // The new connection becomes the client here, on this thread, so
+            // the next one to arrive always closes this one.
+            std::shared_ptr<juce::StreamingSocket> fresh (std::move (sock));
             {
                 // Grab a reference under the lock if we can get it quickly; a
                 // wedged writer must not stop us superseding the connection.
@@ -222,26 +238,38 @@ namespace zynforge::capture
                 // native descriptor from being recycled during a send.
                 const std::lock_guard<std::timed_mutex> guard (writeLock);
                 if (old != nullptr) old->close();
+                std::atomic_store_explicit (&client, fresh, std::memory_order_release);
+                clientConnected.store (true);
             }
-            if (readThread.joinable()) readThread.join();
-            readThread = std::thread ([this, s = std::move (sock), hello, serverProof] () mutable
+            // The old reader is not joined first. It may be inside a command
+            // that takes minutes -- a STOP closing every file on every copy for
+            // a window that crashed -- and a relaunched window waiting on that
+            // for its greeting took the helper for something else on the port
+            // and switched daemon mode off. It finishes beside the new one; its
+            // reply goes nowhere (sendReply) and it leaves `client` alone.
+            joinRetiredReaders (false);
+            if (readThread.joinable())
+                retiredReaders.push_back ({ std::move (readThread), readerFinished });
+            readerFinished = std::make_shared<std::atomic<bool>> (false);
+            readThread = std::thread ([this, fresh, hello, serverProof, finished = readerFinished]
             {
-                readLoop (std::move (s), hello, serverProof);
+                readLoop (fresh, hello, serverProof, finished);
             });
         }
     }
 
-    void CaptureServer::readLoop (std::unique_ptr<juce::StreamingSocket> sock,
-                                 Command hello, juce::String serverProof)
+    void CaptureServer::readLoop (std::shared_ptr<juce::StreamingSocket> shared,
+                                 Command hello, juce::String serverProof,
+                                 std::shared_ptr<std::atomic<bool>> finished)
     {
         currentCaptureReader = this;
-        const juce::ScopeGuard clearReader { [] { currentCaptureReader = nullptr; } };
-        std::shared_ptr<juce::StreamingSocket> shared (std::move (sock));
+        currentReaderSocket = shared.get();
+        const juce::ScopeGuard clearReader { [finished]
         {
-            const std::lock_guard<std::timed_mutex> g (writeLock);
-            std::atomic_store_explicit (&client, shared, std::memory_order_release);
-        }
-        clientConnected.store (true);
+            currentCaptureReader = nullptr;
+            currentReaderSocket = nullptr;
+            finished->store (true);
+        } };
 
         Reply greeting;
         greeting.id = hello.id;
@@ -275,15 +303,20 @@ namespace zynforge::capture
         }
 
         {
+            // Only this reader's own connection: a newer window has taken over
+            // if `client` is another socket, and it stays the client.
             const std::lock_guard<std::timed_mutex> g (writeLock);
-            std::atomic_store_explicit (&client,
-                                        std::shared_ptr<juce::StreamingSocket>(),
-                                        std::memory_order_release);
+            if (std::atomic_load_explicit (&client, std::memory_order_acquire) == shared)
+            {
+                std::atomic_store_explicit (&client,
+                                            std::shared_ptr<juce::StreamingSocket>(),
+                                            std::memory_order_release);
+                clientConnected.store (false);
+            }
         }
-        clientConnected.store (false);
     }
 
-    bool CaptureServer::writeLine (const juce::var& v)
+    bool CaptureServer::writeLine (const juce::var& v, bool isReply)
     {
         // Fail fast instead of queueing behind a write that's stuck on a dead
         // peer -- that queueing is what let one dozing GUI stall the daemon's
@@ -292,13 +325,17 @@ namespace zynforge::capture
         if (! g.owns_lock()) return false;
         auto live = std::atomic_load_explicit (&client, std::memory_order_acquire);
         if (live == nullptr) return false;
+        // A reply answers the connection its command came in on. A reader whose
+        // window was superseded during its command has no one left to answer:
+        // its reply must not reach the new window, whose ids it could match.
+        if (isReply && currentCaptureReader == this && currentReaderSocket != live.get()) return false;
         if (writeAll (*live, frame (v))) return true;
         live->close(); // discard an incomplete frame before any later status
         return false;
     }
 
-    bool CaptureServer::sendStatus (const EngineStatus& s) { return writeLine (encodeStatus (s)); }
-    bool CaptureServer::sendReply  (const Reply& r)        { return writeLine (r.toJson()); }
+    bool CaptureServer::sendStatus (const EngineStatus& s) { return writeLine (encodeStatus (s), false); }
+    bool CaptureServer::sendReply  (const Reply& r)        { return writeLine (r.toJson(), true); }
 
     // ── CaptureClient ───────────────────────────────────────────────────────
 

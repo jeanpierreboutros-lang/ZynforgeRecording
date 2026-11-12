@@ -57,6 +57,11 @@ namespace zynforge
         void disconnect();
         bool isConnected() const noexcept { return connected; }
         juce::String getHost() const      { return host; }
+        // The desk dropped a TCP link and the watchdog closed it. Stands until
+        // a link is made again, so the loss is not one status line that the
+        // next one covers: names and scene markers stopped with it.
+        bool wasLinkLost() const noexcept   { return lostHost.isNotEmpty(); }
+        juce::String getLostHost() const    { return lostHost; }
 
         // isConnected says a socket is open, and on UDP that holds from connect
         // to disconnect with nobody there. Only a reply to the dialect's probe
@@ -101,6 +106,10 @@ namespace zynforge
         // some channels and silently leave the rest at soundcheck settings.
         // A capture loaded from console_state.json counts as complete.
         bool isGainCaptureComplete() const noexcept { return gainCaptureComplete; }
+        // A capture ended: every reply in (true), or its deadline passed
+        // (false). Message thread. This, not a guess at how long the desk
+        // takes, is when the host saves the gains.
+        std::function<void (bool complete)> onGainCaptureFinished;
         float gainToDb (float v) const noexcept { return profile.gainToDb (v); }
 
         // Round-trip the stashed patch + captured gains through the
@@ -249,6 +258,7 @@ namespace zynforge
         bool                 connected { false };
         bool                 dialectConfirmed { false };
         juce::String         host;
+        juce::String         lostHost;     // see wasLinkLost
         int                  connectedPort { 0 };
 
         juce::File           sessionDir;

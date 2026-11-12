@@ -13,8 +13,11 @@ namespace zynforge::mcu
     //  - Scribble strips: a SysEx LCD write.
 
     // Fader law: map the 14-bit fader value <-> dB over a sensible live range.
-    // Reversible so the surface echo round-trips. Unity (0 dB) lands ~84 % up.
-    constexpr float kFaderMinDb = -65.0f;
+    // Reversible so the surface echo round-trips. Unity (0 dB) lands ~83 % up.
+    // The bottom is the engine's own floor (setTrackGainDb holds -60..+12): a
+    // lower one let the bottom of the travel read -65, the engine keep -60,
+    // and the echo push the motor back up to where -60 sat.
+    constexpr float kFaderMinDb = -60.0f;
     constexpr float kFaderMaxDb = 12.0f;
 
     inline float faderToDb (int value14) noexcept
@@ -48,6 +51,16 @@ namespace zynforge::mcu
 
     enum class Action { None, Arm, Solo, Mute, Select, Rewind, Forward, Stop, Play, Record,
                         BankLeft, BankRight, ChanLeft, ChanRight };
+
+    // Fader touch: note-on 127 when a hand is on a touch-sensitive fader,
+    // velocity 0 (or note-off) when it lets go. 0x68..0x6F are the strips,
+    // 0x70 the master. Returns the strip (8 = master), or -1.
+    constexpr int kTouchBase   = 0x68;
+    constexpr int kMasterTouch = 0x70;
+    inline int touchedFader (int note) noexcept
+    {
+        return note >= kTouchBase && note <= kMasterTouch ? note - kTouchBase : -1;
+    }
 
     struct ButtonHit { Action action { Action::None }; int strip { -1 }; };
 

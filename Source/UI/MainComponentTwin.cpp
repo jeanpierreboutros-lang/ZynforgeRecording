@@ -7,6 +7,20 @@
 
 using namespace zynforge;
 
+namespace
+{
+    // Runs `then` on the message thread once `ready` holds, checking 10 times
+    // a second. Nothing waits: each check is its own timer callback.
+    void whenReady (std::function<bool()> ready, std::function<void()> then)
+    {
+        juce::Timer::callAfterDelay (100, [ready = std::move (ready), then = std::move (then)]() mutable
+        {
+            if (ready()) then();
+            else whenReady (std::move (ready), std::move (then));
+        });
+    }
+}
+
 twin::MacStatus MainComponent::twinStatus()
 {
     // captureStatus and isRecording both cover a daemon take.
@@ -63,6 +77,20 @@ void MainComponent::twinStopRecord (std::function<void (bool, juce::String)> don
     // it is not one more first tap. A tap armed here must not outlive the take.
     stopArmedAtMs = 0;
     juce::Component::SafePointer<MainComponent> self (this);
+    // A STOP is already closing this take: STOP pressed here and on the leader
+    // at about the same moment. That STOP's outcome is the answer; a second
+    // one would only be refused as pending and read as a failure there.
+    if (captureMetadataPending)
+    {
+        whenReady ([self] { return self == nullptr || ! self->captureMetadataPending; }, [self, done]
+        {
+            if (self == nullptr) return;
+            if (self->engine.isRecording()) { self->twinStopRecord (done); return; }
+            const auto error = self->lastCaptureFinalizationError;
+            done (error.isEmpty(), error);
+        });
+        return;
+    }
     stopActiveCaptureAsync (false, [self, done] (bool ok)
     {
         if (self == nullptr) return;

@@ -20,4 +20,9 @@ namespace zynforge::capture::helperexit
     {
         return sender == 1;
     }
+
+    // The helper's exit code when it could not open its port (or that port's
+    // key file). Anything else that ends it during start-up is not the port's
+    // fault, and the window must not say it is.
+    inline constexpr int kExitCannotListen = 2;
 }

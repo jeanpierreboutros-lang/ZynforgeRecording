@@ -236,6 +236,50 @@ namespace zynforge
                 server.stop();
             }
 
+            beginTest ("A window that reconnects while the last one's STOP is still closing files is greeted at once");
+            {
+                CaptureServer server;
+                juce::WaitableEvent stopEntered, releaseStop;
+                std::atomic<int> lateReplies { 0 };
+                server.onCommand = [&] (const Command& c)
+                {
+                    if (c.action != Action::StopRecording) return;
+                    // A long STOP: every file on every copy is being closed.
+                    stopEntered.signal();
+                    releaseStop.wait (10000);
+                    Reply r; r.id = c.id; r.ok = r.completed = true;
+                    if (server.sendReply (r)) lateReplies.fetch_add (1);
+                };
+                const juce::ScopeGuard release { [&] { releaseStop.signal(); } };
+                const int port = listenSomewhere (server);
+                expect (port > 0);
+                if (port <= 0) return;
+
+                CaptureClient a;
+                expect (a.connect ("127.0.0.1", port));
+                expect (a.hello (2000).ok);
+                Command stop; stop.action = Action::StopRecording;
+                expect (a.send (stop));
+                expect (stopEntered.wait (3000), "the STOP never reached the server");
+                a.disconnect();   // the window crashed during STOP
+
+                CaptureClient b;
+                std::atomic<int> statuses { 0 };
+                b.onStatus = [&] (const EngineStatus&) { statuses.fetch_add (1); };
+                expect (b.connect ("127.0.0.1", port));
+                expect (b.hello (1500).ok, "the relaunched window waited on the old window's STOP");
+
+                releaseStop.signal();
+                juce::Thread::sleep (300);
+                expectEquals (lateReplies.load(), 0, "the old window's STOP reply went to the new window");
+                expect (server.hasClient(), "the old connection's end dropped the new window");
+                expect (server.sendStatus (EngineStatus {}), "the new window can no longer hear the helper");
+                expect (waitUntil ([&] { return statuses.load() > 0; }, 2000), "no status reached the new window");
+
+                b.disconnect();
+                server.stop();
+            }
+
             beginTest ("server reports listening / port / no-client cleanly");
             {
                 CaptureServer server;

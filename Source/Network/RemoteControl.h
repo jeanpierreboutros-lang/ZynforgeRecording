@@ -57,6 +57,9 @@ namespace zynforge
         int          getOscPort() const;
         juce::String getOscAccessToken() const;
         int          getOscDialect() const;
+        // Changes what a running listener parses, keeping its port and its
+        // Generic token (a restart makes a new token and strands the tablet).
+        void         setOscDialect (int dialectIndex);
 
         // ── Outbound console control (DiGiCo bidirectional link) ────────
         // Ask the console (at host:port) to report all channel names. The

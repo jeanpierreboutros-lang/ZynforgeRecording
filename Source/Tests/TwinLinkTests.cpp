@@ -1423,6 +1423,73 @@ namespace zynforge
                 b.deleteRecursively();
             }
 
+            beginTest ("A leader that restarts under its helper's take still compares that take with the follower's");
+            {
+                Pair pair;
+                const auto a = tempSession ("relaunch-leader"), b = tempSession ("relaunch-follower");
+                pair.leaderHost.status.sessionDir = a;
+                pair.followerHost.status.sessionDir = b;
+                if (! bring (pair)) return;
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.followerHost.status.recording; }));
+
+                // The leader's window dies; its capture helper keeps the take
+                // rolling. The new window adopts the take, then links again.
+                pair.leader = std::make_unique<TwinLink> (pair.leaderHost);
+                pair.both[0] = pair.leader.get();
+                pair.leader->noteLocalTakeAdopted();
+                run (pair.both, 60);
+                juce::String error;
+                expect (pair.leader->start (fastConfig (Role::Leader, pair.follower->getBoundPort()), error), error);
+                expect (settle (pair.both, [&] { return pair.leaderHost.noticed ("now linked"); }),
+                        "the follower's take was never tied to the adopted one");
+
+                writeReport (a, 2, 480000, 10.0);
+                writeReport (b, 2, 480000, 10.0);
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (settle (pair.both, [&] { return pair.followerHost.stopCalls == 1; }), "STOP never reached the follower");
+                expect (settle (pair.both, [&]
+                {
+                    return twinBlock (a).getProperty ("peerReported", false)
+                        && twinBlock (b).getProperty ("peerReported", false);
+                }, 6000), "neither report has the other Mac's numbers");
+                expectEquals (twinBlock (a).getProperty ("takeId", "").toString(),
+                              twinBlock (b).getProperty ("takeId", "").toString(),
+                              "the two Macs filed the take under different ids");
+                expect (settle (pair.both, [&] { return pair.leader->snapshot().compareLine.isNotEmpty(); }),
+                        "the leader never compared the take");
+
+                // A new link starts clean: the panel must not keep this take's
+                // comparison, or an old refusal, after Disconnect and Connect.
+                pair.leader->stop();
+                expect (pair.leader->start (fastConfig (Role::Leader, pair.follower->getBoundPort()), error), error);
+                const auto fresh = pair.leader->snapshot();
+                expect (fresh.compareLine.isEmpty(), "a new link shows the last link's comparison: " + fresh.compareLine);
+                expect (fresh.lastEvent.isEmpty(), "a new link shows the last link's event: " + fresh.lastEvent);
+                pair.leader->stop();
+                pair.follower->stop();
+                a.deleteRecursively();
+                b.deleteRecursively();
+            }
+
+            beginTest ("A new link forgets the last link's refusal");
+            {
+                Pair pair;
+                juce::String error;
+                // Port 1: nothing is there, so the link stays down.
+                expect (pair.leader->start (fastConfig (Role::Leader, 1), error), error);
+                startLeaderTake (pair);
+                expect (pair.leader->snapshot().lastEvent.contains ("NOT STARTED"), pair.leader->snapshot().lastEvent);
+                pair.leaderHost.status.recording = false;
+                run ({ pair.leader.get() }, 40);
+                pair.leader->stop();
+                expect (pair.leader->start (fastConfig (Role::Leader, 1), error), error);
+                expect (pair.leader->snapshot().lastEvent.isEmpty(),
+                        "Disconnect and Connect kept: " + pair.leader->snapshot().lastEvent);
+                pair.leader->stop();
+            }
+
             beginTest ("A mismatch between the two finished takes gets a plain warning");
             {
                 TakeSummary here, peer;

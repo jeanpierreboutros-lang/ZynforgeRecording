@@ -864,6 +864,41 @@ namespace zynforge
                 surface.timerCallback();
                 expect (sent.size() < 4, "an idle tick resent the whole surface");
             }
+
+            beginTest ("A touched Mackie fader is left to the hand, and the bottom of its travel stays there");
+            {
+                AudioEngine engine;
+                engine.setStripCount (2);
+                MidiControlSurface surface (engine);
+                std::vector<juce::MidiMessage> sent;
+                surface.sendHookForTests = [&] (const juce::MidiMessage& m) { sent.push_back (m); };
+                const auto faderSent = [&] (int strip, int* value)
+                {
+                    for (const auto& m : sent)
+                        if (m.isPitchWheel() && m.getChannel() == strip + 1)
+                        {
+                            if (value != nullptr) *value = m.getPitchWheelValue();
+                            return true;
+                        }
+                    return false;
+                };
+                surface.timerCallback();
+
+                // Touch strip 1's fader and pull it to the bottom.
+                surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::noteOn (1, 0x68, (juce::uint8) 127));
+                surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::pitchWheel (1, 0));
+                sent.clear();
+                surface.timerCallback();
+                expect (! faderSent (0, nullptr), "the app drove a fader under the engineer's hand");
+
+                // Let go: the surface gets where the engine is, the bottom.
+                surface.handleIncomingMidiMessage (nullptr, juce::MidiMessage::noteOn (1, 0x68, (juce::uint8) 0));
+                sent.clear();
+                surface.timerCallback();
+                int value = -1;
+                expect (faderSent (0, &value), "a released fader was never given the engine's level");
+                expectEquals (value, 0, "the bottom of the travel was pushed back up");
+            }
         }
 
         void testTwinComparison()
