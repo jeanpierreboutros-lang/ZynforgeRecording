@@ -34,6 +34,7 @@
 namespace zynforge
 {
     namespace interchange { struct SessionInput; }
+    class StereoMixWriter;   // StereoMixWriter.h
 
     class MainTransportRegressionTests;
 
@@ -254,6 +255,8 @@ namespace zynforge
         void  setMasterStereo (bool stereo);
 
         bool startRecording (const juce::File& sessionDir);
+        // Test seams around the recorder's start inside startRecording.
+        std::function<void()> beforeRecorderStartForTests, afterRecorderStartForTests;
         void stopRecording();
         // UI entry: accepted once, completion on UI after media/player readiness
         // and reader retirement. A false return never invokes completion.
@@ -297,6 +300,8 @@ namespace zynforge
         void setRecordStereoMix (bool enabled);
         bool getRecordStereoMix() const noexcept           { return recordStereoMixFlag.load(); }
         bool hasStereoMixWriteFailed() const noexcept      { return stereoMixWriteFailed.load(); }
+        // Test seam: wraps StereoMix.wav's file writer (takes ownership).
+        std::function<juce::AudioFormatWriter* (juce::AudioFormatWriter*)> wrapStereoMixWriterForTests;
 
         // Load a session's audio into the player + seed clips. preserveEdits
         // is false for a genuine session OPEN (wipe stale clips; the caller's
@@ -970,7 +975,7 @@ namespace zynforge
             std::thread worker;
             SessionPlayer::Prepared prepared, retired;
             std::vector<Clip> explicitReaders;
-            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> mixWriter;
+            std::unique_ptr<StereoMixWriter> mixWriter;
             juce::File directory;
             juce::int64 recordEnd = 0;
             double playbackRate = 48000.0;
@@ -1049,7 +1054,7 @@ namespace zynforge
         std::atomic<bool>                                       recordStereoMixFlag { false };
         std::atomic<bool>                                       stereoMixWriteFailed { false };
         juce::TimeSliceThread                                   mixWriterThread { "ZF Mix Writer" };
-        std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> stereoMixWriter;
+        std::unique_ptr<StereoMixWriter>                        stereoMixWriter;
         juce::AudioBuffer<float>                                stereoMixScratch;
         // Guards the audio-thread stereo-mix capture (check-and-write) against
         // the message-thread stereoMixWriter.reset() in stopRecording. The
@@ -1133,7 +1138,7 @@ namespace zynforge
         struct StereoMixFile
         {
             juce::File file;
-            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
+            std::unique_ptr<StereoMixWriter> writer;
             // Silence the mix writes ahead of its first block: the pre-roll
             // the track files start with. -1 until the take has gone live.
             std::shared_ptr<std::atomic<juce::int64>> leadPad;

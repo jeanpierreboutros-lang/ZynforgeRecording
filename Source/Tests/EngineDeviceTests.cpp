@@ -331,6 +331,7 @@ public:
         devicePanelMasterRevert();   // C3
         devicePanelInputMeter();   // C3
         masterMeterIsPostFader();   // C3
+        stereoMixWriteErrors();   // C4
     }
 
 private:
@@ -576,6 +577,34 @@ private:
         feed.blocks (1, 0.5f);
         expectLessThan (master.peak.load(), 0.0001f, "the meter moved with MUTE on");
         master.muted.store (false);
+    }
+
+    // ── ENG-09 ─────────────────────────────────────────────────────────
+    void stereoMixWriteErrors()
+    {
+        beginTest ("ENG-09: a StereoMix.wav write that fails is reported");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        engine.clearAllStripOverrides();
+        engine.setStripCount (1);
+        engine.prepareForTests (enginedevice::kRate, enginedevice::kBlock);
+        engine.getRecorder().setPreRollSeconds (0);
+        engine.setTrackInputRouting (0, 0);
+        engine.getRecorder().getTrack (0).armed.store (true);
+        engine.getRecorder().getTrack (0).streamSend.store (true);
+        engine.setRecordStereoMix (true);
+        engine.wrapStereoMixWriterForTests = [] (juce::AudioFormatWriter* inner) -> juce::AudioFormatWriter*
+        { return new enginedevice::FailingWriter (inner); };
+        expect (engine.startRecording (session.dir), engine.getRecorder().getStartError());
+        enginedevice::Feeder feed { engine, 1 };
+        feed.blocks (40, 0.25f);
+        expect (enginedevice::pumpUntil ([&] { return engine.hasStereoMixWriteFailed(); }, 3000),
+                "the mix lost its audio and nothing said so");
+        expect (engine.captureStatus().stereoMixFailed);
+        engine.stopRecording();
+        expect (engine.hasStereoMixWriteFailed(), "STOP forgot the failure");
+        engine.setRecordStereoMix (false);
+        engine.wrapStereoMixWriterForTests = nullptr;
     }
 
 };

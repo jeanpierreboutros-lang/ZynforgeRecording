@@ -7,6 +7,7 @@
 #include "SessionMixFile.h"
 #include "FastAccumulate.h"
 #include "MultiPartReader.h"
+#include "StereoMixWriter.h"
 
 #include <vector>
 
@@ -367,11 +368,14 @@ namespace zynforge
         const auto landsAt = continuing ? continueLandsAt() : (juce::int64) 0;
         recorder.setContinueLandsAt (continuing ? landsAt : -1);
 
-        if (! recorder.startRecording (sessionDir))
+        if (beforeRecorderStartForTests) beforeRecorderStartForTests();
+        const bool started = recorder.startRecording (sessionDir);
+        if (afterRecorderStartForTests) afterRecorderStartForTests();
+        if (! started)
         {
             markers.setContext (markerSession, markerRate);
             if (mix.leadPad != nullptr) mix.leadPad->store (0, std::memory_order_release);
-            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> unused;
+            std::unique_ptr<StereoMixWriter> unused;
             {
                 const juce::ScopedLock sl (stereoMixLock);
                 unused = std::move (stereoMixWriter);
@@ -442,18 +446,23 @@ namespace zynforge
                                            + juce::String (take).paddedLeft ('0', 2) + ".wav");
 
         juce::WavAudioFormat wav;
-        if (auto* out = path.createOutputStream().release())
+        // A short close (disk full on the last flush or the header) is only
+        // seen by the stream, after the writer has gone.
+        auto fileFailed = CheckedFileStream::makeFailedFlag();
+        if (auto* out = CheckedFileStream::open (path, fileFailed).release())
         {
             juce::StringPairArray meta;
             if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
             {
+                juce::AudioFormatWriter* inner = w;
+                if (wrapStereoMixWriterForTests) inner = wrapStereoMixWriterForTests (w);
                 mix.file = path;
                 mix.leadPad = std::make_shared<std::atomic<juce::int64>> (-1);
-                mix.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
-                                 (new LeadPadWriter (w, mix.leadPad), mixWriterThread, 32768);
                 // JUCE writes the header at open and close unless told, and a
                 // crash would leave all this audio behind a length of zero.
-                mix.writer->setFlushInterval ((int) (sr * 5.0));
+                mix.writer = std::make_unique<StereoMixWriter> (
+                    std::make_unique<LeadPadWriter> (inner, mix.leadPad), mixWriterThread, 32768,
+                    stereoMixWriteFailed, fileFailed, (int) (sr * 5.0));
             }
             else
             {
