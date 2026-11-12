@@ -249,6 +249,9 @@ private:
     int pendingMetadataSaves = 0;
     juce::uint64 metadataRevision = 0;
     bool captureMetadataPending = false; // holds the entire media + metadata STOP operation
+    // A rolling punch-out restarts playback once its files are final; STOP in
+    // that time clears this, and playback stays stopped.
+    bool punchResumePending = false;
     bool restoringUILayout = false;
     bool metadataContinuationReserved = false;
     juce::String lastCaptureFinalizationError;

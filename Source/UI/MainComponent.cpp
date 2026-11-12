@@ -839,7 +839,14 @@ void MainComponent::onStopClicked()
 {
     recordPressHeldAtMs = 0;   // STOP after a held RECORD means don't start
     if (captureMetadataPending)
-    { showStatus ("Recording stopped; finalization pending"); return; }
+    {
+        // A punch-out that kept playing restarts playback when its files are
+        // final. STOP now means stop.
+        showStatus (std::exchange (punchResumePending, false)
+                        ? "Recording stopped; finalization pending -- playback will not restart"
+                        : "Recording stopped; finalization pending");
+        return;
+    }
     if (punchSessionActive)
     {
         onRecordClicked(); // a deliberate selection punch ends in one press
@@ -1079,6 +1086,7 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
         const auto resumeAt = engine.getPlayer().getPositionSamples();
         const bool previousBusy = sessionIoBusy.load();
         captureMetadataPending = true;
+        punchResumePending = resumeManualPlayback;
         sessionIoBusy.store (true);
         const bool accepted = engine.stopRecordingAsync (
             [self, rewind, resumeManualPlayback, resumeAt, completion] (bool mediaOk)
@@ -1093,16 +1101,18 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
                     self->engine.stopPlayback();
                     self->engine.getPlayer().rewind();
                 }
-                else if (resumeManualPlayback && mediaOk)
+                else if (resumeManualPlayback && mediaOk && self->punchResumePending)
                 {
                     self->engine.getPlayer().setPositionSamples (resumeAt);
                     self->engine.startPlayback();
                 }
+                self->punchResumePending = false;
                 self->saveFinalizedCaptureMetadata (mediaOk, std::move (mediaError), completion);
             });
         if (! accepted)
         {
             captureMetadataPending = false;
+            punchResumePending = false;
             sessionIoBusy.store (previousBusy);
             lastCaptureFinalizationError = "Capture finalization was not accepted; check the recording state";
             showStatus (lastCaptureFinalizationError);
