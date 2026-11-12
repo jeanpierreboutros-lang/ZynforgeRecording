@@ -2032,7 +2032,9 @@ void MainComponent::showPreflightChecklist()
     offer ([] (const juce::String& item) { return item.startsWith ("Mirror "); }, "Backup",
            run ([] (MainComponent& m) { m.onBackupClicked(); }));
     offer (named ({ "Signal on armed inputs" }), "Patch", run ([] (MainComponent& m) { m.openPatchWindow(); }));
-    offer (named ({ "Desk patch" }), "To stage", run ([] (MainComponent& m) { m.consoleToggleSoundcheck(); }));
+    // The checklist stays open while the desk moves; this button only ever
+    // brings it back, whatever the desk did meanwhile.
+    offer (named ({ "Desk patch" }), "To stage", run ([] (MainComponent& m) { m.consoleReturnToStage(); }));
     offer (named ({ "Output patch" }), "Restore", run ([] (MainComponent& m) { m.restoreOutputPatch(); }));
 
     zynforge::PreflightDialog::launch (std::move (rows));

@@ -45,6 +45,10 @@ namespace zynforge
     {
         return osc != nullptr ? (int) osc->getDialect() : 0;
     }
+    void RemoteControl::setOscDialect (int dialectIndex)
+    {
+        if (osc != nullptr) osc->setDialect ((OscRemote::Dialect) juce::jlimit (0, 4, dialectIndex));
+    }
 
     bool RemoteControl::requestConsoleChannelNames (const juce::String& consoleHost, int port, int dialect)
     {

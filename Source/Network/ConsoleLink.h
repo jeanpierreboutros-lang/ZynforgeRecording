@@ -106,6 +106,10 @@ namespace zynforge
         // some channels and silently leave the rest at soundcheck settings.
         // A capture loaded from console_state.json counts as complete.
         bool isGainCaptureComplete() const noexcept { return gainCaptureComplete; }
+        // A capture ended: every reply in (true), or its deadline passed
+        // (false). Message thread. This, not a guess at how long the desk
+        // takes, is when the host saves the gains.
+        std::function<void (bool complete)> onGainCaptureFinished;
         float gainToDb (float v) const noexcept { return profile.gainToDb (v); }
 
         // Round-trip the stashed patch + captured gains through the

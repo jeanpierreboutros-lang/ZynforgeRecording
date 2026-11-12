@@ -549,6 +549,7 @@ namespace zynforge
                     gainCaptureComplete = true;
                     if (onStatus) onStatus (juce::String ((int) gains.size())
                                             + " head-amp gains captured.");
+                    if (onGainCaptureFinished) onGainCaptureFinished (true);
                 }
                 return;
             }
@@ -673,6 +674,7 @@ namespace zynforge
                 gainCaptureComplete = false;   // partial -- must NOT be persisted as the show's gains
                 if (onStatus) onStatus ("Head-amp capture timed out (" + juce::String (got)
                                         + " of expected received) -- try again.");
+                if (onGainCaptureFinished) onGainCaptureFinished (false);
             }
         }
 

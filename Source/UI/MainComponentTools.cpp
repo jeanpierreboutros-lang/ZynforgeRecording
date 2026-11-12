@@ -461,6 +461,35 @@ void MainComponent::wireConsoleLink()
     consoleLink.onStereoLink = [self] (int leftCh1, bool linked)
     { if (self != nullptr) self->engine.getRemotes().onConsoleStereoLink (leftCh1, linked); };
 
+    // Saved when the capture is complete, however long the desk took. A fixed
+    // wait decided once and said "captured" for replies that came after it.
+    // Only a COMPLETE capture is saved: a partial one would restore only some
+    // channels and leave the rest at soundcheck settings.
+    consoleLink.onGainCaptureFinished = [self] (bool complete)
+    {
+        if (self == nullptr) return;
+        auto& link = self->consoleLink;
+        const int got = (int) link.getCapturedGains().size();
+        if (! complete)
+        {
+            self->showStatus (got == 0 ? juce::String ("No head-amp replies from the console -- gains not saved")
+                                       : juce::String (got) + " of the requested head-amp gains came back -- PARTIAL capture "
+                                         "NOT saved. Check the console link and capture again.");
+            return;
+        }
+        const auto sess = self->engine.getActiveSessionDir();
+        if (self->engine.isTakeOnDisk())
+        {
+            link.saveInBackground (sess);
+            self->showStatus (juce::String (got) + " head-amp gains captured");
+        }
+        else if (sess.isDirectory() && link.saveTo (sess))
+            self->showStatus (juce::String (got) + " head-amp gains captured -> "
+                              + zynforge::ConsoleLink::kStateFileName);
+        else
+            self->showStatus (juce::String (got) + " head-amp gains captured, but NOT saved -- open a session and capture again");
+    };
+
     consoleLink.onTraffic = [self] (const juce::String& line)
     { if (self != nullptr) self->engine.getRemotes().logOsc (line); };
 
@@ -491,6 +520,22 @@ void MainComponent::consoleToggleSoundcheck()
         consoleLink.enterSoundcheck();
 }
 
+// Pre-flight's fix for a desk on the soundcheck patch. The checklist stays
+// open while the desk can move (the menu bar is live behind it), so this
+// never toggles: a desk already back on stage is left where it is.
+void MainComponent::consoleReturnToStage()
+{
+    if (refuseConsoleWriteDuringTake()) return;
+    if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    if (! consoleLink.isOnSoundcheckPatch())
+    {
+        showStatus ("The desk is already back on the stage patch");
+        return;
+    }
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
+    consoleLink.exitSoundcheck();
+}
+
 void MainComponent::consoleCheckDeskPatch()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
@@ -511,43 +556,8 @@ void MainComponent::consoleCaptureGains()
         return;
     }
     const int n = juce::jlimit (1, 32, tracks);
+    // Saved by consoleLink.onGainCaptureFinished (wireConsoleLink).
     consoleLink.captureGains (n);
-    // Persist once the replies have had time to land (UDP round trip on
-    // a local network is milliseconds; 1.5 s is generous).
-    juce::Component::SafePointer<MainComponent> self (this);
-    juce::Timer::callAfterDelay (1500, [self]
-    {
-        if (self == nullptr) return;
-        // Only persist a COMPLETE capture. "Not empty" wasn't enough: this
-        // timer and ConsoleLink's own reply watchdog are both 1500 ms, so on a
-        // lossy link they race -- a partial capture (a handful of replies)
-        // would pass the emptiness check and overwrite console_state.json as
-        // if it were the whole show, leaving the un-captured channels to be
-        // "restored" to whatever the desk happened to have at soundcheck.
-        if (self->consoleLink.getCapturedGains().empty())
-        {
-            self->showStatus ("No head-amp replies from the console -- gains not saved");
-            return;
-        }
-        if (! self->consoleLink.isGainCaptureComplete())
-        {
-            self->showStatus (juce::String ((int) self->consoleLink.getCapturedGains().size())
-                              + " of the requested head-amp gains came back -- PARTIAL capture "
-                                "NOT saved. Check the console link and capture again.");
-            return;
-        }
-        const auto sess = self->engine.getActiveSessionDir();
-        if (self->engine.isTakeOnDisk())
-        {
-            self->consoleLink.saveInBackground (sess);
-            self->showStatus (juce::String ((int) self->consoleLink.getCapturedGains().size())
-                              + " head-amp gains captured");
-        }
-        else if (sess.isDirectory() && self->consoleLink.saveTo (sess))
-            self->showStatus (juce::String ((int) self->consoleLink.getCapturedGains().size())
-                              + " head-amp gains captured -> "
-                              + zynforge::ConsoleLink::kStateFileName);
-    });
 }
 
 void MainComponent::consoleRestoreGains()
