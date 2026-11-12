@@ -1,12 +1,15 @@
 #include "TrackExporter.h"
+#include "BwfStamp.h"
 #include "CheckedFileStream.h"
 #include "FloatAiffWriter.h"
 #include "CheckedReaderSource.h"
 #include "MultiPartReader.h"
+#include "PunchSplice.h"
 #include "SincResampler.h"
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <vector>
 
 namespace zynforge
@@ -45,6 +48,59 @@ namespace zynforge
         }
 
         struct ChannelSource { juce::AudioFormatReader* reader; int channel; };
+
+        // A take's Description: "sTRK<n>=<name>" lines, then the take's text.
+        struct ChannelNames { std::map<int, juce::String> names; juce::String rest; };
+
+        ChannelNames splitChannelNames (const juce::String& description)
+        {
+            ChannelNames out;
+            auto rest = description;
+            while (rest.startsWith ("sTRK"))
+            {
+                const auto end = rest.indexOf ("\r\n"), equals = rest.indexOfChar ('=');
+                if (end < 0 || equals < 0 || equals > end) break;
+                const int channel = rest.substring (4, equals).getIntValue();
+                if (channel < 1) break;
+                out.names[channel] = rest.substring (equals + 1, end);
+                rest = rest.substring (end + 2);
+            }
+            out.rest = rest;
+            return out;
+        }
+
+        // The broadcast stamp of the take a file is made from: its text and its
+        // place in the day, at the file's own rate. A file of one channel of a
+        // pair names only that channel; a pair made of two mono takes names both.
+        // Empty for a source with no bext, and for containers that have none.
+        juce::StringPairArray broadcastStampFor (ExportFormat format, const juce::AudioFormatReader& source,
+                                                 double destRate, int onlyChannel,
+                                                 const juce::AudioFormatReader* right = nullptr)
+        {
+            if (format != ExportFormat::Wav24) return {};
+            auto stamp = bextFieldsOf (source);
+            if (stamp.size() == 0) return {};
+            const auto timeKey = juce::WavAudioFormat::bwavTimeReference;
+            if (stamp.containsKey (timeKey) && source.sampleRate > 0.0
+                && ! juce::approximatelyEqual (source.sampleRate, destRate))
+                stamp.set (timeKey, juce::String ((juce::int64) std::llround (
+                    (double) stamp[timeKey].getLargeIntValue() * destRate / source.sampleRate)));
+            const auto descriptionKey = juce::WavAudioFormat::bwavDescription;
+            const auto own = splitChannelNames (stamp[descriptionKey]);
+            if (right != nullptr)
+            {
+                const auto other = splitChannelNames (right->metadataValues[descriptionKey]);
+                const auto first = [] (const ChannelNames& n) { return n.names.empty() ? juce::String() : n.names.begin()->second; };
+                stamp.set (descriptionKey, bwf::channelDescription (own.rest, first (own), first (other)));
+            }
+            else if (onlyChannel >= 0 && source.numChannels > 1)
+            {
+                const auto name = own.names.find (onlyChannel + 1);
+                stamp.set (descriptionKey, bwf::channelDescription (
+                    own.rest, name != own.names.end() ? name->second : juce::String()));
+            }
+            return stamp;
+        }
 
         // At the session rate the samples go across as the file holds them.
         // Through floats a 24-bit value can come back one step low, because
@@ -141,7 +197,8 @@ namespace zynforge
         juce::OutputStream* out,
         double sampleRate,
         unsigned int numChannels,
-        int bitsPerSample)
+        int bitsPerSample,
+        const juce::StringPairArray& stamp = {})
     {
         switch (fmt)
         {
@@ -149,7 +206,7 @@ namespace zynforge
             {
                 juce::WavAudioFormat f;
                 return std::unique_ptr<juce::AudioFormatWriter> (
-                    f.createWriterFor (out, sampleRate, numChannels, bitsPerSample, {}, 0));
+                    f.createWriterFor (out, sampleRate, numChannels, bitsPerSample, stamp, 0));
             }
             case ExportFormat::Aiff24:
             {
@@ -215,7 +272,8 @@ namespace zynforge
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
         auto writer = makePcmWriter (opts.format, outStream.get(), destSR, (unsigned int) channels,
-                                     bitsForFormat (opts.format, opts.bitsPerSample));
+                                     bitsForFormat (opts.format, opts.bitsPerSample),
+                                     broadcastStampFor (opts.format, *reader, destSR, onlyChannel));
         if (writer == nullptr)
         {
             outStream.reset();
@@ -359,7 +417,8 @@ namespace zynforge
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
         auto writer = makePcmWriter (opts.format, outStream.get(), destSR, 2,   // 2 channels
-                                     bitsForFormat (opts.format, opts.bitsPerSample));
+                                     bitsForFormat (opts.format, opts.bitsPerSample),
+                                     broadcastStampFor (opts.format, *readerL, destSR, -1, readerR.get()));
         if (writer == nullptr)
         {
             outStream.reset();

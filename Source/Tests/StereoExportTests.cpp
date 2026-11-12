@@ -150,7 +150,100 @@ namespace zynforge
                     expectEquals (dir.findChildFiles (juce::File::findFiles, false, "*.partial*").size(), 0);
                 }
 
+            testExportsKeepTheBroadcastStamp (dir);
             dir.deleteRecursively();
+        }
+
+        // A take as the recorder leaves it: bext time stamp and channel names.
+        static bool writeStampedTake (const juce::File& f, int channels, const juce::String& description,
+                                      juce::int64 timeReference, double rate)
+        {
+            juce::StringPairArray meta;
+            meta.set (juce::WavAudioFormat::bwavDescription, description);
+            meta.set (juce::WavAudioFormat::bwavOriginator, "ZynForge Recording");
+            meta.set (juce::WavAudioFormat::bwavOriginationDate, "2026-11-11");
+            meta.set (juce::WavAudioFormat::bwavOriginationTime, "20:00:00");
+            meta.set (juce::WavAudioFormat::bwavTimeReference, juce::String (timeReference));
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::FileOutputStream> os (f.createOutputStream());
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), rate, (unsigned int) channels, 24, meta, 0));
+            if (w == nullptr) return false;
+            os.release();
+            juce::AudioBuffer<float> audio (channels, 4800);
+            for (int c = 0; c < channels; ++c) juce::FloatVectorOperations::fill (audio.getWritePointer (c), 0.1f * (c + 1), 4800);
+            return w->writeFromAudioSampleBuffer (audio, 0, 4800);
+        }
+
+        juce::StringPairArray stampOf (juce::AudioFormatManager& fm, const juce::File& f)
+        {
+            std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+            expect (r != nullptr, f.getFileName() + " is unreadable");
+            return r != nullptr ? r->metadataValues : juce::StringPairArray();
+        }
+
+        void testExportsKeepTheBroadcastStamp (const juce::File& dir)
+        {
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            const juce::int64 eightPm = (juce::int64) 20 * 3600 * 48000;
+            const auto stereo = dir.getChildFile ("Track_05.wav");
+            expect (writeStampedTake (stereo, 2, "sTRK1=AUD L\r\nsTRK2=AUD R\r\nShow take", eightPm, 48000.0));
+
+            beginTest ("A raw export keeps the take's time stamp and channel names");
+            {
+                TrackExporter ex;
+                ExportOptions opts;
+                juce::String err;
+                const auto stem = dir.getChildFile ("raw-stereo");
+                expect (ex.exportTrack (stereo, stem, opts, err), err);
+                const auto meta = stampOf (fm, stem.withFileExtension (".wav"));
+                expectEquals (meta[juce::WavAudioFormat::bwavTimeReference], juce::String (eightPm),
+                              "the export lost its place in the day");
+                expectEquals (meta[juce::WavAudioFormat::bwavDescription],
+                              juce::String ("sTRK1=AUD L\r\nsTRK2=AUD R\r\nShow take"));
+                expectEquals (meta[juce::WavAudioFormat::bwavOriginator], juce::String ("ZynForge Recording"));
+            }
+
+            beginTest ("A converted export moves the time stamp to the new rate");
+            {
+                TrackExporter ex;
+                ExportOptions opts;
+                opts.sampleRate = 96000.0;
+                juce::String err;
+                const auto stem = dir.getChildFile ("raw-96k");
+                expect (ex.exportTrack (stereo, stem, opts, err), err);
+                const auto meta = stampOf (fm, stem.withFileExtension (".wav"));
+                expectEquals (meta[juce::WavAudioFormat::bwavTimeReference], juce::String (eightPm * 2),
+                              "20:00:00 at 48 kHz is not 20:00:00 at 96 kHz");
+            }
+
+            beginTest ("One channel of a stereo take keeps only its own name");
+            {
+                TrackExporter ex;
+                ExportOptions opts;
+                opts.onlyChannel = 1;
+                juce::String err;
+                const auto stem = dir.getChildFile ("raw-right");
+                expect (ex.exportTrack (stereo, stem, opts, err), err);
+                const auto meta = stampOf (fm, stem.withFileExtension (".wav"));
+                expectEquals (meta[juce::WavAudioFormat::bwavDescription], juce::String ("sTRK1=AUD R\r\nShow take"));
+                expectEquals (meta[juce::WavAudioFormat::bwavTimeReference], juce::String (eightPm));
+            }
+
+            beginTest ("A pair exported from two mono takes names both sides");
+            {
+                const auto left = dir.getChildFile ("Track_07.wav"), right = dir.getChildFile ("Track_08.wav");
+                expect (writeStampedTake (left,  1, "sTRK1=OH L\r\nShow take", eightPm, 48000.0));
+                expect (writeStampedTake (right, 1, "sTRK1=OH R\r\nShow take", eightPm, 48000.0));
+                TrackExporter ex;
+                ExportOptions opts;
+                juce::String err;
+                const auto stem = dir.getChildFile ("pair-stamped");
+                expect (ex.exportStereoPair (left, right, stem, opts, err), err);
+                const auto meta = stampOf (fm, stem.withFileExtension (".wav"));
+                expectEquals (meta[juce::WavAudioFormat::bwavDescription], juce::String ("sTRK1=OH L\r\nsTRK2=OH R\r\nShow take"));
+                expectEquals (meta[juce::WavAudioFormat::bwavTimeReference], juce::String (eightPm));
+            }
         }
     };
 
