@@ -1178,6 +1178,11 @@ namespace zynforge
                 AudioEngine engine;
                 OnRepairRig on (engine, rig);
                 on.choose ("Rig");
+                // The buffer picked in DEVICE is part of the choice (ENG-10).
+                auto picked = on.manager().getAudioDeviceSetup();
+                picked.bufferSize = 256;
+                expect (on.manager().setAudioDeviceSetup (picked, true).isEmpty());
+                engine.noteChosenDevice();
                 rig.inputs.erase ("Rig");
                 on.type->listChanged();
                 expectEquals (on.input(), juce::String ("Mic"), "no stand-in took over");
@@ -1188,7 +1193,7 @@ namespace zynforge
                 expectEquals (on.input(), juce::String ("Rig"));
                 expect (rig.openedAt.count ("Rig") > 0);
                 expectEquals (rig.openedAt["Rig"].first, 96000.0, "the interface was asked for the stand-in's rate");
-                expectEquals (rig.openedAt["Rig"].second, 128, "the interface took the stand-in's buffer");
+                expectEquals (rig.openedAt["Rig"].second, 256, "the interface took the stand-in's buffer, not the chosen one");
                 forgetChosenDevice (engine);
             }
         }

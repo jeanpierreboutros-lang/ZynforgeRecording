@@ -34,6 +34,7 @@
 namespace zynforge
 {
     namespace interchange { struct SessionInput; }
+    class StereoMixWriter;   // StereoMixWriter.h
 
     class MainTransportRegressionTests;
 
@@ -98,6 +99,9 @@ namespace zynforge
         void setDeviceOutputCountForTests (int n) noexcept { testDeviceOutputs.store (n, std::memory_order_relaxed); }
 
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
+        // Inputs and outputs asked of every device open: the most strips there
+        // can be, and what the callback's scratch is sized for.
+        static constexpr int kDeviceChannels = 256;
 
         // The device the engineer chose (DeviceChoice.h), kept in app settings.
         // At launch it opens, each side on its own, or the Mac's default stands
@@ -225,6 +229,16 @@ namespace zynforge
         // True while the audio callback keeps the master bus off its outputs
         // because a strip is patched to one (mix::busHeldOffOutputs).
         bool  isMasterHeldOff() const noexcept { return masterHeldOff.load (std::memory_order_relaxed); }
+
+        // The DEVICE panel's input meter: the loudest device input, read in
+        // the callback while the panel asks for it. Strips have nothing to do
+        // with it: a new session has none, and a strip's meter shows playback.
+        void  setDeviceInputMeterOn (bool on) noexcept
+        {
+            deviceInputMeterOn.store (on, std::memory_order_relaxed);
+            if (! on) deviceInputPeak.store (0.0f, std::memory_order_relaxed);
+        }
+        float getDeviceInputPeak() const noexcept { return deviceInputPeak.load (std::memory_order_relaxed); }
         bool  isStreamHeldOff() const noexcept { return streamHeldOff.load (std::memory_order_relaxed); }
         // The engineer's override: this rig's first outputs really are
         // monitors, so the mix may sit on top of strips patched there.
@@ -241,6 +255,8 @@ namespace zynforge
         void  setMasterStereo (bool stereo);
 
         bool startRecording (const juce::File& sessionDir);
+        // Test seams around the recorder's start inside startRecording.
+        std::function<void()> beforeRecorderStartForTests, afterRecorderStartForTests;
         void stopRecording();
         // UI entry: accepted once, completion on UI after media/player readiness
         // and reader retirement. A false return never invokes completion.
@@ -284,6 +300,8 @@ namespace zynforge
         void setRecordStereoMix (bool enabled);
         bool getRecordStereoMix() const noexcept           { return recordStereoMixFlag.load(); }
         bool hasStereoMixWriteFailed() const noexcept      { return stereoMixWriteFailed.load(); }
+        // Test seam: wraps StereoMix.wav's file writer (takes ownership).
+        std::function<juce::AudioFormatWriter* (juce::AudioFormatWriter*)> wrapStereoMixWriterForTests;
 
         // Load a session's audio into the player + seed clips. preserveEdits
         // is false for a genuine session OPEN (wipe stale clips; the caller's
@@ -317,6 +335,10 @@ namespace zynforge
             // network/remote entry points (OSC play, MCU Play) and timecode
             // chase reach here directly, so the guard belongs at the engine.
             if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return false;
+            // The player has no converter: at another device rate every strip
+            // reaches the desk at the wrong speed and pitch. PLAY, Space, the
+            // remotes and chase all come here.
+            if (getPlaybackRateRefusal().isNotEmpty()) return false;
             // Nothing to roll (no session, or parked at/after the end with no
             // loop to wrap): don't start.
             if (! player.isPlaying() && ! player.hasAudioAhead()) return false;
@@ -324,6 +346,8 @@ namespace zynforge
             return true;
         }
         void stopPlayback() { player.stop(); }
+        // Why the device's rate refuses PLAY, or empty. Message thread.
+        juce::String getPlaybackRateRefusal() const;
 
         // Snap mode -- shared between the host (which sets it from
         // the Edit menu / '4' hotkey) and the edit operations that
@@ -936,6 +960,29 @@ namespace zynforge
         int dropMarkerAtCurrentPosition (const juce::String& name = {},
                                          const juce::String& type = "user");
 
+        // ── A take outlives a device that is not its input ─────────────
+        // A device pair runs through JUCE's combiner, named after its OUTPUT:
+        // headphones pulled, a display asleep or a headset gone stops the
+        // whole device, input included. While the take's input device is
+        // still there, the take is held open instead of ended (capture paused,
+        // outputs silent), the input is opened again on its own at the take's
+        // rate, and capture resumes with the stretch it missed written as
+        // silence and counted as missed samples, so every track stays on the
+        // clock. Not back within kRideThroughGraceMs, or the input itself gone,
+        // and the take ends exactly as a device loss always has. A punch never
+        // rides through: its timeline is the player's.
+        static constexpr juce::uint32 kRideThroughGraceMs = 5000;
+        // A failed HAL call on a device pair stops both halves and says
+        // nothing: JUCE's combiner reports only an error, and the device
+        // manager passes no error on. A device that says it is not playing,
+        // with no block for this long during a take, has stopped.
+        static constexpr juce::uint32 kSilentStopMs = 500;
+        // Runs from the 100 ms watch timer while a take rolls; tests call it
+        // with their own clock. Message thread.
+        void serviceDeviceWatch (juce::uint32 nowMs);
+        // True while a take is held open waiting for its input device.
+        bool isRidingThroughDeviceStop() const noexcept { return deviceRideThrough.load (std::memory_order_acquire); }
+
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;
         void audioDeviceStopped() override;
@@ -951,7 +998,7 @@ namespace zynforge
             std::thread worker;
             SessionPlayer::Prepared prepared, retired;
             std::vector<Clip> explicitReaders;
-            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> mixWriter;
+            std::unique_ptr<StereoMixWriter> mixWriter;
             juce::File directory;
             juce::int64 recordEnd = 0;
             double playbackRate = 48000.0;
@@ -971,6 +1018,9 @@ namespace zynforge
         std::mutex deviceLifecycleLock;
         std::optional<DeferredDeviceConfiguration> deferredDeviceConfiguration;
         bool deferredDeviceRelease = false;
+        // The device stopped with no take, and nothing has started since:
+        // the recorder has no writers, so RECORD waits. Under deviceLifecycleLock.
+        bool deviceStoppedIdle { false };
         std::atomic<bool> deferredDeviceAudio { false };
         std::atomic<bool> asyncCaptureFinalizing { false };
         std::unique_ptr<CaptureStopJob> captureStopJob;
@@ -980,6 +1030,57 @@ namespace zynforge
         std::atomic<juce::uint32> callbackCount { 0 };       // bumped first in every callback
         std::atomic<bool>         deviceErrorSeen { false };  // any thread
         CallbackWatchdog          callbackWatchdog;           // under the structure lock
+        // The device watch's view of the callback: the count it last saw, and
+        // when that count last moved. Message thread.
+        juce::uint32 watchCallbacks { 0 }, watchProgressMs { 0 };
+
+        // The take's device as it started: what a ride-through waits for and
+        // opens again. Message thread, under deviceLifecycleLock.
+        struct TakeDevice
+        {
+            juce::AudioDeviceManager::AudioDeviceSetup setup;
+            double rate { 0.0 };
+            int    block { 0 }, inputs { 0 };
+        };
+        TakeDevice takeDevice;
+        // Under deviceLifecycleLock.
+        struct RideThrough
+        {
+            bool active { false };
+            juce::uint32 startedMs { 0 }, nextAttemptMs { 0 };
+            // A device JUCE opened meanwhile. Never prepared for: it runs
+            // silent, and takes over once the take is over.
+            std::optional<DeferredDeviceConfiguration> standIn;
+        };
+        RideThrough ride;
+        enum class RideOutcome : int { none = 0, waiting, resumed, resumedWithoutOutput };
+        std::atomic<bool>        deviceRideThrough { false };      // the callback holds capture, outputs silent
+        std::atomic<bool>        resumeGapPending { false };       // the next block adds the stretch first
+        std::atomic<bool>        watchdogExcusePending { false };  // a ride-through's wait is not a stall
+        std::atomic<juce::int64> lastCaptureTicks { 0 };           // audio thread: start of the last captured block
+        std::atomic<int>         lastCaptureBlock { 0 };
+        std::atomic<juce::int64> rideGapFrames { 0 };              // silence added this take
+        std::atomic<int>         rideOutcome { 0 };
+        // A ride-through came back without the monitor output: once the take
+        // is over and the chosen output is listed, the device watch reopens it.
+        std::atomic<bool>        monitorOutputDropped { false };
+        struct DeviceWatch final : public juce::Timer
+        {
+            explicit DeviceWatch (AudioEngine& e) : engine (e) {}
+            void timerCallback() override { engine.serviceDeviceWatch (juce::Time::getMillisecondCounter()); }
+            AudioEngine& engine;
+        };
+        std::unique_ptr<DeviceWatch> deviceWatch;   // message thread
+        void startDeviceWatch();
+        bool mayRideThrough();
+        bool takeInputListed();
+        void beginRideThrough (juce::uint32 nowMs);
+        bool rideThroughAccepts (juce::AudioIODevice&);
+        void resumeRideThrough();
+        bool finalizeDeviceLoss();
+        void settleRideThroughAfterStop();
+        void reopenTakeInput();
+        juce::String deviceNotice() const;
         juce::String             reorderRefusal;
         devicechoice::Chosen     chosenDevice;
         devicechoice::Answers    deviceAnswers;
@@ -989,9 +1090,14 @@ namespace zynforge
         {
             juce::StringArray names;
             devicechoice::DeviceList ids;
+            // A read that came back empty (the HAL did not answer in time) is
+            // tried again, a few times and not often: each one can take 250 ms.
+            juce::uint32 retryAtMs { 0 };
+            int retriesLeft { 0 };
         };
         ListedIds listedIds[2];
-        devicechoice::DeviceList listDevices (bool inputs);
+        // `freshIds`: read the ids again now if the last read had none.
+        devicechoice::DeviceList listDevices (bool inputs, bool freshIds = false);
         bool clipsBelongTo (const juce::File& takeFolder) const;
         juce::String openInputDevice();
         MultitrackRecorder       recorder;
@@ -1025,7 +1131,7 @@ namespace zynforge
         std::atomic<bool>                                       recordStereoMixFlag { false };
         std::atomic<bool>                                       stereoMixWriteFailed { false };
         juce::TimeSliceThread                                   mixWriterThread { "ZF Mix Writer" };
-        std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> stereoMixWriter;
+        std::unique_ptr<StereoMixWriter>                        stereoMixWriter;
         juce::AudioBuffer<float>                                stereoMixScratch;
         // Guards the audio-thread stereo-mix capture (check-and-write) against
         // the message-thread stereoMixWriter.reset() in stopRecording. The
@@ -1053,6 +1159,9 @@ namespace zynforge
         LoudnessMeter     loudness;   // BS.1770 master loudness + true-peak
         std::atomic<juce::uint32> chaseStartLabel { 0 };   // hh mm ss ff, one byte each
         std::atomic<bool> masterHeldOff { false };
+        // The DEVICE panel's input meter (setDeviceInputMeterOn).
+        std::atomic<bool>  deviceInputMeterOn { false };
+        std::atomic<float> deviceInputPeak { 0.0f };
         std::atomic<bool> streamHeldOff { false };
         std::atomic<bool> mixMaySharePatchedOutputs { false };
         std::atomic<int>  masterOutL    { 0 };
@@ -1106,7 +1215,7 @@ namespace zynforge
         struct StereoMixFile
         {
             juce::File file;
-            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
+            std::unique_ptr<StereoMixWriter> writer;
             // Silence the mix writes ahead of its first block: the pre-roll
             // the track files start with. -1 until the take has gone live.
             std::shared_ptr<std::atomic<juce::int64>> leadPad;

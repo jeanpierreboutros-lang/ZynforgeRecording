@@ -653,7 +653,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                                 && consoleLink.getHealth() == zynforge::ConsoleLink::Health::Silent;
         if (primaryNotAnswering || status.copyDiskStale || daemonUnavailable || deviceLost || deviceStalled || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
-            || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort || consoleSilent || status.preRollNotice.isNotEmpty())
+            || ! status.copyProblems.isEmpty() || timeRunningOut || timeShort || consoleSilent || status.preRollNotice.isNotEmpty()
+            || status.deviceNotice.isNotEmpty())
         {
             // Most serious first. Two spaces end each alarm: that is how the
             // banner tells them apart, and a '!' is what makes one a danger.
@@ -662,6 +663,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             if (status.deviceStalled) warn << "!! NO AUDIO FROM THE DEVICE -- the take is open but nothing is being captured; check the interface  ";
             else if (deviceStalled)   warn << "! DEVICE STOPPED FOR " << juce::String (status.deviceStallMs / 1000.0, 1)
                                            << " s -- that time is not in the take  ";
+            warn << status.deviceNotice;   // a take held open through a device stop
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";
@@ -918,7 +920,7 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     // ASCII only -- sample-rate mismatch must stay legible in every UI face.
     // (it rendered as mojibake); the banner's colour carries the alarm.
     setWarning ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
-                + "  vs  session " + fmt (sessionSR) + "  - recording blocked");
+                + "  vs  session " + fmt (sessionSR) + "  - recording blocked, PLAY refused");
 
     // One-shot modal, once per distinct device rate, and never mid-take.
     if (std::abs (deviceSampleRate - srMismatchWarned) < 1.0 || engine.isRecording())

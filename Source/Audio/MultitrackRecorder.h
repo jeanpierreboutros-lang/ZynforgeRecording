@@ -288,6 +288,12 @@ namespace zynforge
         bool hasCaptureDeviceLost() const noexcept { return captureDeviceLost.load(); }
         void setMeterUnarmedInputs (bool on) noexcept { meterUnarmedInputs.store (on); }
         void markCaptureDeviceLost() noexcept { captureDeviceLost.store (true, std::memory_order_relaxed); }
+        // A stretch the device did not deliver, from the audio thread before
+        // the block that follows it (a take held open through a device stop).
+        // It goes in every captured channel's timeline as silence and is
+        // counted as missed, so the tracks stay on the clock and the report
+        // says the take has a hole.
+        void addCaptureGap (juce::int64 frames) noexcept;
         // Wall time this take had no audio callback. It leaves no gap in the
         // files, so the report is the only place it can be seen afterwards.
         void noteDeviceStall (juce::int64 ms) noexcept { deviceStallMs.store (ms, std::memory_order_relaxed); }

@@ -7,6 +7,7 @@
 #include "SessionMixFile.h"
 #include "FastAccumulate.h"
 #include "MultiPartReader.h"
+#include "StereoMixWriter.h"
 
 #include <vector>
 
@@ -67,6 +68,13 @@ namespace zynforge
             std::shared_ptr<std::atomic<juce::int64>> pad;
             bool padded { false }, healthy { true };
         };
+
+        juce::String rateText (double rate)
+        {
+            const double k = rate / 1000.0;
+            return (std::abs (k - std::round (k)) < 1.0e-6 ? juce::String (juce::roundToInt (k)) : juce::String (k, 1))
+                 + " kHz";
+        }
     }
 
     void AudioEngine::rememberRecentSession (const juce::File& dir)
@@ -296,6 +304,11 @@ namespace zynforge
 
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
+        // A device stop decides "no take, release the recorder" under this
+        // lock (audioDeviceStopped, on CoreAudio's thread for a restart it
+        // asked for). Held across the start, the stop either runs first and
+        // the start below refuses, or sees the take and handles it as one.
+        const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
         // Every refusal here also drops a punch/continue arm the caller set
         // for this start; discardTakeArms is a no-op while a take is live.
         if (isCaptureFinalizing()) { recorder.discardTakeArms(); return false; }
@@ -315,6 +328,12 @@ namespace zynforge
                  << (deviceManager.getCurrentAudioDevice()
                         ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 0.0)
                  << " vs session " << sessionSampleRate.load (std::memory_order_relaxed) << ")");
+            return false;
+        }
+        // The recorder has no writers until a device starts again.
+        if (deviceStoppedIdle)
+        {
+            recorder.refuseStart ("the audio device has stopped -- RECORD waits until it runs again");
             return false;
         }
 
@@ -360,11 +379,14 @@ namespace zynforge
         const auto landsAt = continuing ? continueLandsAt() : (juce::int64) 0;
         recorder.setContinueLandsAt (continuing ? landsAt : -1);
 
-        if (! recorder.startRecording (sessionDir))
+        if (beforeRecorderStartForTests) beforeRecorderStartForTests();
+        const bool started = recorder.startRecording (sessionDir);
+        if (afterRecorderStartForTests) afterRecorderStartForTests();
+        if (! started)
         {
             markers.setContext (markerSession, markerRate);
             if (mix.leadPad != nullptr) mix.leadPad->store (0, std::memory_order_release);
-            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> unused;
+            std::unique_ptr<StereoMixWriter> unused;
             {
                 const juce::ScopedLock sl (stereoMixLock);
                 unused = std::move (stereoMixWriter);
@@ -376,6 +398,22 @@ namespace zynforge
             }
             return false;
         }
+        // What a ride-through waits for and opens again, as the take found it.
+        takeDevice = {};
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+        {
+            takeDevice.setup  = deviceManager.getAudioDeviceSetup();
+            takeDevice.rate   = device->getCurrentSampleRate();
+            takeDevice.block  = device->getCurrentBufferSizeSamples();
+            takeDevice.inputs = device->getActiveInputChannels().countNumberOfSetBits();
+        }
+        rideOutcome.store ((int) RideOutcome::none, std::memory_order_relaxed);
+        rideGapFrames.store (0, std::memory_order_relaxed);
+        lastCaptureTicks.store (0, std::memory_order_relaxed);
+        resumeGapPending.store (false, std::memory_order_relaxed);
+        watchCallbacks = callbackCount.load (std::memory_order_relaxed);
+        watchProgressMs = juce::Time::getMillisecondCounter();
+        startDeviceWatch();
         if (mix.leadPad != nullptr)
             mix.leadPad->store (recorder.getPreRollHistorySamples(), std::memory_order_release);
         if (mixWanted) stereoMixWriteFailed.store (! mixOpened, std::memory_order_relaxed);
@@ -435,18 +473,23 @@ namespace zynforge
                                            + juce::String (take).paddedLeft ('0', 2) + ".wav");
 
         juce::WavAudioFormat wav;
-        if (auto* out = path.createOutputStream().release())
+        // A short close (disk full on the last flush or the header) is only
+        // seen by the stream, after the writer has gone.
+        auto fileFailed = CheckedFileStream::makeFailedFlag();
+        if (auto* out = CheckedFileStream::open (path, fileFailed).release())
         {
             juce::StringPairArray meta;
             if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
             {
+                juce::AudioFormatWriter* inner = w;
+                if (wrapStereoMixWriterForTests) inner = wrapStereoMixWriterForTests (w);
                 mix.file = path;
                 mix.leadPad = std::make_shared<std::atomic<juce::int64>> (-1);
-                mix.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
-                                 (new LeadPadWriter (w, mix.leadPad), mixWriterThread, 32768);
                 // JUCE writes the header at open and close unless told, and a
                 // crash would leave all this audio behind a length of zero.
-                mix.writer->setFlushInterval ((int) (sr * 5.0));
+                mix.writer = std::make_unique<StereoMixWriter> (
+                    std::make_unique<LeadPadWriter> (inner, mix.leadPad), mixWriterThread, 32768,
+                    stereoMixWriteFailed, fileFailed, (int) (sr * 5.0));
             }
             else
             {
@@ -487,6 +530,7 @@ namespace zynforge
             const juce::ScopedLock sl (stereoMixLock);
             stereoMixWriter.reset();
         }
+        settleRideThroughAfterStop();
 
         // Auto-load the just-recorded session into the SessionPlayer so
         // PLAY / spacebar can play back immediately without an explicit
@@ -530,6 +574,17 @@ namespace zynforge
                                             const juce::File& externalSession, juce::int64 externalEnd)
     {
         asyncCaptureFinalizing.store (true, std::memory_order_release);
+        if (ride.active)
+        {
+            // A take held open ends: nothing running now was ever prepared
+            // for, so it stays silent until the files are final, and then the
+            // engine prepares for it like any device that started meanwhile.
+            deferredDeviceAudio.store (true, std::memory_order_release);
+            deferredDeviceRelease = true;
+            deferredDeviceConfiguration = std::exchange (ride.standIn, {});
+            ride = {};
+            deviceRideThrough.store (false, std::memory_order_release);
+        }
         auto job = std::make_unique<CaptureStopJob>();
         job->external = externalSession != juce::File();
         job->directory = job->external ? externalSession : recorder.getActiveSessionDir();
@@ -632,7 +687,12 @@ namespace zynforge
         {
             const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
             recorder.endFinalization();
-            if (deferredDeviceRelease) recorder.release();
+            if (deferredDeviceRelease)
+            {
+                recorder.release();
+                // Released with nothing to prepare for: RECORD waits for a device.
+                if (! deferredDeviceConfiguration) deviceStoppedIdle = true;
+            }
             deferredDeviceRelease = false;
             if (deferredDeviceConfiguration)
             {
@@ -670,7 +730,9 @@ namespace zynforge
                     return true;
                 }
                 if (startPlayback()) return true;
-                error = isTakeOnDisk() ? "capture is running" : "nothing to play from here";
+                error = isTakeOnDisk() ? juce::String ("capture is running")
+                      : getPlaybackRateRefusal().isNotEmpty() ? getPlaybackRateRefusal()
+                                                               : juce::String ("nothing to play from here");
                 return false;
             case RemoteTransportAction::StopPlay:
                 stopPlayback();
@@ -931,8 +993,21 @@ namespace zynforge
         return false;
     }
 
+    // The player has no converter: what it plays, it plays at the device's rate.
+    juce::String AudioEngine::getPlaybackRateRefusal() const
+    {
+        auto* device = deviceManager.getCurrentAudioDevice();
+        if (device == nullptr || ! player.isLoaded()) return {};
+        const double deviceRate = device->getCurrentSampleRate();
+        const double sessionRate = getSessionAudioRate();
+        if (deviceRate <= 0.0 || sessionRate <= 0.0 || std::abs (deviceRate - sessionRate) <= 1.0) return {};
+        return "the device runs at " + rateText (deviceRate) + " and the session is " + rateText (sessionRate)
+             + " -- playback would reach the desk at the wrong speed and pitch";
+    }
+
     juce::String AudioEngine::getChaseParkReason() const
     {
+        if (const auto rate = getPlaybackRateRefusal(); rate.isNotEmpty()) return "Chase is holding: " + rate;
         if (isPunchModeOn()) return "Chase is holding: PUNCH mode is on";
         const auto total  = player.getTotalLengthSamples();
         const auto target = getChaseTargetSamples();
@@ -1229,11 +1304,18 @@ namespace zynforge
         // In tests a take can roll with no device behind it at all.
         const bool watchCallback = recorder.isRecording() && deviceManager.getCurrentAudioDevice() != nullptr;
         const auto nowMs = juce::Time::getMillisecondCounter();
-        s.deviceStalled = callbackWatchdog.update (watchCallback, callbackCount.load (std::memory_order_relaxed),
-                                                   nowMs, deviceErrorSeen.load (std::memory_order_relaxed));
-        if (! watchCallback) deviceErrorSeen.store (false, std::memory_order_relaxed);
-        else                 recorder.noteDeviceStall (callbackWatchdog.stalledMs (nowMs));
+        // A take held open for its device is said so by its own notice, and
+        // that wait goes in the files as silence, so it is no stall.
+        if (! isRidingThroughDeviceStop())
+        {
+            if (watchdogExcusePending.exchange (false, std::memory_order_relaxed)) callbackWatchdog.excuse (nowMs);
+            s.deviceStalled = callbackWatchdog.update (watchCallback, callbackCount.load (std::memory_order_relaxed),
+                                                       nowMs, deviceErrorSeen.load (std::memory_order_relaxed));
+            if (! watchCallback) deviceErrorSeen.store (false, std::memory_order_relaxed);
+            else                 recorder.noteDeviceStall (callbackWatchdog.stalledMs (nowMs));
+        }
         s.deviceStallMs = recorder.getDeviceStallMs();
+        s.deviceNotice = recorder.isRecording() ? deviceNotice() : juce::String();
         s.recording        = isRecording();
         if (s.recording)
             s.sessionPath = recorder.getActiveSessionDir().getFullPathName();
@@ -2130,7 +2212,9 @@ namespace zynforge
     // would pull the clock out from under its take.
     void AudioEngine::openChosenDevice()
     {
-        // Open with up to 256 inputs / 64 outputs by default -- adjust later from UI.
+        // Up to 256 inputs and 256 outputs, the most strips there can be: an
+        // output past the first 64 is where a strip on a wide Dante or MADI
+        // card plays back to the desk. The callback is sized for 256 of each.
         std::unique_ptr<juce::XmlElement> state;
         if (chosenDevice.saved)
         {
@@ -2145,9 +2229,13 @@ namespace zynforge
                 state->setAttribute ("deviceType", type->getTypeName());
                 state->setAttribute ("audioInputDeviceName", open.input);
                 state->setAttribute ("audioOutputDeviceName", open.output);
+                // The buffer chosen with it, never the rate (see above). One the
+                // device does not offer falls back to its default.
+                if (chosenDevice.bufferSize > 0)
+                    state->setAttribute ("audioDeviceBufferSize", chosenDevice.bufferSize);
             }
         }
-        const auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64, state.get(),
+        const auto err = deviceManager.initialise (/*numInputs*/ kDeviceChannels, /*numOutputs*/ kDeviceChannels, state.get(),
                                                    /*selectDefault*/ true);
         if (err.isNotEmpty())
             DBG ("AudioDeviceManager init: " << err);
@@ -2161,16 +2249,29 @@ namespace zynforge
         }
     }
 
-    devicechoice::DeviceList AudioEngine::listDevices (bool inputs)
+    devicechoice::DeviceList AudioEngine::listDevices (bool inputs, bool freshIds)
     {
         auto* type = deviceManager.getCurrentDeviceTypeObject();
         if (type == nullptr) return {};
         const auto names = type->getDeviceNames (inputs);
         auto& known = listedIds[inputs ? 1 : 0];
+        constexpr int kIdRetries = 5;
+        constexpr juce::uint32 kIdRetryMs = 5000;
+        const auto now = juce::Time::getMillisecondCounter();
+        const bool changed = names != known.names;
+        // A read that timed out left no ids, and nothing else would read them
+        // again until the list changes: the chosen device's id would go
+        // unlearned all run. Apply asks at once; otherwise a few spaced tries.
+        const bool idsMissing = known.ids.empty() && ! names.isEmpty();
+        const bool retry = ! changed && idsMissing
+                        && (freshIds || (known.retriesLeft > 0 && (juce::int32) (now - known.retryAtMs) >= 0));
         // A device that changes under a take can wait: nothing here may touch
         // the HAL then, and nothing reopens until the take is over.
-        if (names != known.names && ! isRecording())
+        if ((changed || retry) && ! isRecording())
         {
+            if (changed) known.retriesLeft = kIdRetries;
+            else if (! freshIds) --known.retriesLeft;
+            known.retryAtMs = now + kIdRetryMs;
             known.names = names;
             known.ids.clear();
             if (deviceIdsForTests != nullptr)
@@ -2208,19 +2309,42 @@ namespace zynforge
                 if (device.name == name) return device.uid;
             return juce::String();
         };
+        // An id the HAL did not give this time keeps the one saved for the
+        // same device: without it, identical twin units renumbered after a
+        // replug would open the wrong one as "the chosen device".
+        const auto keptUid = [this] (const juce::String& uid, const juce::String& name,
+                                     const juce::String& savedName, const juce::String& savedUid)
+        {
+            return uid.isNotEmpty() || ! chosenDevice.saved || name != savedName ? uid : savedUid;
+        };
+        const auto inputUid  = keptUid (uidOf (setup.inputDeviceName, listDevices (true, true)),
+                                        setup.inputDeviceName, chosenDevice.input, chosenDevice.inputUid);
+        const auto outputUid = keptUid (uidOf (setup.outputDeviceName, listDevices (false, true)),
+                                        setup.outputDeviceName, chosenDevice.output, chosenDevice.outputUid);
         chosenDevice.saved     = true;
         chosenDevice.input     = setup.inputDeviceName;
         chosenDevice.output    = setup.outputDeviceName;
-        chosenDevice.inputUid  = uidOf (setup.inputDeviceName, listDevices (true));
-        chosenDevice.outputUid = uidOf (setup.outputDeviceName, listDevices (false));
+        chosenDevice.inputUid  = inputUid;
+        chosenDevice.outputUid = outputUid;
         chosenDevice.inputs    = getCurrentDeviceInputCount();
+        chosenDevice.bufferSize = juce::jmax (0, setup.bufferSize);
+        monitorOutputDropped.store (false, std::memory_order_relaxed);
         updateSettings (appProps.get(), [this] (juce::PropertiesFile& p) { devicechoice::save (p, chosenDevice); });
         deviceAnswers.clear();
     }
 
     devicechoice::DeviceState AudioEngine::getDeviceState()
     {
-        return devicechoice::assess (chosenDevice, openInputDevice(), listDevices (true), getCurrentDeviceInputCount());
+        auto state = devicechoice::assess (chosenDevice, openInputDevice(), listDevices (true), getCurrentDeviceInputCount());
+        // A take held open through a lost monitor output came back on its
+        // input alone. Once it is over and the chosen output is listed again,
+        // the device watch puts the pair back.
+        if (monitorOutputDropped.load (std::memory_order_relaxed) && ! isTakeOnDisk()
+            && deviceManager.getCurrentAudioDevice() != nullptr
+            && deviceManager.getAudioDeviceSetup().outputDeviceName.isEmpty())
+            state.monitorOutputBack = devicechoice::nameNow (chosenDevice.output, chosenDevice.outputUid,
+                                                             listDevices (false)).isNotEmpty();
+        return state;
     }
 
     devicechoice::RecordQuestion AudioEngine::getRecordDeviceQuestion (const juce::String& session)
@@ -2250,11 +2374,12 @@ namespace zynforge
 
         const auto before = deviceManager.getAudioDeviceSetup();
         auto setup = before;
-        // Names only, as at launch: the stand-in's rate and buffer are not the
-        // interface's, and asking for that rate would re-clock the rig. JUCE
-        // then keeps the rate the interface runs at and its own buffer.
+        // Names only, as at launch: the stand-in's rate is not the interface's,
+        // and asking for that rate would re-clock the rig. JUCE then keeps the
+        // rate the interface runs at. The buffer is the one chosen with it
+        // (0, the device's own, when none was).
         setup.sampleRate = 0;
-        setup.bufferSize = 0;
+        setup.bufferSize = chosenDevice.bufferSize;
         setup.inputDeviceName = state.chosenNow;
         setup.useDefaultInputChannels = true;
         const auto output = devicechoice::nameNow (chosenDevice.output, chosenDevice.outputUid, listDevices (false));
@@ -2268,6 +2393,7 @@ namespace zynforge
         {
             // The rig is back, so whatever was accepted while it was away is over.
             deviceAnswers.clear();
+            monitorOutputDropped.store (false, std::memory_order_relaxed);
             return true;
         }
         // JUCE has already closed what was open.
@@ -2281,6 +2407,7 @@ namespace zynforge
         // member teardown begins.  The shared handle itself stays alive in
         // queued lambdas, but they will observe nullptr and become no-ops.
         asyncHandle->store (nullptr, std::memory_order_release);
+        if (deviceWatch != nullptr) deviceWatch->stopTimer();
         if (! s_testSkipAudioInit.load (std::memory_order_acquire))
             deviceManager.removeAudioCallback (this);
         // No queued callback owns readers. Finish whichever worker phase is
@@ -2304,11 +2431,36 @@ namespace zynforge
             deferredDeviceConfiguration = DeferredDeviceConfiguration { sr, blockSize, device->getWorkgroup() };
             return;
         }
+        // Preparing the recorder ends a take, so a take never sees it: this
+        // is the take's own device back, or a stand-in that runs silent.
+        if (recorder.isRecording())
+        {
+            if (! ride.active)
+            {
+                if (! mayRideThrough())
+                {
+                    // A punch can't wait; it ends as a device loss, and this
+                    // device takes over once its files are final.
+                    if (finalizeDeviceLoss())
+                    {
+                        deferredDeviceConfiguration = DeferredDeviceConfiguration { sr, blockSize, device->getWorkgroup() };
+                        return;
+                    }
+                    applyDeviceConfiguration (sr, blockSize, device->getWorkgroup());
+                    return;
+                }
+                beginRideThrough (juce::Time::getMillisecondCounter());
+            }
+            if (rideThroughAccepts (*device)) resumeRideThrough();
+            else ride.standIn = DeferredDeviceConfiguration { sr, blockSize, device->getWorkgroup() };
+            return;
+        }
         applyDeviceConfiguration (sr, blockSize, device->getWorkgroup());
     }
 
     void AudioEngine::applyDeviceConfiguration (double sr, int blockSize, juce::AudioWorkgroup workgroup)
     {
+        deviceStoppedIdle = false;
         deviceSampleRate.store (sr, std::memory_order_relaxed);
         deviceBlockSize .store (blockSize, std::memory_order_relaxed);
         audioLoadPct    .store (0.0f, std::memory_order_relaxed);
@@ -2760,6 +2912,211 @@ namespace zynforge
         }
     }
 
+    // ── A take outlives a device that is not its input ──────────────────
+
+    namespace
+    {
+        // How far a gap may run: past the grace period a take is not held open.
+        constexpr double kMaxGapSeconds = AudioEngine::kRideThroughGraceMs / 1000.0 + 10.0;
+        // Between attempts to open a take's input again.
+        constexpr juce::uint32 kRideThroughRetryMs = 500;
+    }
+
+    void AudioEngine::startDeviceWatch()
+    {
+        if (! juce::MessageManager::existsAndIsCurrentThread()) return;
+        if (deviceWatch == nullptr) deviceWatch = std::make_unique<DeviceWatch> (*this);
+        deviceWatch->startTimer (100);
+    }
+
+    // deviceLifecycleLock held. Whether a take that lost its device may wait.
+    bool AudioEngine::mayRideThrough()
+    {
+        if (takeDevice.setup.inputDeviceName.isEmpty()) return false;   // nothing to wait for
+        // A punch's timeline is the player's, and its splice point a player position.
+        if (recorder.isPunchInArmed() || captureWindowEnabled.load (std::memory_order_acquire)) return false;
+        // The device list is the message thread's. From CoreAudio's thread (a
+        // restart it asked for) the watch looks within a tick.
+        if (! juce::MessageManager::existsAndIsCurrentThread()) return true;
+        return takeInputListed();
+    }
+
+    // Message thread.
+    bool AudioEngine::takeInputListed()
+    {
+        auto* type = deviceManager.getCurrentDeviceTypeObject();
+        return type != nullptr && type->getDeviceNames (true).contains (takeDevice.setup.inputDeviceName);
+    }
+
+    // deviceLifecycleLock held. Capture holds, every output goes silent.
+    void AudioEngine::beginRideThrough (juce::uint32 nowMs)
+    {
+        ride = {};
+        ride.active = true;
+        ride.startedMs = nowMs;
+        ride.nextAttemptMs = nowMs;
+        rideOutcome.store ((int) RideOutcome::waiting, std::memory_order_relaxed);
+        deviceRideThrough.store (true, std::memory_order_release);
+    }
+
+    // deviceLifecycleLock held. The take's input, at the take's rate, with the
+    // inputs it had, and either its own output or none: the take never moves
+    // the monitor mix to an output nobody chose, like the Mac's speakers.
+    bool AudioEngine::rideThroughAccepts (juce::AudioIODevice& device)
+    {
+        if (! juce::MessageManager::existsAndIsCurrentThread()) return false;   // the watch takes it back
+        const auto setup = deviceManager.getAudioDeviceSetup();
+        const auto& take = takeDevice.setup;
+        return setup.inputDeviceName == take.inputDeviceName
+            && (setup.outputDeviceName == take.outputDeviceName || setup.outputDeviceName.isEmpty())
+            && std::abs (device.getCurrentSampleRate() - takeDevice.rate) <= 1.0
+            && device.getCurrentBufferSizeSamples() <= deviceBlockSize.load (std::memory_order_relaxed)
+            && device.getActiveInputChannels().countNumberOfSetBits() == takeDevice.inputs;
+    }
+
+    // deviceLifecycleLock held. The next block puts the stretch it missed in
+    // first (audioDeviceIOCallbackWithContext), then capture carries on.
+    void AudioEngine::resumeRideThrough()
+    {
+        const bool withoutOutput = takeDevice.setup.outputDeviceName.isNotEmpty()
+                                && deviceManager.getAudioDeviceSetup().outputDeviceName.isEmpty();
+        ride = {};
+        deviceStoppedIdle = false;
+        if (withoutOutput) monitorOutputDropped.store (true, std::memory_order_relaxed);
+        const auto before = (RideOutcome) rideOutcome.load (std::memory_order_relaxed);
+        rideOutcome.store ((int) (withoutOutput || before == RideOutcome::resumedWithoutOutput
+                                      ? RideOutcome::resumedWithoutOutput : RideOutcome::resumed),
+                           std::memory_order_relaxed);
+        watchdogExcusePending.store (true, std::memory_order_relaxed);
+        resumeGapPending.store (true, std::memory_order_release);
+        deviceRideThrough.store (false, std::memory_order_release);
+    }
+
+    // deviceLifecycleLock held. Exactly the device loss it always was: the
+    // take closes on the STOP worker and says why when it is done.
+    bool AudioEngine::finalizeDeviceLoss()
+    {
+        recorder.markCaptureDeviceLost();
+        // Closing a take can take minutes (a punch rewrites whole files, a
+        // lead-in writes silence), and JUCE calls a device stop on the message
+        // thread holding its audio lock. It goes to the STOP worker, and what
+        // the device does next waits for it like any other STOP.
+        if (! recorder.beginFinalization()) return false;
+        const bool riding = ride.active;
+        launchCaptureStopJob ([this] (bool ok) { if (onTakeInterrupted) onTakeInterrupted (ok); });   // hands over a stand-in
+        deferredDeviceAudio.store (true, std::memory_order_release);
+        deferredDeviceRelease = true;
+        if (! riding) deferredDeviceConfiguration.reset();
+        return true;
+    }
+
+    // A synchronous STOP during a ride-through: the recorder is released, and
+    // a stand-in that is running is prepared for at once.
+    void AudioEngine::settleRideThroughAfterStop()
+    {
+        const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        if (! ride.active) return;
+        const auto standIn = std::exchange (ride.standIn, {});
+        ride = {};
+        recorder.release();
+        if (standIn) applyDeviceConfiguration (standIn->rate, standIn->block, standIn->workgroup);
+        else         deviceStoppedIdle = true;
+        deviceRideThrough.store (false, std::memory_order_release);
+    }
+
+    juce::String AudioEngine::deviceNotice() const
+    {
+        const auto input = takeDevice.setup.inputDeviceName;
+        const double rate = deviceSampleRate.load (std::memory_order_relaxed);
+        const auto silence = juce::String (rate > 0.0 ? (double) rideGapFrames.load (std::memory_order_relaxed) / rate : 0.0, 1);
+        switch ((RideOutcome) rideOutcome.load (std::memory_order_relaxed))
+        {
+            case RideOutcome::waiting:
+                return "!! AUDIO DEVICE STOPPED -- the take is held open while " + input + " comes back  ";
+            case RideOutcome::resumed:
+                return "! AUDIO DEVICE RESTARTED -- the take continues; " + silence + " s of silence in it  ";
+            case RideOutcome::resumedWithoutOutput:
+                return "! MONITOR OUTPUT LOST -- the take continues on " + input + " with " + silence
+                     + " s of silence in it; no monitor output until STOP  ";
+            case RideOutcome::none: break;
+        }
+        return {};
+    }
+
+    // Message thread, 10 Hz while a take rolls.
+    void AudioEngine::serviceDeviceWatch (juce::uint32 nowMs)
+    {
+        bool reopen = false;
+        {
+            const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+            if (isCaptureFinalizing() || ! recorder.isRecording())
+            {
+                if (deviceWatch != nullptr) deviceWatch->stopTimer();
+                return;
+            }
+            if (! ride.active)
+            {
+                // A failed HAL call on a device pair stops both halves and
+                // says nothing at all: JUCE's combiner reports only an error,
+                // and the device manager passes no error on. So: the device
+                // says it is not playing, and no block has come for a while.
+                const auto callbacks = callbackCount.load (std::memory_order_relaxed);
+                if (callbacks != watchCallbacks)
+                {
+                    watchCallbacks = callbacks;
+                    watchProgressMs = nowMs;
+                    return;
+                }
+                // Still playing with no blocks is a stall, not a stop: the
+                // alarm says so, and the device is left alone.
+                if (auto* device = deviceManager.getCurrentAudioDevice(); device != nullptr && device->isPlaying()) return;
+                if ((juce::int32) (nowMs - watchProgressMs) < (juce::int32) kSilentStopMs) return;
+                // A punch keeps today's behaviour: the stall alarm, take open.
+                if (! mayRideThrough()) return;
+                beginRideThrough (nowMs);
+            }
+            // The input itself gone, or not back in time: a device loss.
+            if (! takeInputListed() || (juce::int32) (nowMs - ride.startedMs) >= (juce::int32) kRideThroughGraceMs)
+            {
+                if (! finalizeDeviceLoss())
+                {
+                    ride = {};
+                    deviceRideThrough.store (false, std::memory_order_release);
+                }
+                return;
+            }
+            // Back already: a restart CoreAudio ran from its own thread.
+            if (auto* device = deviceManager.getCurrentAudioDevice();
+                device != nullptr && device->isPlaying() && rideThroughAccepts (*device))
+            {
+                resumeRideThrough();
+                return;
+            }
+            if ((juce::int32) (nowMs - ride.nextAttemptMs) < 0) return;
+            ride.nextAttemptMs = nowMs + kRideThroughRetryMs;
+            reopen = true;
+        }
+        // Outside the lock: closing and opening call back into this engine.
+        if (reopen) reopenTakeInput();
+    }
+
+    // Message thread, no lock held. The take's input on its own, at the take's
+    // rate and buffer. Never an output: the monitor mix must not land somewhere
+    // nobody chose. Closing first, because a device stopped by an error is
+    // still the current one, and the same setup would otherwise open nothing.
+    // takeDevice is written only by startRecording, on this thread.
+    void AudioEngine::reopenTakeInput()
+    {
+        auto setup = takeDevice.setup;
+        setup.outputDeviceName = {};
+        setup.outputChannels.clear();
+        setup.useDefaultOutputChannels = true;
+        setup.sampleRate = takeDevice.rate;
+        setup.bufferSize = takeDevice.block;
+        deviceManager.closeAudioDevice();
+        deviceManager.setAudioDeviceSetup (setup, false);
+    }
+
     void AudioEngine::audioDeviceStopped()
     {
         const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
@@ -2771,21 +3128,22 @@ namespace zynforge
             player.stop();
             return;
         }
+        // A stand-in, or a device the watch opened, stopped: still waiting.
+        if (ride.active)
+        {
+            ride.standIn.reset();
+            return;
+        }
         if (recorder.isRecording())
         {
-            recorder.markCaptureDeviceLost();
-            // Closing a take can take minutes (a punch rewrites whole files, a
-            // lead-in writes silence), and JUCE calls this on the message
-            // thread holding its audio lock. It goes to the STOP worker, and
-            // what the device does next waits for it like any other STOP.
-            if (recorder.beginFinalization())
+            // The input still there (a lost monitor output, a restart): the
+            // take is held open for it. Otherwise a device loss, as always.
+            if (mayRideThrough())
             {
-                launchCaptureStopJob ([this] (bool ok) { if (onTakeInterrupted) onTakeInterrupted (ok); });
-                deferredDeviceAudio.store (true, std::memory_order_release);
-                deferredDeviceRelease = true;
-                deferredDeviceConfiguration.reset();
+                beginRideThrough (juce::Time::getMillisecondCounter());
                 return;
             }
+            if (finalizeDeviceLoss()) return;
         }
         recorder.release();
         player.release();
@@ -2793,10 +3151,13 @@ namespace zynforge
             const juce::ScopedLock sl (stereoMixLock);
             stereoMixWriter.reset();
         }
+        deviceStoppedIdle = true;
     }
 
-    // Any failed HAL call lands here, and on a device pair JUCE's combiner
-    // stops the device and says nothing else. Which thread it comes from varies.
+    // JUCE 8's AudioDeviceManager does not pass device errors on (its
+    // block-size wrapper drops them), so in this app only a direct caller
+    // reaches this. A device pair stopped by a failed HAL call is found by
+    // serviceDeviceWatch instead. Which thread it comes from varies.
     void AudioEngine::audioDeviceError (const juce::String&)
     {
         deviceErrorSeen.store (true, std::memory_order_relaxed);
@@ -2808,7 +3169,10 @@ namespace zynforge
                                                         const juce::AudioIODeviceCallbackContext&)
     {
         callbackCount.fetch_add (1, std::memory_order_relaxed);
-        if (deferredDeviceAudio.load (std::memory_order_acquire))
+        // A take held open through a device stop runs a stand-in silent, and
+        // captures nothing until its own device is back.
+        if (deferredDeviceAudio.load (std::memory_order_acquire)
+            || deviceRideThrough.load (std::memory_order_acquire))
         {
             for (int channel = 0; channel < numOutputs; ++channel)
                 if (outputs[channel]) juce::FloatVectorOperations::clear (outputs[channel], numSamples);
@@ -2819,6 +3183,20 @@ namespace zynforge
         // (callback time / available time) as a load percentage. The
         // dashboard polls audioLoadPct at 4 Hz to drive the LED.
         const auto cbStart = juce::Time::getHighResolutionTicks();
+
+        // The DEVICE panel's input meter: the loudest device input, strips or not.
+        if (deviceInputMeterOn.load (std::memory_order_relaxed))
+        {
+            float peak = 0.0f;
+            for (int ch = 0; ch < numInputs; ++ch)
+                if (inputs[ch] != nullptr)
+                {
+                    const auto range = juce::FloatVectorOperations::findMinAndMax (inputs[ch], numSamples);
+                    peak = juce::jmax (peak, -range.getStart(), range.getEnd());
+                }
+            deviceInputPeak.store (juce::jmax (peak, deviceInputPeak.load (std::memory_order_relaxed) * 0.92f),
+                                   std::memory_order_relaxed);
+        }
 
         // 64-bit output accumulator -- every per-strip / stream
         // sum lands here in double precision; the final cast to the
@@ -2885,6 +3263,29 @@ namespace zynforge
             punchSamples = last > first ? (int) (last - first) : 0;
         }
 
+        // Back from a device stop: the stretch the device was away goes in
+        // first, as silence counted as missed, so every track (and the mix)
+        // stays on the clock. From the start of the last block captured to
+        // the start of this one, less that block.
+        juce::int64 gapFrames = 0;
+        if (resumeGapPending.exchange (false, std::memory_order_acq_rel))
+        {
+            const auto last = lastCaptureTicks.load (std::memory_order_relaxed);
+            const double rate = deviceSampleRate.load (std::memory_order_relaxed);
+            if (last > 0 && rate > 0.0 && recorder.isRecording())
+            {
+                const double away = juce::Time::highResolutionTicksToSeconds (cbStart - last);
+                gapFrames = juce::jlimit ((juce::int64) 0, (juce::int64) (rate * kMaxGapSeconds),
+                                          (juce::int64) std::llround (away * rate)
+                                              - lastCaptureBlock.load (std::memory_order_relaxed));
+                if (gapFrames > 0)
+                {
+                    recorder.addCaptureGap (gapFrames);
+                    rideGapFrames.fetch_add (gapFrames, std::memory_order_relaxed);
+                }
+            }
+        }
+
         bool capturedThisBlock = false;
         if (punchSamples > 0)
         {
@@ -2897,6 +3298,11 @@ namespace zynforge
                                    playerWasRolling ? playbackBlockStart + punchOffset
                                                     : (juce::int64) -1);
             capturedThisBlock = recorder.capturedLastBlock();
+        }
+        if (recorder.isRecording())
+        {
+            lastCaptureTicks.store (cbStart, std::memory_order_relaxed);
+            lastCaptureBlock.store (numSamples, std::memory_order_relaxed);
         }
 
         // While punching, the recorded input replaces the old take on armed
@@ -3110,6 +3516,7 @@ namespace zynforge
 
         if (wantMixCapture)
         {
+            if (gapFrames > 0) stereoMixWriter->addGap (gapFrames);
             const float* chans[2] = { stereoMixScratch.getReadPointer (0),
                                       stereoMixScratch.getReadPointer (1) };
             if (! stereoMixWriter->write (chans, numSamples))
@@ -3223,7 +3630,8 @@ const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxe
             }
         }
 
-        // Drive the L/R master meters from the accumulator BEFORE mGain.
+        // The L/R master meters read the bus after the master fader and MUTE,
+        // as its outputs carry it, like the loudness below.
         {
             double mPeakL = 0.0, mPeakR = 0.0;
             double mRmsL  = 0.0, mRmsR  = 0.0;
@@ -3237,10 +3645,10 @@ const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxe
                 mRmsR += accR[i] * accR[i];
             }
             const double inv = 1.0 / (double) juce::jmax (1, blk);
-            const float pkL  = (float) mPeakL;
-            const float pkR  = (float) mPeakR;
-            const float rmsL = (float) std::sqrt (mRmsL * inv);
-            const float rmsR = (float) std::sqrt (mRmsR * inv);
+            const float pkL  = (float) (mPeakL * mGain);
+            const float pkR  = (float) (mPeakR * mGain);
+            const float rmsL = (float) (std::sqrt (mRmsL * inv) * mGain);
+            const float rmsR = (float) (std::sqrt (mRmsR * inv) * mGain);
 
             const float prevPkL  = masterState .peak.load (std::memory_order_relaxed);
             const float prevPkR  = masterStateR.peak.load (std::memory_order_relaxed);

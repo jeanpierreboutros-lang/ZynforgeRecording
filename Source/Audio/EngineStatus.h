@@ -110,6 +110,10 @@ namespace zynforge
         // does not know the field ignores it.
         std::vector<channelalarm::Alarm> channelAlarms;
         juce::StringArray copyProblems;   // a line per copy that lost audio, naming it
+        // The take rode through a device stop: held open, or back with a
+        // stretch of silence in it. Banner text, ending in two spaces. In-process
+        // takes only (the helper opens inputs only), so it is not sent on.
+        juce::String deviceNotice;
         juce::String  preRollNotice;      // a quiet line: this take wrote less pre-roll than asked
         std::vector<TrackStatus> tracks;
 

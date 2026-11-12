@@ -848,6 +848,7 @@ void MainComponent::startPlaybackFromCursor()
     engine.startPlayback();
     // The engine refuses with nothing ahead, as a two-tap RECORD stop leaves it.
     if (player.isPlaying()) statusLabel.setText ("Playing -> " + player.getSessionName(), juce::dontSendNotification);
+    else if (const auto rate = engine.getPlaybackRateRefusal(); rate.isNotEmpty()) showStatus ("PLAY refused -- " + rate);
     else                    showStatus ("Nothing to play from here -- locate back into the take");
 }
 

@@ -29,5 +29,7 @@ namespace zynforge
         // Devices are tried out live in this panel, so nothing else may change
         // them while it is up.
         static bool isOpen();
+        // What the panel's input meter shows, 0..1.
+        static float inputMeterLevel (AudioEngine& engine);
     };
 }
