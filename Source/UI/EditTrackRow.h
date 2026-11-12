@@ -2791,15 +2791,22 @@ namespace zynforge
                     closesForTake (aw);
                     juce::Component::SafePointer<TrackRow> rowSafe (self);
                     aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [aw, rowSafe, clipIdx] (int r)
+                        [aw, rowSafe, prints = clipedit::printsOf (self->engine, targets)] (int r)
                     {
                         std::unique_ptr<juce::AlertWindow> own (aw);
                         if (r != 1 || rowSafe == nullptr || ! rowSafe->timelineEditAllowed()) return;
                         const auto nm = own->getTextEditorContents ("name").trim();
                         if (nm.isEmpty()) return;
+                        const auto clips = clipedit::findPrinted (rowSafe->engine, prints);
                         auto* page = rowSafe->findParentComponentOfClass<EditPage>();
+                        if (! clips)
+                        {
+                            if (page != nullptr && page->onStatus)
+                                page->onStatus ("The clip changed while its name was asked -- nothing renamed");
+                            return;
+                        }
                         if (page != nullptr) page->beginClipEdit();
-                        for (auto [p, pi] : rowSafe->peerClipTargets (clipIdx))
+                        for (auto [p, pi] : *clips)
                             rowSafe->engine.setClipName (p, pi, nm);
                         if (page != nullptr) page->commitClipEdit ("Rename clip");
                         rowSafe->repaint();
@@ -2828,15 +2835,22 @@ namespace zynforge
                     closesForTake (aw);
                     juce::Component::SafePointer<TrackRow> rowSafe (self);
                     aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [aw, rowSafe, clipIdx] (int r)
+                        [aw, rowSafe, prints = clipedit::printsOf (self->engine, targets)] (int r)
                     {
                         std::unique_ptr<juce::AlertWindow> own (aw);
                         if (r != 1 || rowSafe == nullptr || ! rowSafe->timelineEditAllowed()) return;
                         const auto txt = own->getTextEditorContents ("dB");
                         const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
+                        const auto clips = clipedit::findPrinted (rowSafe->engine, prints);
                         auto* page = rowSafe->findParentComponentOfClass<EditPage>();
+                        if (! clips)
+                        {
+                            if (page != nullptr && page->onStatus)
+                                page->onStatus ("The clip changed while its gain was asked -- nothing changed");
+                            return;
+                        }
                         if (page != nullptr) page->beginClipEdit();
-                        for (auto [p, pi] : rowSafe->peerClipTargets (clipIdx))
+                        for (auto [p, pi] : *clips)
                             rowSafe->engine.setClipGainDb (p, pi, dB);
                         if (page != nullptr) page->commitClipEdit ("Clip gain");
                         rowSafe->repaint();

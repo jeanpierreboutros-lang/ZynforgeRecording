@@ -181,6 +181,7 @@ namespace zynforge
             promptsLetATakeThrough (main);
             cueEditsSurviveTimelineUndo (main);
             continuedTakesKeepOneWaveform();
+            clipPromptsFollowTheirClip();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1419,6 +1420,77 @@ namespace zynforge
                     expectEquals (cacheEntries (s.cache), 1,
                                   "the shorter take's peaks stayed cached beside the continued take");
                 }
+            }
+        }
+
+        void clipPromptsFollowTheirClip()
+        {
+            const auto prompt = [] { return dynamic_cast<juce::AlertWindow*> (topModal()); };
+
+            beginTest ("Rename clip and Set gain land on the clip they opened on, whatever moved under them");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                for (juce::int64 at : { 12000, 24000, 36000 }) s.engine.splitTrackAtSample (0, at);
+                expectEquals ((int) s.clips (0).size(), 4, "setup: four clips");
+                const auto clipAt24k = [&]() -> const Clip*
+                {
+                    for (const auto& c : s.clips (0)) if (c.timelineStartSamples == 24000) return &c;
+                    return nullptr;
+                };
+
+                row.applyClipMenuChoice (2, 412);
+                if (auto* aw = prompt())
+                {
+                    s.engine.deleteClip (0, 0);   // the list shifts under the prompt
+                    aw->getTextEditor ("name")->setText ("KEEP");
+                    aw->exitModalState (1);
+                }
+                else expect (false, "setup: the rename prompt");
+                // The answer arrives a moment after the prompt leaves.
+                pumpUntil ([&] { return clipAt24k() != nullptr && clipAt24k()->name == "KEEP"; }, 1000);
+                expect (clipAt24k() != nullptr && clipAt24k()->name == "KEEP", "the clip the prompt was for kept its name");
+                for (const auto& c : s.clips (0))
+                    if (c.timelineStartSamples != 24000)
+                        expect (c.name != "KEEP", "another clip took the name");
+
+                const int idx = (int) (clipAt24k() - s.clips (0).data());
+                row.applyClipMenuChoice (idx, 510);
+                if (auto* aw = prompt())
+                {
+                    s.engine.deleteClip (0, 0);
+                    aw->getTextEditor ("dB")->setText ("-7");
+                    aw->exitModalState (1);
+                }
+                else expect (false, "setup: the gain prompt");
+                pumpUntil ([&] { return clipAt24k() != nullptr && std::abs (clipAt24k()->gainDb + 7.0f) < 0.01f; }, 1000);
+                expect (clipAt24k() != nullptr && std::abs (clipAt24k()->gainDb + 7.0f) < 0.01f,
+                        "the gain missed the clip the prompt was for");
+                for (const auto& c : s.clips (0))
+                    if (c.timelineStartSamples != 24000)
+                        expect (std::abs (c.gainDb) < 0.01f, "another clip took the gain");
+            }
+
+            beginTest ("A clip prompt whose clip went changes nothing");
+            {
+                Session s (1, { kRate });
+                Row row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                s.engine.splitTrackAtSample (0, 16000);
+                s.engine.splitTrackAtSample (0, 32000);
+                expectEquals ((int) s.clips (0).size(), 3, "setup: three clips");
+                row.applyClipMenuChoice (1, 510);
+                if (auto* aw = prompt())
+                {
+                    s.engine.deleteClip (0, 1);
+                    aw->getTextEditor ("dB")->setText ("-7");
+                    aw->exitModalState (1);
+                }
+                else expect (false, "setup: the gain prompt");
+                pumpUntil ([] { return false; }, 300);   // the answer arrives a moment after the prompt leaves
+                for (const auto& c : s.clips (0))
+                    expect (std::abs (c.gainDb) < 0.01f, "a gain meant for a deleted clip landed on another");
             }
         }
     };

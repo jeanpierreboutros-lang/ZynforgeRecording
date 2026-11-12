@@ -10,6 +10,7 @@
 #include "EditTimeline.h"
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -100,6 +101,58 @@ namespace zynforge::clipedit
         if (selection.count (primary) > 0) reach (primary);
         for (const auto& clip : selection) reach (clip);
         return { all.begin(), all.end() };
+    }
+
+    // A clip as it was when a prompt opened on it. A list index goes stale
+    // while the prompt waits (an undo from the menu bar, a remote edit), so the
+    // answer finds the clip again by what it is, not where it was.
+    struct ClipPrint
+    {
+        int          track { -1 };
+        juce::int64  start { 0 }, fileStart { 0 }, length { 0 };
+        juce::File   file;
+        int          channel { -1 };
+    };
+
+    inline std::vector<ClipPrint> printsOf (AudioEngine& engine, const std::vector<ClipRef>& clips)
+    {
+        std::vector<ClipPrint> prints;
+        for (const auto& [track, idx] : clips)
+            if (const auto* list = engine.tryClipsFor (track); list != nullptr && idx >= 0 && idx < (int) list->size())
+            {
+                const auto& c = (*list)[(size_t) idx];
+                prints.push_back ({ track, c.timelineStartSamples, c.fileStartSamples, c.fileLengthSamples,
+                                    c.audioFile, c.sourceChannel });
+            }
+        return prints;
+    }
+
+    // Where each printed clip is now. Nothing when any of them is gone, moved,
+    // trimmed or no longer one clip: the answer then lands on none of them,
+    // never on whatever sits at the old index.
+    inline std::optional<std::vector<ClipRef>> findPrinted (AudioEngine& engine,
+                                                            const std::vector<ClipPrint>& prints)
+    {
+        std::vector<ClipRef> found;
+        for (const auto& p : prints)
+        {
+            const auto* list = engine.tryClipsFor (p.track);
+            if (list == nullptr) return std::nullopt;
+            int at = -1;
+            for (int i = 0; i < (int) list->size(); ++i)
+            {
+                const auto& c = (*list)[(size_t) i];
+                if (c.timelineStartSamples != p.start || c.fileStartSamples != p.fileStart
+                    || c.fileLengthSamples != p.length || c.audioFile != p.file || c.sourceChannel != p.channel)
+                    continue;
+                if (at >= 0) return std::nullopt;   // two alike: neither is surely the one
+                at = i;
+            }
+            if (at < 0) return std::nullopt;
+            found.emplace_back (p.track, at);
+        }
+        if (found.empty()) return std::nullopt;
+        return found;
     }
 
     // Refusing the whole command is what keeps a group together: skipping one
