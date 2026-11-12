@@ -82,28 +82,56 @@ namespace
         }
     };
 
-    // Scrollable per-channel rename table: a row per channel showing its
-    // input number + an editable name field. applyTo() writes every name
-    // back through the engine (MIXER / EDIT then pick them up via their
-    // own polling). Embedded in the Rename Channels AlertWindow.
+    // A stereo pair is one strip in every view, so the batch tables give it
+    // one row, numbered by both of its channels.
+    struct LogicalRow { int index; bool stereo; };
+    std::vector<LogicalRow> logicalRows (AudioEngine& eng)
+    {
+        std::vector<LogicalRow> out;
+        auto& rec = eng.getRecorder();
+        const int n = rec.getNumTracks();
+        for (int i = 0; i < n; )
+        {
+            const bool stereo = i + 1 < n && rec.getTrack (i).isStereo.load (std::memory_order_relaxed);
+            out.push_back ({ i, stereo });
+            i += stereo ? 2 : 1;
+        }
+        return out;
+    }
+
+    juce::String rowNumber (const LogicalRow& r)
+    {
+        return "In " + juce::String (r.index + 1) + (r.stereo ? "-" + juce::String (r.index + 2) : juce::String());
+    }
+
+    // Scrollable per-strip rename table: a row per strip showing its
+    // channel number + an editable name field. applyTo() writes every changed
+    // name back through the engine, a pair's R as the strip's own rename does
+    // (MIXER / EDIT then pick them up via their own polling). Embedded in the
+    // Rename Channels AlertWindow; Return in a field is Apply.
     class RenameTable final : public juce::Component
     {
     public:
         explicit RenameTable (AudioEngine& eng)
         {
-            const int n = eng.getRecorder().getNumTracks();
-            for (int i = 0; i < n; ++i)
+            for (const auto& strip : logicalRows (eng))
             {
                 auto r = std::make_unique<Row>();
-                r->index = i;
-                r->num.setText ("In " + juce::String (i + 1), juce::dontSendNotification);
+                r->index = strip.index;
+                r->stereo = strip.stereo;
+                r->original = eng.getRecorder().getTrack (strip.index).getNameThreadSafe();
+                r->num.setText (rowNumber (strip), juce::dontSendNotification);
                 r->num.setColour (juce::Label::textColourId, brand::textTertiary);
                 r->num.setFont (brand::type::uiLabel());
                 r->num.setJustificationType (juce::Justification::centredLeft);
-                r->editor.setText (eng.getRecorder().getTrack (i).name, juce::dontSendNotification);
+                r->editor.setText (r->original, juce::dontSendNotification);
                 r->editor.setFont (brand::type::uiBody());
                 dialog::styleTextEditor (r->editor);
                 r->editor.setSelectAllWhenFocused (true);
+                r->editor.onReturnKey = [this]
+                {
+                    if (auto* box = findParentComponentOfClass<juce::AlertWindow>()) box->exitModalState (1);
+                };
                 content.addAndMakeVisible (r->num);
                 content.addAndMakeVisible (r->editor);
                 rows.push_back (std::move (r));
@@ -140,7 +168,12 @@ namespace
         void applyTo (AudioEngine& eng)
         {
             for (auto& r : rows)
-                eng.setTrackName (r->index, r->editor.getText().trim());
+            {
+                const auto name = r->editor.getText().trim();
+                if (name == r->original) continue;
+                eng.setTrackName (r->index, name);
+                if (r->stereo) eng.setTrackName (r->index + 1, name.isEmpty() ? juce::String() : name + " R");
+            }
         }
 
         int preferredHeight() const
@@ -167,7 +200,7 @@ namespace
         }
 
     private:
-        struct Row { int index { 0 }; juce::Label num; NameEditor editor; };
+        struct Row { int index { 0 }; bool stereo { false }; juce::String original; juce::Label num; NameEditor editor; };
         juce::Viewport viewport;
         juce::Component content;
         std::vector<std::unique_ptr<Row>> rows;
@@ -212,18 +245,20 @@ namespace
             rangeBtn.onClick = [this] { pickForRange(); };
             addAndMakeVisible (rangeBtn);
 
-            for (int i = 0; i < n; ++i)
+            for (const auto& strip : logicalRows (eng))
             {
+                const int row = (int) rows.size();
                 auto r = std::make_unique<Row>();
-                r->index = i;
-                r->num.setText ("In " + juce::String (i + 1), juce::dontSendNotification);
+                r->index = strip.index;
+                r->stereo = strip.stereo;
+                r->num.setText (rowNumber (strip), juce::dontSendNotification);
                 r->num.setColour (juce::Label::textColourId, brand::textTertiary);
                 r->num.setFont (brand::type::uiLabel());
-                r->name.setText (eng.getRecorder().getTrack (i).name, juce::dontSendNotification);
+                r->name.setText (eng.getRecorder().getTrack (strip.index).getNameThreadSafe(), juce::dontSendNotification);
                 r->name.setColour (juce::Label::textColourId, brand::textPrimary);
                 r->name.setFont (brand::type::uiBody());
                 applySwatchColour (*r);
-                r->swatch.onClick = [this, idx = i] { pickForOne (idx); };
+                r->swatch.onClick = [this, row] { pickForOne (row); };
                 content.addAndMakeVisible (r->num);
                 content.addAndMakeVisible (r->name);
                 content.addAndMakeVisible (r->swatch);
@@ -263,7 +298,9 @@ namespace
         }
 
     private:
-        struct Row { int index { 0 }; juce::Label num, name; juce::TextButton swatch; };
+        // One row per strip: `index` is its first track, and a pair's R takes
+        // every colour the row gets.
+        struct Row { int index { 0 }; bool stereo { false }; juce::Label num, name; juce::TextButton swatch; };
 
         void applySwatchColour (Row& r)
         {
@@ -273,33 +310,37 @@ namespace
                                 argb != 0 ? juce::Colour (argb) : brand::stripDefaultGrey);
         }
 
-        void setRowColour (int idx, juce::Colour c)
+        void setRowColour (int row, juce::Colour c)
         {
-            if (idx < 0 || idx >= (int) rows.size() || ! stillCurrent()) return;
-            engine.setTrackColour (idx, c);
-            rows[(size_t) idx]->swatch.setColour (juce::TextButton::buttonColourId, c);
-            rows[(size_t) idx]->swatch.repaint();
+            if (row < 0 || row >= (int) rows.size() || ! stillCurrent()) return;
+            auto& r = *rows[(size_t) row];
+            engine.setTrackColour (r.index, c);
+            if (r.stereo) engine.setTrackColour (r.index + 1, c);
+            r.swatch.setColour (juce::TextButton::buttonColourId, c);
+            r.swatch.repaint();
             if (onChanged) onChanged();
         }
 
-        void pickForOne (int idx)
+        void pickForOne (int row)
         {
             // These rows were made for the strips of the moment the dialog opened.
-            if (! stillCurrent() || idx >= engine.getRecorder().getNumTracks()) return;
-            const auto cur = juce::Colour (engine.getRecorder().getTrack (idx)
+            if (! stillCurrent() || row < 0 || row >= (int) rows.size()) return;
+            const auto cur = juce::Colour (engine.getRecorder().getTrack (rows[(size_t) row]->index)
                                               .colourARGB.load (std::memory_order_relaxed));
             juce::Component::SafePointer<BatchColourTable> self (this);
             auto picker = std::make_unique<zynforge::StripColourPicker> (
-                cur, [self, idx] (juce::Colour c)
-                { if (self != nullptr) self->setRowColour (idx, c); });
+                cur, [self, row] (juce::Colour c)
+                { if (self != nullptr) self->setRowColour (row, c); });
             zynforge::closesForTake (&juce::CallOutBox::launchAsynchronously (std::move (picker),
-                rows[(size_t) idx]->swatch.getScreenBounds(), nullptr));
+                rows[(size_t) row]->swatch.getScreenBounds(), nullptr));
         }
 
+        // The range is in channel numbers, as the rows are labelled; a strip
+        // any of whose channels it covers takes the colour whole.
         void pickForRange()
         {
-            const int n = (int) rows.size();
-            if (n == 0 || ! stillCurrent()) return;
+            const int n = engine.getRecorder().getNumTracks();
+            if (rows.empty() || n == 0 || ! stillCurrent()) return;
             const int first = juce::jlimit (1, n, fromEd.getText().getIntValue());
             const int last  = juce::jlimit (first, n, toEd.getText().getIntValue());
             juce::Component::SafePointer<BatchColourTable> self (this);
@@ -308,7 +349,12 @@ namespace
                 [self, first, last] (juce::Colour c)
                 {
                     if (self == nullptr) return;
-                    for (int ch = first - 1; ch < last; ++ch) self->setRowColour (ch, c);
+                    for (int row = 0; row < (int) self->rows.size(); ++row)
+                    {
+                        const auto& r = *self->rows[(size_t) row];
+                        const int lo = r.index + 1, hi = r.index + (r.stereo ? 2 : 1);
+                        if (hi >= first && lo <= last) self->setRowColour (row, c);
+                    }
                 });
             zynforge::closesForTake (&juce::CallOutBox::launchAsynchronously (std::move (picker),
                 rangeBtn.getScreenBounds(), nullptr));
