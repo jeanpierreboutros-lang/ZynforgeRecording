@@ -490,8 +490,10 @@ namespace zynforge
                             ^ (engine.getEditCursorSample()      << 4);
             const auto& list = engine.getMarkers().getAll();
             sig ^= (juce::int64) list.size() << 40;
-            for (const auto& m : list) sig += m.sampleOffset + m.name.hashCode64();
-            return sig;
+            // Unsigned, so summing hashes wraps instead of overflowing (UB).
+            auto mix = (juce::uint64) sig;
+            for (const auto& m : list) mix += (juce::uint64) m.sampleOffset + (juce::uint64) m.name.hashCode64();
+            return (juce::int64) mix;
         }
 
         // Wall-clock label. Below an hour: M:SS; an hour or more:

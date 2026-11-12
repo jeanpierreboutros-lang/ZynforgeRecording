@@ -572,6 +572,15 @@ namespace zynforge
                     return best;
                 };
 
+                // The old quadratic decode took ~120 ms per pass in Release.
+                // Debug and sanitizer builds run every byte several times
+                // slower, so they get a looser bound that still fails it.
+               #if JUCE_DEBUG
+                constexpr double kCheapMs = 150.0;
+               #else
+                constexpr double kCheapMs = 25.0;
+               #endif
+
                 // A name the parser keeps, as a desk's Latin-1 channel name.
                 juce::MemoryOutputStream kept;
                 oscString (kept, juce::MemoryBlock ("/x", 2));
@@ -585,7 +594,7 @@ namespace zynforge
                                  ? parsed->getMessage()[0].getString().length() : -1;
                 });
                 expectEquals (parsedLength, 64000, "the Latin-1 packet was refused or cut");
-                expect (parseMs < 25.0, "64 KB of Latin-1 took " + juce::String (parseMs, 1) + " ms to parse");
+                expect (parseMs < kCheapMs, "64 KB of Latin-1 took " + juce::String (parseMs, 1) + " ms to parse");
 
                 // A packet the parser refuses, which the log describes.
                 juce::MemoryOutputStream refused;
@@ -597,7 +606,7 @@ namespace zynforge
                         expect (false, "a packet with a double was accepted");
                     oscwire::describeRefused (refused.getData(), refused.getDataSize());
                 });
-                expect (describeMs < 25.0, "refusing 64 KB of Latin-1 took " + juce::String (describeMs, 1) + " ms");
+                expect (describeMs < kCheapMs, "refusing 64 KB of Latin-1 took " + juce::String (describeMs, 1) + " ms");
             }
 
             beginTest ("A deeply nested OSC bundle cannot crash the OSC listener");
