@@ -478,6 +478,9 @@ void MainComponent::showStartupWelcome()
             // Zero tracks is a session that opened empty, not a failure.
             if (openSessionFolder (last) >= 0)
                 return;   // reopened -- no welcome dialog
+            // A backup an earlier build opened as a session is never pinned again.
+            if (zynforge::sessionrepair::isInsideBackups (last) && ! engine.mixerBelongsTo (last))
+                engine.setActiveSessionDir ({});
         }
         // A pinned folder with nothing to open stays unloaded for good, and
         // would refuse every save of whatever is built here. Release it.

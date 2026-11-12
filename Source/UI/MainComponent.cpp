@@ -750,6 +750,14 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
             engine.armPunchIn (plan.punchAt);
     }
 
+    // As in daemon mode: the strips this take records into go into the session
+    // before it rolls, or a crash brings back only the strips of the last save
+    // (strips added since would have audio on disk and no strip). A failed
+    // write never stops RECORD; STOP saves everything again.
+    if (! saveMixerToTakeFolder (plan.dir))
+        juce::Logger::writeToLog ("[ZF] RECORD: the mixer could not be written to " + plan.dir.getFullPathName()
+                                  + " before the take");
+
     if (engine.startRecording (plan.dir))
     {
         lastCaptureFinalizationError.clear();

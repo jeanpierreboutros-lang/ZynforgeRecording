@@ -60,6 +60,10 @@ namespace zynforge::sessionbackup
         return true;
     }
 
+    // A snapshot folder is "<session>_<stamp>_<sequence>": the session's
+    // folder name plus this many bytes.
+    inline constexpr int kSnapshotExtraBytes = 1 + 19 + 1 + 19;
+
     struct SnapshotName
     {
         juce::String stamp;
@@ -114,10 +118,30 @@ namespace zynforge::sessionbackup
         return {};
     }
 
+    // What writeSnapshot puts in a snapshot, and what Finder adds when someone
+    // looks inside (.DS_Store, and ._ AppleDouble files on exFAT and shares).
+    inline bool isSnapshotDocument (const juce::String& name)
+    {
+        const auto plain = name.startsWith ("._") ? name.substring (2) : name;
+        return plain == ".DS_Store" || plain.endsWithIgnoreCase (".zfproj")
+            || plain == "session_mix.json" || plain == "session_settings.json" || plain == "markers.json";
+    }
+
+    inline bool holdsOnlySessionDocuments (const juce::File& snapshot)
+    {
+        for (const auto& entry : juce::RangedDirectoryIterator (snapshot, false, "*",
+                                                                juce::File::findFilesAndDirectories))
+            if (entry.isDirectory() || ! isSnapshotDocument (entry.getFile().getFileName())) return false;
+        return true;
+    }
+
     // Optional clock input makes retention tests deterministic; ordinary callers
-    // retain the existing current-time behaviour.
+    // retain the existing current-time behaviour. `keptForeign` receives every
+    // snapshot-named folder that retention leaves alone because it holds more
+    // than session documents.
     inline juce::File writeSnapshot (const juce::File& sessionDir, int keepNewest = 10,
-                                    juce::Time snapshotTime = juce::Time::getCurrentTime())
+                                    juce::Time snapshotTime = juce::Time::getCurrentTime(),
+                                    juce::Array<juce::File>* keptForeign = nullptr)
     {
         if (keepNewest <= 0 || ! sessionDir.isDirectory() || sessionDir.isSymbolicLink()) return {};
 
@@ -178,8 +202,17 @@ namespace zynforge::sessionbackup
         }
 
         // Only recognized real directories are owned snapshots. Journals,
-        // arbitrary similarly named folders and links are never pruned.
+        // arbitrary similarly named folders and links are never pruned. Nor is
+        // a snapshot holding anything but the documents copied into it: one
+        // opened as a session may hold a take. It is kept, takes no place in
+        // the window, and is reported.
         entries.push_back ({ snap, stamp, sequence });
+        entries.erase (std::remove_if (entries.begin(), entries.end(), [keptForeign] (const Entry& e)
+        {
+            if (holdsOnlySessionDocuments (e.file)) return false;
+            if (keptForeign != nullptr) keptForeign->add (e.file);
+            return true;
+        }), entries.end());
         const auto removeCount = entries.size() > (size_t) keepNewest
             ? entries.size() - (size_t) keepNewest : 0;
         // An emptied mix can fill the whole window. The last copy that still

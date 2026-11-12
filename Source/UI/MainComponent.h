@@ -193,6 +193,7 @@ private:
     void launchNewSessionDialog (juce::File templateFile = {});
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
     juce::String sessionCreateFailureMessage() const;
+    juce::String sessionCreateRefusal;   // why the last create refused, in plain words; empty otherwise
     // Canonical "open this session folder" sequence: pin the active dir,
     // restore setlist + UI layout, load the audio, restore the full mixer
     // state, force a strip rebuild. Returns the track count loaded. Used by
@@ -201,6 +202,7 @@ private:
     // restored backup changed its files. Nothing else may, because a reload
     // replaces every unsaved edit.
     int  openSessionFolder (const juce::File& dir, bool reload = false);
+    int  restoreUnsavedStrips (const juce::File& dir, int playerTracks);
     bool isSessionOpen (const juce::File& dir) const;
     void reportDamagedFiles (const juce::File& dir, const std::vector<zynforge::sessionrepair::DamagedFile>& files);
     bool restoreDamagedFiles (const juce::File& dir, const std::vector<zynforge::sessionrepair::DamagedFile>& files);

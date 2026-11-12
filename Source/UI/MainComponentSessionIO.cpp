@@ -20,6 +20,7 @@
 #include "../Audio/WavRepair.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/TrackFileTransaction.h"
+#include "../Audio/MultiPartReader.h"
 #include "../Audio/PathSafety.h"
 #include "../Audio/ShowHandoff.h"
 #include "../Audio/VirtualSoundcheck.h"
@@ -167,6 +168,10 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (engine.isCaptureFinalizing())
     { showStatus ("Wait for recording finalization before switching sessions"); return -1; }
     if (! dir.isDirectory()) return 0;
+    // Every way in (File > Open, Finder, the Welcome, the launch reopen, a
+    // recent session) comes here: a backup is never made the live session.
+    if (zynforge::sessionrepair::isInsideBackups (dir))
+    { showStatus (zynforge::sessionrepair::backupFolderRefusal (dir)); return -1; }
     // Everything below repairs and rewrites: nothing here may run under a helper
     // that is writing this folder, adopted or not.
     if (helperHoldsSession (dir))
@@ -221,15 +226,25 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     // Size one strip per loaded audio track so the channels (and the menus)
     // come back. A mix saved with no strips over a session that has audio is
     // the same case, not an authoritative empty mixer.
+    int addedSinceSave = 0;
     if (! loadedMix || (engine.getRecorder().getNumTracks() == 0 && n > 0))
         engine.setStripCount (n);
+    else if (n > engine.getRecorder().getNumTracks())
+        addedSinceSave = restoreUnsavedStrips (dir, n);
     restoreSessionDocuments (dir);
     engine.claimMixerFor (dir);
     if (n > 0)
     {
-        statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
+        statusLabel.setText ("Loaded " + juce::String (n) + " tracks"
+                                 + (addedSinceSave > 0 ? "; " + zynforge::counted (addedSinceSave, "strip")
+                                                           + " recorded after the last save came back with default names and patch"
+                                                       : juce::String()),
+                             juce::dontSendNotification);
         warnIfSampleRateMismatch();
     }
+    if (addedSinceSave > 0)
+        toast.show (zynforge::counted (addedSinceSave, "strip") + " recorded after the last save came back;"
+                    " check their names and patch", Toast::Kind::Warning);
     if (unrepairedHeaders > 0)
         toast.show (zynforge::counted (unrepairedHeaders, "take file") + " from a crash could not be repaired;"
                     " they read short until the drive is writable", Toast::Kind::Warning);
@@ -249,6 +264,29 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (! damaged.empty()) reportDamagedFiles (dir, damaged);
     zynforge::MultitrackRecorder::resumeReportHashes (dir);
     return n;
+}
+
+// Takes on disk past the saved mixer's strips: strips added since the last save
+// and recorded before a crash. They come back after the saved ones with default
+// names and patch, and a take recorded as one stereo file comes back as a pair.
+// Returns how many strips were added.
+int MainComponent::restoreUnsavedStrips (const juce::File& dir, int playerTracks)
+{
+    const int saved = engine.getRecorder().getNumTracks();
+    engine.setStripCount (playerTracks);
+    const int now = engine.getRecorder().getNumTracks();
+    const auto audioDir = dir.getChildFile ("Audio Files");
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    for (int i = saved; i + 1 < now; ++i)
+    {
+        const auto take = zynforge::findTrackMedia (audioDir.isDirectory() ? audioDir : dir, i);
+        if (! take.existsAsFile()) continue;
+        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (take));
+        if (reader != nullptr && reader->numChannels >= 2)
+            engine.setTrackStereo (i++, true);
+    }
+    return juce::jmax (0, now - saved);
 }
 
 void MainComponent::keepRemovedFeatureData (const juce::File& dir)
@@ -891,7 +929,11 @@ void MainComponent::serviceAutosave()
         return;
     }
     juce::Component::SafePointer<MainComponent> self (this);
-    enqueueMetadataSave (dir, "Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
+    // Documents that already hold this state are not written again: an
+    // archived show on read-only media would otherwise fail every interval.
+    auto snapshot = captureMetadataSnapshot (dir);
+    snapshot.skipWhenUnchanged = true;
+    enqueueMetadataSnapshot (std::move (snapshot), "Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
         [self, intervalMs] (bool ok)
         {
             if (self == nullptr) return;
@@ -2735,6 +2777,7 @@ juce::String MainComponent::missingLocalStorage() const
 
 juce::String MainComponent::sessionCreateFailureMessage() const
 {
+    if (sessionCreateRefusal.isNotEmpty()) return sessionCreateRefusal;
     return engine.isRecording() || engine.isCaptureFinalizing()
         ? "Recording -- the new session was not created. Stop the take first."
         : "Couldn't create session -- check permissions / free space";
@@ -2746,6 +2789,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // console) gets here after an async step, and a take can start meanwhile
     // (a remote RECORD). Clearing the strips would re-patch that take live,
     // and STOP would then save the wiped state over the real session.
+    sessionCreateRefusal.clear();
     if (engine.isRecording() || engine.isCaptureFinalizing())
         return {};
 
@@ -2761,6 +2805,10 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         return {};
 
     const juce::File sessionFolder = r.location.getNonexistentChildFile (safeName, {}, false);
+    // Bytes, not characters: a name that fits the folder can still be too long
+    // for what a save derives from it, and every save would fail.
+    sessionCreateRefusal = zynforge::sessionrepair::nameTooLongForNewSession (sessionFolder.getFileName());
+    if (sessionCreateRefusal.isNotEmpty()) return {};
     if (sessionFolder.createDirectory().failed() || ! sessionFolder.isDirectory())
         return {};
 

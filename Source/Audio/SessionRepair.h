@@ -99,6 +99,52 @@ namespace zynforge::sessionrepair
             || dir.getChildFile ("Session File Backups").isDirectory();
     }
 
+    // A folder inside a session's Session File Backups: a backup snapshot, the
+    // kept originals, a move journal. Opened as a session, a snapshot would be
+    // autosaved over, could take a RECORD, and retention in the real session
+    // would later delete it with whatever was recorded there.
+    inline bool isInsideBackups (const juce::File& dir)
+    {
+        return dir.getParentDirectory().getFileName().equalsIgnoreCase ("Session File Backups");
+    }
+
+    // The refusal, with the way back to that state.
+    inline juce::String backupFolderRefusal (const juce::File& dir)
+    {
+        const auto session = dir.getParentDirectory().getParentDirectory();
+        return dir.getFileName() + " is a backup of " + session.getFileName()
+             + ", not a session; nothing was opened. To go back to it, close " + session.getFileName()
+             + " and copy this folder's files into " + session.getFullPathName();
+    }
+
+    // A file name holds at most 255 bytes of UTF-8 (APFS, HFS+). A save derives
+    // longer names than the session's own: the project's staging file and the
+    // backup snapshot folder. New sessions and Save As copies stay under
+    // kMaxSessionNameBytes, which also leaves room for an export staged as
+    // "<name> - Mix" in the session's own Export Files.
+    inline constexpr int kMaxNameBytes = 255;
+    inline constexpr int kMaxSessionNameBytes = 200;
+
+    inline juce::String nameTooLongForNewSession (const juce::String& name)
+    {
+        const auto bytes = (int) name.getNumBytesAsUTF8();
+        if (bytes <= kMaxSessionNameBytes) return {};
+        return "Session name is too long: " + juce::String (bytes) + " bytes, and at most "
+             + juce::String (kMaxSessionNameBytes) + " fit (about 100 letters in Arabic, Hebrew or Greek). Use a shorter name";
+    }
+
+    // Why nothing can be saved into this folder under its present name (a
+    // rename in Finder), or empty.
+    inline juce::String nameTooLongToSave (const juce::File& dir, const juce::File& project, bool backup)
+    {
+        const auto folder = (int) dir.getFileName().getNumBytesAsUTF8();
+        const auto staging = (int) project.getFileName().getNumBytesAsUTF8() + atomicfile::kStagingExtraBytes;
+        if (staging <= kMaxNameBytes && (! backup || folder + sessionbackup::kSnapshotExtraBytes <= kMaxNameBytes))
+            return {};
+        return "the session folder name is too long to save into (" + juce::String (folder)
+             + " bytes); rename it to at most " + juce::String (kMaxSessionNameBytes) + " bytes in Finder, then save";
+    }
+
     // Run before anything in the session loads. `hasTakeAudio` also catches a
     // mix saved with no strips: readable, but it describes no channel of the
     // audio beside it.

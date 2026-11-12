@@ -10,7 +10,11 @@
 #include "../Audio/VirtualSoundcheck.h"
 #include "../UI/ExportDialog.h"
 #include "../UI/ExportSongsDialog.h"
+#include "../UI/FloatingLaunch.h"
 #include "../UI/NewSessionDialog.h"
+#include "../UI/SessionInfoDialog.h"
+#include "../UI/SessionSettingsDialog.h"
+#include "../UI/WelcomeDialog.h"
 #include "SilentAudioDevice.h"
 #include <csignal>
 #include <sys/resource.h>
@@ -1009,6 +1013,188 @@ public:
         }
     }
 
+    // ── 2026-11-11 audit ──────────────────────────────────────────────────
+
+    static void dropModals()
+    {
+        juce::ModalComponentManager::getInstance()->cancelAllModalComponents();
+        pumpUntil ([] { return juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0; }, 3000);
+    }
+
+    // What a take starting behind the open modals would close.
+    static int closedByATake()
+    {
+        const int closed = closeModalsForTake();
+        dropModals();
+        return closed;
+    }
+
+    static juce::TextButton* findButton (juce::Component* in, const juce::String& text)
+    {
+        if (in == nullptr) return nullptr;
+        if (auto* button = dynamic_cast<juce::TextButton*> (in); button != nullptr && button->getButtonText() == text)
+            return button;
+        for (auto* child : in->getChildren())
+            if (auto* found = findButton (child, text)) return found;
+        return nullptr;
+    }
+
+    // Points the sessions root at a test folder, and puts it back.
+    struct SessionsRoot
+    {
+        juce::PropertiesFile* props;
+        juce::String previous;
+        SessionsRoot (MainComponent& host, const juce::File& root)
+            : props (host.engine.getAppProps()), previous (props != nullptr ? props->getValue ("sessionsRoot") : juce::String())
+        {
+            if (props != nullptr) { props->setValue ("sessionsRoot", root.getFullPathName()); props->saveIfNeeded(); }
+        }
+        ~SessionsRoot()
+        {
+            if (props == nullptr) return;
+            if (previous.isEmpty()) props->removeValue ("sessionsRoot"); else props->setValue ("sessionsRoot", previous);
+            props->saveIfNeeded();
+        }
+    };
+
+    // Stands in for the native folder panel.
+    struct Picker
+    {
+        MainComponent& host;
+        juce::String asked;
+        std::function<void (const juce::File&)> answer;
+        explicit Picker (MainComponent& m) : host (m)
+        {
+            host.sessionPickerForTests = [this] (const juce::String& what, std::function<void (const juce::File&)> a)
+            { asked = what; answer = std::move (a); };
+        }
+        ~Picker() { host.sessionPickerForTests = nullptr; }
+        void reply (const juce::File& f) { auto a = std::exchange (answer, nullptr); if (a) a (f); }
+    };
+
+    void testBackupSnapshotsAreNotSessions()
+    {
+        beginTest ("A backup snapshot is refused as a session, from File > Open and from Finder");
+        {
+            Folder f ("Gig"); writeSavedShow (f, 2); expect (writeAudio (f.track (1)));
+            const auto snapshot = sessionbackup::writeSnapshot (f.dir);
+            expect (snapshot.isDirectory(), "setup: a snapshot");
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (snapshot) < 0, "the snapshot opened as a session");
+            expect (host.statusLabel.getText().contains ("backup of Gig"), host.statusLabel.getText());
+            expect (! host.openSessionDocument (findSessionProj (snapshot)), "a double-click on its project opened it");
+            host.completeOpenFolder (snapshot);
+            expect (host.engine.getActiveSessionDir() != snapshot, "File > Open made the snapshot the session");
+            expect (! snapshot.getChildFile ("Session File Backups").exists(), "something was written into the snapshot");
+            expect (! snapshot.getChildFile ("Audio Files").exists());
+            forget (host);
+        }
+    }
+
+    void testStripsAddedSinceTheLastSave()
+    {
+        beginTest ("Reopening after a crash brings back the strips recorded since the last save");
+        {
+            Folder f; writeSavedShow (f, 2);
+            for (int t = 1; t <= 3; ++t) expect (writeAudio (f.track (t)));
+            expect (writeStereoAudio (f.track (4), 0.25f, -0.5f));
+            Host host (f);
+            auto& recorder = host.main.engine.getRecorder();
+            expectEquals (recorder.getNumTracks(), 5, "strips whose audio is on disk were left out");
+            expectEquals (recorder.getTrack (0).getNameThreadSafe(), juce::String ("Saved 1"));
+            expectEquals (recorder.getTrack (1).getNameThreadSafe(), juce::String ("Saved 2"));
+            if (recorder.getNumTracks() == 5)
+                expect (recorder.getTrack (3).isStereo.load(), "a stereo take came back as two loose strips");
+            expect (host.status().contains ("after the last save"), "the engineer was not told: " + host.status());
+        }
+
+        beginTest ("RECORD writes the mixer into the session before the take rolls");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            auto& engine = host.main.engine;
+            engine.setStripCount (2);
+            engine.setTrackName (1, "Audience");
+            expect (engine.setTrackArmed (1, true));
+            MainComponent::RecordStartPlan plan;
+            plan.dir = f.dir; plan.numTracks = 2; plan.armed = 1;
+            host.main.startLocalTake (plan);
+            expect (engine.isRecording(), host.status());
+            const auto mix = juce::JSON::parse (f.dir.getChildFile ("session_mix.json"));
+            expectEquals ((int) mix.getProperty ("trackCount", 0), 2, "a crash now brings back one strip");
+            if (auto* strips = mix.getProperty ("strips", {}).getArray(); strips != nullptr && strips->size() > 1)
+                expectEquals (savedName (f.dir, 1), juce::String ("Audience"));
+            engine.stopRecording();
+        }
+
+        beginTest ("A RECORD whose mixer write fails still rolls");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            auto& engine = host.main.engine;
+            expect (engine.setTrackArmed (0, true));
+            expect (f.project().deleteFile());   // nothing to write the mixer into
+            MainComponent::RecordStartPlan plan;
+            plan.dir = f.dir; plan.numTracks = 1; plan.armed = 1;
+            host.main.startLocalTake (plan);
+            expect (engine.isRecording(), "the take did not start: " + host.status());
+            engine.stopRecording();
+        }
+    }
+
+    void testLongSessionNames()
+    {
+        beginTest ("A session name too long for the files derived from it is refused in plain words");
+        {
+            Folder root ("Sessions", false);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            NewSessionDialog::Result r;
+            r.name = juce::String::repeatedString (juce::String::fromUTF8 ("\xd8\xb9"), 120);   // 240 bytes
+            r.location = root.dir; r.sampleRate = 48000.0;
+            const auto made = host.createSessionFolderStructure (r);
+            expect (! made.isDirectory(), "a session was made that can never be saved");
+            expect (host.sessionCreateFailureMessage().contains ("too long"), host.sessionCreateFailureMessage());
+            expectEquals (root.dir.getNumberOfChildFiles (juce::File::findFilesAndDirectories), 0);
+            forget (host);
+        }
+
+        beginTest ("Saving into a folder renamed too long says why");
+        {
+            Folder f (juce::String::repeatedString ("x", 212));
+            writeSavedShow (f, 1);
+            Host host (f);
+            expect (! host.main.saveSessionStateTo (f.dir), "setup: the save went through");
+            expect (host.main.lastMetadataSaveError.contains ("too long"), host.main.lastMetadataSaveError);
+        }
+
+    }
+
+    void testReadOnlySessionAutosave()
+    {
+        beginTest ("A session on read-only media with nothing changed auto-saves quietly; a change still warns");
+        {
+            Folder f; writeSavedShow (f, 2);
+            Host host (f);
+            expect (host.main.saveSessionStateTo (f.dir), "setup: " + host.main.lastMetadataSaveError);
+            expect (f.dir.setReadOnly (true, true));
+            const juce::ScopeGuard writable { [&] { f.dir.setReadOnly (false, true); } };
+            const auto autosave = [&]
+            {
+                if (auto* props = host.main.engine.getAppProps()) props->setValue ("autosaveMinutes", 1);
+                host.main.lastAutosaveMs = juce::Time::getMillisecondCounter() - 120000;
+                host.main.statusLabel.setText ({}, juce::dontSendNotification);
+                host.main.serviceAutosave();
+                pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 5000);
+            };
+            autosave();
+            expect (! host.status().contains ("FAILED"), "an unchanged session failed to auto-save: " + host.status());
+            host.main.engine.setTrackName (0, "Changed");
+            autosave();
+            expect (host.status().contains ("AUTO-SAVE FAILED"), "a change that cannot be saved went unreported: " + host.status());
+            if (auto* props = host.main.engine.getAppProps()) props->setValue ("autosaveMinutes", 5);
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -1032,6 +1218,10 @@ public:
         testRestoreFindsTheProject();
         testRecordNeedsLocalStorage();
         testRawExportOfAnUnlinkedPair();
+        testBackupSnapshotsAreNotSessions();
+        testStripsAddedSinceTheLastSave();
+        testReadOnlySessionAutosave();
+        testLongSessionNames();
     }
 };
 
