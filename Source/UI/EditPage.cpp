@@ -301,7 +301,11 @@ namespace zynforge
         // capture writes), but every OTHER row keeps showing its existing
         // waveform -- so arming one track and rolling no longer blanks the
         // already-recorded tracks.
-        void setWaveformsFromSession (const juce::File& sessionDir, bool skipArmedRows = false)
+        // noteOnly: the session's saved peaks are still loading. The rows stay
+        // blank and only note their files, for a take that starts before the
+        // peaks arrive (showPendingWaveforms).
+        void setWaveformsFromSession (const juce::File& sessionDir, bool skipArmedRows = false,
+                                      bool noteOnly = false)
         {
             waveformSession = sessionDir;
             if (! sessionDir.isDirectory())
@@ -328,6 +332,12 @@ namespace zynforge
                 }
                 return base.getChildFile (stem + ".wav");
             };
+            const auto show = [noteOnly] (TrackRow& r, const juce::File& fL, const juce::File& fR, int channel)
+            {
+                if (! noteOnly) { r.setWaveformFiles (fL, fR, channel); return; }
+                r.setWaveformFiles ({}, {});
+                r.notePendingWaveformFiles (fL, fR, channel);
+            };
             for (auto& r : rows)
             {
                 if (skipArmedRows && rowIsArmed (*r))
@@ -338,15 +348,24 @@ namespace zynforge
                 const int trackIdx = r->getTrackIndex();
                 if (r->isStereoPair())
                 {
-                    r->setWaveformFiles (findTrackFile (trackIdx), findTrackFile (trackIdx + 1));
+                    show (*r, findTrackFile (trackIdx), findTrackFile (trackIdx + 1), 0);
                     continue;
                 }
                 // Resolved the way playback resolves it: after an unlink, a
                 // mono row can be the right channel of the file on its left.
                 int channel = 0;
                 const auto file = engine.getTrackAudioFile (trackIdx, &channel);
-                r->setWaveformFiles (file.existsAsFile() ? file : findTrackFile (trackIdx), {}, channel);
+                show (*r, file.existsAsFile() ? file : findTrackFile (trackIdx), {}, channel);
             }
+        }
+
+        // A take is on disk and the saved peaks the rows waited for are as far
+        // in as they will get before STOP: show the noted files from memory.
+        void showPendingWaveforms (bool skipArmedRows)
+        {
+            for (auto& r : rows)
+                if (! (skipArmedRows && rowIsArmed (*r)))
+                    r->showPendingWaveformFromMemory();
         }
 
         // The same outcome for a take on disk, with no disk: resolving a file
@@ -1040,11 +1059,17 @@ namespace zynforge
             // existing file is stable -- keep showing its waveform.
             const bool isContinue = engine.getRecorder().getRecordBaseSamples() > 0;
             list->holdWaveformsForTake (sessionDir, /*skipArmedRows*/ ! isContinue);
+            // A take that started while the session's saved peaks were loading
+            // cancelled the load, and the rows had no files yet. Once the
+            // cancelled load has stopped, they show what came in, from memory:
+            // otherwise every earlier set stays blank for the whole take.
+            if (! waveCacheLoading) list->showPendingWaveforms (/*skipArmedRows*/ ! isContinue);
         }
         else
             // Rows blank until the saved peaks are in: the previous session's
-            // waveforms must not sit under this session's names.
-            list->setWaveformsFromSession (waveCacheLoading ? juce::File() : sessionDir);
+            // waveforms must not sit under this session's names. They note
+            // their files meanwhile, for a take that starts before then.
+            list->setWaveformsFromSession (sessionDir, false, /*noteOnly*/ waveCacheLoading);
 
         if (resetCaches)
             beginWaveCacheReset (sessionDir, loadSaved ? CacheReset::load : CacheReset::clear);

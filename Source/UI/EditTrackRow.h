@@ -460,6 +460,10 @@ namespace zynforge
         void setWaveformFiles (const juce::File& fL, const juce::File& fRin, int monoChannel = 0)
         {
             monoFileChannel = monoChannel;
+            pendingWaveform.reset();
+            // Peaks shown from memory during a take have no file to read; the
+            // real sources replace them now.
+            const bool redo = std::exchange (provisionalWaveform, false);
             // Native interleaved stereo: the pair is ONE 2-channel file with
             // no separate R file. Point BOTH lanes at it (each draws its own
             // channel) so the stereo image still shows two lanes. Legacy
@@ -467,24 +471,61 @@ namespace zynforge
             stereoOneFile = stereo && fL.existsAsFile() && ! fRin.existsAsFile();
             const juce::File fR = stereoOneFile ? fL : fRin;
 
-            if (fL != currentFileL || fR != currentFileR)
+            if (fL != currentFileL || fR != currentFileR || redo)
             {
                 overviewCache.clear();
                 ownThumbs.clear();
             }
 
-            if (fL != currentFileL)
+            if (fL != currentFileL || redo)
             {
                 currentFileL = fL;
                 applyThumbSource (thumbnailL, fL, false);
             }
-            if (fR != currentFileR)
+            if (fR != currentFileR || redo)
             {
                 currentFileR = fR;
                 // One file: the R lane draws its channel 1 from thumbnailL, so
                 // the file is scanned once, not once per lane.
                 applyThumbSource (thumbnailR, stereoOneFile ? juce::File() : fR, false);
             }
+            repaint();
+        }
+
+        // The files this row will show once the session's saved peaks are in,
+        // noted while they load. Stats and lists the take folder, so only
+        // between takes. The row stays blank meanwhile (setWaveformFiles ({})
+        // first): another session's peaks must not show under these names.
+        void notePendingWaveformFiles (const juce::File& fL, const juce::File& fRin, int monoChannel = 0)
+        {
+            PendingWaveform p;
+            p.oneFile = stereo && fL.existsAsFile() && ! fRin.existsAsFile();
+            p.left    = fL;
+            p.right   = p.oneFile ? juce::File() : fRin;
+            p.channel = monoChannel;
+            p.partsL  = fL.existsAsFile() ? findTakeParts (fL).size() : 0;
+            p.partsR  = p.right.existsAsFile() ? findTakeParts (p.right).size() : 0;
+            pendingWaveform = p;
+        }
+
+        // A take started before the saved peaks reached the rows. Show the
+        // noted files from the peaks already in memory, touching no file: a
+        // lane whose peaks did not come in before the take stays blank until
+        // STOP, when the row gets its real sources.
+        void showPendingWaveformFromMemory()
+        {
+            if (! pendingWaveform || currentFileL != juce::File() || currentFileR != juce::File()) return;
+            const auto p = *pendingWaveform;
+            pendingWaveform.reset();
+            overviewCache.clear();
+            ownThumbs.clear();
+            monoFileChannel = p.channel;
+            stereoOneFile   = p.oneFile;
+            currentFileL    = p.left;
+            currentFileR    = p.oneFile ? p.left : p.right;
+            if (p.partsL > 0) thumbnailL.setSource (new PeaksFromMemory (takePeaksHash (p.left, p.partsL)));
+            if (p.partsR > 0) thumbnailR.setSource (new PeaksFromMemory (takePeaksHash (p.right, p.partsR)));
+            provisionalWaveform = true;
             repaint();
         }
 
@@ -687,6 +728,7 @@ namespace zynforge
         void reloadCurrentWaveformFiles()
         {
             ++waveformReloads;
+            provisionalWaveform = false;   // the files get their real sources here
             overviewCache.clear();
             // setSource consults the AudioThumbnailCache by file hash and, if
             // it finds an entry that claims to be fully loaded, returns it
@@ -2669,6 +2711,7 @@ namespace zynforge
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
         float        getWaveformPeakForTests() const { return thumbnailL.getApproximatePeak(); }
         juce::int64  getRightThumbnailHashForTests() const { return thumbnailR.getHashCode(); }
+        bool         isWaveformFromMemoryForTests() const noexcept { return provisionalWaveform; }
         int          getOverviewBuildsForTests() const noexcept { return overviewBuilds; }
         int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }
 
@@ -3194,6 +3237,26 @@ namespace zynforge
         AudioEngine&              engine;
         juce::AudioFormatManager& formats;       // for building multi-part thumbnail readers
         juce::AudioThumbnailCache& thumbCache;   // shared; used to drop stale thumbs
+
+        // A take's peaks by cache key alone. It has no stream, so a cache miss
+        // reads nothing and the lane stays blank (showPendingWaveformFromMemory).
+        struct PeaksFromMemory final : public juce::InputSource
+        {
+            explicit PeaksFromMemory (juce::int64 key) : hash (key) {}
+            juce::InputStream* createInputStream() override { return nullptr; }
+            juce::InputStream* createInputStreamFor (const juce::String&) override { return nullptr; }
+            juce::int64 hashCode() const override { return hash; }
+            juce::int64 hash;
+        };
+        struct PendingWaveform
+        {
+            juce::File left, right;
+            int    channel { 0 };
+            bool   oneFile { false };
+            size_t partsL { 0 }, partsR { 0 };
+        };
+        std::optional<PendingWaveform> pendingWaveform;   // notePendingWaveformFiles
+        bool provisionalWaveform { false };               // showing peaks from memory, no source
         // The most parts each take this row has drawn had, by path: a forced
         // reload drops the peaks of every count up to it.
         std::map<juce::String, int> partCountsSeen;

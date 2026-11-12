@@ -186,6 +186,7 @@ namespace zynforge
             zoomStepsKeepThePlayhead (main);
             copyWaitsForTheTake (main);
             quitKeepsTheCacheBeingWritten();
+            recordWhileLoadingKeepsTheLanes();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1577,6 +1578,51 @@ namespace zynforge
                 }
                 expect (wavecache::fileIn (s.dir).existsAsFile(),
                         "quitting threw away the waveform cache it was writing");
+            }
+        }
+
+        void recordWhileLoadingKeepsTheLanes()
+        {
+            beginTest ("RECORD while the saved waveforms load still shows the other lanes' audio");
+            {
+                Session s (2, { kRate, 0 });
+                {
+                    EditPage first (s.engine);
+                    first.setBounds (0, 0, 1400, 300);
+                    first.refresh();
+                    expect (pumpUntil ([&] { return wavecache::fileIn (s.dir).existsAsFile()
+                                                 && first.waveCacheIdleForTests(); }, 10000),
+                            "setup: the waveforms were never saved");
+                }
+                {
+                    // Reopened: the saved peaks load, and RECORD comes before the
+                    // page has handed them to the rows.
+                    EditPage page (s.engine);
+                    page.setBounds (0, 0, 1400, 300);
+                    const auto end = juce::Time::getMillisecondCounterHiRes() + 5000;
+                    while (! page.waveCacheResetRanForTests() && juce::Time::getMillisecondCounterHiRes() < end)
+                        juce::Thread::sleep (5);
+                    expect (page.waveCacheResetRanForTests(), "setup: the saved peaks never loaded");
+                    s.engine.getRecorder().getTrack (1).armed.store (true);
+                    expect (s.engine.startRecording (s.dir), "setup: " + s.engine.getRecorder().getStartError());
+                    const auto firstRow = [&]() -> Row*
+                    {
+                        const auto rows = rowsOf (page);
+                        return rows.size() == 2 ? rows[0] : nullptr;
+                    };
+                    expect (firstRow() != nullptr, "setup: two rows");
+                    expect (pumpUntil ([&] { auto* r = firstRow(); return r != nullptr && r->getWaveformSecondsForTests() > 0.9; }, 2000),
+                            "an earlier take's lane stays blank for the whole take");
+                    s.engine.stopRecording();
+                    expect (pumpUntil ([&]
+                    {
+                        auto* r = firstRow();
+                        return ! s.engine.isCaptureFinalizing() && r != nullptr
+                            && r->getWaveformSecondsForTests() > 0.9 && r->waveformsLoaded();
+                    }, 5000), "the lane lost its waveform after the take");
+                    s.engine.getRecorder().getTrack (1).armed.store (false);
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (s.dir);
             }
         }
     };
