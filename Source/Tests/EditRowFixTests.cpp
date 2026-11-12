@@ -179,6 +179,7 @@ namespace zynforge
 
             // 2026-11-11 audit
             promptsLetATakeThrough (main);
+            cueEditsSurviveTimelineUndo (main);
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1283,6 +1284,106 @@ namespace zynforge
                 main.cues.clear();
                 main.currentCueIndex = -1;
             }
+        }
+
+        void cueEditsSurviveTimelineUndo (MainComponent& main)
+        {
+            const auto cue = [] (const juce::String& name, juce::int64 at)
+            {
+                SetlistBar::Cue c;
+                c.name = name;
+                c.samplePos = at;
+                return c;
+            };
+            const auto names = [&main]
+            {
+                juce::StringArray out;
+                for (const auto& c : main.cues) out.add (c.name + "@" + juce::String (c.samplePos));
+                return out.joinIntoString (",");
+            };
+
+            beginTest ("Undo and redo of Ripple Delete keep a cue updated since, once, where it was updated");
+            {
+                Show show (main);
+                show.session ({ "KICK" }, false, false);
+                auto& engine = show.engine;
+                main.cues = { cue ("Intro", 4800), cue ("Song 2", 36000) };
+                main.currentCueIndex = -1;
+                expect (settle (show), "setup: the session never settled");
+                main.flushMixerUndo();   // the setup's mixer changes are not the step undone
+                expect (main.rippleTimeline ("Ripple Delete", engine.allTimelineTracks(), 9600, 14400) > 0,
+                        "setup: the ripple");
+                expectEquals (names(), juce::String ("Intro@4800,Song 2@31200"), "setup: the cue moved with the audio");
+
+                main.currentCueIndex = 1;
+                engine.getPlayer().setPositionSamples (24000);
+                main.updateCueAtTransport();
+                settle (show);
+                main.editUndo();
+                expectEquals (names(), juce::String ("Intro@4800,Song 2@24000"),
+                              "undo brought back the cue as it was before its Update");
+                settle (show);
+                main.editRedo();
+                expectEquals (names(), juce::String ("Intro@4800,Song 2@24000"),
+                              "redo kept the stale copy of the updated cue");
+            }
+
+            beginTest ("Undo of Ripple Delete keeps a cue's new name, and a cue deleted since stays deleted");
+            {
+                Show show (main);
+                show.session ({ "KICK" }, false, false);
+                auto& engine = show.engine;
+                main.cues = { cue ("Intro", 4800), cue ("Song 2", 36000) };
+                main.currentCueIndex = -1;
+                expect (settle (show), "setup: the session never settled");
+                main.flushMixerUndo();   // the setup's mixer changes are not the step undone
+                expect (main.rippleTimeline ("Ripple Delete", engine.allTimelineTracks(), 9600, 14400) > 0,
+                        "setup: the ripple");
+                main.cues[1].name = "Encore";              // what Rename Cue does
+                main.currentCueIndex = 0;
+                main.setlistBar.onDeleteCue();             // Delete cue on "Intro"
+                settle (show);
+                main.editUndo();
+                expectEquals (names(), juce::String ("Encore@36000"),
+                              "undo revived a deleted cue or the old name of a renamed one");
+                settle (show);
+                main.editRedo();
+                expectEquals (names(), juce::String ("Encore@31200"), "redo lost the rename");
+            }
+
+            beginTest ("Undo of Ripple Delete keeps a marker's new name and does not revive a deleted one");
+            {
+                Show show (main);
+                show.session ({ "KICK" }, false, false);
+                auto& engine = show.engine;
+                main.cues.clear();
+                main.currentCueIndex = -1;
+                auto& markers = engine.getMarkers();
+                markers.replaceAll ({});
+                markers.drop (36000, "Verse");
+                const auto verse = markers.lastDroppedId;
+                markers.drop (40000, "Bridge");
+                const auto bridge = markers.lastDroppedId;
+                expect (settle (show), "setup: the session never settled");
+                main.flushMixerUndo();   // the setup's mixer changes are not the step undone
+                expect (main.rippleTimeline ("Ripple Delete", engine.allTimelineTracks(), 9600, 14400) > 0,
+                        "setup: the ripple");
+                markers.renameMarker (markers.indexOfId (verse), "Chorus");
+                markers.removeById (bridge);
+                settle (show);
+                main.editUndo();
+                expectEquals (markers.getCount(), 1, "undo revived a marker deleted since");
+                const int at = markers.indexOfId (verse);
+                expect (at >= 0, "the renamed marker went");
+                if (at >= 0)
+                {
+                    expectEquals (markers.getMarker (at).name, juce::String ("Chorus"), "undo put the old name back");
+                    expectEquals (markers.getMarker (at).sampleOffset, (juce::int64) 36000, "the marker did not move back");
+                }
+                markers.replaceAll ({});
+            }
+            main.cues.clear();
+            main.currentCueIndex = -1;
         }
     };
 

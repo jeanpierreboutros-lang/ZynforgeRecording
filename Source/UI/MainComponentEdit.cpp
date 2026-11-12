@@ -16,6 +16,7 @@
 #include "MarkerListDialog.h"
 #include "MixerSnapshot.h"
 #include "RecordPosition.h"
+#include "TimelineCarry.h"
 
 #include <algorithm>
 #include <map>
@@ -157,17 +158,6 @@ namespace
         bool firstRun { true };
     };
 
-    // Markers and cues are not on the undo stack, so one added since the step
-    // (a take's scene marker, say) must not vanish with it.
-    template <class Item, class Same>
-    void keepAddedSince (std::vector<Item>& target, const std::vector<Item>& stepState,
-                         const std::vector<Item>& current, Same same)
-    {
-        for (const auto& item : current)
-            if (std::none_of (stepState.begin(), stepState.end(),
-                              [&] (const Item& known) { return same (known, item); }))
-                target.push_back (item);
-    }
 }
 
 void MainComponent::pushClipUndo (const juce::String& label, const juce::var& before)
@@ -184,18 +174,31 @@ MainComponent::TimelineSnapshot MainComponent::captureTimeline() const
     return { engine.captureTimelineState(), cues };
 }
 
+// Markers and cues are not on the undo stack: a marker or cue added, renamed,
+// updated or deleted since the step keeps that through its undo and redo
+// (a take's scene marker must not vanish with a Cmd+Z, and a stale copy of an
+// updated cue would recall the old mix).
 void MainComponent::restoreTimeline (TimelineSnapshot target, const TimelineSnapshot& replaced)
 {
-    keepAddedSince (target.engineState.markers, replaced.engineState.markers,
-                    engine.getMarkers().getAll(),
-                    [] (const Marker& a, const Marker& b) { return a.runtimeId == b.runtimeId; });
-    keepAddedSince (target.cues, replaced.cues, cues,
-                    [] (const SetlistBar::Cue& a, const SetlistBar::Cue& b)
-                    { return a.name == b.name && a.samplePos == b.samplePos; });
+    target.engineState.markers = zynforge::timelinecarry::carryForward (
+        target.engineState.markers, replaced.engineState.markers, engine.getMarkers().getAll(),
+        [] (const Marker& m) { return m.runtimeId; },
+        [] (const Marker& then, const Marker& now) { return then.sampleOffset != now.sampleOffset; },
+        [] (Marker now, const Marker& back) { now.sampleOffset = back.sampleOffset; return now; });
+    target.cues = zynforge::timelinecarry::carryForward (
+        target.cues, replaced.cues, cues,
+        [] (const SetlistBar::Cue& c) { return c.runtimeId; },
+        [] (const SetlistBar::Cue& then, const SetlistBar::Cue& now)
+        { return then.samplePos != now.samplePos || then.strips != now.strips; },
+        [] (SetlistBar::Cue now, const SetlistBar::Cue& back) { now.samplePos = back.samplePos; return now; });
 
+    const auto picked = currentCueIndex >= 0 && currentCueIndex < (int) cues.size()
+                      ? cues[(size_t) currentCueIndex].runtimeId : juce::String();
     engine.restoreTimelineState (target.engineState);
     cues = std::move (target.cues);
-    if (currentCueIndex >= (int) cues.size()) currentCueIndex = -1;
+    currentCueIndex = -1;
+    for (int i = 0; i < (int) cues.size(); ++i)
+        if (cues[(size_t) i].runtimeId == picked) currentCueIndex = i;
     setlistBar.setCues (cues, currentCueIndex);
     if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     saveCueChanges ({});

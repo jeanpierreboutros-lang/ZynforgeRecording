@@ -15,6 +15,7 @@
 #include "../Audio/SongExport.h"
 #include "../Audio/TrackExporter.h"
 #include "../UI/MainComponent.h"
+#include "../UI/TimelineCarry.h"
 #include "SavedTakes.h"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -286,6 +287,58 @@ public:
             cue.name = "song"; cue.samplePos = 30000;
             const auto moved = MainComponent::cuesAfterCut ({ cue }, { 10000, 20000, false }, false);
             expectEquals (moved[0].samplePos, (juce::int64) 30000);
+        }
+
+        beginTest ("A timeline undo carries cue edits made since: no stale copy, no revived cue");
+        {
+            using Cue = SetlistBar::Cue;
+            const auto carry = [] (const std::vector<Cue>& target, const std::vector<Cue>& replaced,
+                                   const std::vector<Cue>& current)
+            {
+                return timelinecarry::carryForward (target, replaced, current,
+                    [] (const Cue& c) { return c.runtimeId; },
+                    [] (const Cue& then, const Cue& now) { return then.samplePos != now.samplePos || then.strips != now.strips; },
+                    [] (Cue now, const Cue& back) { now.samplePos = back.samplePos; return now; });
+            };
+            const auto read = [] (const std::vector<Cue>& cues)
+            {
+                juce::StringArray out;
+                for (const auto& c : cues)
+                    out.add (c.name + "@" + juce::String (c.samplePos) + (c.strips.empty() ? "" : "+mix"));
+                return out.joinIntoString (",");
+            };
+
+            // The reviewer's case: Crop drops the first 5 s, "Song 2" is
+            // updated (position and mix), then Cmd+Z and Cmd+Shift+Z.
+            Cue intro, song;
+            intro.name = "Intro";  intro.samplePos = 48000 * 10;
+            song.name  = "Song 2"; song.samplePos  = 48000 * 300;
+            const std::vector<Cue> before { intro, song };
+            auto after = before;
+            for (auto& c : after) c.samplePos -= 48000 * 5;
+            auto now = after;
+            now[1].samplePos = 48000 * 290;
+            now[1].strips.push_back ({});
+            const auto undone = carry (before, after, now);
+            expectEquals (read (undone), juce::String ("Intro@480000,Song 2@13920000+mix"));
+            expectEquals (read (carry (after, before, undone)), juce::String ("Intro@240000,Song 2@13920000+mix"));
+
+            // Renamed since: moves with the step under its new name.
+            now = after;
+            now[1].name = "Encore";
+            expectEquals (read (carry (before, after, now)), juce::String ("Intro@480000,Encore@14400000"));
+
+            // Deleted since: stays deleted. Added since: stays where it is.
+            now = after;
+            now.erase (now.begin());
+            Cue late;
+            late.name = "Late"; late.samplePos = 1000;
+            now.push_back (late);
+            expectEquals (read (carry (before, after, now)), juce::String ("Song 2@14400000,Late@1000"));
+
+            // Dropped by the step: comes back on undo, in its place in the list.
+            const std::vector<Cue> cropped { after[1] };
+            expectEquals (read (carry (before, cropped, cropped)), juce::String ("Intro@480000,Song 2@14400000"));
         }
 
         beginTest ("Crop and Ripple Delete restore everything from one state");
