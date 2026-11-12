@@ -124,6 +124,15 @@ namespace zynforge
 
         for (int i = 0; i < n; ++i)
         {
+            // A take on disk that would not open (a lead-in still owed, a part
+            // unreadable) reads as length 0. Its clips and the length they know
+            // stay as they were: reseeding from 0 wiped the strip at STOP, and a
+            // later reconcile from 0 laid the whole file over its edits.
+            if (player.trackFailedToOpen (i))
+            {
+                if (! trackClips[(size_t) i].empty()) player.setTrackClips (i, trackClips[(size_t) i]);
+                continue;
+            }
             const auto oldLength = sourceTrackLengths[(size_t) i];
             const auto newLength = player.getTrackLengthSamples (i);
             if (preserveEdits && (trackIsEdited (i) || shift != 0))
@@ -469,6 +478,8 @@ namespace zynforge
         std::vector<juce::int64> known ((size_t) n);
         for (int i = 0; i < n; ++i)
         {
+            // Would not open: its media length is unknown, not 0 (see seedDefaultClips).
+            if (player.trackFailedToOpen (i)) { known[(size_t) i] = sourceTrackLengths[(size_t) i]; continue; }
             const auto media = player.getTrackLengthSamples (i);
             juce::int64 covered = 0;
             for (const auto& clip : trackClips[(size_t) i])

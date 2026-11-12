@@ -693,6 +693,33 @@ namespace zynforge
                 expect (quiet.first < loud.first - 15.0f);
             }
 
+            beginTest ("LoudnessMeter reads the BS.1770 reference: a 997 Hz full-scale sine in one channel is -3.01 LUFS");
+            {
+                // BS.1770's own calibration point. The 48 kHz filter is the
+                // published one, so it reads -3.01 to the hundredth; other
+                // rates take the same analogue prototypes (-3.008 at 44.1 kHz,
+                // -3.028 at 96 kHz, as libebur128 reads them).
+                for (const auto [rate, tolerance] : { std::pair { 48000.0, 0.02f },
+                                                      std::pair { 44100.0, 0.05f },
+                                                      std::pair { 96000.0, 0.05f } })
+                {
+                    const int N = 512;
+                    const double dph = 2.0 * juce::MathConstants<double>::pi * 997.0 / rate;
+                    std::vector<double> L ((size_t) N), R ((size_t) N, 0.0);
+                    LoudnessMeter m;
+                    m.prepare (rate);
+                    double ph = 0.0;
+                    for (int blk = 0; blk < (int) (2.0 * rate / N); ++blk)
+                    {
+                        for (int i = 0; i < N; ++i) { L[(size_t) i] = std::sin (ph); ph += dph; }
+                        m.processMasterDouble (L.data(), R.data(), 1.0, N);
+                    }
+                    expectWithinAbsoluteError (m.getMomentaryLufs(), -3.01f, tolerance,
+                                               "the K-weighting is not BS.1770's at " + juce::String (rate) + " Hz");
+                    expectWithinAbsoluteError (m.getShortTermLufs(), -3.01f, tolerance);
+                }
+            }
+
             beginTest ("renderTrackArrangement bounces the edited clip arrangement");
             {
                 const auto sessionDir = makeTempSessionDir();

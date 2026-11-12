@@ -63,12 +63,18 @@ namespace zynforge
         // which is what the audio thread needs. Set before a reader is shared.
         void setReadTimeout (int milliseconds) noexcept { timeoutMs = milliseconds; }
 
-        // The player will read here soon. Keeps that block in RAM until the
-        // read or the next cue.
+        // The player will read here soon. Keeps that block in RAM until a read
+        // reaches it or the next cue, or until it goes unrefreshed for
+        // kCueExpiry reads (the player cues again every few blocks while the
+        // jump is still ahead). A cue held for ever took two of a small pool's
+        // blocks from the read-ahead of every later crossfade.
         void cue (juce::int64 position) noexcept
         {
             if (position >= 0 && position < lengthInSamples)
+            {
+                cueTick.store (readTick.load (std::memory_order_relaxed), std::memory_order_relaxed);
                 cuePosition.store (position, std::memory_order_relaxed);
+            }
         }
 
         // Fill from here as a read here would, without reading.
@@ -132,6 +138,8 @@ namespace zynforge
         // Reads a position may go unused before its blocks are released. After
         // a plain jump the old position must not keep holding RAM.
         static constexpr juce::uint32 kReadPositionExpiry = 64;
+        // Reads a cue may go unrefreshed: a loop turned off, a locate elsewhere.
+        static constexpr juce::uint32 kCueExpiry = 4 * kReadPositionExpiry;
 
         struct Block
         {
@@ -156,6 +164,12 @@ namespace zynforge
         void noteRead (juce::int64 position) noexcept
         {
             const auto tick = readTick.fetch_add (1, std::memory_order_relaxed) + 1;
+            // A read inside the cue's blocks is the jump it was for. The read
+            // window keeps those blocks from here, so the cue lets them go.
+            auto cued = cuePosition.load (std::memory_order_relaxed);
+            if (cued >= 0 && position >= blockStart (cued)
+                && position < blockStart (cued) + (juce::int64) kCueBlocks * kBlockSamples)
+                cuePosition.compare_exchange_strong (cued, -1, std::memory_order_relaxed);
             const auto near = [position] (juce::int64 at)
             {
                 return at >= 0 && std::abs (position - at) <= (juce::int64) kBlockSamples;
@@ -244,7 +258,8 @@ namespace zynforge
                 if (reads[(size_t) i] >= 0 && tick - lowTicks[i].load (std::memory_order_relaxed) <= kReadPositionExpiry)
                     lows[(size_t) i] = readLows[i].load (std::memory_order_relaxed);
             }
-            const auto cued = cuePosition.load (std::memory_order_relaxed);
+            auto cued = cuePosition.load (std::memory_order_relaxed);
+            if (cued >= 0 && tick - cueTick.load (std::memory_order_relaxed) > kCueExpiry) cued = -1;
             for (int step = 0; step < playBlocks; ++step)
             {
                 const auto ahead = (juce::int64) step * kBlockSamples;
@@ -298,6 +313,7 @@ namespace zynforge
         std::atomic<juce::uint32> lowTicks[2]      { { 0 }, { 0 } };
         std::atomic<juce::uint32> readTick    { 0 };
         std::atomic<juce::int64>  cuePosition { -1 };
+        std::atomic<juce::uint32> cueTick     { 0 };   // readTick when it was cued
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PlaybackReader)
     };

@@ -1432,6 +1432,13 @@ namespace zynforge
             return out;
         }
 
+        static juce::int64 lengthOf (const juce::File& file)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+            return reader != nullptr ? reader->lengthInSamples : -1;
+        }
+
         // Every frame is the frame played at that position.
         void expectIntact (const juce::File& file, juce::int64 frames, const juce::String& what,
                            int channel = 0, int fileChannel = 0)
@@ -1460,6 +1467,292 @@ namespace zynforge
             boundedFinishing();
             primaryHolesAreCounted();
             copiesOpenBehindTheTake();
+            slowLeadIns();
+            emptyPassOwesNoLeadIn();
+            openingCopyIsNotExpectedToWrite();
+            punchPutBackOnACopy();
+            hashesWaitForTheNextTake();
+            refusedStartResumesHashes();
+        }
+
+        // A lead-in is silence the length of the take so far: gigabytes on a
+        // long show, minutes on a slow drive. Every block of it is progress.
+        void slowLeadIns()
+        {
+            beginTest ("A copy writing a long silent lead-in after STOP is making progress and is not left behind");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks (320, { 0 });                 // five 16384-frame blocks of lead-in
+                rec.stopRecording();
+                const auto firstSet = feeder.frame;
+
+                // The mirror joins for the second set and owes the first as silence.
+                expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                rec.copyStallLimitMs = 250.0;
+                MultitrackRecorder::silenceBlockDelayMsForTests.store (80);
+                const juce::ScopeGuard fast { [] { MultitrackRecorder::silenceBlockDelayMsForTests.store (0); } };
+                rec.armContinue (firstSet);
+                expect (rec.startRecording (dirs.session), rec.getStartError());
+                feeder.blocks (20, { 0, 2 });
+                rec.stopRecording();
+
+                const auto problems = rec.getCopyProblems().joinIntoString ("|");
+                expect (! problems.contains ("left behind"), problems);
+                expect (! rec.anyMirrorFailed(), "a healthy mirror was reported failed");
+                expect (! rec.isStillLeftBehind (dirs.mirror), "the next take would leave the mirror out");
+                const auto mirrorAudio = dirs.mirror.getChildFile ("take").getChildFile ("Audio Files");
+                expectEquals (lengthOf (mirrorAudio.getChildFile ("Track_01.wav")), firstSet, "the lead-in is short");
+                expectEquals (lengthOf (mirrorAudio.getChildFile ("Track_01_part02.wav")), (juce::int64) 20 * kBlock);
+                expect (! mirrorAudio.getChildFile ("Pending Lead-ins").exists(), "the lead-in is still owed");
+            }
+
+            beginTest ("A copy finishing an owed lead-in while it joins a take is making progress, not hung");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks (20, { 0, 2 });
+                rec.stopRecording();
+
+                // A crash left the mirror owing a lead-in of 81920 frames.
+                const auto mirrorAudio = dirs.mirror.getChildFile ("take").getChildFile ("Audio Files");
+                MultitrackRecorder::PendingLeadIn lead;
+                lead.audioDir = mirrorAudio; lead.trackName = "Track_09"; lead.ext = ".wav";
+                lead.firstPart = 1; lead.parts = 1; lead.container = 0; lead.bitDepth = 24; lead.channels = 1;
+                lead.sampleRate = kRate; lead.priorLength = 0; lead.timelineStart = 5 * 16384;
+                expect (MultitrackRecorder::writeLeadInMarker (lead));
+                expect (mirrorAudio.getChildFile ("Track_09_part02.wav").replaceWithText ("audio"));
+
+                rec.copyStallLimitMs = 250.0;
+                MultitrackRecorder::silenceBlockDelayMsForTests.store (80);
+                const juce::ScopeGuard fast { [] { MultitrackRecorder::silenceBlockDelayMsForTests.store (0); } };
+                rec.armContinue (feeder.frame);
+                expect (rec.startRecording (dirs.session), rec.getStartError());
+                feeder.blocks (4, { 0 });
+                rec.stopRecording();                       // while the mirror still writes that silence
+
+                const auto problems = rec.getCopyProblems().joinIntoString ("|");
+                expect (! problems.contains ("left behind"), problems);
+                expect (! problems.contains ("not in this take"), problems);
+                expect (! rec.isStillLeftBehind (dirs.mirror));
+                expectEquals (lengthOf (mirrorAudio.getChildFile ("Track_09.wav")), lead.timelineStart);
+                expectEquals (lengthOf (mirrorAudio.getChildFile ("Track_01_part02.wav")), (juce::int64) 4 * kBlock,
+                              "the mirror did not get the take");
+            }
+        }
+
+        // A pass that captured nothing has nothing to line up.
+        void emptyPassOwesNoLeadIn()
+        {
+            beginTest ("A continue stopped before any audio writes no lead-in for a newly armed track, on any copy");
+            Dirs dirs;
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 2);
+            rec.getTrack (0).armed.store (true);
+            rec.setBackupDirectory (dirs.backup);
+            expect (rec.startRecording (dirs.session));
+            Feeder feeder { rec, 2 };
+            feeder.blocks (40, { 0, 1 });
+            rec.stopRecording();
+
+            rec.getTrack (1).armed.store (true);            // the encore's guest mic
+            rec.armContinue (feeder.frame);
+            expect (rec.startRecording (dirs.session), rec.getStartError());
+            rec.stopRecording();                            // before a single block
+
+            for (const auto& audio : { dirs.session.getChildFile ("Audio Files"),
+                                       dirs.backup.getChildFile ("take").getChildFile ("Audio Files") })
+            {
+                const auto written = audio.findChildFiles (juce::File::findFiles, false, "Track_02*");
+                expect (written.isEmpty(), audio.getFullPathName() + " holds " + juce::String (written.size())
+                                               + " Track_02 file(s) from a pass that captured nothing");
+                expect (! audio.getChildFile ("Pending Lead-ins").exists(), "a lead-in is still owed");
+                expectEquals (lengthOf (audio.getChildFile ("Track_01.wav")), (juce::int64) 40 * kBlock,
+                              "the first set changed");
+            }
+            expect (! rec.hasPrimaryFailed() && ! rec.hasBackupFailed());
+            const auto report = juce::JSON::parse (dirs.session.getChildFile ("session.report.json"));
+            expect (report["stampFailures"].size() == 0, juce::JSON::toString (report["stampFailures"]));
+        }
+
+        // The expected write rate is what is writing: a copy still opening
+        // writes nothing yet, and counting it read as a struggling disk.
+        void openingCopyIsNotExpectedToWrite()
+        {
+            beginTest ("A copy still opening is not counted in the disk rate the take expects");
+            Dirs dirs;
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 1);
+            rec.getTrack (0).armed.store (true);
+            rec.setBackupDirectory (dirs.backup);
+            expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+            struct Gate { ~Gate() { released.signal(); } juce::WaitableEvent released { true }; };
+            auto gate = std::make_shared<Gate>();
+            auto opening = std::make_shared<std::atomic<int>> (0);
+            rec.beforeCopyOpenForTests = [gate, opening] (Copy&)
+            {
+                opening->fetch_add (1);
+                gate->released.wait (-1);
+            };
+            expect (rec.startRecording (dirs.session));
+            for (int i = 0; i < 5000 && opening->load() < 2; ++i) juce::Thread::sleep (1);
+            expectEquals (opening->load(), 2, "both copies should be opening");
+            const auto primaryOnly = (juce::int64) (kRate * 3);   // one mono 24-bit track
+            expectEquals (rec.estimateBytesPerSecondForArmedTracks(), primaryOnly,
+                          "copies that are still opening were expected to write");
+            gate->released.signal();
+            Feeder feeder { rec, 1 };
+            feeder.blocks (10, { 0, 1, 2 });
+            expectEquals (rec.estimateBytesPerSecondForArmedTracks(), primaryOnly * 3, "the copies that opened were left out");
+            rec.stopRecording();
+        }
+
+        void punchPutBackOnACopy()
+        {
+            beginTest ("A copy that had an interrupted punch put back sits out one take and joins the next");
+            Dirs dirs;
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 1);
+            rec.getTrack (0).armed.store (true);
+            expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+            expect (rec.startRecording (dirs.session));
+            Feeder feeder { rec, 1 };
+            feeder.blocks (20, { 0, 2 });
+            rec.stopRecording();
+
+            // A crash in the middle of a punch on the mirror.
+            const auto mirrorAudio = dirs.mirror.getChildFile ("take").getChildFile ("Audio Files");
+            const auto take = mirrorAudio.getChildFile ("Track_01.wav");
+            expect (take.copyFileTo (mirrorAudio.getChildFile ("Track_01.punchbase.wav")));
+
+            rec.armContinue (feeder.frame);
+            expect (rec.startRecording (dirs.session), rec.getStartError());
+            feeder.blocks (10, { 0 });
+            const auto end = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+            while (! rec.anyMirrorFailed() && juce::Time::getMillisecondCounterHiRes() < end) juce::Thread::sleep (2);
+            rec.stopRecording();
+            const auto problems = rec.getCopyProblems().joinIntoString ("|");
+            expect (problems.contains ("interrupted punch put back"), problems);
+            expect (problems.contains ("joins the next"), "the line does not say what happens next: " + problems);
+            expect (! problems.contains ("reopen"), "reopening the session does nothing for a copy: " + problems);
+
+            rec.armContinue (feeder.frame);
+            expect (rec.startRecording (dirs.session), rec.getStartError());
+            feeder.blocks (10, { 0, 2 });
+            rec.stopRecording();
+            expect (! rec.anyMirrorFailed(), "the mirror did not join the next take: "
+                                                 + rec.getCopyProblems().joinIntoString ("|"));
+        }
+
+        // The last take's hashes read the drive the next take writes to. In
+        // another folder nothing used to stop them: every helper take is one.
+        void hashesWaitForTheNextTake()
+        {
+            beginTest ("The last take's hash pass reads nothing while the next take, in another folder, captures");
+            {
+                Dirs first, second;
+                auto gate      = std::make_shared<juce::WaitableEvent> (true);
+                auto published = std::make_shared<std::atomic<bool>> (false);
+                auto hooks = std::make_shared<MultitrackRecorder::ReportTestHooks>();
+                hooks->beforeScan   = [gate] { gate->wait (10000); };
+                hooks->afterPublish = [published] { published->store (true); };
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.reportTestHooks = hooks;
+                expect (rec.startRecording (first.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks (40, { 0 });
+                rec.stopRecording();
+                rec.reportTestHooks = {};
+
+                expect (rec.startRecording (second.session), rec.getStartError());
+                gate->signal();                            // the first take's pass may read now
+                Feeder next { rec, 1 };
+                for (int i = 0; i < 30; ++i) { next.blocks (2, { 0 }); juce::Thread::sleep (10); }
+                expect (! published->load(), "the hash pass read the drive while the next take captured");
+                expect ((bool) juce::JSON::parse (first.session.getChildFile ("session.report.json"))["sha256Pending"]);
+                rec.stopRecording();
+
+                const auto end = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+                while (! published->load() && juce::Time::getMillisecondCounterHiRes() < end) juce::Thread::sleep (5);
+                expect (published->load(), "the hash pass never came back after the take");
+                expect (! (bool) juce::JSON::parse (first.session.getChildFile ("session.report.json"))["sha256Pending"]);
+            }
+
+            beginTest ("A resumed hash pass reads nothing while a take captures, and finishes after it");
+            {
+                Dirs first, second;
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (kRate, kBlock, 1);
+                    rec.getTrack (0).armed.store (true);
+                    expect (rec.startRecording (first.session));
+                    Feeder feeder { rec, 1 };
+                    feeder.blocks (40, { 0 });
+                    rec.stopRecording();
+                }
+                std::atomic<bool> stop { false };
+                expect (MultitrackRecorder::waitForReportHashes (first.session, stop, true));
+                expect (MultitrackRecorder::editSessionReport (first.session, [] (juce::DynamicObject& live)
+                { live.setProperty ("sha256Pending", true); }));
+
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.startRecording (second.session));
+                auto done = std::make_shared<juce::WaitableEvent> (true);
+                MultitrackRecorder::resumeReportHashes (first.session, [done] { done->signal(); });
+                Feeder feeder { rec, 1 };
+                for (int i = 0; i < 30; ++i) { feeder.blocks (2, { 0 }); juce::Thread::sleep (10); }
+                expect (! done->wait (0), "the resumed pass read the drive while a take captured");
+                rec.stopRecording();
+                expect (done->wait (10000), "the resumed pass never finished");
+                expect (! (bool) juce::JSON::parse (first.session.getChildFile ("session.report.json"))["sha256Pending"]);
+            }
+        }
+
+        void refusedStartResumesHashes()
+        {
+            beginTest ("A RECORD refused after it touched the take puts the last take's hashes back to work");
+            Dirs dirs;
+            auto gate = std::make_shared<juce::WaitableEvent> (true);
+            auto hooks = std::make_shared<MultitrackRecorder::ReportTestHooks>();
+            hooks->beforeScan = [gate] { gate->wait (10000); };
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 1);
+            rec.getTrack (0).armed.store (true);
+            rec.reportTestHooks = hooks;
+            expect (rec.startRecording (dirs.session));
+            Feeder feeder { rec, 1 };
+            feeder.blocks (40, { 0 });
+            rec.stopRecording();
+            rec.reportTestHooks = {};
+
+            // The continuation's file cannot be created: RECORD is refused after
+            // it claimed the session's report.
+            const auto blocker = dirs.session.getChildFile ("Audio Files").getChildFile ("Track_01_part02.wav");
+            expect (blocker.createDirectory().wasOk());
+            rec.armContinue (feeder.frame);
+            expect (! rec.startRecording (dirs.session), "the fixture did not refuse the start");
+            gate->signal();
+            expect (blocker.deleteRecursively());
+
+            const auto report = [&dirs] { return juce::JSON::parse (dirs.session.getChildFile ("session.report.json")); };
+            const auto end = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+            while ((bool) report()["sha256Pending"] && juce::Time::getMillisecondCounterHiRes() < end)
+                juce::Thread::sleep (10);
+            expect (! (bool) report()["sha256Pending"], "the last take's hashes stayed pending after a refused RECORD");
+            expectEquals (report()["tracks"][0]["sha256"][0].toString().length(), 64);
         }
 
         void copiesOpenBehindTheTake()

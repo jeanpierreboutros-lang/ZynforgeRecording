@@ -79,6 +79,10 @@ namespace zynforge
         // lost its file. Whether a copy holds what another lost is read from
         // these, because STOP closes every track and the live count goes to 0.
         std::atomic<bool>        joined { false }, incomplete { false };
+        // A write failed during the take (not only a close): its drive went,
+        // filled, or turned read-only. A session folder that is gone at STOP
+        // after this is not intact (see sessionFolderIncomplete).
+        std::atomic<bool>        writeFailed { false };
 
         std::mutex              ringLock;
         std::condition_variable wake;
@@ -411,6 +415,7 @@ namespace zynforge
                 t.partFiles.add (next.getFileName());
             else
             {
+                writeFailed.store (true, std::memory_order_relaxed);
                 failTrack (t);    // the next part would not open (disk full at the ceiling)
                 stopTrack (t);
             }
@@ -432,6 +437,7 @@ namespace zynforge
             }
             else
             {
+                writeFailed.store (true, std::memory_order_relaxed);
                 failTrack (t);
                 stopTrack (t);
             }

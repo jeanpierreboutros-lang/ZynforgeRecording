@@ -193,9 +193,13 @@ namespace zynforge
         // leadInsOwed: a track's silent lead-in could not be finished. That costs
         // one track its alignment and no audio, so it is no failure here: the
         // session opens, and a new pass into it is what has to wait.
+        // onProgress ticks through every long write (a lead-in it completes is
+        // silence the length of the take so far), so a copy doing this is seen
+        // making progress, not hung.
         static bool recoverInterruptedPunches (const juce::File& audioDir,
                                                int* recovered = nullptr,
-                                               bool* leadInsOwed = nullptr);
+                                               bool* leadInsOwed = nullptr,
+                                               const std::function<void()>& onProgress = {});
 
         // A track still owes its silence. The marker names it by number, so its
         // number has to stand until then: a marker that outlived a strip move
@@ -439,6 +443,13 @@ namespace zynforge
         // STOP found the session folder gone from where the take began (renamed
         // or moved during the take): the take was not finished and has no report.
         bool hasSessionFolderLost() const noexcept { return sessionFolderLost.load (std::memory_order_relaxed); }
+        // ... and its audio is not intact: its drive is gone (unplugged), or a
+        // write to it failed during the take. A folder only renamed or moved
+        // kept every write through its open files.
+        bool isLostSessionFolderIncomplete() const noexcept
+        {
+            return sessionFolderIncomplete.load (std::memory_order_relaxed);
+        }
         bool hasReportWriteFailed() const noexcept
         {
             return reportWriteFailed.load (std::memory_order_relaxed)
@@ -773,7 +784,10 @@ namespace zynforge
         void waitForCopies (double totalLimitMs);
         void finishCopyFiles (TakeStop&);
         void noteCopyProblem (const juce::String&);
-        void completeLeadIns (const TakeStop&);
+        void completeLeadIns (TakeStop&);
+        // What a lead-in that could not be written means, naming the strips
+        // (1-based). copyLabel empty: the primary's.
+        static juce::String owedLeadInLine (const juce::StringArray& strips, const juce::String& copyLabel);
         struct SessionReport;
         void quiesceWritersForStop();
         TakeStop snapshotTakeAtStop();
@@ -849,6 +863,14 @@ namespace zynforge
         static void resumeReportHashes (const juce::File& sessionDir,
                                         const std::function<void()>& finishedForTests = {},
                                         const std::function<void()>& beforePublishForTests = {});
+    private:
+        // afterCancelledScan: a start that claimed this session's report was
+        // refused, and the pass it cancelled may still be ending. This one
+        // waits for that pass instead of giving way to it.
+        static void startResumedHashes (const juce::File& sessionDir, bool afterCancelledScan,
+                                        const std::function<void()>& finishedForTests,
+                                        const std::function<void()>& beforePublishForTests);
+    public:
         static bool deleteSessionAfterCancellingReports (const juce::File& sessionDir);
         // Runs `remove` once no report for this session can still be published.
         static bool removeSessionAfterCancellingReports (const juce::File& sessionDir,
@@ -906,6 +928,17 @@ namespace zynforge
         std::shared_ptr<ReportTestHooks> reportTestHooks;
         std::function<void()> beforeFinalizationForTests;
         std::atomic<bool> finalizing { false };
+    public:
+        // Takes capturing in this process, on any recorder. A report hash pass
+        // reads nothing while there is one (see hashing pauses in the .cpp).
+        static inline std::atomic<int> capturingTakes { 0 };
+    private:
+        std::atomic<bool> countedAsCapturing { false };
+        void noteCapturing (bool capturing) noexcept
+        {
+            if (countedAsCapturing.exchange (capturing, std::memory_order_acq_rel) != capturing)
+                capturingTakes.fetch_add (capturing ? 1 : -1, std::memory_order_acq_rel);
+        }
 
         double sampleRate { 48000.0 };
         int    blockSize  { 512 };
@@ -991,7 +1024,9 @@ namespace zynforge
         // the operator loses the take's integrity manifest.
         std::atomic<bool> recoveryMarkerFailed { false };
         std::atomic<bool> reportWriteFailed { false };
-        std::atomic<bool> sessionFolderLost { false };
+        std::atomic<bool> sessionFolderLost { false }, sessionFolderIncomplete { false };
+        // "/Volumes/<drive>" of this folder is no longer mounted. Asks the disk.
+        static bool driveIsGone (const juce::File& folder);
         // The final hash/write runs after stopRecording returns and cannot
         // capture `this`: the recorder may be destroyed before it finishes.
         // Each new take invalidates older completion notifications.
@@ -1070,25 +1105,39 @@ namespace zynforge
             juce::int64  priorLength   { 0 };    // samples this copy had before the pass
             juce::int64  timelineStart { 0 };    // where the pass begins (start-time estimate)
             int          copyIndex { 0 };        // 0 primary, 1 backup, 2+ mirror (not persisted)
+            std::size_t  trackIndex { 0 };       // the strip it lines up (not persisted)
         };
         static juce::File partFileFor (const juce::File& audioDir, const juce::String& trackName,
                                        const juce::String& ext, int part);
         // Fills the reserved slots with (timelineStart - priorLength) samples
-        // of silence. Skips (true) when this pass wrote no audio to the copy.
-        static bool writeLeadIn (const PendingLeadIn&, juce::int64 timelineStart);
-        static bool finishLeadIn (const PendingLeadIn&, juce::int64 timelineStart);
+        // of silence, calling onProgress after every block. Skips (true) when
+        // the pass's audio part is not there. A pass that wrote no frames to it
+        // has nothing to line up: see dropEmptyLeadIn.
+        static bool writeLeadIn (const PendingLeadIn&, juce::int64 timelineStart,
+                                 const std::function<void()>& onProgress = {});
+        static bool finishLeadIn (const PendingLeadIn&, juce::int64 timelineStart,
+                                  const std::function<void()>& onProgress = {});
+        // The pass wrote no frames to this lead-in's audio part: no silence is
+        // owed. Removes the empty part (and its stamp) and the marker.
+        static bool dropEmptyLeadIn (const PendingLeadIn&, std::vector<WriterChannel::StampedPart>& stamps);
         static bool writeLeadInMarker (const PendingLeadIn&);
         static bool openTrackFile (CaptureCopy&, std::size_t track, const juce::File& dir, const TakeFormat&,
                                    const juce::String& trackName, int channels, const LeadInPlan&,
                                    bool primaryHadBase, juce::int64 prior, std::vector<PendingLeadIn>&);
         // Completes every marker left in audioDir by an interrupted take.
-        static bool recoverPendingLeadIns (const juce::File& audioDir);
+        static bool recoverPendingLeadIns (const juce::File& audioDir,
+                                           const std::function<void()>& onProgress = {});
+        // What to tell the engineer about lead-ins still owed in audioDir.
+        static juce::String describeOwedLeadIns (const juce::File& audioDir);
+        // A slow drive for the tests: a pause before each block of silence.
+        static inline std::atomic<int> silenceBlockDelayMsForTests { 0 };
 
     private:
         std::vector<PendingLeadIn> pendingLeadIns;   // this take's reservations
         static juce::File leadInMarkerFor (const PendingLeadIn&);
         static bool writeSilenceFile (const juce::File&, int container, int bits, int chans,
-                                      double sampleRate, juce::int64 frames);
+                                      double sampleRate, juce::int64 frames,
+                                      const std::function<void()>& onProgress = {});
         std::atomic<bool> continueAsPart { false };   // append a new part instead of overwriting
         std::atomic<juce::int64> recordBaseSamples { 0 };       // timeline offset for a continue take
 

@@ -9,6 +9,7 @@
 #include "../Audio/MixKernel.h"
 #include "../Audio/PlaybackReader.h"
 #include "../Audio/SessionPlayer.h"
+#include "LtcTestSignal.h"
 
 #include <atomic>
 #include <functional>
@@ -594,6 +595,20 @@ namespace zynforge
                 expectWithinAbsoluteError ((double) e.getChaseTargetSamples(), 3.0 * rate, 1.0,
                                            "a show running over midnight lost its place");
 
+                // 29.97 drop-frame: the label is a frame count, not label seconds.
+                expect (e.setChaseStartTimecode ("00:00:00:00"));
+                e.getTimecodeChase().feedMtcFullFrame (0, 0, 59, 29, 29.97f, true);
+                expectWithinAbsoluteError ((double) e.getChaseTargetSamples(), 1799.0 * 1001.0 / 30000.0 * rate, 1.0,
+                                           "drop-frame chase is off by what its labels skip");
+
+                // A running master: a quarter-frame run's time is two frames old
+                // when it completes, and older by the time the poll reads it.
+                expect (e.setChaseStartTimecode ("01:00:00:00"));
+                for (const auto message : ltctest::mtcQuarterFrames ({ 1, 0, 0, 10 }, 1))
+                    e.getTimecodeChase().feedMtcQuarterFrame (message);
+                expectWithinAbsoluteError ((double) e.getChaseTargetSamples(), 12.0 / 25.0 * rate, 0.005 * rate,
+                                           "chase runs behind a running master");
+
                 expect (e.setChaseStartTimecode ("10:20:30:04"));
                 e.claimMixerFor (f.dir);
                 expect (e.saveSessionMixTo (f.dir));
@@ -669,6 +684,78 @@ namespace zynforge
                 e.clearSessionState();
                 expect (! e.getRecorder().getTrack (0).captureInputGainKnown.load());
                 expect (! e.getRecorder().getTrack (0).liveInputGainKnown.load());
+            }
+
+            beginTest ("A strip whose lead-in could not be written keeps its clips, and is named as silent");
+            {
+                TempFolder f;
+                Rig r (2, 2, 2);
+                auto& e = r.engine;
+                const auto record = [&] (std::initializer_list<int> armed, int blocks, bool continuing)
+                {
+                    for (int i = 0; i < 2; ++i) e.getRecorder().getTrack (i).armed.store (false);
+                    for (const int i : armed) e.getRecorder().getTrack (i).armed.store (true);
+                    if (continuing) e.armContinue (e.getCaptureLengthSamples());
+                    expect (e.startRecording (f.dir), e.getRecorder().getStartError());
+                    r.input (0, 0.25f); r.input (1, 0.25f);
+                    for (int b = 0; b < blocks; ++b) r.process();
+                    e.stopRecording();
+                };
+                record ({ 0, 1 }, 100, false);
+                record ({ 1 }, 50, true);                  // strip 1 sits this set out
+                const auto before = e.clipsFor (0);
+                expectEquals ((int) before.size(), 1);
+
+                // Strip 1 comes back for the encore, and the drive will not take
+                // the silence that lines it up: a full folder where it goes.
+                const auto audio = f.dir.getChildFile ("Audio Files");
+                const auto blocked = audio.getChildFile ("Track_01_part02.wav");
+                expect (blocked.getChildFile ("held").create().wasOk());
+                record ({ 0 }, 20, true);
+                expect (MultitrackRecorder::leadInsPending (audio), "the fixture did not leave the lead-in owed");
+
+                expect (e.getPlayer().trackFailedToOpen (0), "the player does not know strip 1 failed to open");
+                const auto& after = e.clipsFor (0);
+                expectEquals ((int) after.size(), (int) before.size(), "the strip was reseeded from a length of 0");
+                if (! after.empty() && ! before.empty())
+                    expectEquals (after[0].fileLengthSamples, before[0].fileLengthSamples);
+                const auto said = MultitrackRecorder::describeOwedLeadIns (audio);
+                expect (said.contains ("Strip 1"), "the message does not name the strip: " + said);
+                expect (said.contains ("silent") && ! said.contains ("early"), "the message says what is not so: " + said);
+                expect (blocked.deleteRecursively());
+
+                // Once the drive has room, the next open writes it and the strip plays again.
+                int recovered = 0;
+                bool owed = true;
+                expect (MultitrackRecorder::recoverInterruptedPunches (audio, &recovered, &owed));
+                expect (! owed);
+                expectEquals (e.loadSession (f.dir), 2);
+                expect (! e.getPlayer().trackFailedToOpen (0));
+                expectEquals (e.getPlayer().getTrackLengthSamples (0), (juce::int64) (100 + 50 + 20) * 256,
+                              "strip 1 does not line up once its lead-in is written");
+            }
+
+            beginTest ("A take with no main file is an incomplete load, not a strip quietly left out");
+            {
+                TempFolder f;
+                const auto write = [] (const juce::File& file)
+                {
+                    file.getParentDirectory().createDirectory();
+                    juce::AudioBuffer<float> data (1, 4800);
+                    data.clear();
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::AudioFormatWriter> writer (
+                        wav.createWriterFor (file.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
+                    if (writer != nullptr) writer->writeFromAudioSampleBuffer (data, 0, data.getNumSamples());
+                };
+                write (f.dir.getChildFile ("Audio Files/Track_01.wav"));
+                write (f.dir.getChildFile ("Audio Files/Track_02_part02.wav"));
+                SessionPlayer player;
+                auto prepared = player.prepareSessionLoad (f.dir, 48000.0, 512);
+                expect (! SessionPlayer::preparedLoadComplete (prepared), "a strip whose take would not open loaded as complete");
+                player.installPreparedSession (prepared, false);
+                expect (player.trackFailedToOpen (1), "strip 2 is not known to have failed");
+                expect (! player.trackFailedToOpen (0));
             }
         }
     };
@@ -838,6 +925,57 @@ namespace zynforge
                     }
                 }
                 expectEquals (torn, 0, "a read returned audio from another position");
+            }
+
+            beginTest ("PlaybackReader: a cue is let go once a read reaches it or it goes stale, so three reads keep their read-ahead");
+            {
+                // Two seconds at 48 kHz: three read blocks and two cue blocks.
+                // A crossfade (two places less than a block apart, in two
+                // blocks) and a third clip far away want five blocks; a cue
+                // still held takes two of them, and a read window loses the
+                // block after its own, so its next block boundary plays silence.
+                constexpr juce::int64 kReaderBlock = 32768;
+                const juce::int64 a = 13 * kReaderBlock + 30000, b = a + 20000, c = (juce::int64) kSecond * 60;
+                const juce::int64 staleCue = (juce::int64) kSecond * 30;
+                const auto readAheadReady = [&] (PlaybackReader& reader)
+                {
+                    const auto next = [] (juce::int64 at) { return (at / kReaderBlock + 1) * kReaderBlock; };
+                    for (int i = 0; i < 3000; ++i)
+                    {
+                        if (reader.isBuffered (next (b), 512) && reader.isBuffered (next (c), 512)) return true;
+                        juce::Thread::sleep (1);
+                    }
+                    return false;
+                };
+                const auto play = [&] (PlaybackReader& reader, int rounds)
+                {
+                    for (int i = 0; i < rounds; ++i)
+                    {
+                        reader.prepareAt (a);
+                        reader.prepareAt (b);
+                        reader.prepareAt (c);
+                    }
+                };
+                juce::TimeSliceThread thread ("test reader");
+                thread.startThread();
+                {
+                    // A loop start cued, then the loop turned off: nothing reads there.
+                    PlaybackReader reader (new CountingSource (kSecond * 120), thread, kSecond * 2);
+                    reader.cue (staleCue);
+                    play (reader, 120);
+                    expect (readAheadReady (reader), "a cue nothing read kept two blocks for ever");
+                }
+                {
+                    // The jump came: the cue has done its job.
+                    PlaybackReader reader (new CountingSource (kSecond * 120), thread, kSecond * 2);
+                    reader.cue (staleCue);
+                    for (int i = 0; i < 2000 && ! reader.isBuffered (staleCue, 512); ++i) juce::Thread::sleep (1);
+                    juce::AudioBuffer<float> out (1, 512);
+                    expect (reader.read (&out, 0, 512, staleCue, true, true), "the cued block was not in RAM");
+                    play (reader, 20);
+                    expect (readAheadReady (reader), "a cue that was read kept two blocks");
+                }
+                thread.stopThread (-1);
             }
 
             beginTest ("A loop pass loses no sample on any track, and all of them wrap together");

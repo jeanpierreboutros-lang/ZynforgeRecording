@@ -7,6 +7,7 @@
 #include "ClipModel.h"
 #include "PlaybackReader.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <map>
@@ -67,6 +68,14 @@ namespace zynforge
             const juce::ScopedLock sl (tracksLock);
             if (trackIdx < 0 || trackIdx >= (int) tracks.size()) return 0;
             return tracks[(size_t) trackIdx].length;
+        }
+        // A strip whose take is on disk but would not open: a part missing (a
+        // silent lead-in still owed), no main file, a file that will not read.
+        // It plays silence, and its clips must not be reseeded from length 0.
+        bool trackFailedToOpen (int trackIdx) const
+        {
+            const juce::ScopedLock sl (tracksLock);
+            return std::find (unopenedTracks.begin(), unopenedTracks.end(), trackIdx) != unopenedTracks.end();
         }
         juce::int64 getPositionSamples()    const noexcept { return position   .load(); }
         double      getSampleRate()         const noexcept { return fileSampleRate; }
@@ -169,6 +178,7 @@ namespace zynforge
         juce::TimeSliceThread    readerThread { "ZF Player Reader" };
 
         std::vector<Track> tracks;
+        std::vector<int>   unopenedTracks;   // see trackFailedToOpen; under tracksLock
         // Reader lifetime guard. The audio thread only try-locks (and emits
         // silence on contention), while load/unload take the lock before
         // replacing readers. This makes teardown safe even with a stopped

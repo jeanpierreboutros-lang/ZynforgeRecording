@@ -543,7 +543,35 @@ namespace zynforge
             expect (! dirs.session.exists(), "STOP made the old folder again");
             expect (moved.getChildFile ("Audio Files").getChildFile ("Track_01.wav").existsAsFile(), "the audio went");
             expect (moved.getChildFile ("recording.session").existsAsFile(), "nothing asks to recover this take");
+            expect (problems.contains ("intact"), "a folder that kept every write should say its audio is intact: " + problems);
             MultitrackRecorder::deleteSessionAfterCancellingReports (moved);
+
+            beginTest ("A session folder whose drive was pulled during a take never claims its audio is intact");
+            {
+                Dirs pulled;
+                const auto away = pulled.session.getSiblingFile ("unplugged");
+                MultitrackRecorder recorder;
+                recorder.prepare (kRate, kBlock, 1);
+                recorder.getTrack (0).armed.store (true);
+                expect (recorder.startRecording (pulled.session));
+                Feeder writes { recorder };
+                writes.blocks (10, { 0 });
+                expect (pulled.session.moveFileTo (away), "the fixture could not take the folder away");
+                // Every write after a drive is pulled fails.
+                recorder.copies.front()->writeFailed.store (true);
+                recorder.stopRecording();
+                expect (recorder.isLostSessionFolderIncomplete());
+                const auto said = recorder.getCopyProblems().joinIntoString ("|");
+                expect (said.contains (pulled.session.getFullPathName()), said);
+                expect (said.contains ("unplugged"), "a pulled drive is not among the causes: " + said);
+                expect (! said.contains ("intact"), "a take whose writes failed was called intact: " + said);
+                MultitrackRecorder::deleteSessionAfterCancellingReports (away);
+
+                // The drive itself gone reads the same, with or without a failed write.
+                expect (MultitrackRecorder::driveIsGone (juce::File ("/Volumes/zf-no-such-drive-" + juce::Uuid().toString())
+                                                             .getChildFile ("take")));
+                expect (! MultitrackRecorder::driveIsGone (pulled.root), "a folder on a mounted drive read as unplugged");
+            }
         }
 
         void pulledDriveReadsNoVolume()
