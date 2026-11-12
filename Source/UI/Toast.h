@@ -4,6 +4,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <algorithm>
+#include <cmath>
 #include <deque>
 
 #include "../Theme/BrandColors.h"
@@ -16,10 +17,13 @@ namespace zynforge
     // are queued, so two toasts fired back-to-back display in order
     // rather than stomping each other.
     //
-    // Add a single instance to a host component (e.g. MainComponent),
-    // position it via setBounds in resized(), and call
-    // toast.show("Cue 4 added") from anywhere. Painted on top of
-    // siblings via setAlwaysOnTop (true).
+    // The host gives it a slot (setBounds in resized()): the slot's width and
+    // bottom-right corner hold, and a message that needs more lines grows the
+    // toast upward, so a crash-recovery notice never loses its second half.
+    // A notice that only counts on from one showing or waiting ("3 strips
+    // selected", then "4 strips selected") takes its place, and at most
+    // kMaxWaiting wait: neutral news is dropped first, never an error for it.
+    // Painted on top of siblings via setAlwaysOnTop (true).
     class Toast final : public juce::Component, private juce::Timer
     {
     public:
@@ -31,6 +35,8 @@ namespace zynforge
         //          even at the edge of vision.
         enum class Kind { Info, Success, Warning, Error };
 
+        static constexpr int kMaxWaiting = 3;
+
         Toast()
         {
             setAlwaysOnTop (true);
@@ -40,7 +46,21 @@ namespace zynforge
 
         void show (const juce::String& message, Kind kind = Kind::Info)
         {
+            if (message.isEmpty()) return;
+            // The same notice, or the same one counting on: the newer says it.
+            if (visible && sameNotice (current, message, kind))
+            {
+                current.message = message;
+                fitToMessage();
+                if (phase == Phase::Hold || phase == Phase::Out) { phase = Phase::Hold; holdMsLeft = holdFor (current); setAlpha (1.0f); }
+                repaint();
+                return;
+            }
+            for (auto& waiting : queue)
+                if (sameNotice (waiting, message, kind)) { waiting.message = message; return; }
+
             queue.push_back ({ message, kind });
+            while ((int) queue.size() > kMaxWaiting) dropLeastUrgent();
             if (! visible)
                 advance();
         }
@@ -63,8 +83,15 @@ namespace zynforge
         // Whether the message showing is drawn whole, nothing cut off.
         bool showsWholeMessage() const
         {
-            return juce::GlyphArrangement::getStringWidth (brand::type::uiLabel(), typeset (current.message))
-                   <= (float) textArea().getWidth();
+            return layoutFor (current.message, (float) textArea().getWidth()).getHeight()
+                   <= (float) textArea().getHeight() + 0.5f;
+        }
+
+        void resized() override
+        {
+            if (fitting) return;
+            slot = getBounds();   // where the host wants it: width and bottom-right corner
+            fitToMessage();
         }
 
         void paint (juce::Graphics& g) override
@@ -91,20 +118,13 @@ namespace zynforge
             g.setColour (brand::lift (base, 0.45f).withAlpha (zynforge::brand::alpha::scrim));
             g.drawRoundedRectangle (r, brand::radius::lg, 1.0f);
 
-            // Message text.
-            g.setColour (brand::textPrimary);
-            g.setFont (brand::type::uiLabel());
-            g.drawText (typeset (current.message),
-                        textArea(),
-                        juce::Justification::centredLeft, true);
+            // Message text, wrapped by word and centred in its area.
+            const auto area = textArea().toFloat();
+            const auto layout = layoutFor (current.message, area.getWidth());
+            layout.draw (g, area.withSizeKeepingCentre (area.getWidth(), juce::jmin (area.getHeight(), layout.getHeight())));
         }
 
     private:
-        juce::Rectangle<int> textArea() const
-        {
-            return getLocalBounds().toFloat().reduced (4.0f).withTrimmedLeft (14).toNearestInt();
-        }
-
         struct Entry { juce::String message; Kind kind; };
 
         std::deque<Entry> queue;
@@ -114,6 +134,8 @@ namespace zynforge
         float             fadeT          { 0.0f };
         enum class Phase  { In, Hold, Out, Idle };
         Phase             phase          { Phase::Idle };
+        juce::Rectangle<int> slot;
+        bool              fitting        { false };
 
         static constexpr int  kTickMs        = 16;       // ~60 Hz
         // Motion timings come from the shared brand::motion::
@@ -122,6 +144,71 @@ namespace zynforge
         static constexpr int  kFadeInMs      = brand::motion::quickFadeMs;
         static constexpr int  kFadeOutMs     = brand::motion::fadeOutMs;
         static constexpr int  kHoldMs        = brand::motion::toastHoldMs;
+        static constexpr int  kInsetX = 4 + 14, kInsetRight = 4 + 10, kInsetY = 4 + 8;
+        static constexpr int  kMaxHeight = 200;
+
+        juce::Rectangle<int> textArea() const
+        {
+            return getLocalBounds().withTrimmedLeft (kInsetX).withTrimmedRight (kInsetRight).reduced (0, kInsetY);
+        }
+
+        static juce::TextLayout layoutFor (const juce::String& message, float width)
+        {
+            juce::AttributedString text;
+            text.append (typeset (message), brand::type::uiLabel(), brand::textPrimary);
+            text.setWordWrap (juce::AttributedString::byWord);
+            text.setJustification (juce::Justification::centredLeft);
+            juce::TextLayout layout;
+            layout.createLayout (text, juce::jmax (1.0f, width));
+            return layout;
+        }
+
+        // Grows up from the host's slot as far as the message needs.
+        void fitToMessage()
+        {
+            if (slot.isEmpty()) return;
+            const float textW = (float) (slot.getWidth() - kInsetX - kInsetRight);
+            const int needed = (int) std::ceil (layoutFor (current.message, textW).getHeight()) + 2 * kInsetY;
+            const int h = juce::jlimit (slot.getHeight(), juce::jmax (slot.getHeight(), kMaxHeight), needed);
+            const juce::ScopedValueSetter<bool> guard (fitting, true);
+            setBounds (slot.withTop (slot.getBottom() - h));
+        }
+
+        // Two notices are one when they differ only in their numbers (and the
+        // plural those bring): the later one is what is true now.
+        static juce::String noticeKey (const juce::String& message)
+        {
+            juce::StringArray words;
+            words.addTokens (message.toLowerCase().retainCharacters ("abcdefghijklmnopqrstuvwxyz -:;,.!'()/"), " ", "");
+            words.removeEmptyStrings();
+            for (auto& word : words)
+                if (word.length() > 3 && word.endsWithChar ('s')) word = word.dropLastCharacters (1);
+            return words.joinIntoString (" ");
+        }
+
+        static bool sameNotice (const Entry& entry, const juce::String& message, Kind kind)
+        {
+            return entry.kind == kind && noticeKey (entry.message) == noticeKey (message);
+        }
+
+        static int urgency (Kind k) { return k == Kind::Error ? 2 : k == Kind::Warning ? 1 : 0; }
+
+        // The oldest of the least urgent goes, so neutral news never pushes an
+        // error out, and a full queue of errors drops the oldest of them.
+        void dropLeastUrgent()
+        {
+            auto victim = queue.begin();
+            for (auto it = queue.begin(); it != queue.end(); ++it)
+                if (urgency (it->kind) < urgency (victim->kind)) victim = it;
+            queue.erase (victim);
+        }
+
+        // A notice that wraps stays up longer, so it can be read to the end.
+        int holdFor (const Entry& entry) const
+        {
+            const auto lines = layoutFor (entry.message, (float) juce::jmax (1, textArea().getWidth())).getNumLines();
+            return kHoldMs + juce::jmax (0, lines - 1) * 1200;
+        }
 
         static juce::Colour colourForKind (Kind k)
         {
@@ -151,6 +238,7 @@ namespace zynforge
             if (queue.empty()) { visible = false; setVisible (false); return; }
             current = queue.front();
             queue.pop_front();
+            fitToMessage();
             visible = true;
             setVisible (true);
             fadeT   = 0.0f;
@@ -167,7 +255,7 @@ namespace zynforge
                 case Phase::In:
                 {
                     fadeT += (float) kTickMs / (float) kFadeInMs;
-                    if (fadeT >= 1.0f) { fadeT = 1.0f; phase = Phase::Hold; holdMsLeft = kHoldMs; }
+                    if (fadeT >= 1.0f) { fadeT = 1.0f; phase = Phase::Hold; holdMsLeft = holdFor (current); }
                     setAlpha (juce::jlimit (0.0f, 1.0f, fadeT));
                     break;
                 }
