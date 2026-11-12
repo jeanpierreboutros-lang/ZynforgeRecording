@@ -346,6 +346,12 @@ namespace zynforge::twin
         enabled = true;
         state = LinkState::Waiting;
         detail.clear();
+        // The panel shows these: a refusal or a comparison from the last link
+        // session is not news on this one. leaderTakeActive stays: a re-pair
+        // during a take must still send that take's STOP.
+        lastEvent.clear();
+        compareLine.clear();
+        compareMismatch = false;
         failedAuth.store (0);
         rejectedConnections.store (0);
         boundPort.store (-1);
@@ -1241,9 +1247,14 @@ namespace zynforge::twin
     {
         if (! adoptedTake || ! linked) return;
         adoptedTake = false;
-        if (config.role != Role::Leader || leaderTakeActive || ! host.twinStatus().recording) return;
+        const auto status = host.twinStatus();
+        if (config.role != Role::Leader || leaderTakeActive || ! status.recording) return;
         leaderTakeId = juce::Uuid().toString();
         leaderTakeActive = true;
+        // The follower files its take under this id once it answers, and the
+        // two reports are matched by it: this Mac's record must carry it too.
+        if (auto* record = openRecordOrNull()) record->takeId = leaderTakeId;
+        else openRecord (leaderTakeId, status);
         queueBody (makeObject ({ { "m", "start" }, { "take", leaderTakeId }, { "relink", true } }));
     }
 
