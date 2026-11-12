@@ -740,7 +740,7 @@ void MainComponent::completeSessionFromCsv (const juce::File& f)
     loadUILayoutFromActiveSession();
     const bool saved = saveSessionStateTo (dir);   // persist the names + strip count now
 
-    showStatus ("New session '" + r.name + "' with " + juce::String (names.size())
+    showStatus ("New session '" + dir.getFileName() + "' with " + juce::String (names.size())
                 + " channels from " + f.getFileName() + notSavedWarning (saved));
 }
 

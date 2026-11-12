@@ -2923,13 +2923,14 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // (Equivalent of Pro Tools' .ptx; we use .zfproj for clarity.)
     {
         juce::DynamicObject::Ptr m (new juce::DynamicObject());
+        // The folder's name, which "Show" taken already makes "Show2".
         m->setProperty ("zynforgeSession", true);
-        m->setProperty ("name",            safeName);
+        m->setProperty ("name",            sessionFolder.getFileName());
         m->setProperty ("createdAt",       juce::Time::getCurrentTime().toISO8601 (true));
         m->setProperty ("sampleRate",      r.sampleRate);
         m->setProperty ("captureFormat",   (int) r.captureFormat);
         if (! zynforge::atomicfile::writeText (
-                sessionFolder.getChildFile (safeName + ".zfproj"),
+                sessionFolder.getChildFile (sessionFolder.getFileName() + ".zfproj"),
                 juce::JSON::toString (juce::var (m.get()))))
         {
             sessionFolder.deleteRecursively();

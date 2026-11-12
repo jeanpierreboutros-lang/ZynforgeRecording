@@ -184,8 +184,9 @@ private:
     bool helperHoldsSession (const juce::File& dir) const;
     bool unprovenHelperAlive() const;
     void showStartupWelcome();
-    void createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
-    void openSessionFromWelcome (const juce::File&);
+    // Each returns whether it worked; the Welcome stays up when it did not.
+    bool createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
+    bool openSessionFromWelcome (const juce::File&);
     void showKeyboardShortcuts();
     void showAboutDialog();
     void showFirstRunTutorial (std::function<void()> onFinished = {});

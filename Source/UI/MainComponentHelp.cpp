@@ -356,7 +356,7 @@ void MainComponent::showAboutDialog()
         "OK");
 }
 
-void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult& r)
+bool MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult& r)
 {
     // The WelcomeDialog::NewResult mirrors NewSessionDialog::Result
     // 1:1 in field types, so reuse the same builder by hand-rolling
@@ -369,13 +369,13 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
     if (zynforge::folderDriveMissing (r.location))
     {
         showStatus ("The drive for " + r.location.getFullPathName() + " is not connected -- connect it or choose another folder");
-        return;
+        return false;
     }
     const auto sessionFolder = createSessionFolderStructure (n);
     if (! sessionFolder.isDirectory())
     {
         showStatus (sessionCreateFailureMessage());
-        return;
+        return false;
     }
     // Whether or not the device has to move, this is now the session's rate.
     pendingSampleRate = r.sampleRate;
@@ -396,13 +396,16 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
             setup.sampleRate = r.sampleRate;
             changed = true;
         }
-        if (r.inputDeviceName.isNotEmpty() && r.inputDeviceName != setup.inputDeviceName)
+        // The pickers show a device even when nobody touched them (the first
+        // listed, when the one in use is not there). Only a pick by hand moves
+        // the session onto another device.
+        if (r.devicePicked && r.inputDeviceName.isNotEmpty() && r.inputDeviceName != setup.inputDeviceName)
         {
             setup.inputDeviceName     = r.inputDeviceName;
             setup.useDefaultInputChannels = true;
             changed = true;
         }
-        if (r.outputDeviceName.isNotEmpty() && r.outputDeviceName != setup.outputDeviceName)
+        if (r.devicePicked && r.outputDeviceName.isNotEmpty() && r.outputDeviceName != setup.outputDeviceName)
         {
             setup.outputDeviceName     = r.outputDeviceName;
             setup.useDefaultOutputChannels = true;
@@ -443,18 +446,20 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
     else
         showStatus ("Session created: " + sessionFolder.getFileName()
                           + " -- add channels with +CH");
+    return true;
 }
 
-void MainComponent::openSessionFromWelcome (const juce::File& sessionDir)
+bool MainComponent::openSessionFromWelcome (const juce::File& sessionDir)
 {
     // Full open (mixer state + active-dir pin + strip rebuild), not just
     // loadSession -- otherwise the menus (Export / Edit) stayed grey and
     // gains/colours/routing didn't restore.
     const int n = openSessionFolder (sessionDir);
-    if (n < 0) return;   // it has said why, and "failed to load" would replace that
+    if (n < 0) return false;   // it has said why, and "failed to load" would replace that
     showStatus (! sessionDir.isDirectory() ? "Failed to load " + sessionDir.getFileName()
                       : n > 0 ? "Loaded: " + sessionDir.getFileName()
                               : "Opened empty session: " + sessionDir.getFileName());
+    return sessionDir.isDirectory();
 }
 
 void MainComponent::showStartupWelcome()
@@ -500,11 +505,13 @@ void MainComponent::showStartupWelcome()
 
     juce::Component::SafePointer<MainComponent> self (this);
 
+    // Each says whether it worked: one that did not leaves the Welcome up,
+    // with the reason on the status line, so the engineer can try again.
     auto onCreate = [self] (const zynforge::WelcomeDialog::NewResult& r)
-    { if (self != nullptr) self->createSessionFromWelcome (r); };
+    { return self == nullptr || self->createSessionFromWelcome (r); };
 
     auto onOpen = [self] (const juce::File& sessionDir)
-    { if (self != nullptr) self->openSessionFromWelcome (sessionDir); };
+    { return self == nullptr || self->openSessionFromWelcome (sessionDir); };
 
     // Enumerate the available input / output devices so the New pane can
     // offer them as a record-from / monitor picker.
@@ -611,11 +618,11 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
             if (! self->saveSessionStateTo (sessionFolder))
                 self->showStatus ("Session created, but its template state could not be saved");
             else
-                self->showStatus ("New session '" + r.name + "' from "
+                self->showStatus ("New session '" + sessionFolder.getFileName() + "' from "
                                   + selectedTemplate.getFileNameWithoutExtension());
         }
         else
-            self->showStatus ("New session '" + r.name
+            self->showStatus ("New session '" + sessionFolder.getFileName()
                               + "' -- add channels with +CH and arm REC to capture");
     });
 }

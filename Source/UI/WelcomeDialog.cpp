@@ -513,8 +513,7 @@ namespace zynforge
                   openPanel (std::make_unique<OpenPanel> (defaultLocation,
                       [this] (const juce::File& f)
                       {
-                          if (onOpen) onOpen (f);
-                          dismiss();
+                          if (! onOpen || onOpen (f)) dismiss();
                       }, recent))
             {
                 // Side rail items.
@@ -633,8 +632,7 @@ namespace zynforge
                 r.inputDeviceName  = newPanel->getInputDevice();
                 r.outputDeviceName = newPanel->getOutputDevice();
                 r.devicePicked     = newPanel->wasDevicePicked();
-                onCreate (r);
-                dismiss();
+                if (onCreate (r)) dismiss();
             }
 
             void dismiss()

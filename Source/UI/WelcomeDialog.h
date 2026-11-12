@@ -31,8 +31,10 @@ namespace zynforge
             bool          devicePicked { false };   // a device picker was changed by hand
         };
 
-        using OnCreateNew  = std::function<void (const NewResult&)>;
-        using OnOpenExisting = std::function<void (const juce::File& /*sessionDir*/)>;
+        // Each returns whether it worked. The Welcome closes only on true: a
+        // refused open or a create on a missing drive leaves it up to try again.
+        using OnCreateNew  = std::function<bool (const NewResult&)>;
+        using OnOpenExisting = std::function<bool (const juce::File& /*sessionDir*/)>;
 
         // Available audio devices to populate the New-session device pickers.
         struct DeviceChoices

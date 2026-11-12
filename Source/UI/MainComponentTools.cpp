@@ -991,25 +991,6 @@ void MainComponent::showSessionInfo()
         return;
     }
 
-    const auto proj = findSessionProj (sessionDir);
-
-    juce::var parsed;
-    if (proj.existsAsFile())
-        parsed = juce::JSON::parse (proj);
-    juce::DynamicObject::Ptr obj;
-    if (parsed.isObject())
-        obj = parsed.getDynamicObject();
-    else
-        obj = new juce::DynamicObject();
-
-    auto readString = [&] (const juce::Identifier& k, const juce::String& fallback = {}) -> juce::String
-    {
-        if (obj == nullptr) return fallback;
-        const auto v = obj->getProperty (k);
-        if (v.isString()) return v.toString();
-        return fallback;
-    };
-
     // Convert the persisted captureFormat int back to a readable label.
     auto formatLabel = [] (int code) -> juce::String
     {
@@ -1029,9 +1010,13 @@ void MainComponent::showSessionInfo()
     };
 
     SessionInfoDialog::Fields fields;
-    fields.name = readString ("name", sessionDir.getFileName());
+    // The folder's name is the session's (title bar, status line, recent list);
+    // a Save As copy's project still carries the source's. The rate is the one
+    // the session runs at now, not the one it was created with.
+    fields.name = sessionDir.getFileName();
     {
-        const auto sr = obj ? (double) obj->getProperty ("sampleRate") : 0.0;
+        const auto sr = engine.getPlayer().isLoaded() && engine.getPlayer().getSampleRate() > 0.0
+                            ? engine.getPlayer().getSampleRate() : engine.getSessionSampleRate();
         fields.sampleRate = sr > 0.0
             ? juce::String (sr / 1000.0, 1) + " kHz"
             : juce::String ("--");

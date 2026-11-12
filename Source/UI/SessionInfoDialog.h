@@ -21,6 +21,7 @@ namespace zynforge
 
     private:
         friend class ReviewPersistenceRepairTests;
+        friend class SessionFixTests;
         // Isolated UI tests read what would be shown, without a native dialog.
         inline static std::function<void (Fields)> launchForTests;
     };

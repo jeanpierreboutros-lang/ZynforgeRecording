@@ -1298,6 +1298,59 @@ public:
         }
     }
 
+    void testSessionNames()
+    {
+        beginTest ("A new session takes its folder's name everywhere");
+        {
+            Folder root ("Sessions", false);
+            expect (root.dir.getChildFile ("Show").createDirectory().wasOk());   // the name is taken
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            NewSessionDialog::ResultCallback answer;
+            NewSessionDialog::launchForTests = [&answer] (NewSessionDialog::ResultCallback cb) { answer = std::move (cb); };
+            host.launchNewSessionDialog();
+            NewSessionDialog::launchForTests = nullptr;
+            NewSessionDialog::Result r;
+            r.name = "Show"; r.location = root.dir; r.sampleRate = 48000.0;
+            if (answer != nullptr) answer (r);
+            const auto dir = host.engine.getActiveSessionDir();
+            expect (dir.getParentDirectory() == root.dir && dir.getFileName() != "Show", "setup: " + dir.getFullPathName());
+            expect (host.statusLabel.getText().contains ("'" + dir.getFileName() + "'"), host.statusLabel.getText());
+            const auto project = findSessionProj (dir);
+            expectEquals (project.getFileName(), dir.getFileName() + ".zfproj");
+            expectEquals (juce::JSON::parse (project).getProperty ("name", {}).toString(), dir.getFileName());
+            forget (host);
+        }
+
+        beginTest ("A CSV session's line names the folder it made");
+        {
+            Folder root ("Sessions", false), input ("Input", false);
+            expect (root.dir.getChildFile ("Channels").createDirectory().wasOk());
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            const auto csv = input.dir.getChildFile ("Channels.csv");
+            expect (csv.replaceWithText ("Kick\nSnare\n"));
+            host.completeSessionFromCsv (csv);
+            const auto dir = host.engine.getActiveSessionDir();
+            expect (host.statusLabel.getText().contains ("'" + dir.getFileName() + "'"), host.statusLabel.getText());
+            forget (host);
+        }
+
+        beginTest ("Session Info names the folder and the rate the session runs at");
+        {
+            Folder f ("Copy"); writeSavedShow (f, 1); expect (writeAudio (f.track (1)));
+            expect (f.project().replaceWithText (R"({"zynforgeSession":true,"name":"Original","sampleRate":44100.0,"setlist":[],"playlists":[]})"));
+            Host host (f);
+            SessionInfoDialog::Fields shown;
+            SessionInfoDialog::launchForTests = [&shown] (SessionInfoDialog::Fields x) { shown = x; };
+            host.main.showSessionInfo();
+            SessionInfoDialog::launchForTests = nullptr;
+            expectEquals (shown.name, juce::String ("Copy"));
+            expectEquals (shown.sampleRate, juce::String ("48.0 kHz"));
+        }
+
+    }
+
     void testLongSessionNames()
     {
         beginTest ("A session name too long for the files derived from it is refused in plain words");
@@ -1333,6 +1386,100 @@ public:
             pumpUntil ([&] { return ! host.main.sessionIoBusy.load(); }, 10000);
             expect (! dest.exists(), "Save As made a copy whose folder name is too long");
             expect (host.status().contains ("too long"), host.status());
+        }
+    }
+
+    // Two devices: the one in use, and the one a picker lists first.
+    class NamedDevice final : public juce::AudioIODevice
+    {
+    public:
+        explicit NamedDevice (const juce::String& name) : juce::AudioIODevice (name, "Two") {}
+        juce::StringArray getOutputChannelNames() override { return { "1", "2" }; }
+        juce::StringArray getInputChannelNames() override { return { "1", "2" }; }
+        juce::Array<double> getAvailableSampleRates() override { return { 48000.0 }; }
+        juce::Array<int> getAvailableBufferSizes() override { return { 256 }; }
+        int getDefaultBufferSize() override { return 256; }
+        juce::String open (const juce::BigInteger&, const juce::BigInteger&, double, int) override { opened = true; return {}; }
+        void close() override { opened = false; }
+        bool isOpen() override { return opened; }
+        void start (juce::AudioIODeviceCallback*) override { started = true; }
+        void stop() override { started = false; }
+        bool isPlaying() override { return started; }
+        juce::String getLastError() override { return {}; }
+        int getCurrentBufferSizeSamples() override { return 256; }
+        double getCurrentSampleRate() override { return 48000.0; }
+        int getCurrentBitDepth() override { return 24; }
+        int getOutputLatencyInSamples() override { return 0; }
+        int getInputLatencyInSamples() override { return 0; }
+        juce::BigInteger getActiveOutputChannels() const override { return 3; }
+        juce::BigInteger getActiveInputChannels() const override { return 3; }
+    private:
+        bool opened { false }, started { false };
+    };
+
+    class TwoDeviceType final : public juce::AudioIODeviceType
+    {
+    public:
+        TwoDeviceType() : juce::AudioIODeviceType ("Two") {}
+        void scanForDevices() override {}
+        juce::StringArray getDeviceNames (bool) const override { return { "Laptop", "Interface" }; }
+        int getDefaultDeviceIndex (bool) const override { return 0; }
+        int getIndexOfDevice (juce::AudioIODevice* d, bool) const override
+        { return d == nullptr ? -1 : getDeviceNames (true).indexOf (d->getName()); }
+        bool hasSeparateInputsAndOutputs() const override { return true; }
+        juce::AudioIODevice* createDevice (const juce::String& out, const juce::String& in) override
+        { return new NamedDevice (out.isNotEmpty() ? out : in); }
+    };
+
+    void testWelcome()
+    {
+        beginTest ("The Welcome stays open when its Create or Open fails");
+        {
+            Folder recent ("Recent Show");
+            bool created = false, opened = false;
+            dropModals();
+            WelcomeDialog::launch (recent.dir.getParentDirectory(), 48000.0, CaptureFormat::Wav24, {},
+                                   [&] (const WelcomeDialog::NewResult&) { created = true; return false; },
+                                   [&] (const juce::File&) { opened = true; return false; },
+                                   { recent.dir });
+            juce::Component::SafePointer<juce::Component> window (juce::ModalComponentManager::getInstance()->getModalComponent (0));
+            expect (window != nullptr, "setup: the Welcome opened");
+            if (auto* create = findButton (window, "Create")) create->onClick();
+            expect (created, "setup: Create did not answer");
+            pumpUntil ([] { return false; }, 200);
+            expect (window != nullptr && window->isCurrentlyModal(), "a Create that failed closed the Welcome");
+            if (auto* pick = findButton (window, recent.dir.getFileName())) pick->onClick();
+            expect (opened, "setup: the recent session did not answer");
+            pumpUntil ([] { return false; }, 200);
+            expect (window != nullptr && window->isCurrentlyModal(), "an Open that failed closed the Welcome");
+            dropModals();
+        }
+
+        beginTest ("Welcome Create keeps the devices the engineer did not touch");
+        {
+            Folder root ("Sessions", false);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            auto& manager = host.engine.getDeviceManager();
+            manager.addAudioDeviceType (std::make_unique<TwoDeviceType>());
+            manager.setCurrentAudioDeviceType ("Two", true);
+            juce::AudioDeviceManager::AudioDeviceSetup setup;
+            setup.outputDeviceName = setup.inputDeviceName = "Interface";
+            setup.sampleRate = 48000.0; setup.bufferSize = 256;
+            expect (manager.setAudioDeviceSetup (setup, false).isEmpty(), "setup: the interface did not open");
+            WelcomeDialog::NewResult r;
+            r.name = "Gig"; r.location = root.dir; r.sampleRate = 48000.0;
+            r.inputDeviceName = r.outputDeviceName = "Laptop";   // what the untouched pickers read
+            r.devicePicked = false;
+            host.createSessionFromWelcome (r);
+            expectEquals (manager.getAudioDeviceSetup().inputDeviceName, juce::String ("Interface"),
+                          "Create moved the input to a device nobody chose");
+            expectEquals (manager.getAudioDeviceSetup().outputDeviceName, juce::String ("Interface"));
+            r.name = "Gig 2"; r.devicePicked = true;
+            host.createSessionFromWelcome (r);
+            expectEquals (manager.getAudioDeviceSetup().inputDeviceName, juce::String ("Laptop"),
+                          "a device picked by hand was not applied");
+            forget (host);
         }
     }
 
@@ -1413,6 +1560,8 @@ public:
         testSessionModalsCloseForATake();
         testFolderPanelsHoldNothing();
         testRemoveLastCaptureQuestion();
+        testSessionNames();
+        testWelcome();
     }
 };
 
