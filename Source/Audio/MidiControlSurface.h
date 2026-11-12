@@ -3,6 +3,9 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include "McuProtocol.h"
 
+#include <array>
+#include <atomic>
+
 namespace zynforge
 {
     class AudioEngine;
@@ -55,6 +58,11 @@ namespace zynforge
         bool         lastPlaying { false };
         bool         lastRecording { false };
         float        lastMasterDb { -999.0f };   // 9th (master) motor fader echo
+        // A hand is on the fader (MCU touch), so the app does not move it; on
+        // release the surface is given the engine's value once. [kStrips] is
+        // the master. Written on the MIDI thread, read by the timer.
+        std::array<std::atomic<bool>, kStrips + 1> faderTouched {};
+        std::array<std::atomic<bool>, kStrips + 1> faderReleased {};
         juce::String lastTimecode;               // 7-seg time display echo
     };
 }

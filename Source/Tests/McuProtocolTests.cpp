@@ -14,8 +14,11 @@ namespace zynforge
 
             beginTest ("Fader dB <-> 14-bit round-trips and clamps");
             {
-                for (float dB : { -65.0f, -20.0f, 0.0f, 6.0f, 12.0f })
+                for (float dB : { -60.0f, -20.0f, 0.0f, 6.0f, 12.0f })
                     expectWithinAbsoluteError (faderToDb (dbToFader (dB)), dB, 0.02f);
+                // The bottom of the travel is the engine's floor. Below it the
+                // engine stored -60 and the echo pushed the motor back up.
+                expectEquals (dbToFader (-60.0f), 0, "the engine's floor is not the bottom of the fader");
                 expectEquals (dbToFader (-100.0f), 0);        // clamps low
                 expectEquals (dbToFader (100.0f), 16383);     // clamps high
                 expect (faderToDb (0) <= kFaderMinDb + 0.01f);

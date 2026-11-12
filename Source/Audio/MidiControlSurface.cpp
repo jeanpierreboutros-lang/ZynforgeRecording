@@ -43,6 +43,17 @@ namespace zynforge
 
     void MidiControlSurface::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
     {
+        // A hand on a fader changes nothing in the session, so it counts under
+        // LOCK too: the echo must never fight the hand.
+        if (m.isNoteOnOrOff())
+            if (const int fader = mcu::touchedFader (m.getNoteNumber()); fader >= 0)
+            {
+                const bool down = m.isNoteOn();   // velocity 0 is a release
+                faderTouched[(size_t) fader].store (down, std::memory_order_relaxed);
+                if (! down) faderReleased[(size_t) fader].store (true, std::memory_order_relaxed);
+                return;
+            }
+
         if (engine.areControlsLocked()) return;
         auto& rec = engine.getRecorder();
         const int bank = bankOffset.load (std::memory_order_relaxed);
@@ -255,7 +266,11 @@ namespace zynforge
             const int   met = present ? mcu::peakToMeter (rec.getTrack (ch).peak.load (std::memory_order_relaxed)) : 0;
             const auto  name = present ? rec.getTrack (ch).name : juce::String();
 
-            if (std::abs (dB - lastFaderDb[i]) > 0.05f)
+            // A touched fader is the hand's; once let go it gets the engine's
+            // value, even unchanged, since the motor was not following it.
+            const bool released = faderReleased[(size_t) i].exchange (false, std::memory_order_relaxed);
+            if (! faderTouched[(size_t) i].load (std::memory_order_relaxed)
+                && (released || std::abs (dB - lastFaderDb[i]) > 0.05f))
             { send (mcu::fader (i, dB)); lastFaderDb[i] = dB; }
             if (force || mute != lastMute[i]) { send (mcu::led (mcu::Action::Mute, i, mute)); lastMute[i] = mute; }
             if (force || solo != lastSolo[i]) { send (mcu::led (mcu::Action::Solo, i, solo)); lastSolo[i] = solo; }
@@ -275,7 +290,9 @@ namespace zynforge
 
         // Master / monitor motor fader (9th fader).
         const float masterDb = engine.getMasterGainDb();
-        if (std::abs (masterDb - lastMasterDb) > 0.05f)
+        const bool masterReleased = faderReleased[kStrips].exchange (false, std::memory_order_relaxed);
+        if (! faderTouched[kStrips].load (std::memory_order_relaxed)
+            && (masterReleased || std::abs (masterDb - lastMasterDb) > 0.05f))
         { send (mcu::masterFader (masterDb)); lastMasterDb = masterDb; }
 
         // Time display: transport position as HH:MM:SS:FF (30 fps). Only the
