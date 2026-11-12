@@ -175,22 +175,23 @@ void MainComponent::showFirstRunTutorial (std::function<void()> onFinished)
           "This 5-step tour shows you how to capture your first session. "
           "You can replay this any time from Help > Quick Start." },
         { "Step 1 of 5 -- Add channels",
-          "Click the green + CH button in the top-right header to add channels. "
-          "Pick a count (e.g. 8 for a basic drum kit) and tick Stereo for pairs. "
+          "Click + CH at the right of the header's top row to add channels. "
+          "Pick a count (e.g. 8 for a basic drum kit) and choose Stereo for pairs. "
           "Channels appear in the mixer left-to-right." },
         { "Step 2 of 5 -- Arm tracks",
-          "On each channel strip, click the red R button to ARM it for recording. "
-          "Click the green I button to also monitor (hear) it through your outputs.\n\n"
+          "On each channel strip, click R to ARM it for recording. "
+          "Click I to also monitor (hear) it through your outputs.\n\n"
           "Tip: Shift-click multiple strips to select them, then bulk-arm / delete / "
           "colour them via Track > Selection. Esc clears the selection." },
         { "Step 3 of 5 -- Record + play back",
-          "Press the red record button in the transport bar (centre-bottom of "
-          "the header) to start recording. To stop, press STOP twice within 2 seconds, "
+          "Press RECORD in the transport, at the left of the header's second row, "
+          "to start recording. To stop, press STOP twice within 2 seconds, "
           "so a stray press can't end a take.\n\n"
-          "When you stop, the session auto-loads for playback. Press play "
-          "(green triangle) or just SPACEBAR to hear what you captured." },
+          "When you stop, the session auto-loads for playback. Press PLAY "
+          "or just SPACEBAR to hear what you captured." },
         { "Step 4 of 5 -- Cue list for shows",
-          "For playback shows, build a setlist with the cue bar at the top. "
+          "For playback shows, press + Cue (beside + CH in the header) to keep a cue; "
+          "from the first cue on, the cue bar sits above the strips. "
           "Each cue snapshots fader / pan / routing--recall via cue "
           "buttons OR number keys 1-""9. Soft-takeover ramps prevent clicks." },
         { "Step 5 of 5 -- Help is always one menu away",

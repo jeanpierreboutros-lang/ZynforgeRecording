@@ -6,7 +6,9 @@
 
 // What Help > Keyboard Shortcuts lists. MainComponent::keyPressed
 // (MainComponentKeys.cpp) is what the keys do; each row names the presses it
-// stands for, so a test can hold the sheet and the key handler to each other.
+// stands for, and a test holds the two to each other: every key the window
+// answers is on the sheet, and every key on the sheet is answered. A new
+// shortcut gets its row here.
 namespace zynforge::shortcuts
 {
     enum class View { Any, Mix, Edit };
@@ -46,36 +48,58 @@ namespace zynforge::shortcuts
     inline const std::vector<Section>& sheet()
     {
         using M = juce::ModifierKeys;
+        constexpr int cmd = M::commandModifier, shift = M::shiftModifier, alt = M::altModifier, ctrl = M::ctrlModifier;
         static const std::vector<Section> table {
             { "Transport", {
-                { "Space", "Play / pause (stops recording if armed)", { key (juce::KeyPress::spaceKey, 0, ' ') } },
-                { "M",     "Drop marker at playhead", { key ('m') } },
-            }},
-            { "Cues", {
+                { "Space", "Play / pause from the cursor. In a take: press twice within 2 s to stop (a punch ends on one press)",
+                  { key (juce::KeyPress::spaceKey, 0, ' ') } },
+                { "M", "Drop a marker at the playhead, then name it", { key ('m') } },
                 { "1 - 9", "Jump to cue 1 - 9", range ('1', '9'), View::Any, "a cue list" },
+                { "Cmd + 1 - 9", "Jump to marker 1 - 9 (recalls its layout if stored)", range ('1', '9', cmd) },
             }},
-            { "Markers", {
-                { "Cmd + 1 - 9", "Jump to marker 1 - 9 (recalls layout if stored)", range ('1', '9', M::commandModifier) },
-            }},
-            { "Edit", {
-                { "A",        "Solo selected strips", { key ('a') } },
-                { "S",        "Smart tool (with the EDIT tools showing)", { key ('s') }, View::Edit },
-                { ",",        "Set range start at playhead", { key (',') } },
-                { ".",        "Set range end at playhead", { key ('.') } },
-                { "Ctrl + 4", "Toggle snap mode", { key ('4', M::ctrlModifier) } },
-                { "Cmd + Z",  "Undo last clip edit", { key ('z', M::commandModifier) } },
-                { "Cmd + R",  "Redo", { key ('r', M::commandModifier) } },
-                { "Cmd + X",  "Cut selected strips", { key ('x', M::commandModifier) } },
-                { "Cmd + C",  "Copy selected strips", { key ('c', M::commandModifier) } },
-                { "Cmd + V",  "Paste strips", { key ('v', M::commandModifier) } },
-            }},
-            { "Mixer", {
-                { "Shift + click", "Toggle multi-selection (additive)" },
-                { "Cmd + A",       "Select every strip", { key ('a', M::commandModifier) }, View::Any, "keyboard focus off a text field" },
-                { "Esc",           "Clear strip selection", { key (juce::KeyPress::escapeKey) }, View::Any, "a strip selection" },
+            { "Mixer and selection", {
+                { "Shift + click", "Add a strip to the selection, or take it out" },
+                { "Cmd + A", "Select every strip", { key ('a', cmd) }, View::Any, "keyboard focus off a text field" },
+                { "Esc", "Clear the strip selection", { key (juce::KeyPress::escapeKey) }, View::Any, "a strip selection" },
+                { "A", "Solo the selected strips; again to unsolo", { key ('a') } },
+                { "Option + R", "Arm the selected strips; again to disarm", { key ('r', alt, 0x00AE) } },
+                { "Cmd + =", "Switch between MIXER and EDIT",
+                  { key ('=', cmd), key ('+', cmd), key (juce::KeyPress::numberPadAdd, cmd) } },
                 { "Right-click strip", "Rename / Colour / Stereo / Stream send / Output-mute" },
             }},
-            { "Edit view", {
+            { "Session and clipboard", {
+                { "Cmd + S", "Save the session", { key ('s', cmd) } },
+                { "Cmd + Z", "Undo", { key ('z', cmd) } },
+                { "Cmd + Shift + Z, Cmd + R", "Redo", { key ('z', cmd | shift), key ('r', cmd) } },
+                { "Cmd + X", "Cut the selected clip or range (EDIT), else the selected strips (asks first)", { key ('x', cmd) } },
+                { "Cmd + C", "Copy the selected clip (EDIT), else the selected strips' settings", { key ('c', cmd) } },
+                { "Cmd + V", "Paste clips at the playhead (EDIT), else strip settings", { key ('v', cmd) } },
+            }},
+            { "Edit tools (EDIT view)", {
+                { "S  T  R  G  F", "Smart / Trim / Range / Grabber / Fade tool",
+                  { key ('s'), key ('t'), key ('r'), key ('g'), key ('f') }, View::Edit },
+                { ",", "Range start at the playhead", { key (',') } },
+                { ".", "Range end at the playhead", { key ('.') } },
+                { "E", "Zoom to the selected range", { key ('e') } },
+                { "D", "Duplicate the selected clip", { key ('d') } },
+                { "N", "Next nudge step (10 ms to 1 s)", { key ('n') } },
+                { "Option + Left / Right", "Nudge the selected clip",
+                  { key (juce::KeyPress::leftKey, alt), key (juce::KeyPress::rightKey, alt) }, View::Edit, "a selected clip" },
+                { "Numpad + / -", "Nudge the selected clip, or the playhead",
+                  { key (juce::KeyPress::numberPadAdd), key (juce::KeyPress::numberPadSubtract) }, View::Edit },
+                { "Delete", "Delete the selected clip or range, leaving a gap (asks first); with only strips selected, delete those channels",
+                  { key (juce::KeyPress::deleteKey), key (juce::KeyPress::backspaceKey) }, View::Edit, "a clip, range or strip selection" },
+                { "Shift + Delete", "Delete the selected clip or range and close the gap (asks first)",
+                  { key (juce::KeyPress::deleteKey, shift), key (juce::KeyPress::backspaceKey, shift) }, View::Edit, "a clip or range" },
+                { "Cmd + E", "Separate at the range, else split at the playhead", { key ('e', cmd) } },
+                { "Cmd + H", "Heal a split", { key ('h', cmd) } },
+                { "Ctrl + Cmd + C", "Crop to the selected range", { key ('c', ctrl | cmd) } },
+                { "Ctrl + 4", "Snap to markers on / off", { key ('4', ctrl) } },
+                { "Cmd + ]  /  Cmd + [", "Zoom the timeline in / out", { key (']', cmd), key ('[', cmd) }, View::Edit },
+                { "Option + 1 - 4", "Recall EDIT zoom preset 1 - 4", range ('1', '4', alt) },
+                { "Option + Shift + 1 - 4", "Store the EDIT zoom as preset 1 - 4", range ('1', '4', alt | shift) },
+            }},
+            { "Edit view mouse", {
                 { "Right-click channel name", "Lane shows waveform or markers / Row size / Delete Channel" },
                 { "Right-click empty lane",   "Lane shows waveform or markers / Row size" },
                 { "Right-click clip", "Mute / Lock / Duplicate / Delete / Gain / Fade in & out" },
