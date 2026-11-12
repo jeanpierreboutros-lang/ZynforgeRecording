@@ -894,7 +894,7 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     // ASCII only -- sample-rate mismatch must stay legible in every UI face.
     // (it rendered as mojibake); the banner's colour carries the alarm.
     setWarning ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
-                + "  vs  session " + fmt (sessionSR) + "  - recording blocked");
+                + "  vs  session " + fmt (sessionSR) + "  - recording blocked, PLAY refused");
 
     // One-shot modal, once per distinct device rate, and never mid-take.
     if (std::abs (deviceSampleRate - srMismatchWarned) < 1.0 || engine.isRecording())

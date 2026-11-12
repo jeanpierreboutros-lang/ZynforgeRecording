@@ -320,6 +320,10 @@ namespace zynforge
             // network/remote entry points (OSC play, MCU Play) and timecode
             // chase reach here directly, so the guard belongs at the engine.
             if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return false;
+            // The player has no converter: at another device rate every strip
+            // reaches the desk at the wrong speed and pitch. PLAY, Space, the
+            // remotes and chase all come here.
+            if (getPlaybackRateRefusal().isNotEmpty()) return false;
             // Nothing to roll (no session, or parked at/after the end with no
             // loop to wrap): don't start.
             if (! player.isPlaying() && ! player.hasAudioAhead()) return false;
@@ -327,6 +331,8 @@ namespace zynforge
             return true;
         }
         void stopPlayback() { player.stop(); }
+        // Why the device's rate refuses PLAY, or empty. Message thread.
+        juce::String getPlaybackRateRefusal() const;
 
         // Snap mode -- shared between the host (which sets it from
         // the Edit menu / '4' hotkey) and the edit operations that

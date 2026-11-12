@@ -327,6 +327,7 @@ public:
         outputsPastSixtyFour();   // C1
         bufferSizeIsKept();   // C1
         deviceIdsAreRetried();   // C1
+        playRefusesAWrongRate();   // C2
     }
 
 private:
@@ -434,6 +435,42 @@ private:
             expectEquals (engine.getChosenDevice().inputUid, juce::String ("UID-IN"), "the saved id was erased");
             expectEquals (engine.getChosenDevice().outputUid, juce::String ("UID-HP"));
             expectEquals (devicechoice::load (*engine.getAppProps()).inputUid, juce::String ("UID-IN"));
+        }
+    }
+
+    // ── ENG-02 ─────────────────────────────────────────────────────────
+    void playRefusesAWrongRate()
+    {
+        beginTest ("ENG-02: PLAY, a remote PLAY and chase refuse while the device runs at another rate");
+        enginedevice::Folder session;
+        enginedevice::writeSession (session.dir);
+        {
+            AudioEngine engine;
+            testaudio::useSilentDevice (engine, 96000.0, 2);
+            engine.prepareForTests (96000.0, testaudio::kSilentBlock);
+            expect (engine.loadSession (session.dir) > 0);
+            engine.getPlayer().setPositionSamples (0);
+            expect (! engine.startPlayback(), "the 48 kHz session played to the desk at 96 kHz");
+            expect (! engine.getPlayer().isPlaying());
+            expect (engine.getPlaybackRateRefusal().contains ("96"), engine.getPlaybackRateRefusal());
+            juce::String error;
+            expect (! engine.performRemoteTransport (AudioEngine::RemoteTransportAction::StartPlay, error));
+            expect (error.contains ("96"), "a remote PLAY was refused without the reason: " + error);
+            expect (engine.getChaseParkReason().contains ("96"), "chase gave no reason: " + engine.getChaseParkReason());
+            engine.getDeviceManager().closeAudioDevice();
+            enginedevice::forgetChosenDevice (engine);
+        }
+        {
+            AudioEngine engine;
+            testaudio::useSilentDevice (engine, 48000.0, 2);
+            engine.prepareForTests (48000.0, testaudio::kSilentBlock);
+            expect (engine.loadSession (session.dir) > 0);
+            engine.getPlayer().setPositionSamples (0);
+            expect (engine.getPlaybackRateRefusal().isEmpty(), engine.getPlaybackRateRefusal());
+            expect (engine.startPlayback(), "a matching rate was refused");
+            engine.stopPlayback();
+            engine.getDeviceManager().closeAudioDevice();
+            enginedevice::forgetChosenDevice (engine);
         }
     }
 

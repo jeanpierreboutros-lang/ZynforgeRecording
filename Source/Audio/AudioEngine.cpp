@@ -67,6 +67,13 @@ namespace zynforge
             std::shared_ptr<std::atomic<juce::int64>> pad;
             bool padded { false }, healthy { true };
         };
+
+        juce::String rateText (double rate)
+        {
+            const double k = rate / 1000.0;
+            return (std::abs (k - std::round (k)) < 1.0e-6 ? juce::String (juce::roundToInt (k)) : juce::String (k, 1))
+                 + " kHz";
+        }
     }
 
     void AudioEngine::rememberRecentSession (const juce::File& dir)
@@ -670,7 +677,9 @@ namespace zynforge
                     return true;
                 }
                 if (startPlayback()) return true;
-                error = isTakeOnDisk() ? "capture is running" : "nothing to play from here";
+                error = isTakeOnDisk() ? juce::String ("capture is running")
+                      : getPlaybackRateRefusal().isNotEmpty() ? getPlaybackRateRefusal()
+                                                               : juce::String ("nothing to play from here");
                 return false;
             case RemoteTransportAction::StopPlay:
                 stopPlayback();
@@ -930,8 +939,21 @@ namespace zynforge
         return false;
     }
 
+    // The player has no converter: what it plays, it plays at the device's rate.
+    juce::String AudioEngine::getPlaybackRateRefusal() const
+    {
+        auto* device = deviceManager.getCurrentAudioDevice();
+        if (device == nullptr || ! player.isLoaded()) return {};
+        const double deviceRate = device->getCurrentSampleRate();
+        const double sessionRate = getSessionAudioRate();
+        if (deviceRate <= 0.0 || sessionRate <= 0.0 || std::abs (deviceRate - sessionRate) <= 1.0) return {};
+        return "the device runs at " + rateText (deviceRate) + " and the session is " + rateText (sessionRate)
+             + " -- playback would reach the desk at the wrong speed and pitch";
+    }
+
     juce::String AudioEngine::getChaseParkReason() const
     {
+        if (const auto rate = getPlaybackRateRefusal(); rate.isNotEmpty()) return "Chase is holding: " + rate;
         if (isPunchModeOn()) return "Chase is holding: PUNCH mode is on";
         const auto total  = player.getTotalLengthSamples();
         const auto target = getChaseTargetSamples();
