@@ -1332,6 +1332,7 @@ void MainComponent::onVscClicked()
     };
     if (confirmForTests) { confirmForTests (repatch); return; }
     const int silent = zynforge::vsc::stripsWithNoOutput (engine);
+    const auto shared = zynforge::vsc::sharedOutputs (engine, true);
     askClosesForTake (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::QuestionIcon)
@@ -1343,6 +1344,10 @@ void MainComponent::onVscClicked()
                                           "this device has no output for "
                                           + (silent == 1 ? "its input" : "their inputs") + ".\n\n"
                                         : juce::String())
+                          + (shared.empty() ? juce::String()
+                                            : zynforge::vsc::outputList (shared) + (shared.size() == 1 ? " gets" : " get")
+                                              + " more than one strip, because those strips share an input: "
+                                                "the desk hears them summed on that channel.\n\n")
                           + "The current output patch is kept. Press VSC ON to go back to it.")
             .withButton ("Repatch")
             .withButton ("Cancel"),
@@ -1918,10 +1923,15 @@ void MainComponent::showPreflightChecklist()
     if (zynforge::vsc::hasSavedPatch (engine))
     {
         const int silent = zynforge::vsc::stripsWithNoOutput (engine);
+        const auto shared = zynforge::vsc::sharedOutputs (engine, false);
         rows.push_back ({ Row::Status::warning, "Output patch",
                           "on Virtual Soundcheck" + (silent > 0 ? ", " + zynforge::counted (silent, "strip")
                                                                   + " with no output on this device"
-                                                                : juce::String()) });
+                                                                : juce::String())
+                              + (shared.empty() ? juce::String()
+                                                : ", " + zynforge::vsc::outputList (shared)
+                                                  + (shared.size() == 1 ? " carries" : " carry")
+                                                  + " more than one strip, summed at the desk") });
     }
 
     if (device != nullptr)
