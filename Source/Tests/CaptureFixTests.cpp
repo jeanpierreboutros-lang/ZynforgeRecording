@@ -1102,10 +1102,11 @@ namespace zynforge
                 Rig rig;
                 if (! bringUp (rig) || ! startTake (rig, rig.session)) return;
                 auto& main = *rig.main;
-                std::atomic<bool> releaseStop { false };
-                rig.daemon.getRecorder().beforeFinalizationForTests = [&]
+                // Shared, so a hook a reader thread runs late never reads a dead flag.
+                auto releaseStop = std::make_shared<std::atomic<bool>> (false);
+                rig.daemon.getRecorder().beforeFinalizationForTests = [releaseStop]
                 {
-                    while (! releaseStop.load()) juce::Thread::sleep (5);
+                    while (! releaseStop->load()) juce::Thread::sleep (5);
                 };
                 bool done = false;
                 const auto started = juce::Time::getMillisecondCounterHiRes();
@@ -1117,7 +1118,7 @@ namespace zynforge
                 main.onStopClicked();
                 expect (main.statusLabel.getText().contains ("pending"), main.statusLabel.getText());
 
-                releaseStop.store (true);
+                releaseStop->store (true);
                 expect (pumpUntil ([&] { return done; }, 30000), "STOP never finished");
                 expect (! main.engine.isRecording());
                 expect (main.engine.getPlayer().isLoaded(), "the take was not read back");
@@ -1129,14 +1130,15 @@ namespace zynforge
                 Rig rig;
                 if (! bringUp (rig)) return;
                 auto& main = *rig.main;
-                std::atomic<bool> releaseStart { false };
-                rig.daemon.beforeStartForTests = [&] { while (! releaseStart.load()) juce::Thread::sleep (5); };
+                // Shared, so a hook a reader thread runs late never reads a dead flag.
+                auto releaseStart = std::make_shared<std::atomic<bool>> (false);
+                rig.daemon.beforeStartForTests = [releaseStart] { while (! releaseStart->load()) juce::Thread::sleep (5); };
                 main.captureSupervisor.startReplyTimeoutMs = 50;
                 juce::BigInteger arms; arms.setBit (0);
                 main.requestDaemonTake (rig.session, 1, arms, 1, true);
                 expect (main.engine.isRecording(), "no answer must not read as a failed RECORD");
                 expect (main.daemonStartUnansweredMs != 0 && ! main.daemonTakeAdopted, "the unanswered take was called settled");
-                releaseStart.store (true);
+                releaseStart->store (true);
                 expect (pumpUntil ([&]
                 {
                     main.serviceCaptureDaemonLink();

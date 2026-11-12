@@ -1327,13 +1327,14 @@ namespace zynforge
                 main.engine.noteLastCapture (before, {});
                 main.engine.getMarkers().setContext (before, kRate);
 
-                std::atomic<bool> releaseStart { false };
-                rig.daemon.beforeStartForTests = [&] { while (! releaseStart.load()) juce::Thread::sleep (5); };
+                // Shared, so a hook a reader thread runs late never reads a dead flag.
+                auto releaseStart = std::make_shared<std::atomic<bool>> (false);
+                rig.daemon.beforeStartForTests = [releaseStart] { while (! releaseStart->load()) juce::Thread::sleep (5); };
                 main.captureSupervisor.startReplyTimeoutMs = 50;
                 main.requestDaemonTake (rig.session, 1, {}, 0, true);
                 expect (main.daemonStartUnansweredMs != 0);
                 expect (main.engine.isExternalRecording());
-                releaseStart.store (true);      // nothing is armed, so the daemon refuses
+                releaseStart->store (true);     // nothing is armed, so the daemon refuses
                 expect (pumpUntil ([&] { return main.captureSupervisor.lastStatusAtMs() != 0; }, 3000));
 
                 main.daemonStartUnansweredMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter() - 20000);
