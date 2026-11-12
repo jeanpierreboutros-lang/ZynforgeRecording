@@ -328,6 +328,9 @@ public:
         bufferSizeIsKept();   // C1
         deviceIdsAreRetried();   // C1
         playRefusesAWrongRate();   // C2
+        devicePanelMasterRevert();   // C3
+        devicePanelInputMeter();   // C3
+        masterMeterIsPostFader();   // C3
     }
 
 private:
@@ -472,6 +475,107 @@ private:
             engine.getDeviceManager().closeAudioDevice();
             enginedevice::forgetChosenDevice (engine);
         }
+    }
+
+    // ── MIX-01 ─────────────────────────────────────────────────────────
+    static juce::ComboBox* monitorCombo (juce::Component& root)
+    {
+        for (auto* child : root.getChildren())
+        {
+            if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
+                if (combo->indexOfItemId (100000) >= 0) return combo;
+            if (auto* found = monitorCombo (*child)) return found;
+        }
+        return nullptr;
+    }
+
+    void devicePanelMasterRevert()
+    {
+        beginTest ("MIX-01: closing DEVICE never undoes a master pair set elsewhere");
+        AudioEngine engine;
+        testaudio::useSilentDevice (engine, 48000.0, 2);
+        engine.setMasterOutputs (0, 1);
+        {
+            std::unique_ptr<juce::DialogWindow> window (AudioDeviceDialog::launch (engine));
+            expect (window != nullptr);
+            engine.setMasterOutputs (-1, -1);   // the MASTER strip takes the mix off its pair
+        }
+        expectEquals (engine.getMasterOutputL(), -1, "closing DEVICE put the mix back on its pair");
+        expectEquals (engine.getMasterOutputR(), -1);
+
+        beginTest ("MIX-01: closing DEVICE without Apply reverts the pair the panel itself changed");
+        engine.setMasterOutputs (0, 1);
+        {
+            std::unique_ptr<juce::DialogWindow> window (AudioDeviceDialog::launch (engine));
+            auto* combo = window != nullptr ? monitorCombo (*window) : nullptr;
+            expect (combo != nullptr, "no monitor pair picker");
+            if (combo != nullptr) combo->setSelectedId (100000, juce::sendNotificationSync);
+            expectEquals (engine.getMasterOutputL(), -1, "the picker did not move the mix");
+        }
+        expectEquals (engine.getMasterOutputL(), 0, "Cancel kept the panel's untried change");
+        expectEquals (engine.getMasterOutputR(), 1);
+        engine.getDeviceManager().closeAudioDevice();
+        enginedevice::forgetChosenDevice (engine);
+    }
+
+    // ── MIX-03 ─────────────────────────────────────────────────────────
+    void devicePanelInputMeter()
+    {
+        beginTest ("MIX-03: the DEVICE input meter shows the device's inputs, with no strip and not playback");
+        AudioEngine engine;
+        engine.clearAllStripOverrides();
+        engine.setStripCount (0);
+        engine.prepareForTests (enginedevice::kRate, enginedevice::kBlock);
+        engine.setDeviceInputMeterOn (true);
+        enginedevice::Feeder feed { engine, 2 };
+        feed.blocks (4, 0.5f);
+        expectWithinAbsoluteError (AudioDeviceDialog::inputMeterLevel (engine), 0.5f, 0.01f,
+                                   "the meter stayed dead on a live input");
+
+        engine.setStripCount (1);
+        feed.blocks (60, 0.0f);
+        engine.getRecorder().getTrack (0).peak.store (0.9f);   // what VSC playback writes
+        expectLessThan (AudioDeviceDialog::inputMeterLevel (engine), 0.01f,
+                        "the meter showed a strip's playback as input");
+        engine.setDeviceInputMeterOn (false);
+    }
+
+    // ── MIX-12 ─────────────────────────────────────────────────────────
+    void masterMeterIsPostFader()
+    {
+        beginTest ("MIX-12: the MASTER meter follows the master fader and MUTE");
+        AudioEngine engine;
+        engine.clearAllStripOverrides();
+        engine.setStripCount (1);
+        engine.prepareForTests (enginedevice::kRate, enginedevice::kBlock);
+        auto& t = engine.getRecorder().getTrack (0);
+        t.monitor.store (true); t.armed.store (false); t.gainDb.store (0.0f); t.pan.store (0.0f);
+        t.muted.store (false); t.soloed.store (false);
+        engine.setTrackInputRouting (0, 0);
+        engine.setTrackOutputRouting (0, -1);
+        engine.setMasterStereo (true);
+        engine.setMasterOutputs (0, 1);
+        engine.getMasterState().muted.store (false);
+        engine.getMasterState().gainDb.store (0.0f);
+        enginedevice::Feeder feed { engine, 2 };
+        auto& master = engine.getMasterState();
+
+        master.peak.store (0.0f);
+        feed.blocks (1, 0.5f);
+        const float unity = master.peak.load();
+        expect (unity > 0.2f, "no master level at unity");
+
+        master.gainDb.store (-20.0f);
+        master.peak.store (0.0f);
+        feed.blocks (1, 0.5f);
+        expectWithinAbsoluteError (master.peak.load(), unity * 0.1f, 0.01f, "the meter ignored the fader");
+
+        master.gainDb.store (0.0f);
+        master.muted.store (true);
+        master.peak.store (0.0f);
+        feed.blocks (1, 0.5f);
+        expectLessThan (master.peak.load(), 0.0001f, "the meter moved with MUTE on");
+        master.muted.store (false);
     }
 
 };

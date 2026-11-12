@@ -228,6 +228,16 @@ namespace zynforge
         // True while the audio callback keeps the master bus off its outputs
         // because a strip is patched to one (mix::busHeldOffOutputs).
         bool  isMasterHeldOff() const noexcept { return masterHeldOff.load (std::memory_order_relaxed); }
+
+        // The DEVICE panel's input meter: the loudest device input, read in
+        // the callback while the panel asks for it. Strips have nothing to do
+        // with it: a new session has none, and a strip's meter shows playback.
+        void  setDeviceInputMeterOn (bool on) noexcept
+        {
+            deviceInputMeterOn.store (on, std::memory_order_relaxed);
+            if (! on) deviceInputPeak.store (0.0f, std::memory_order_relaxed);
+        }
+        float getDeviceInputPeak() const noexcept { return deviceInputPeak.load (std::memory_order_relaxed); }
         bool  isStreamHeldOff() const noexcept { return streamHeldOff.load (std::memory_order_relaxed); }
         // The engineer's override: this rig's first outputs really are
         // monitors, so the mix may sit on top of strips patched there.
@@ -1067,6 +1077,9 @@ namespace zynforge
         LoudnessMeter     loudness;   // BS.1770 master loudness + true-peak
         std::atomic<juce::uint32> chaseStartLabel { 0 };   // hh mm ss ff, one byte each
         std::atomic<bool> masterHeldOff { false };
+        // The DEVICE panel's input meter (setDeviceInputMeterOn).
+        std::atomic<bool>  deviceInputMeterOn { false };
+        std::atomic<float> deviceInputPeak { 0.0f };
         std::atomic<bool> streamHeldOff { false };
         std::atomic<bool> mixMaySharePatchedOutputs { false };
         std::atomic<int>  masterOutL    { 0 };

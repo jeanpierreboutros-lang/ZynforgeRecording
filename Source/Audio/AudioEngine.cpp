@@ -2873,6 +2873,20 @@ namespace zynforge
         // dashboard polls audioLoadPct at 4 Hz to drive the LED.
         const auto cbStart = juce::Time::getHighResolutionTicks();
 
+        // The DEVICE panel's input meter: the loudest device input, strips or not.
+        if (deviceInputMeterOn.load (std::memory_order_relaxed))
+        {
+            float peak = 0.0f;
+            for (int ch = 0; ch < numInputs; ++ch)
+                if (inputs[ch] != nullptr)
+                {
+                    const auto range = juce::FloatVectorOperations::findMinAndMax (inputs[ch], numSamples);
+                    peak = juce::jmax (peak, -range.getStart(), range.getEnd());
+                }
+            deviceInputPeak.store (juce::jmax (peak, deviceInputPeak.load (std::memory_order_relaxed) * 0.92f),
+                                   std::memory_order_relaxed);
+        }
+
         // 64-bit output accumulator -- every per-strip / stream
         // sum lands here in double precision; the final cast to the
         // device's float buffers happens at the end of the callback.
@@ -3276,7 +3290,8 @@ const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxe
             }
         }
 
-        // Drive the L/R master meters from the accumulator BEFORE mGain.
+        // The L/R master meters read the bus after the master fader and MUTE,
+        // as its outputs carry it, like the loudness below.
         {
             double mPeakL = 0.0, mPeakR = 0.0;
             double mRmsL  = 0.0, mRmsR  = 0.0;
@@ -3290,10 +3305,10 @@ const double dB = (double) mix::stripDb (t.gainDb.load (std::memory_order_relaxe
                 mRmsR += accR[i] * accR[i];
             }
             const double inv = 1.0 / (double) juce::jmax (1, blk);
-            const float pkL  = (float) mPeakL;
-            const float pkR  = (float) mPeakR;
-            const float rmsL = (float) std::sqrt (mRmsL * inv);
-            const float rmsR = (float) std::sqrt (mRmsR * inv);
+            const float pkL  = (float) (mPeakL * mGain);
+            const float pkR  = (float) (mPeakR * mGain);
+            const float rmsL = (float) (std::sqrt (mRmsL * inv) * mGain);
+            const float rmsR = (float) (std::sqrt (mRmsR * inv) * mGain);
 
             const float prevPkL  = masterState .peak.load (std::memory_order_relaxed);
             const float prevPkR  = masterStateR.peak.load (std::memory_order_relaxed);

@@ -141,7 +141,7 @@ namespace zynforge
         };
         addAndMakeVisible (fader);
 
-        meter.setTooltip ("Master bus peak + RMS -- click to clear clip.");
+        meter.setTooltip ("Master bus peak + RMS after the master fader and MUTE -- click to clear clip.");
         if (engine.getMasterStereo())
             meter.setStereoPartner (&engine.getMasterStateR());
         addAndMakeVisible (meter);

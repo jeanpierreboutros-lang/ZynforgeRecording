@@ -47,8 +47,16 @@ namespace zynforge
         class InputMeter final : public juce::Component, private juce::Timer
         {
         public:
-            explicit InputMeter (AudioEngine& eng) : engine (eng) { startTimerHz (24); }
-            ~InputMeter() override { stopTimer(); }
+            explicit InputMeter (AudioEngine& eng) : engine (eng)
+            {
+                engine.setDeviceInputMeterOn (true);
+                startTimerHz (24);
+            }
+            ~InputMeter() override
+            {
+                stopTimer();
+                engine.setDeviceInputMeterOn (false);
+            }
 
             void paint (juce::Graphics& g) override
             {
@@ -56,15 +64,7 @@ namespace zynforge
                 g.setColour (brand::bgDeep);
                 g.fillRoundedRectangle (r, brand::radius::sm);
 
-                // Read level from the first active input channel (cheap).
-                float level = 0.0f;
-                auto& rec = engine.getRecorder();
-                for (int i = 0; i < rec.getNumTracks(); ++i)
-                {
-                    const auto p = rec.getTrack (i).peak.load (std::memory_order_relaxed);
-                    if (p > level) level = p;
-                }
-                const float lit = juce::jlimit (0.0f, 1.0f, level);
+                const float lit = juce::jlimit (0.0f, 1.0f, AudioDeviceDialog::inputMeterLevel (engine));
                 auto bar = r.withWidth (r.getWidth() * lit);
                 g.setColour (lit > 0.85f ? brand::meterRed : brand::meterGreen);   // FLAT: solid, coloured by level
                 g.fillRoundedRectangle (bar, brand::radius::sm);
@@ -81,13 +81,7 @@ namespace zynforge
                 // dialog's input-meter width). Without this the
                 // meter repaints 24 Hz even when the level is
                 // perfectly stable.
-                float level = 0.0f;
-                auto& rec = engine.getRecorder();
-                for (int i = 0; i < rec.getNumTracks(); ++i)
-                {
-                    const auto p = rec.getTrack (i).peak.load (std::memory_order_relaxed);
-                    if (p > level) level = p;
-                }
+                const float level = AudioDeviceDialog::inputMeterLevel (engine);
                 const float quantised = std::round (juce::jlimit (0.0f, 1.0f, level) * 100.0f) / 100.0f;
                 if (std::abs (quantised - lastLevel) >= 0.005f)
                 {
@@ -242,8 +236,12 @@ namespace zynforge
                 stopTimer();
                 engine.getDeviceManager().removeChangeListener (this);
 
-                // Cancel/ESC/close -> also revert the LIVE-applied monitor bus.
-                if (! applied)
+                // Cancel/ESC/close -> also revert the LIVE-applied monitor bus,
+                // but only the pair THIS panel set, still standing: the MASTER
+                // strip may have moved the mix since, and that stays. Never
+                // under a take, which keeps the monitor it rolls with.
+                if (! applied && panelChangedMaster && ! engine.isRecording()
+                    && engine.getMasterOutputL() == panelMasterL && engine.getMasterOutputR() == panelMasterR)
                     engine.setMasterOutputs (origMasterL, origMasterR);
 
                 // The revert below RESTARTS the device, which would stop a take
@@ -489,12 +487,14 @@ namespace zynforge
                 if (monitorOutLBox.getSelectedId() == kMonitorOffId)
                 {
                     engine.setMasterOutputs (-1, -1);
+                    notePanelMaster();
                     statusLabel.setText ("Monitor bus -> no output", juce::dontSendNotification);
                     return;
                 }
                 const int l = juce::jmax (0, monitorOutLBox.getSelectedId() - 1);
                 const int r = l + 1;   // stereo pair: right is always left + 1
                 engine.setMasterOutputs (l, r);
+                notePanelMaster();
                 statusLabel.setText (
                     "Monitor bus -> Out " + juce::String (l + 1)
                     + "-" + juce::String (r + 1),
@@ -597,6 +597,13 @@ namespace zynforge
                 notePanelSetup();
             }
 
+            void notePanelMaster()
+            {
+                panelChangedMaster = true;
+                panelMasterL = engine.getMasterOutputL();
+                panelMasterR = engine.getMasterOutputR();
+            }
+
             void notePanelSetup()
             {
                 panelChangedDevice = true;
@@ -648,6 +655,8 @@ namespace zynforge
             // the monitor output survived Cancel (and relaunch). Capture it at
             // open and restore on Cancel too.
             int origMasterL { 0 }, origMasterR { 1 };
+            bool panelChangedMaster { false };              // see ~DialogContent
+            int panelMasterL { 0 }, panelMasterR { 1 };     // the pair this panel last set
             bool applied    { false };
             bool panelChangedDevice { false };                       // see ~DialogContent
             juce::AudioDeviceManager::AudioDeviceSetup panelSetup;   // the setup this panel last set
@@ -661,11 +670,18 @@ namespace zynforge
     // "no audio device" placeholder (self-owned modal) -- and each DialogContent
     // snapshots the device state + registers a ChangeListener in its ctor.
     // Two live at once means Cancel on each double-restores the device (they
-    // fight over initialise(256,64,...)), so we allow only ONE. Auto-nulls when
+    // fight over initialise(...)), so we allow only ONE. Auto-nulls when
     // the dialog is destroyed (SafePointer), covering both close paths.
     static juce::Component::SafePointer<DialogContent> s_liveDeviceDialog;
 
     bool AudioDeviceDialog::isOpen() { return s_liveDeviceDialog.getComponent() != nullptr; }
+
+    // The device's inputs, read in the callback while the meter is up. Strip
+    // meters would be dead with no strip, and show playback during VSC.
+    float AudioDeviceDialog::inputMeterLevel (AudioEngine& engine)
+    {
+        return engine.getDeviceInputPeak();
+    }
 
     void AudioDeviceDialog::closeSelfOwned()
     {
@@ -702,8 +718,10 @@ namespace zynforge
         if (selfOwned)
         {
             // Self-deleting on close (dtor -> snapshot + monitor-bus restore).
-            // For callers with no way to track/reap the window.
-            opts.launchAsync();
+            // For callers with no way to track/reap the window. It is modal,
+            // and closing it is Cancel, which changes nothing under a take:
+            // a take that starts behind it closes it.
+            launchClosesForTake (opts);
             return nullptr;
         }
         return launchFloating (opts);   // non-modal so the DEVICE tab can toggle it
