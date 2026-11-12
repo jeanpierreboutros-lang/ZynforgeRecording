@@ -57,6 +57,7 @@ namespace zynforge
         double sampleRate = 48000.0;
         juce::int64 length = 0;
         bool complete = true;
+        std::vector<int> unopened;   // strips whose take is on disk and would not open
     };
 
     int SessionPlayer::loadSession (const juce::File& directory)
@@ -193,9 +194,22 @@ namespace zynforge
             for (const auto& f : partFiles)
                 if (! f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
                 { mainFile = f; break; }
-            if (! mainFile.existsAsFile()) continue;
+            // Parts with no main file (the silence a lead-in owes goes there) or
+            // a take that will not open: the strip is silent, and the load is
+            // not complete. It used to be skipped without a word.
+            if (! mainFile.existsAsFile())
+            {
+                prepared->complete = false;
+                prepared->unopened.push_back (idx);
+                continue;
+            }
             auto reader = ConcatReader::createUnchecked (formatManager, findTakeParts (mainFile));
-            if (reader == nullptr) { prepared->complete = false; continue; }
+            if (reader == nullptr)
+            {
+                prepared->complete = false;
+                prepared->unopened.push_back (idx);
+                continue;
+            }
             const double fileSR = reader->sampleRate;
             const bool stereo = reader->numChannels >= 2;
             if (stereo && idx >= 255) continue;
@@ -287,6 +301,7 @@ namespace zynforge
             const juce::ScopedLock sl (tracksLock);
             retired->tracks.swap (tracks);
             tracks.swap (prepared->tracks);
+            unopenedTracks.swap (prepared->unopened);
             readerCount.store ((int) tracks.size(), std::memory_order_release);
         }
         {
@@ -329,6 +344,7 @@ namespace zynforge
         {
             const juce::ScopedLock sl (tracksLock);
             tracks.clear();
+            unopenedTracks.clear();
         }
         readerCount.store (0, std::memory_order_release);
         loaded     .store (false, std::memory_order_release);

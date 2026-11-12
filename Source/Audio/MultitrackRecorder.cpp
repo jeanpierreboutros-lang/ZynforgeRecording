@@ -625,7 +625,8 @@ namespace zynforge
     // the PUNCH-mode position window (MainComponent::servicePunch). Either way
     // this recorder just stashes + splices; it doesn't know which path armed it.
     bool MultitrackRecorder::recoverInterruptedPunches (const juce::File& audioDir,
-                                                        int* recovered, bool* leadInsOwed)
+                                                        int* recovered, bool* leadInsOwed,
+                                                        const std::function<void()>& onProgress)
     {
         if (recovered != nullptr) *recovered = 0;
         if (leadInsOwed != nullptr) *leadInsOwed = false;
@@ -637,8 +638,8 @@ namespace zynforge
         flacrepair::repairTakeFolder (audioDir);
         wavrepair::repairTakeFolder (audioDir);
         // A take interrupted before STOP may still owe a copy its silent
-        // lead-in (see PendingLeadIn); without it the new audio sits early.
-        if (! recoverPendingLeadIns (audioDir) && leadInsOwed != nullptr) *leadInsOwed = true;
+        // lead-in (see PendingLeadIn); without it the strip does not open.
+        if (! recoverPendingLeadIns (audioDir, onProgress) && leadInsOwed != nullptr) *leadInsOwed = true;
 
         // A punch's install leaves Track_NN.punchinstall from its first change
         // to its last (CopySplice::install). With the main sidecar still there
@@ -1383,7 +1384,7 @@ namespace zynforge
             lead.container = fmt.container; lead.bitDepth = fmt.bitDepth; lead.channels = chans;
             lead.sampleRate = plan.sampleRate; lead.priorLength = prior;
             lead.timelineStart = plan.timelineStart;
-            lead.firstPart = t.partNumber;  lead.copyIndex = copy.copyIndex;
+            lead.firstPart = t.partNumber;  lead.copyIndex = copy.copyIndex;  lead.trackIndex = i;
             // Enough slots to stay under the container's ceiling. A punch
             // starts capturing a little after it was armed (punchCaptureOrigin),
             // so allow a minute more than the armed position.
@@ -1563,7 +1564,7 @@ namespace zynforge
 
             int recovered = 0;
             bool leadInsOwed = false;
-            if (! recoverInterruptedPunches (audioDir, &recovered, &leadInsOwed))
+            if (! recoverInterruptedPunches (audioDir, &recovered, &leadInsOwed, [&copy] { copy.noteProgress(); }))
                 return left ("has an interrupted punch that could not be put back");
             if (leadInsOwed)
                 return left ("still owes a silent lead-in it could not write");
@@ -1965,7 +1966,8 @@ namespace zynforge
     }
 
     bool MultitrackRecorder::writeSilenceFile (const juce::File& file, int container, int bits,
-                                               int chans, double sampleRate, juce::int64 frames)
+                                               int chans, double sampleRate, juce::int64 frames,
+                                               const std::function<void()>& onProgress)
     {
         file.deleteFile();
         const auto closeFailed = CheckedFileStream::makeFailedFlag();
@@ -1981,17 +1983,32 @@ namespace zynforge
         else
             w.reset (juce::WavAudioFormat().createWriterFor (os.get(), sampleRate, channels, bits, {}, 0));
         if (w == nullptr) { os.reset(); file.deleteFile(); return false; }
-        os.release();
+        auto* const stream = os.release();
 
+        // A lead-in is the take so far in silence: gigabytes on a long show.
+        // Each block is progress, and so is each flush. The flush puts what is
+        // written on the disk every 32 MiB, so the close never has gigabytes
+        // left to sync in one call that ticks nothing (STOP leaves a copy
+        // behind after 30 s without progress).
         constexpr int kBlock = 16384;
+        constexpr juce::int64 kFlushBytes = (juce::int64) 32 << 20;
+        const juce::int64 blockBytes = (juce::int64) kBlock * (juce::int64) channels * juce::jmax (1, bits / 8);
         const std::vector<float> zeros ((std::size_t) kBlock, 0.0f);
         const float* planes[2] { zeros.data(), zeros.data() };
         bool ok = true;
+        juce::int64 unflushed = 0;
         for (auto remaining = frames; ok && remaining > 0;)
         {
+            if (const int delay = silenceBlockDelayMsForTests.load (std::memory_order_relaxed)) juce::Thread::sleep (delay);
             const int count = (int) juce::jmin ((juce::int64) kBlock, remaining);
             ok = w->writeFromFloatArrays (planes, (int) channels, count);
             remaining -= count;
+            if ((unflushed += blockBytes) >= kFlushBytes && remaining > 0)
+            {
+                stream->flush();
+                unflushed = 0;
+            }
+            if (onProgress) onProgress();
         }
         if (ok) ok = flushFloatAiffBeforeClose (w.get());
         w.reset();
@@ -2000,7 +2017,8 @@ namespace zynforge
         return ok;
     }
 
-    bool MultitrackRecorder::writeLeadIn (const PendingLeadIn& lead, juce::int64 timelineStart)
+    bool MultitrackRecorder::writeLeadIn (const PendingLeadIn& lead, juce::int64 timelineStart,
+                                          const std::function<void()>& onProgress)
     {
         // No audio reached this copy this pass: nothing to align.
         if (! partFileFor (lead.audioDir, lead.trackName, lead.ext,
@@ -2013,7 +2031,8 @@ namespace zynforge
         {
             const auto share = silence / parts + (p < silence % parts ? 1 : 0);
             if (! writeSilenceFile (partFileFor (lead.audioDir, lead.trackName, lead.ext, lead.firstPart + p),
-                                    lead.container, lead.bitDepth, lead.channels, lead.sampleRate, share))
+                                    lead.container, lead.bitDepth, lead.channels, lead.sampleRate, share,
+                                    onProgress))
                 return false;
         }
         return true;
@@ -2025,7 +2044,43 @@ namespace zynforge
             juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "*.json").isEmpty();
     }
 
-    bool MultitrackRecorder::recoverPendingLeadIns (const juce::File& audioDir)
+    // A strip whose lead-in is owed does not play at all: the reader refuses a
+    // take with a part missing, and a strip with only its new audio has no main
+    // file. Nothing plays early, so nothing may say it does.
+    juce::String MultitrackRecorder::owedLeadInLine (const juce::StringArray& strips, const juce::String& copyLabel)
+    {
+        if (strips.isEmpty()) return {};
+        const bool one = strips.size() == 1;
+        const auto list = one ? strips[0]
+            : strips.joinIntoString (", ", 0, strips.size() - 1) + " and " + strips[strips.size() - 1];
+        if (copyLabel.isNotEmpty())
+            return copyLabel + " could not write the silent lead-in" + (one ? " for strip " : "s for strips ") + list
+                 + ", so " + (one ? "that strip is" : "they are") + " silent on it until its drive has room";
+        return (one ? "Strip " + list + "'s silent lead-in" : "Strips " + list + ": their silent lead-ins")
+             + " could not be written, so " + (one ? "strip " + list + " is" : juce::String ("they are"))
+             + " silent until the drive has room. Free some space and reopen the session";
+    }
+
+    juce::String MultitrackRecorder::describeOwedLeadIns (const juce::File& audioDir)
+    {
+        juce::StringArray strips;
+        auto markers = audioDir.getChildFile ("Pending Lead-ins").findChildFiles (
+            juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "Track_*");
+        markers.sort();
+        for (const auto& marker : markers)
+        {
+            const auto number = marker.getFileNameWithoutExtension().fromFirstOccurrenceOf ("Track_", false, false);
+            if (number.isNotEmpty() && number.containsOnly ("0123456789"))
+                strips.addIfNotAlreadyThere (juce::String (number.getIntValue()));
+        }
+        if (strips.isEmpty())
+            return "A strip's silent lead-in could not be written; that strip is silent until the drive has room. "
+                   "Free some space and reopen the session";
+        return owedLeadInLine (strips, {});
+    }
+
+    bool MultitrackRecorder::recoverPendingLeadIns (const juce::File& audioDir,
+                                                    const std::function<void()>& onProgress)
     {
         const auto folder = audioDir.getChildFile ("Pending Lead-ins");
         if (! folder.isDirectory()) return true;
@@ -2057,7 +2112,7 @@ namespace zynforge
             if (! lead.trackName.startsWith ("Track_") || lead.ext.isEmpty() || lead.parts < 1
                 || lead.firstPart < 1 || lead.sampleRate <= 0.0)
             { setAside(); continue; }
-            if (writeLeadIn (lead, lead.timelineStart)) marker.deleteFile();
+            if (writeLeadIn (lead, lead.timelineStart, onProgress)) marker.deleteFile();
             else ok = false;
         }
         if (folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0) folder.deleteFile();
@@ -2574,17 +2629,51 @@ namespace zynforge
     // Fill the lead-in slots reserved at start now that the pass's real
     // timeline start is known (a rolling punch begins where capture began).
     // Runs before the manifest, so the report lists the silence parts too.
-    void MultitrackRecorder::completeLeadIns (const TakeStop& stop)
+    void MultitrackRecorder::completeLeadIns (TakeStop& stop)
     {
+        juce::StringArray failed;
         for (const auto& lead : pendingLeadIns)
-            if (lead.copyIndex == 0 && ! finishLeadIn (lead, stop.timelineStart))
-                primaryFailed.store (true, std::memory_order_relaxed);
+        {
+            if (lead.copyIndex != 0) continue;
+            const bool wroteAudio = lead.trackIndex < stop.writers.size()
+                                 && stop.writers[lead.trackIndex].totalSamplesPrimary > 0;
+            if (wroteAudio ? finishLeadIn (lead, stop.timelineStart) : dropEmptyLeadIn (lead, stop.stampedParts))
+                continue;
+            primaryFailed.store (true, std::memory_order_relaxed);
+            failed.add (juce::String ((int) lead.trackIndex + 1));
+        }
+        // The audio is safe in its own part, but with the silence before it
+        // missing the strip will not open at all: say which, and that it is
+        // silent until the drive takes the silence (the next open writes it).
+        if (! failed.isEmpty())
+            noteCopyProblem (owedLeadInLine (failed, {}));
     }
 
     // On failure the marker stays, so the next session open retries the write.
-    bool MultitrackRecorder::finishLeadIn (const PendingLeadIn& lead, juce::int64 timelineStart)
+    bool MultitrackRecorder::finishLeadIn (const PendingLeadIn& lead, juce::int64 timelineStart,
+                                           const std::function<void()>& onProgress)
     {
-        if (! writeLeadIn (lead, timelineStart)) return false;
+        if (! writeLeadIn (lead, timelineStart, onProgress)) return false;
+        const auto marker = leadInMarkerFor (lead);
+        marker.deleteFile();
+        const auto folder = marker.getParentDirectory();
+        if (folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0)
+            folder.deleteFile();
+        return true;
+    }
+
+    // A pass stopped before any audio reached this track (a punch stopped in
+    // its pre-roll, a continue stopped before its first block) opened the part
+    // and wrote nothing to it. There is nothing to line up: writing the silence
+    // would give the strip a silent take the length of the show, on every
+    // copy, and hold RECORD while it wrote. The empty part goes instead, and
+    // the track keeps the take it had.
+    bool MultitrackRecorder::dropEmptyLeadIn (const PendingLeadIn& lead,
+                                              std::vector<WriterChannel::StampedPart>& stamps)
+    {
+        const auto part = partFileFor (lead.audioDir, lead.trackName, lead.ext, lead.firstPart + lead.parts);
+        if (part.exists() && ! part.deleteFile()) return false;
+        std::erase_if (stamps, [&part] (const WriterChannel::StampedPart& stamped) { return stamped.file == part; });
         const auto marker = leadInMarkerFor (lead);
         marker.deleteFile();
         const auto folder = marker.getParentDirectory();
@@ -2624,18 +2713,24 @@ namespace zynforge
 
     void MultitrackRecorder::waitForCopies (double totalLimitMs)
     {
-        const auto startedMs = juce::Time::getMillisecondCounterHiRes();
+        // A copy still opening at STOP (completing a lead-in a crash left it
+        // owing, following strip moves) has not begun to drain: its total limit
+        // runs from when it opened. Only no progress at all leaves it behind
+        // meanwhile, and every step of its open ticks.
+        std::vector<double> drainingFrom (copies.size(), juce::Time::getMillisecondCounterHiRes());
         for (;;)
         {
             bool waiting = false;
             const auto now = juce::Time::getMillisecondCounterHiRes();
-            for (auto& copy : copies)
+            for (std::size_t c = 0; c < copies.size(); ++c)
             {
+                auto& copy = copies[c];
                 if (copy->finished.load (std::memory_order_acquire)
                     || copy->abandoned.load (std::memory_order_acquire)) continue;
+                if (copy->opening.load (std::memory_order_acquire)) drainingFrom[c] = now;
                 if (copy->copyIndex != 0
                     && (now - copy->lastProgressMs.load (std::memory_order_relaxed) >= copyStallLimitMs
-                        || (totalLimitMs > 0.0 && now - startedMs >= totalLimitMs)))
+                        || (totalLimitMs > 0.0 && now - drainingFrom[c] >= totalLimitMs)))
                 {
                     copy->abandon();
                     leftBehind.push_back (copy);
@@ -3017,6 +3112,7 @@ namespace zynforge
 
         std::set<size_t>     punchFailedTracks;
         bool                 punchHadGap {}, leadInFailed {};
+        juce::StringArray    leadInFailedStrips;
         juce::StringArray    stampFailures;
         std::vector<juce::StringArray> partFiles;
         std::vector<juce::int64>       samples;
@@ -3051,7 +3147,13 @@ namespace zynforge
 
             for (const auto& lead : leadIns)
             {
-                if (! finishLeadIn (lead, timelineStart)) leadInFailed = true;
+                const bool wroteAudio = lead.trackIndex < copy.tracks.size()
+                                     && copy.tracks[lead.trackIndex].totalSamples > 0;
+                if (! (wroteAudio ? finishLeadIn (lead, timelineStart, tick) : dropEmptyLeadIn (lead, stampedParts)))
+                {
+                    leadInFailed = true;
+                    leadInFailedStrips.add (juce::String ((int) lead.trackIndex + 1));
+                }
                 tick();
             }
 
@@ -3170,8 +3272,8 @@ namespace zynforge
             {
                 (isBackup ? backupFailed : mirrorFailed).store (true, std::memory_order_relaxed);
                 if (job->leadInFailed)
-                    noteCopyProblem ((isBackup ? juce::String ("Backup") : copy->label)
-                                     + " could not write a silent lead-in; a track on it sits early");
+                    noteCopyProblem (owedLeadInLine (job->leadInFailedStrips,
+                                                     isBackup ? juce::String ("Backup") : copy->label));
             }
             if (job->punchHadGap)
                 noteCopyProblem ((isBackup ? juce::String ("Backup") : copy->label)

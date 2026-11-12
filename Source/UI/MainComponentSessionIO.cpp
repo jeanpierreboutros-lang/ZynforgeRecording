@@ -240,7 +240,7 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         toast.show ("Recovered " + zynforge::counted (interruptedPunches, "interrupted punch file") + "; partial audio is in Session File Backups",
                     Toast::Kind::Warning);
     if (leadInsOwed)
-        toast.show ("A track's silent lead-in could not be written; it plays early until the drive has room",
+        toast.show (zynforge::MultitrackRecorder::describeOwedLeadIns (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir),
                     Toast::Kind::Warning);
     // The autosave interval counts from here, not from the last session: a
     // save landing seconds after the open would write behind the damaged-files

@@ -1432,6 +1432,13 @@ namespace zynforge
             return out;
         }
 
+        static juce::int64 lengthOf (const juce::File& file)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+            return reader != nullptr ? reader->lengthInSamples : -1;
+        }
+
         // Every frame is the frame played at that position.
         void expectIntact (const juce::File& file, juce::int64 frames, const juce::String& what,
                            int channel = 0, int fileChannel = 0)
@@ -1460,8 +1467,119 @@ namespace zynforge
             boundedFinishing();
             primaryHolesAreCounted();
             copiesOpenBehindTheTake();
+            slowLeadIns();
+            emptyPassOwesNoLeadIn();
             openingCopyIsNotExpectedToWrite();
             punchPutBackOnACopy();
+        }
+
+        // A lead-in is silence the length of the take so far: gigabytes on a
+        // long show, minutes on a slow drive. Every block of it is progress.
+        void slowLeadIns()
+        {
+            beginTest ("A copy writing a long silent lead-in after STOP is making progress and is not left behind");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks (320, { 0 });                 // five 16384-frame blocks of lead-in
+                rec.stopRecording();
+                const auto firstSet = feeder.frame;
+
+                // The mirror joins for the second set and owes the first as silence.
+                expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                rec.copyStallLimitMs = 250.0;
+                MultitrackRecorder::silenceBlockDelayMsForTests.store (80);
+                const juce::ScopeGuard fast { [] { MultitrackRecorder::silenceBlockDelayMsForTests.store (0); } };
+                rec.armContinue (firstSet);
+                expect (rec.startRecording (dirs.session), rec.getStartError());
+                feeder.blocks (20, { 0, 2 });
+                rec.stopRecording();
+
+                const auto problems = rec.getCopyProblems().joinIntoString ("|");
+                expect (! problems.contains ("left behind"), problems);
+                expect (! rec.anyMirrorFailed(), "a healthy mirror was reported failed");
+                expect (! rec.isStillLeftBehind (dirs.mirror), "the next take would leave the mirror out");
+                const auto mirrorAudio = dirs.mirror.getChildFile ("take").getChildFile ("Audio Files");
+                expectEquals (lengthOf (mirrorAudio.getChildFile ("Track_01.wav")), firstSet, "the lead-in is short");
+                expectEquals (lengthOf (mirrorAudio.getChildFile ("Track_01_part02.wav")), (juce::int64) 20 * kBlock);
+                expect (! mirrorAudio.getChildFile ("Pending Lead-ins").exists(), "the lead-in is still owed");
+            }
+
+            beginTest ("A copy finishing an owed lead-in while it joins a take is making progress, not hung");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks (20, { 0, 2 });
+                rec.stopRecording();
+
+                // A crash left the mirror owing a lead-in of 81920 frames.
+                const auto mirrorAudio = dirs.mirror.getChildFile ("take").getChildFile ("Audio Files");
+                MultitrackRecorder::PendingLeadIn lead;
+                lead.audioDir = mirrorAudio; lead.trackName = "Track_09"; lead.ext = ".wav";
+                lead.firstPart = 1; lead.parts = 1; lead.container = 0; lead.bitDepth = 24; lead.channels = 1;
+                lead.sampleRate = kRate; lead.priorLength = 0; lead.timelineStart = 5 * 16384;
+                expect (MultitrackRecorder::writeLeadInMarker (lead));
+                expect (mirrorAudio.getChildFile ("Track_09_part02.wav").replaceWithText ("audio"));
+
+                rec.copyStallLimitMs = 250.0;
+                MultitrackRecorder::silenceBlockDelayMsForTests.store (80);
+                const juce::ScopeGuard fast { [] { MultitrackRecorder::silenceBlockDelayMsForTests.store (0); } };
+                rec.armContinue (feeder.frame);
+                expect (rec.startRecording (dirs.session), rec.getStartError());
+                feeder.blocks (4, { 0 });
+                rec.stopRecording();                       // while the mirror still writes that silence
+
+                const auto problems = rec.getCopyProblems().joinIntoString ("|");
+                expect (! problems.contains ("left behind"), problems);
+                expect (! problems.contains ("not in this take"), problems);
+                expect (! rec.isStillLeftBehind (dirs.mirror));
+                expectEquals (lengthOf (mirrorAudio.getChildFile ("Track_09.wav")), lead.timelineStart);
+                expectEquals (lengthOf (mirrorAudio.getChildFile ("Track_01_part02.wav")), (juce::int64) 4 * kBlock,
+                              "the mirror did not get the take");
+            }
+        }
+
+        // A pass that captured nothing has nothing to line up.
+        void emptyPassOwesNoLeadIn()
+        {
+            beginTest ("A continue stopped before any audio writes no lead-in for a newly armed track, on any copy");
+            Dirs dirs;
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 2);
+            rec.getTrack (0).armed.store (true);
+            rec.setBackupDirectory (dirs.backup);
+            expect (rec.startRecording (dirs.session));
+            Feeder feeder { rec, 2 };
+            feeder.blocks (40, { 0, 1 });
+            rec.stopRecording();
+
+            rec.getTrack (1).armed.store (true);            // the encore's guest mic
+            rec.armContinue (feeder.frame);
+            expect (rec.startRecording (dirs.session), rec.getStartError());
+            rec.stopRecording();                            // before a single block
+
+            for (const auto& audio : { dirs.session.getChildFile ("Audio Files"),
+                                       dirs.backup.getChildFile ("take").getChildFile ("Audio Files") })
+            {
+                const auto written = audio.findChildFiles (juce::File::findFiles, false, "Track_02*");
+                expect (written.isEmpty(), audio.getFullPathName() + " holds " + juce::String (written.size())
+                                               + " Track_02 file(s) from a pass that captured nothing");
+                expect (! audio.getChildFile ("Pending Lead-ins").exists(), "a lead-in is still owed");
+                expectEquals (lengthOf (audio.getChildFile ("Track_01.wav")), (juce::int64) 40 * kBlock,
+                              "the first set changed");
+            }
+            expect (! rec.hasPrimaryFailed() && ! rec.hasBackupFailed());
+            const auto report = juce::JSON::parse (dirs.session.getChildFile ("session.report.json"));
+            expect (report["stampFailures"].size() == 0, juce::JSON::toString (report["stampFailures"]));
         }
 
         // The expected write rate is what is writing: a copy still opening
