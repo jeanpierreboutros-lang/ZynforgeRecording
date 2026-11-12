@@ -29,6 +29,7 @@ namespace zynforge
         double getFreeGB() const noexcept           { return freeGB; }
         double getRemainingSeconds() const noexcept { return remainingSeconds; }
         DiskReading getDiskReading() const noexcept { return diskReading; }
+        juce::int64 getMissedSamples() const noexcept { return missed; }
 
         // True when any strip is record-armed but the transport is
         // still idle. Lights the lamp amber and reads ARMED, so the engineer

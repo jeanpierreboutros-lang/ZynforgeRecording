@@ -160,7 +160,7 @@ namespace zynforge
         g.setFont (loudnessFont());
 
         // A dropped sample outranks everything else on this row.
-        if (missed > 0)
+        if (showsDrop())
         {
             g.setColour (brand::accentRecord);
             g.drawText ("DROP " + juce::String (missed), top, juce::Justification::centredRight, false);

@@ -13,6 +13,7 @@
 #include "NewSessionDialog.h"
 #include "RecordPosition.h"
 #include "SessionRecoveryDialog.h"
+#include "ShortcutSheet.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
@@ -47,49 +48,8 @@ namespace
         }
 
     private:
-        struct Row { juce::String shortcut; juce::String description; };
-        struct Section { juce::String title; std::vector<Row> rows; };
-
-        static std::vector<Section> sections()
-        {
-            return {
-                { "Transport", {
-                    { "Space",        "Play / pause (stops recording if armed)" },
-                    { "M",            "Drop marker at playhead" },
-                }},
-                { "Cues", {
-                    { "1 - 9",        "Jump to cue 1 - 9" },
-                }},
-                { "Markers", {
-                    { "Cmd + 1 - 9",  "Jump to marker 1 - 9 (recalls layout if stored)" },
-                }},
-                { "Edit", {
-                    { "A",            "Solo selected strips" },
-                    { "S",            "Smart tool (with the EDIT tools showing)" },
-                    { ",",            "Set range start at playhead" },
-                    { ".",            "Set range end at playhead" },
-                    { "Ctrl + 4",     "Toggle snap mode" },
-                    { "Cmd + Z",      "Undo last clip edit" },
-                    { "Cmd + R",      "Redo" },
-                    { "Cmd + X",      "Cut selected strips" },
-                    { "Cmd + C",      "Copy selected strips" },
-                    { "Cmd + V",      "Paste strips" },
-                }},
-                { "Mixer", {
-                    { "Shift + click", "Toggle multi-selection (additive)" },
-                    { "Cmd + A",      "Select every strip" },
-                    { "Esc",          "Clear strip selection" },
-                    { "Right-click strip",
-                                      "Rename / Colour / Stereo / Stream send / Output-mute" },
-                }},
-                { "Edit view", {
-                    { "Right-click channel name", "Lane shows waveform or markers / Row size / Delete Channel" },
-                    { "Right-click empty lane",   "Lane shows waveform or markers / Row size" },
-                    { "Right-click clip", "Mute / Lock / Duplicate / Delete / Gain / Fade in & out" },
-                    { "Drag swatch",      "Reorder strip (paused only)" },
-                }},
-            };
-        }
+        // The rows live in ShortcutSheet.h, held to the key handler by a test.
+        static const std::vector<shortcuts::Section>& sections() { return shortcuts::sheet(); }
 
         static constexpr int kHeaderH  = 26;
         static constexpr int kRowH     = 24;
@@ -143,7 +103,7 @@ namespace
                         // Left column -- shortcut, mono, light grey.
                         g.setColour (brand::textPrimary);
                         g.setFont (brand::type::mono (brand::type::h_caption, true));
-                        g.drawText (r.shortcut,
+                        g.drawText (r.keys,
                                     row.withTrimmedLeft (kHPad).withWidth (kColSplit - kHPad),
                                     juce::Justification::centredLeft, false);
 

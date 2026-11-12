@@ -209,7 +209,8 @@ namespace zynforge
                 {
                     juce::Graphics::ScopedSaveState clip (g);
                     g.reduceClipRegion (0, bodyY, L.rowHeaderW, bodyH);
-                    for (int row = 0; row < numHw; ++row)
+                    const auto rowInfo = PatchPage::rowsFor (engine, isInput);
+                    for (int row = 0; row < (int) rowInfo.size(); ++row)
                     {
                         const int y = bodyY + row * L.rowH - scrollY;
                         if (y + L.rowH <= bodyY || y >= bodyY + bodyH) continue;
@@ -218,10 +219,10 @@ namespace zynforge
                             g.setColour (brand::bgStrip.withAlpha (zynforge::brand::alpha::scrim));
                             g.fillRect (juce::Rectangle<int> (0, y, L.rowHeaderW, L.rowH));
                         }
-                        const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
-                        g.setColour (isActiveRow ? brand::textPrimary : brand::textSecondary);
+                        const auto& info = rowInfo[(size_t) row];
+                        g.setColour (info.held ? brand::textPrimary : brand::textSecondary);
                         g.setFont (brand::type::sectionTitle());
-                        g.drawText ((isInput ? "IN " : "OUT ") + juce::String (row + 1),
+                        g.drawText (info.label,
                                     juce::Rectangle<int> (14, y, L.rowHeaderW - 18, L.rowH),
                                     juce::Justification::centredLeft, false);
                     }
@@ -432,14 +433,6 @@ namespace zynforge
 
             void mouseUp (const juce::MouseEvent&) override { dragActive = false; }
 
-            bool isRowRoutedToAnyStrip (int row, const std::vector<LogicalStrip>& logical) const
-            {
-                // A stereo strip lights both of its rows, as it does its dots.
-                for (auto& ls : logical)
-                    if (holdsRow (ls, row)) return true;
-                return false;
-            }
-
         private:
             int numRows() const
             {
@@ -563,6 +556,33 @@ namespace zynforge
             else if (col >= 0 && col < numCols)   row -= stripIsStereo[(size_t) col] ? 2 : 1;
         }
         return targets;
+    }
+
+    std::vector<PatchPage::RowInfo> PatchPage::rowsFor (AudioEngine& engine, bool inputSide)
+    {
+        auto& rec = engine.getRecorder();
+        const int n = rec.getNumTracks();
+        const int numHw = inputSide ? engine.getCurrentDeviceInputCount() : engine.getCurrentDeviceOutputCount();
+        const auto routing = [&] (int track)
+        {
+            return inputSide ? engine.getEffectiveInputRouting (track)
+                             : rec.getTrack (track).outputRouting.load (std::memory_order_relaxed);
+        };
+        std::vector<RowInfo> rows;
+        for (int row = 0; row < numHw; ++row)
+        {
+            RowInfo info;
+            info.channel = row;
+            info.label = (inputSide ? "IN " : "OUT ") + juce::String (row + 1);
+            for (int i = 0; i < n; )
+            {
+                const bool stereo = rec.getTrack (i).isStereo.load() && i + 1 < n;
+                if (routing (i) == row || (stereo && routing (i + 1) == row)) info.held = true;
+                i += stereo ? 2 : 1;
+            }
+            rows.push_back (info);
+        }
+        return rows;
     }
 
     juce::DialogWindow* PatchPage::launch (AudioEngine& engine)

@@ -3,6 +3,7 @@
 #include "../Audio/DisplayText.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 #include <deque>
 
 #include "../Theme/BrandColors.h"
@@ -53,6 +54,18 @@ namespace zynforge
         }
 
         const juce::String& getCurrentMessage() const noexcept { return current.message; }
+        // How many messages wait behind the one showing.
+        int waitingCount() const noexcept { return (int) queue.size(); }
+        bool isWaiting (const juce::String& message) const
+        {
+            return std::any_of (queue.begin(), queue.end(), [&] (const Entry& e) { return e.message == message; });
+        }
+        // Whether the message showing is drawn whole, nothing cut off.
+        bool showsWholeMessage() const
+        {
+            return juce::GlyphArrangement::getStringWidth (brand::type::uiLabel(), typeset (current.message))
+                   <= (float) textArea().getWidth();
+        }
 
         void paint (juce::Graphics& g) override
         {
@@ -82,11 +95,16 @@ namespace zynforge
             g.setColour (brand::textPrimary);
             g.setFont (brand::type::uiLabel());
             g.drawText (typeset (current.message),
-                        r.withTrimmedLeft (14).toNearestInt(),
+                        textArea(),
                         juce::Justification::centredLeft, true);
         }
 
     private:
+        juce::Rectangle<int> textArea() const
+        {
+            return getLocalBounds().toFloat().reduced (4.0f).withTrimmedLeft (14).toNearestInt();
+        }
+
         struct Entry { juce::String message; Kind kind; };
 
         std::deque<Entry> queue;

@@ -39,7 +39,7 @@
 #include <vector>
 
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
-namespace zynforge { class MixerFixTests; }
+namespace zynforge { class MixerFixTests; class UiFixTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -661,6 +661,7 @@ private:
     juce::String remoteDeviceRefusal;   // or because nobody there can answer for the device
 
     friend class zynforge::MixerFixTests;
+    friend class zynforge::UiFixTests;
     friend class zynforge::CaptureDaemonLinkTests;
     friend class zynforge::CapturePathTests;
     friend class zynforge::MainTransportRegressionTests;
