@@ -187,6 +187,7 @@ namespace zynforge
             copyWaitsForTheTake (main);
             quitKeepsTheCacheBeingWritten();
             recordWhileLoadingKeepsTheLanes();
+            groupedRangeShadesWhatItCuts();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1623,6 +1624,47 @@ namespace zynforge
                     s.engine.getRecorder().getTrack (1).armed.store (false);
                 }
                 MultitrackRecorder::deleteSessionAfterCancellingReports (s.dir);
+            }
+        }
+
+        void groupedRangeShadesWhatItCuts()
+        {
+            beginTest ("A range on a grouped strip shades every strip it will cut");
+            {
+                Session s (3, { kRate, kRate, kRate });
+                s.engine.setTrackEditGroup (0, 2);
+                s.engine.setTrackEditGroup (2, 2);
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                std::set<int> selected { 0 };
+                page.isTrackSelected = [&selected] (int t) { return selected.count (t) > 0; };
+                page.isStripSelectionEmpty = [&selected] { return selected.empty(); };
+                const auto rows = rowsOf (page);
+                expectEquals ((int) rows.size(), 3, "setup: three rows");
+                if (rows.size() == 3)
+                {
+                    const auto render = [] (Row& row)
+                    {
+                        juce::Image img (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                        juce::Graphics g (img);
+                        row.paint (g);
+                        return img;
+                    };
+                    const auto shaded = [&] (Row& row, const juce::Image& plain)
+                    {
+                        const auto now = render (row);
+                        for (int x = row.getHeaderWidth() + 8; x < row.getWidth(); x += 2)
+                            if (now.getPixelAt (x, 2) != plain.getPixelAt (x, 2)) return true;
+                        return false;
+                    };
+                    const auto plain0 = render (*rows[0]), plain1 = render (*rows[1]), plain2 = render (*rows[2]);
+                    s.engine.getPlayer().setLoopRegion (12000, 24000);
+                    expect (shaded (*rows[0], plain0), "setup: the selected strip shows its range");
+                    expect (shaded (*rows[2], plain2), "a grouped strip the range will cut shows no range");
+                    expect (! shaded (*rows[1], plain1), "a strip outside the group shows a range it is not cut by");
+                    s.engine.getPlayer().clearLoopRegion();
+                }
             }
         }
     };

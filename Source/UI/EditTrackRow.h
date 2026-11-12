@@ -1591,10 +1591,17 @@ namespace zynforge
                         // selected (a global loop set via , / .). The Selector
                         // tool selects the track you drag on, so a single-track
                         // range only highlights that track -- not all of them.
+                        // A range edit also cuts every edit-group peer of a
+                        // selected strip (MainComponent::tracksToEditPhysical),
+                        // so a peer shades too: the band shows what Delete cuts.
                         bool drawHere = true;
                         if (auto* pg = findParentComponentOfClass<EditPage>())
-                            drawHere = (pg->isStripSelectionEmpty && pg->isStripSelectionEmpty())
-                                    || (pg->isTrackSelected && pg->isTrackSelected (index));
+                        {
+                            drawHere = pg->isStripSelectionEmpty && pg->isStripSelectionEmpty();
+                            if (! drawHere && pg->isTrackSelected)
+                                for (int peer : clipedit::peerTracks (engine, index))
+                                    if (pg->isTrackSelected (peer)) { drawHere = true; break; }
+                        }
                         if (xB > xA && drawHere)
                         {
                             const juce::Rectangle<int> band (xA, 0, xB - xA, getHeight());
