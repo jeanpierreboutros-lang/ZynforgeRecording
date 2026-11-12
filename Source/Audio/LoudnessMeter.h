@@ -16,7 +16,7 @@ namespace zynforge
     // momentary / short-term / integrated LUFS + true-peak dBTP.
     //
     // Method:
-    //  - Two-stage K-weighting (high-shelf + high-pass) per channel.
+    //  - Two-stage BS.1770 K-weighting (high-shelf + high-pass) per channel.
     //  - 100 ms gating "chunks"; a 400 ms block = the last 4 chunks.
     //  - Momentary = the latest 400 ms block; short-term = last 3 s.
     //  - Integrated = gated mean of blocks (absolute -70 LUFS gate +
@@ -142,43 +142,39 @@ namespace zynforge
         struct Biquad { double b0, b1, b2, a1, a2; };
         Biquad shelf {}, hpf {};
 
+        // The BS.1770 K-weighting. The standard publishes its two biquads at
+        // 48 kHz only (shelf b 1.53512485958697, -2.69169618940638,
+        // 1.19839281085285, a -1.69065929318241, 0.73248077421585; high-pass
+        // b 1, -2, 1, a -1.99004745483398, 0.99007225036621). Below are the
+        // analogue prototypes those numbers come from, through the bilinear
+        // transform as libebur128 and pyloudnorm take them: the published
+        // filter exactly at 48 kHz, the same curve at other rates. An RBJ shelf
+        // and high-pass built from the same f0 and Q are a different filter
+        // (a 1 kHz tone read 0.26 LU low).
         void designKWeighting() noexcept
         {
-            // BS.1770-4 reference coefficients are defined at 48 kHz; for
-            // other rates we re-derive via the bilinear transform from the
-            // analog prototypes (stage 1 high-shelf ~ +4 dB, stage 2 high-
-            // pass ~ 38 Hz). This matches the spec at 48 k and tracks
-            // closely at 44.1 / 96 k.
-            const double f0s = 1681.9744509555319, Qs = 0.7071752369554196, gainDb = 3.99984385397;
-            shelf = highShelf (f0s, Qs, gainDb);
-            const double f0h = 38.13547087613982, Qh = 0.5003270373253953;
-            hpf = highPass (f0h, Qh);
+            shelf = kWeightingShelf (sr);
+            hpf   = kWeightingHighPass (sr);
         }
 
-        Biquad highShelf (double f0, double Q, double gainDb) const noexcept
+        static Biquad kWeightingShelf (double rate) noexcept
         {
-            const double A = std::pow (10.0, gainDb / 40.0);
-            const double w0 = 2.0 * juce::MathConstants<double>::pi * f0 / sr;
-            const double cw = std::cos (w0), sw = std::sin (w0);
-            const double alpha = sw / (2.0 * Q);
-            const double sq = 2.0 * std::sqrt (A) * alpha;
-            const double b0 =      A * ((A + 1) + (A - 1) * cw + sq);
-            const double b1 = -2 * A * ((A - 1) + (A + 1) * cw);
-            const double b2 =      A * ((A + 1) + (A - 1) * cw - sq);
-            const double a0 =          (A + 1) - (A - 1) * cw + sq;
-            const double a1 =      2 * ((A - 1) - (A + 1) * cw);
-            const double a2 =          (A + 1) - (A - 1) * cw - sq;
-            return { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
+            const double f0 = 1681.974450955533, G = 3.999843853973347, Q = 0.7071752369554196;
+            const double K  = std::tan (juce::MathConstants<double>::pi * f0 / rate);
+            const double Vh = std::pow (10.0, G / 20.0);
+            const double Vb = std::pow (Vh, 0.4996667741545416);
+            const double a0 = 1.0 + K / Q + K * K;
+            return { (Vh + Vb * K / Q + K * K) / a0, 2.0 * (K * K - Vh) / a0, (Vh - Vb * K / Q + K * K) / a0,
+                     2.0 * (K * K - 1.0) / a0,       (1.0 - K / Q + K * K) / a0 };
         }
 
-        Biquad highPass (double f0, double Q) const noexcept
+        // The standard keeps the high-pass numerator at 1, -2, 1, unscaled.
+        static Biquad kWeightingHighPass (double rate) noexcept
         {
-            const double w0 = 2.0 * juce::MathConstants<double>::pi * f0 / sr;
-            const double cw = std::cos (w0), sw = std::sin (w0);
-            const double alpha = sw / (2.0 * Q);
-            const double b0 = (1 + cw) / 2, b1 = -(1 + cw), b2 = (1 + cw) / 2;
-            const double a0 = 1 + alpha, a1 = -2 * cw, a2 = 1 - alpha;
-            return { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
+            const double f0 = 38.13547087602444, Q = 0.5003270373238773;
+            const double K  = std::tan (juce::MathConstants<double>::pi * f0 / rate);
+            const double a0 = 1.0 + K / Q + K * K;
+            return { 1.0, -2.0, 1.0, 2.0 * (K * K - 1.0) / a0, (1.0 - K / Q + K * K) / a0 };
         }
 
         // Per-channel cascade state: [shelf x1,x2,y1,y2][hpf x1,x2,y1,y2].
