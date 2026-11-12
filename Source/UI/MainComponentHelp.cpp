@@ -306,14 +306,15 @@ void MainComponent::showAboutDialog()
     // the badge for any non-NoIcon alert). fromUTF8 so the © and · render as
     // themselves -- the implicit const char* -> String conversion decodes the
     // multi-byte UTF-8 as Latin-1 and shows mojibake ("Â©").
-    juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::InfoIcon,
-        "ZynForge Recording",
-        juce::String::fromUTF8 (
-            "Live multitrack recording + virtual soundcheck.\n\n"
-            "JUCE 8 \xC2\xB7 C++20 \xC2\xB7 macOS Universal\n"
-            "\xC2\xA9 Zynforge"),
-        "OK");
+    askClosesForTake (juce::MessageBoxOptions()
+                          .withIconType (juce::MessageBoxIconType::InfoIcon)
+                          .withTitle ("ZynForge Recording")
+                          .withMessage (juce::String::fromUTF8 (
+                              "Live multitrack recording + virtual soundcheck.\n\n"
+                              "JUCE 8 \xC2\xB7 C++20 \xC2\xB7 macOS Universal\n"
+                              "\xC2\xA9 Zynforge"))
+                          .withButton ("OK"),
+                      {});
 }
 
 void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult& r)

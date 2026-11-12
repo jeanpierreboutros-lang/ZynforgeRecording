@@ -17,6 +17,7 @@
 #include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 #include "RecordPosition.h"
+#include "FloatingLaunch.h"
 
 using namespace zynforge;
 
@@ -115,6 +116,7 @@ void MainComponent::askBeforeDeviceRecord (const RecordStartPlan& plan)
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::returnKey),
                    juce::KeyPress (juce::KeyPress::escapeKey));
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+    zynforge::closesForTake (aw);   // a take from elsewhere answers it: Cancel
     deviceRecordQuestion = aw;
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
@@ -170,6 +172,7 @@ void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
     if (refusal.isEmpty()) aw->addButton ("Replace From Cursor", 2);
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+    zynforge::closesForTake (aw);   // a take from elsewhere answers it: Cancel
     cursorPunchQuestion = aw;
     cursorPunchScope = questionScope();
     juce::Component::SafePointer<MainComponent> self (this);
@@ -1329,7 +1332,7 @@ void MainComponent::onVscClicked()
     };
     if (confirmForTests) { confirmForTests (repatch); return; }
     const int silent = zynforge::vsc::stripsWithNoOutput (engine);
-    juce::AlertWindow::showAsync (
+    askClosesForTake (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::QuestionIcon)
             .withTitle ("Virtual Soundcheck")
@@ -1344,6 +1347,19 @@ void MainComponent::onVscClicked()
             .withButton ("Repatch")
             .withButton ("Cancel"),
         [repatch] (int result) { if (result == 1) repatch(); });
+}
+
+void MainComponent::askClosesForTake (const juce::MessageBoxOptions& options, std::function<void (int)> answered)
+{
+    auto& lf = options.getAssociatedComponent() != nullptr ? options.getAssociatedComponent()->getLookAndFeel()
+                                                           : juce::LookAndFeel::getDefaultLookAndFeel();
+    auto* box = lf.createAlertWindow (options.getTitle(), options.getMessage(),
+                                      options.getButtonText (0), options.getButtonText (1), options.getButtonText (2),
+                                      options.getIconType(), options.getNumButtons(), options.getAssociatedComponent());
+    if (! answered) answered = [] (int) {};
+    if (box == nullptr) { answered (0); return; }
+    zynforge::closesForTake (box);
+    box->enterModalState (true, juce::ModalCallbackFunction::create (std::move (answered)), true);
 }
 
 // What a soundcheck patch reaches, in one sentence for the status line.
@@ -1371,7 +1387,7 @@ void MainComponent::restoreOutputPatch()
         self->showStatus ("Outputs restored on " + zynforge::counted (moved, "strip"));
     };
     if (confirmForTests) { confirmForTests (restore); return; }
-    juce::AlertWindow::showAsync (
+    askClosesForTake (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::QuestionIcon)
             .withTitle ("Restore Outputs")
@@ -1639,12 +1655,13 @@ void MainComponent::confirmAndQuit()
         aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         aw->addButton ("Quit",   kQuit,   juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+        zynforge::closesForTake (aw);   // a take behind it closes it with 0: stay
         juce::Component::SafePointer<MainComponent> self (this);
         aw->enterModalState (true,
             juce::ModalCallbackFunction::create ([aw, self] (int result)
             {
                 std::unique_ptr<juce::AlertWindow> dispose (aw);
-                if (result == kCancel) return;       // stay in app
+                if (result != kQuit) return;         // Cancel, or closed for a take: stay in app
                 // A remote RECORD may have started behind this dialog; that
                 // take gets the proper Stop & Quit, not a bare teardown.
                 if (self != nullptr
@@ -1685,6 +1702,7 @@ void MainComponent::confirmAndQuit()
     aw->addButton ("Don't Save", kDontSave);
     aw->addButton ("Cancel",     kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
     aw->addButton ("Save",       kSave,   juce::KeyPress (juce::KeyPress::returnKey));
+    zynforge::closesForTake (aw);   // a take behind it closes it with 0, as Cancel
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
@@ -1692,7 +1710,7 @@ void MainComponent::confirmAndQuit()
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
 
-            if (result == kCancel || self == nullptr)
+            if ((result != kSave && result != kDontSave) || self == nullptr)
                 return;                              // abort the quit, stay in app
 
             if (self->pendingMetadataSaves != 0 || self->engine.isRecording() || self->engine.isCaptureFinalizing())

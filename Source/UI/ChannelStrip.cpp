@@ -3,6 +3,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "StripColourPicker.h"
+#include "FloatingLaunch.h"
 
 // Strip paint helpers. Flat: the channel colour lives in the header and the
 // spine, so the fader and meter sit on one calm body on every strip.
@@ -528,6 +529,7 @@ namespace zynforge
     void ChannelStrip::openColourPicker()
     {
         if (! colourCb) return;
+        if (canOpenColourPicker && ! canOpenColourPicker()) return;
         auto current = getResolvedColour();
 
         auto picker = std::make_unique<StripColourPicker> (
@@ -545,7 +547,9 @@ namespace zynforge
 
         auto screenBounds = swatch != nullptr ? swatch->getScreenBounds()
                                               : getScreenBounds();
-        juce::CallOutBox::launchAsynchronously (std::move (picker), screenBounds, nullptr);
+        // A pick applies as it is made, so a take that starts behind the picker
+        // closes it and keeps what is on screen.
+        closesForTake (&juce::CallOutBox::launchAsynchronously (std::move (picker), screenBounds, nullptr));
     }
 
     ChannelStrip::ChannelStrip (int index, TrackState& s,

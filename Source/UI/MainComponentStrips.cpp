@@ -16,6 +16,7 @@
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
 #include "StripColourPicker.h"
+#include "FloatingLaunch.h"
 #include "NewSessionDialog.h"
 #include "Meterbridge.h"
 #include "../Audio/ChannelCsv.h"
@@ -291,8 +292,8 @@ namespace
             auto picker = std::make_unique<zynforge::StripColourPicker> (
                 cur, [self, idx] (juce::Colour c)
                 { if (self != nullptr) self->setRowColour (idx, c); });
-            juce::CallOutBox::launchAsynchronously (std::move (picker),
-                rows[(size_t) idx]->swatch.getScreenBounds(), nullptr);
+            zynforge::closesForTake (&juce::CallOutBox::launchAsynchronously (std::move (picker),
+                rows[(size_t) idx]->swatch.getScreenBounds(), nullptr));
         }
 
         void pickForRange()
@@ -309,8 +310,8 @@ namespace
                     if (self == nullptr) return;
                     for (int ch = first - 1; ch < last; ++ch) self->setRowColour (ch, c);
                 });
-            juce::CallOutBox::launchAsynchronously (std::move (picker),
-                rangeBtn.getScreenBounds(), nullptr);
+            zynforge::closesForTake (&juce::CallOutBox::launchAsynchronously (std::move (picker),
+                rangeBtn.getScreenBounds(), nullptr));
         }
 
         AudioEngine& engine;
@@ -505,6 +506,7 @@ bool MainComponent::stillInScope (const QuestionScope& scope)
 void MainComponent::colourSelectedStrips()
 {
     if (selectedLogical.empty()) return;
+    if (! colourPickerMayOpen()) return;
 
     // Use the app's gradient StripColourPicker -- the same hue×shade palette
     // the per-strip swatch + EDIT recolour use -- not the OS colourspace
@@ -534,13 +536,23 @@ void MainComponent::colourSelectedStrips()
             self->lastTrackCount = -1;
         });
 
-    juce::CallOutBox::launchAsynchronously (
+    // Each pick applies as it is made, so a take that starts behind the picker
+    // closes it and keeps what is on screen.
+    zynforge::closesForTake (&juce::CallOutBox::launchAsynchronously (
         std::move (picker),
         juce::Rectangle<int>{ getScreenBounds().getCentreX(),
                               getScreenBounds().getCentreY(), 1, 1 },
-        nullptr);
+        nullptr));
 
     showStatus ("Picking colour for " + zynforge::counted ((int) selectedLogical.size(), "strip") + "...");
+}
+
+// A picker is modal: over a take it would stand in front of STOP.
+bool MainComponent::colourPickerMayOpen()
+{
+    if (! engine.isRecording()) return true;
+    showStatus ("Colours wait until the take has stopped -- the picker would stand in front of STOP");
+    return false;
 }
 
 // Stereo logical<->physical mapping now lives on AudioEngine (it's a pure
@@ -568,6 +580,9 @@ void MainComponent::showBatchRenameDialog()
 
     aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    // A take that starts behind it closes it as Cancel: names typed so far are
+    // not applied in the middle of a take the engineer did not start here.
+    zynforge::closesForTake (aw);
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
@@ -575,6 +590,8 @@ void MainComponent::showBatchRenameDialog()
         {
             std::unique_ptr<juce::AlertWindow> disposeAw (aw);
             std::unique_ptr<RenameTable>       disposeTable (table);
+            if (self != nullptr && result != 1 && self->engine.isRecording())
+            { self->showStatus ("Rename Channels closed for the take -- nothing was renamed"); return; }
             if (result != 1 || self == nullptr || ! self->stillInScope (scope)) return;
 
             table->applyTo (self->engine);
@@ -622,6 +639,7 @@ void MainComponent::showBatchColourDialog()
     aw->addCustomComponent (table);
     aw->addButton ("Done",   1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);   // closed for a take: as Done, see below
 
     aw->enterModalState (true,
         juce::ModalCallbackFunction::create ([self, aw, table, snapshot, total, scope] (int result)
@@ -629,6 +647,14 @@ void MainComponent::showBatchColourDialog()
             std::unique_ptr<juce::AlertWindow>     disposeAw (aw);
             std::unique_ptr<BatchColourTable>      disposeTable (table);
             if (self == nullptr || ! self->stillInScope (scope)) return;
+            // Closed because a take started behind it: the colours already on
+            // screen stay. Taking them back mid-show would be the surprise.
+            if (result != 1 && self->engine.isRecording())
+            {
+                self->lastTrackCount = -1;
+                self->showStatus ("Batch Colour closed for the take -- the colours picked stay");
+                return;
+            }
             if (result != 1)   // Cancel -> restore the snapshot
             {
                 for (int i = 0; i < total && i < (int) snapshot.size(); ++i)

@@ -787,6 +787,8 @@ void MainComponent::rebuildStrips()
                              std::move (addCb),
                              std::move (linkStereoCb));
 
+        s->canOpenColourPicker = [this] { return colourPickerMayOpen(); };
+
         s->onEditGroupChanged = [this, i, step] (int groupId)
         {
             engine.setTrackEditGroup (i, groupId);

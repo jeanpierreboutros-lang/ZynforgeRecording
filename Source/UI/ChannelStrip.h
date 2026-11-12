@@ -104,6 +104,9 @@ namespace zynforge
         // looks up the group + peers via the engine.
         std::function<void (int /*srcTrackIndex*/)> onAfterArmedToggle;
         std::function<bool()> canChangeArm;
+        // Asked before the colour picker opens: it is modal, and over a take it
+        // would stand in front of STOP.
+        std::function<bool()> canOpenColourPicker;
         std::function<void (int /*srcTrackIndex*/)> onAfterMonitorToggle;
         std::function<void (int /*srcTrackIndex*/)> onAfterMuteToggle;
         std::function<void (int /*srcTrackIndex*/)> onAfterSoloToggle;

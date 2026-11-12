@@ -188,6 +188,10 @@ private:
     void openSessionFromWelcome (const juce::File&);
     void showKeyboardShortcuts();
     void showAboutDialog();
+    // The box AlertWindow::showAsync draws, opened now and marked closesForTake,
+    // so a take that starts behind it closes it as its last button (Cancel).
+    // showAsync opens its box on a later message, where nothing can mark it.
+    static void askClosesForTake (const juce::MessageBoxOptions&, std::function<void (int)> answered);
     void showFirstRunTutorial (std::function<void()> onFinished = {});
     void showUserGuide();
     void launchNewSessionDialog (juce::File templateFile = {});
@@ -322,6 +326,7 @@ private:
     // rebuild). Prevents a freed-memory read in the window before the rebuild.
     void condemnAllStrips();
     void colourSelectedStrips();
+    bool colourPickerMayOpen();
     void moveSelectedStrips (int delta);
     void clearStripSelection();
     void removeStrip (int firstTrack, int width);
