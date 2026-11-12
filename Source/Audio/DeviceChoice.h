@@ -30,6 +30,9 @@ namespace zynforge::devicechoice
         juce::String input, output;
         juce::String inputUid, outputUid;
         int inputs { 0 };   // active inputs when chosen
+        // The buffer chosen with it, 0 for the device's own. Never the rate:
+        // the rate is the clock, and the interface keeps the one it runs at.
+        int bufferSize { 0 };
     };
 
     inline Chosen load (const juce::PropertySet& props)
@@ -41,6 +44,7 @@ namespace zynforge::devicechoice
         c.inputUid  = props.getValue ("chosenInputUid");
         c.outputUid = props.getValue ("chosenOutputUid");
         c.inputs    = props.getIntValue ("chosenInputCount");
+        c.bufferSize = juce::jmax (0, props.getIntValue ("chosenBufferSize"));
         return c;
     }
 
@@ -51,6 +55,7 @@ namespace zynforge::devicechoice
         props.setValue ("chosenInputUid",     c.inputUid);
         props.setValue ("chosenOutputUid",    c.outputUid);
         props.setValue ("chosenInputCount",   c.inputs);
+        props.setValue ("chosenBufferSize",   c.bufferSize);
     }
 
     // The name a saved device goes by now, or empty when it is not here. The id

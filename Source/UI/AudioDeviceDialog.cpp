@@ -260,12 +260,13 @@ namespace zynforge
                 {
                     if (snapshot != nullptr)
                         // Restore with the SAME channel counts the app boots with
-                        // (AudioEngine: 256 in / 64 out). Passing 0 inputs here
+                        // (AudioEngine::kDeviceChannels in and out). Passing 0 inputs here
                         // made JUCE enable "the first 0" input channels when the
                         // snapshot XML carried no explicit mask (it never does),
                         // so a Cancel/ESC on the DEVICE panel killed every input
                         // until relaunch -- dead meters, silent recordings.
-                        engine.getDeviceManager().initialise (256, 64, snapshot.get(), true);
+                        engine.getDeviceManager().initialise (AudioEngine::kDeviceChannels, AudioEngine::kDeviceChannels,
+                                                              snapshot.get(), true);
                     else
                         // No snapshot (first use since boot): revert the live
                         // device/rate/buffer change via the captured setup.
@@ -508,11 +509,11 @@ namespace zynforge
             {
                 juce::StringArray ranges;
                 int total = 0;
-                for (int i = 0; i < 128; )
+                for (int i = 0; i < AudioEngine::kDeviceChannels; )
                 {
                     if (! bits[i]) { ++i; continue; }
                     const int start = i;
-                    while (i < 128 && bits[i]) { ++total; ++i; }
+                    while (i < AudioEngine::kDeviceChannels && bits[i]) { ++total; ++i; }
                     const int end = i - 1;
                     ranges.add (start == end
                                     ? juce::String (start + 1)

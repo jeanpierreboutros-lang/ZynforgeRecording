@@ -2128,7 +2128,9 @@ namespace zynforge
     // would pull the clock out from under its take.
     void AudioEngine::openChosenDevice()
     {
-        // Open with up to 256 inputs / 64 outputs by default -- adjust later from UI.
+        // Up to 256 inputs and 256 outputs, the most strips there can be: an
+        // output past the first 64 is where a strip on a wide Dante or MADI
+        // card plays back to the desk. The callback is sized for 256 of each.
         std::unique_ptr<juce::XmlElement> state;
         if (chosenDevice.saved)
         {
@@ -2143,9 +2145,13 @@ namespace zynforge
                 state->setAttribute ("deviceType", type->getTypeName());
                 state->setAttribute ("audioInputDeviceName", open.input);
                 state->setAttribute ("audioOutputDeviceName", open.output);
+                // The buffer chosen with it, never the rate (see above). One the
+                // device does not offer falls back to its default.
+                if (chosenDevice.bufferSize > 0)
+                    state->setAttribute ("audioDeviceBufferSize", chosenDevice.bufferSize);
             }
         }
-        const auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64, state.get(),
+        const auto err = deviceManager.initialise (/*numInputs*/ kDeviceChannels, /*numOutputs*/ kDeviceChannels, state.get(),
                                                    /*selectDefault*/ true);
         if (err.isNotEmpty())
             DBG ("AudioDeviceManager init: " << err);
@@ -2159,16 +2165,29 @@ namespace zynforge
         }
     }
 
-    devicechoice::DeviceList AudioEngine::listDevices (bool inputs)
+    devicechoice::DeviceList AudioEngine::listDevices (bool inputs, bool freshIds)
     {
         auto* type = deviceManager.getCurrentDeviceTypeObject();
         if (type == nullptr) return {};
         const auto names = type->getDeviceNames (inputs);
         auto& known = listedIds[inputs ? 1 : 0];
+        constexpr int kIdRetries = 5;
+        constexpr juce::uint32 kIdRetryMs = 5000;
+        const auto now = juce::Time::getMillisecondCounter();
+        const bool changed = names != known.names;
+        // A read that timed out left no ids, and nothing else would read them
+        // again until the list changes: the chosen device's id would go
+        // unlearned all run. Apply asks at once; otherwise a few spaced tries.
+        const bool idsMissing = known.ids.empty() && ! names.isEmpty();
+        const bool retry = ! changed && idsMissing
+                        && (freshIds || (known.retriesLeft > 0 && (juce::int32) (now - known.retryAtMs) >= 0));
         // A device that changes under a take can wait: nothing here may touch
         // the HAL then, and nothing reopens until the take is over.
-        if (names != known.names && ! isRecording())
+        if ((changed || retry) && ! isRecording())
         {
+            if (changed) known.retriesLeft = kIdRetries;
+            else if (! freshIds) --known.retriesLeft;
+            known.retryAtMs = now + kIdRetryMs;
             known.names = names;
             known.ids.clear();
             if (deviceIdsForTests != nullptr)
@@ -2206,12 +2225,25 @@ namespace zynforge
                 if (device.name == name) return device.uid;
             return juce::String();
         };
+        // An id the HAL did not give this time keeps the one saved for the
+        // same device: without it, identical twin units renumbered after a
+        // replug would open the wrong one as "the chosen device".
+        const auto keptUid = [this] (const juce::String& uid, const juce::String& name,
+                                     const juce::String& savedName, const juce::String& savedUid)
+        {
+            return uid.isNotEmpty() || ! chosenDevice.saved || name != savedName ? uid : savedUid;
+        };
+        const auto inputUid  = keptUid (uidOf (setup.inputDeviceName, listDevices (true, true)),
+                                        setup.inputDeviceName, chosenDevice.input, chosenDevice.inputUid);
+        const auto outputUid = keptUid (uidOf (setup.outputDeviceName, listDevices (false, true)),
+                                        setup.outputDeviceName, chosenDevice.output, chosenDevice.outputUid);
         chosenDevice.saved     = true;
         chosenDevice.input     = setup.inputDeviceName;
         chosenDevice.output    = setup.outputDeviceName;
-        chosenDevice.inputUid  = uidOf (setup.inputDeviceName, listDevices (true));
-        chosenDevice.outputUid = uidOf (setup.outputDeviceName, listDevices (false));
+        chosenDevice.inputUid  = inputUid;
+        chosenDevice.outputUid = outputUid;
         chosenDevice.inputs    = getCurrentDeviceInputCount();
+        chosenDevice.bufferSize = juce::jmax (0, setup.bufferSize);
         updateSettings (appProps.get(), [this] (juce::PropertiesFile& p) { devicechoice::save (p, chosenDevice); });
         deviceAnswers.clear();
     }
@@ -2248,11 +2280,12 @@ namespace zynforge
 
         const auto before = deviceManager.getAudioDeviceSetup();
         auto setup = before;
-        // Names only, as at launch: the stand-in's rate and buffer are not the
-        // interface's, and asking for that rate would re-clock the rig. JUCE
-        // then keeps the rate the interface runs at and its own buffer.
+        // Names only, as at launch: the stand-in's rate is not the interface's,
+        // and asking for that rate would re-clock the rig. JUCE then keeps the
+        // rate the interface runs at. The buffer is the one chosen with it
+        // (0, the device's own, when none was).
         setup.sampleRate = 0;
-        setup.bufferSize = 0;
+        setup.bufferSize = chosenDevice.bufferSize;
         setup.inputDeviceName = state.chosenNow;
         setup.useDefaultInputChannels = true;
         const auto output = devicechoice::nameNow (chosenDevice.output, chosenDevice.outputUid, listDevices (false));

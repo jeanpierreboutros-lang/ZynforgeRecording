@@ -242,6 +242,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/EditViewFixTests.cpp
     Source/Tests/EditingFixTests.cpp
     Source/Tests/EngineFixTests.cpp
+    Source/Tests/EngineDeviceTests.cpp
     Source/Tests/EngineMixSafetyTests.cpp
     Source/Tests/EngineReviewRepairTests.cpp
     Source/Tests/EngineStateTests.cpp

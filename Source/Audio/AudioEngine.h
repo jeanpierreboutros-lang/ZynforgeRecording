@@ -98,6 +98,9 @@ namespace zynforge
         void setDeviceOutputCountForTests (int n) noexcept { testDeviceOutputs.store (n, std::memory_order_relaxed); }
 
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
+        // Inputs and outputs asked of every device open: the most strips there
+        // can be, and what the callback's scratch is sized for.
+        static constexpr int kDeviceChannels = 256;
 
         // The device the engineer chose (DeviceChoice.h), kept in app settings.
         // At launch it opens, each side on its own, or the Mac's default stands
@@ -989,9 +992,14 @@ namespace zynforge
         {
             juce::StringArray names;
             devicechoice::DeviceList ids;
+            // A read that came back empty (the HAL did not answer in time) is
+            // tried again, a few times and not often: each one can take 250 ms.
+            juce::uint32 retryAtMs { 0 };
+            int retriesLeft { 0 };
         };
         ListedIds listedIds[2];
-        devicechoice::DeviceList listDevices (bool inputs);
+        // `freshIds`: read the ids again now if the last read had none.
+        devicechoice::DeviceList listDevices (bool inputs, bool freshIds = false);
         bool clipsBelongTo (const juce::File& takeFolder) const;
         juce::String openInputDevice();
         MultitrackRecorder       recorder;
