@@ -6,7 +6,7 @@
 
 **Status:** Made during the fixes; each is open to the owner's review.
 
-**Context.** A second whole-codebase review on 2026-11-11 made 82 findings (1 critical, 4 high, 28 medium, 49 low), fixed on six branches (engine, capture, remote, session, EDIT, main window) and merged on `integrate/fix-2026-11-11`. Where a fix had more than one reasonable behaviour, the fixer took the one that protects the take or says what happened, and listed it for the owner. Two findings are fixed in part (EDIT lanes not loaded at RECORD, native file panels); see tasks.md.
+**Context.** A second whole-codebase review on 2026-11-11 made 82 findings (1 critical, 4 high, 28 medium, 49 low), fixed on six branches (engine, capture, remote, session, EDIT, main window) and merged on `main`. Where a fix had more than one reasonable behaviour, the fixer took the one that protects the take or says what happened, and listed it for the owner. Two findings are fixed in part (EDIT lanes not loaded at RECORD, native file panels); see tasks.md.
 
 **Decision:**
 

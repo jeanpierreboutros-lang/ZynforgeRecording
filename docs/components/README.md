@@ -7,7 +7,7 @@ The format follows `/design-system document` output: description, when-to-use, v
 ## Index
 
 References are kept in line with the current headers. The 2026-11-11 pass,
-after that day's review fixes on `integrate/fix-2026-11-11`, updated
+after that day's review fixes on `main`, updated
 `BigClockPanel` (missed samples per session), `ChannelStrip` (colour picker
 refused during a take), `EditPage::TrackRow` (peaks during a load, continued-take
 peaks, group shading), `EditTimeRuler` (`markerIndexAt`), `MasterStrip` (meter

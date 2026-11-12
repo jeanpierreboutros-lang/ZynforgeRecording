@@ -1,6 +1,6 @@
 # Documentation index
 
-Reconciled on 2026-11-12 against `integrate/fix-2026-11-11`, after the 2026-11-11
+Reconciled on 2026-11-12 against `main`, after the 2026-11-11
 review's fixes (and on 2026-11-04 against `main` at `821131a`, after that day's). Documentation commits do not change the installed binaries: see the
 status in the [README](../README.md). The development Mac has `0e1bd8a` (on JUCE
 8.0.17-security, with that day's scan, scrollbar and review fixes), and the

@@ -10,7 +10,7 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ## 2026-11-11 fix round — not yet performed
 
-The fixes from the 2026-11-11 review are merged on `integrate/fix-2026-11-11`; [INSTALL.md](INSTALL.md) says which Mac has them. Use disposable sessions, and keep a recovery plan for the steps that pull hardware or end processes. The device steps need the capture helper **off**, so the take is in the window.
+The fixes from the 2026-11-11 review are merged on `main`; [INSTALL.md](INSTALL.md) says which Mac has them. Use disposable sessions, and keep a recovery plan for the steps that pull hardware or end processes. The device steps need the capture helper **off**, so the take is in the window.
 
 ### Device and engine
 

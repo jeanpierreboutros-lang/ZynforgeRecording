@@ -2,7 +2,7 @@
 
 ## Bug audit, 2026-11-11
 
-A second whole-codebase review made 82 findings (1 critical, 4 high, 28 medium, 49 low). All are fixed on six branches (engine, capture, remote, session, EDIT, main window) merged on `integrate/fix-2026-11-11`, two of them in part (below). What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the top ADR of [decisions.md](decisions.md), and the results are in [testing.md](testing.md). The audit list itself stays outside the repository. Installed builds are in [INSTALL.md](INSTALL.md). None of it has run on real hardware.
+A second whole-codebase review made 82 findings (1 critical, 4 high, 28 medium, 49 low). All are fixed on six branches (engine, capture, remote, session, EDIT, main window) merged on `main`, two of them in part (below). What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the top ADR of [decisions.md](decisions.md), and the results are in [testing.md](testing.md). The audit list itself stays outside the repository. Installed builds are in [INSTALL.md](INSTALL.md). None of it has run on real hardware.
 
 - [ ] Owner: run *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig. A device-pair take with the monitor output unplugged, a Dante or interface reconfigure mid-take, an OSC tablet STOP button sending a value, 29.97 drop-frame chase, Mackie touch faders, a real Yamaha CL/QL and a recording drive pulled mid-take are the ones no test can stand in for.
 - [ ] Owner: change any tablet layout that sends `/zynforge/stop` with no value. Such a STOP is refused now; the button must send 1 on press and 0 on release, before the token.

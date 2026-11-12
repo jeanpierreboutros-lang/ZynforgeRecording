@@ -17,7 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-Everything from here down to the next rule came from a second whole-codebase review on 2026-11-11. It made 82 findings (1 critical, 4 high, 28 medium, 49 low), fixed on six branches (engine, capture, remote, session, EDIT, main window) and merged on `integrate/fix-2026-11-11`. All 82 are closed except two that are fixed in part: lanes not yet loaded at RECORD stay blank until STOP (EDIT), and native file panels can't be closed for a take (prompts). None of it has run on real hardware. Installed builds are in [INSTALL.md](INSTALL.md). The choices the fixes made where the owner may want otherwise are in the top ADR of [decisions.md](decisions.md).
+Everything from here down to the next rule came from a second whole-codebase review on 2026-11-11. It made 82 findings (1 critical, 4 high, 28 medium, 49 low), fixed on six branches (engine, capture, remote, session, EDIT, main window) and merged on `main`. All 82 are closed except two that are fixed in part: lanes not yet loaded at RECORD stay blank until STOP (EDIT), and native file panels can't be closed for a take (prompts). None of it has run on real hardware. Installed builds are in [INSTALL.md](INSTALL.md). The choices the fixes made where the owner may want otherwise are in the top ADR of [decisions.md](decisions.md).
 
 ### Changed — what to know, 2026-11-11 review
 

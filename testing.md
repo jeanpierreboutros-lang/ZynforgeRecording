@@ -2,7 +2,7 @@
 
 ## 2026-11-11 fix round
 
-The review's 82 findings were fixed on six branches and merged on `integrate/fix-2026-11-11`. Each fix has a regression test, and each test was built and run on the unfixed code first and seen failing there, except ENG-08 (a lock in the callback, which no headless test can observe) and the tour's wording (MAIN-10), checked by eye. Nothing here has run on real hardware; the hardware steps are *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
+The review's 82 findings were fixed on six branches and merged on `main`. Each fix has a regression test, and each test was built and run on the unfixed code first and seen failing there, except ENG-08 (a lock in the callback, which no headless test can observe) and the tour's wording (MAIN-10), checked by eye. Nothing here has run on real hardware; the hardware steps are *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
 
 ### Build on this Mac since Xcode 27.2
 

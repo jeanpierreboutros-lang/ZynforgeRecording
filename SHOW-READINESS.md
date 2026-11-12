@@ -2,7 +2,7 @@
 
 ## Decision as of 2026-11-11
 
-A second whole-codebase review made 82 findings; all are fixed on `integrate/fix-2026-11-11`, two in part (see *Bug audit, 2026-11-11* in [tasks.md](tasks.md)). None of it has run on real hardware, and [INSTALL.md](INSTALL.md) says which Mac has it. Do not take it to a show until it has been installed on purpose and has passed *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md), as well as the earlier rounds named below.
+A second whole-codebase review made 82 findings; all are fixed on `main`, two in part (see *Bug audit, 2026-11-11* in [tasks.md](tasks.md)). None of it has run on real hardware, and [INSTALL.md](INSTALL.md) says which Mac has it. Do not take it to a show until it has been installed on purpose and has passed *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md), as well as the earlier rounds named below.
 
 Three changes matter on show day:
 
