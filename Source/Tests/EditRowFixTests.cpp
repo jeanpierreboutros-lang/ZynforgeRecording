@@ -184,6 +184,7 @@ namespace zynforge
             continuedTakesKeepOneWaveform();
             clipPromptsFollowTheirClip();
             zoomStepsKeepThePlayhead (main);
+            copyWaitsForTheTake (main);
             quitKeepsTheCacheBeingWritten();
         }
 
@@ -1531,6 +1532,28 @@ namespace zynforge
                     expect (playheadOnScreen(), "Cmd+] zoomed the playhead off screen");
                     page.setZoom (1.0f);
                 }
+            }
+        }
+
+        void copyWaitsForTheTake (MainComponent& main)
+        {
+            beginTest ("Cmd+C on a clip waits for the take: it reads nothing on the take's drive");
+            {
+                Show show (main);
+                const auto dir = show.session ({ "KICK" }, false, true);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                main.clipClipboard = juce::var();
+                show.page().setSelectedClip (0, 0);
+                if (startTakeIn (show, dir))
+                {
+                    main.editClipboardCut (false);
+                    expect (! main.clipClipboard.isObject(), "a clip was copied off the take's drive during the take");
+                    expect (stopTake (show), "setup: the take never stopped");
+                }
+                show.page().setSelectedClip (0, 0);
+                main.editClipboardCut (false);
+                expect (main.clipClipboard.isObject(), "copy stayed refused after the take");
+                main.clipClipboard = juce::var();
             }
         }
 

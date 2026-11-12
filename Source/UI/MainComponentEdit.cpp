@@ -1128,6 +1128,11 @@ void MainComponent::editClipboardCut (bool cut)
     if (currentView == View::Edit && editPage != nullptr
         && editPage->getSelectedClipTrack() >= 0)
     {
+        // Copying names each clip's file, and finding a take's file stats and
+        // opens it -- on the message thread, on the take's own drive, which
+        // may be the one that stopped answering.
+        if (engine.isTakeOnDisk())
+        { showStatus ("Copy the clip after the take -- its file is still being written"); return; }
         const auto sel = selectedClipTargets();
         if (cut && zynforge::clipedit::anyLocked (engine, sel))
         { showStatus ("Clip is locked -- unlock before cutting"); return; }
