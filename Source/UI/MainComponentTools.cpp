@@ -749,6 +749,13 @@ void MainComponent::toggleCaptureDaemon()
         return;
     }
 
+    // An in-process take is rolling: the helper would open the device beside
+    // it, and connecting holds this window for seconds. The menu greys it too.
+    if (engine.isRecording() || engine.isCaptureFinalizing() || captureMetadataPending)
+    {
+        showStatus ("The capture daemon can be turned on after the take has stopped");
+        return;
+    }
     useCaptureDaemon = true;
     connectCaptureDaemon (true);
     zynforge::updateSettings (engine.getAppProps(), [this] (juce::PropertiesFile& p)

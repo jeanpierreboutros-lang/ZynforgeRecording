@@ -1509,6 +1509,109 @@ public:
         }
     }
 
+    void testTemplateMenu()
+    {
+        const auto writeTemplate = [] (const juce::File& dir, const juce::String& name)
+        {
+            return dir.getChildFile (name + ".zftemplate").replaceWithText (
+                "{\"trackCount\":1,\"strips\":[{\"name\":\"" + name + "\",\"inRoute\":0,\"outRoute\":0}]}");
+        };
+        const auto clickTemplate = [] (MainComponent& host, int id, const juce::File& root)
+        {
+            NewSessionDialog::ResultCallback answer;
+            NewSessionDialog::launchForTests = [&answer] (NewSessionDialog::ResultCallback cb) { answer = std::move (cb); };
+            host.menuItemSelected (id, 0);
+            NewSessionDialog::launchForTests = nullptr;
+            if (answer == nullptr) return juce::String ("(nothing opened)");
+            NewSessionDialog::Result r;
+            r.name = "Gig " + juce::String (id); r.location = root; r.sampleRate = 48000.0;
+            answer (r);
+            return host.engine.getRecorder().getNumTracks() > 0
+                ? host.engine.getRecorder().getTrack (0).getNameThreadSafe() : juce::String ("(no strips)");
+        };
+
+        beginTest ("A template menu item opens the template it showed, after another was saved");
+        {
+            Folder dir ("Templates", false), root ("Sessions", false);
+            expect (writeTemplate (dir.dir, "Show A") && writeTemplate (dir.dir, "Show C"));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            host.templatesDirForTests = dir.dir;
+            host.getMenuForIndex (0, {});           // the menu macOS shows: A at 200, C at 201
+            expect (writeTemplate (dir.dir, "Show B"));
+            expectEquals (clickTemplate (host, 201, root.dir), juce::String ("Show C"),
+                          "the item reading Show C opened another template");
+            forget (host);
+        }
+
+        beginTest ("A template menu item opens the template it showed, after another was deleted");
+        {
+            Folder dir ("Templates", false), root ("Sessions", false);
+            expect (writeTemplate (dir.dir, "Show A") && writeTemplate (dir.dir, "Show B") && writeTemplate (dir.dir, "Show C"));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            SessionsRoot sessions (host, root.dir);
+            host.templatesDirForTests = dir.dir;
+            host.getMenuForIndex (0, {});
+            expect (dir.dir.getChildFile ("Show A.zftemplate").deleteFile());
+            expectEquals (clickTemplate (host, 202, root.dir), juce::String ("Show C"));
+            forget (host);
+        }
+
+        beginTest ("Saving or starring a template, auto-arm and zero-crossing snap refresh the menu");
+        {
+            Folder dir ("Templates", false);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.templatesDirForTests = dir.dir;
+            host.engine.setStripCount (1);
+            host.refreshMenuStateIfChanged();
+            auto sig = host.lastMenuStateSig;
+            const auto changed = [&] (const juce::String& what)
+            {
+                host.refreshMenuStateIfChanged();
+                expect (host.lastMenuStateSig != sig, what + " left the menu as macOS last drew it");
+                sig = host.lastMenuStateSig;
+            };
+            expect (host.saveSessionTemplate ("Show D"));
+            changed ("Saving a template");
+            host.setDefaultTemplate (dir.dir.getChildFile ("Show D.zftemplate"));
+            changed ("Setting the default template");
+            const bool autoArm = host.engine.isAutoArmOnInputDetect();
+            host.engine.setAutoArmOnInputDetect (! autoArm);
+            changed ("Auto-arm on input detect");
+            host.engine.setAutoArmOnInputDetect (autoArm);
+            host.zeroCrossSnap = ! host.zeroCrossSnap;
+            changed ("Snap edits to zero-crossing");
+            host.zeroCrossSnap = ! host.zeroCrossSnap;
+            host.setDefaultTemplate ({});
+            forget (host);
+        }
+    }
+
+    void testDaemonSwitchMidTake()
+    {
+        beginTest ("The capture daemon cannot be switched on in the middle of a take");
+        {
+            Folder f; writeSavedShow (f, 1);
+            Host host (f);
+            auto& main = host.main;
+            main.captureSupervisor.setBinaryPath (juce::File ("/usr/bin/false"));
+            main.captureDaemonPort = 1;   // nothing answers there
+            const juce::ScopeGuard settingOff { [&main]
+            {
+                updateSettings (main.engine.getAppProps(), [] (juce::PropertiesFile& p) { p.setValue ("useCaptureDaemon", false); });
+                main.useCaptureDaemon = false;
+            } };
+            expect (main.engine.setTrackArmed (0, true));
+            expect (main.engine.startRecording (f.dir), "setup: the take did not start");
+            for (const auto& row : walk (main.getMenuForIndex (3, {})))
+                if (row.id == 958) expect (! row.enabled, "the menu offers the daemon in the middle of a take");
+            main.toggleCaptureDaemon();
+            expect (! main.useCaptureDaemon);
+            expect (main.statusLabel.getText().contains ("take"), main.statusLabel.getText());
+            main.engine.stopRecording();
+        }
+    }
+
     void testRemoveLastCaptureQuestion()
     {
         beginTest ("Remove last capture? holds nothing while it waits, and a take closes it");
@@ -1562,6 +1665,8 @@ public:
         testRemoveLastCaptureQuestion();
         testSessionNames();
         testWelcome();
+        testTemplateMenu();
+        testDaemonSwitchMidTake();
     }
 };
 

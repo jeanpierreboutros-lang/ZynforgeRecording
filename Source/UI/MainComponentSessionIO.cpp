@@ -2699,13 +2699,19 @@ void MainComponent::promptSaveSessionTemplate()
         if (r != 1 || self == nullptr) return;
         const auto name = aw->getTextEditorContents ("name").trim();
         if (name.isEmpty()) return;
-
-        const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
-        const auto out = self->templatesDir().getChildFile (safeName + ".zftemplate");
-        self->showStatus (zynforge::atomicfile::writeText (out, self->sessionTemplateJson (name))
-                            ? "Template saved -> " + out.getFileName()
-                            : "Template NOT saved -- check permissions / free space");
+        self->saveSessionTemplate (name);
     }));
+}
+
+bool MainComponent::saveSessionTemplate (const juce::String& name)
+{
+    const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
+    const auto out = templatesDir().getChildFile (safeName + ".zftemplate");
+    const bool ok = zynforge::atomicfile::writeText (out, sessionTemplateJson (name));
+    ++templateMenuRevision;   // the File menu lists it from the next build on
+    showStatus (ok ? "Template saved -> " + out.getFileName()
+                   : "Template NOT saved -- check permissions / free space");
+    return ok;
 }
 
 void MainComponent::applySessionTemplate (const juce::File& templateFile)
@@ -2802,6 +2808,7 @@ void MainComponent::setDefaultTemplate (const juce::File& templateFile)
 {
     zynforge::updateSettings (engine.getAppProps(), [&templateFile] (juce::PropertiesFile& props)
                               { props.setValue ("defaultTemplateFile", templateFile.getFullPathName()); });
+    ++templateMenuRevision;   // the tick moves
     showStatus (templateFile == juce::File{}
                   ? juce::String ("Default template cleared")
                   : "Default template -> " + templateFile.getFileNameWithoutExtension());
@@ -2823,6 +2830,7 @@ void MainComponent::promptDeleteSessionTemplate()
         if (idx < list.size())
         {
             list[idx].deleteFile();
+            ++self->templateMenuRevision;
             self->showStatus ("Template deleted: " + list[idx].getFileNameWithoutExtension());
         }
     });

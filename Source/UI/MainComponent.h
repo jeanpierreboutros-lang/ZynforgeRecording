@@ -599,7 +599,13 @@ private:
     juce::File  templatesDir() const;
     juce::File  templatesDirForTests;
     juce::Array<juce::File> listSessionTemplates() const;
+    // The templates the File menu was last built with, in its order: a click
+    // on item 200+i or 2000+i means the file shown there, whatever was saved
+    // or deleted since (macOS keeps showing the menu it was handed).
+    juce::Array<juce::File> menuTemplateFiles;
+    int  templateMenuRevision { 0 };   // in the menu signature; bumped on save / delete / default
     void  promptSaveSessionTemplate();
+    bool  saveSessionTemplate (const juce::String& name);
     void  applySessionTemplate (const juce::File& templateFile);
     juce::String sessionTemplateJson (const juce::String& name);
     void  promptDeleteSessionTemplate();
