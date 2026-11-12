@@ -855,6 +855,57 @@ namespace zynforge
                 expectEquals (torn, 0, "a read returned audio from another position");
             }
 
+            beginTest ("PlaybackReader: a cue is let go once a read reaches it or it goes stale, so three reads keep their read-ahead");
+            {
+                // Two seconds at 48 kHz: three read blocks and two cue blocks.
+                // A crossfade (two places less than a block apart, in two
+                // blocks) and a third clip far away want five blocks; a cue
+                // still held takes two of them, and a read window loses the
+                // block after its own, so its next block boundary plays silence.
+                constexpr juce::int64 kReaderBlock = 32768;
+                const juce::int64 a = 13 * kReaderBlock + 30000, b = a + 20000, c = (juce::int64) kSecond * 60;
+                const juce::int64 staleCue = (juce::int64) kSecond * 30;
+                const auto readAheadReady = [&] (PlaybackReader& reader)
+                {
+                    const auto next = [] (juce::int64 at) { return (at / kReaderBlock + 1) * kReaderBlock; };
+                    for (int i = 0; i < 3000; ++i)
+                    {
+                        if (reader.isBuffered (next (b), 512) && reader.isBuffered (next (c), 512)) return true;
+                        juce::Thread::sleep (1);
+                    }
+                    return false;
+                };
+                const auto play = [&] (PlaybackReader& reader, int rounds)
+                {
+                    for (int i = 0; i < rounds; ++i)
+                    {
+                        reader.prepareAt (a);
+                        reader.prepareAt (b);
+                        reader.prepareAt (c);
+                    }
+                };
+                juce::TimeSliceThread thread ("test reader");
+                thread.startThread();
+                {
+                    // A loop start cued, then the loop turned off: nothing reads there.
+                    PlaybackReader reader (new CountingSource (kSecond * 120), thread, kSecond * 2);
+                    reader.cue (staleCue);
+                    play (reader, 120);
+                    expect (readAheadReady (reader), "a cue nothing read kept two blocks for ever");
+                }
+                {
+                    // The jump came: the cue has done its job.
+                    PlaybackReader reader (new CountingSource (kSecond * 120), thread, kSecond * 2);
+                    reader.cue (staleCue);
+                    for (int i = 0; i < 2000 && ! reader.isBuffered (staleCue, 512); ++i) juce::Thread::sleep (1);
+                    juce::AudioBuffer<float> out (1, 512);
+                    expect (reader.read (&out, 0, 512, staleCue, true, true), "the cued block was not in RAM");
+                    play (reader, 20);
+                    expect (readAheadReady (reader), "a cue that was read kept two blocks");
+                }
+                thread.stopThread (-1);
+            }
+
             beginTest ("A loop pass loses no sample on any track, and all of them wrap together");
             {
                 TempFolder f;
