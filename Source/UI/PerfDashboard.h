@@ -40,8 +40,10 @@ namespace zynforge
         juce::String getTruePeakText() const;
         // True peak within 1 dB of full scale turns red.
         bool truePeakIsHot() const noexcept;
-        // Whether the loudness line gives way to the take's missed samples.
-        bool showsDrop() const noexcept { return missed > 0; }
+        // Whether the loudness line gives way to the take's missed samples:
+        // only while a take rolls. After STOP the clock keeps the count, and
+        // this row goes back to loudness for the soundcheck that follows.
+        bool showsDrop() const noexcept { return recording && missed > 0; }
         // Whether the row holds the device format and the loudness line at their
         // widest, so a window size can't quietly lose the readout.
         bool loudnessFits() const;

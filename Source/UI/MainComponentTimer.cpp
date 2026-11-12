@@ -510,9 +510,14 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     const bool estimateStands = rec || (idleEstimateFor.isNotEmpty() && idleEstimateFor == idleEstimateKey());
     const double remainingSec = estimateStands ? (double) status.minutesRemaining * 60.0 : 0.0;
 
+    // Missed samples belong to the take and its session: the clock keeps them
+    // after STOP while that session is open, and nowhere else.
+    if (rec && status.missedSamples > 0) missedSamplesSession = engine.getActiveSessionDir();
+    const bool missedHere = missedSamplesSession != juce::File() && missedSamplesSession == engine.getActiveSessionDir();
+    const juce::int64 missedShown = rec || missedHere ? status.missedSamples : 0;
     bigClock.setDiskInfo (freeGB,
                           status.lastWriteMs,
-                          status.missedSamples,
+                          missedShown,
                           remainingSec,
                           status.primaryDiskStale ? BigClockPanel::DiskReading::PrimaryStale
                           : status.copyDiskStale  ? BigClockPanel::DiskReading::CopyStale
@@ -524,7 +529,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     perfDashboard.setMetrics (status.audioLoadPct,
                               (float) status.diskMBPerSec,
                               status.ringFillPct,
-                              status.missedSamples);
+                              missedShown);
     perfDashboard.setDeviceInfo (status.sampleRate,
                                  status.blockSize);
     perfDashboard.setRecording (rec);

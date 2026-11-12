@@ -487,6 +487,9 @@ private:
     juce::uint32 lastDiskQueryMs { 0 };
     double       cachedFreeGB { 0.0 };
     bool         sessionsDriveMissing { false };   // the chosen sessions folder's drive is not mounted
+    // The session a take missed samples in. The recorder keeps its count until
+    // the next take; the clock shows it only while that session is open.
+    juce::File   missedSamplesSession;
     // The sessions folder the engineer chose (appProps sessionsRoot); empty for
     // the default. The engine falls back to ~/Music when it can't be made.
     juce::File configuredSessionsRoot() const;
