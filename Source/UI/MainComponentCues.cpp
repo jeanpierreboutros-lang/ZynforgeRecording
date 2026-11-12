@@ -10,6 +10,7 @@
 #include "../Audio/AtomicFile.h"
 #include "../Audio/VirtualSoundcheck.h"
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 #include "RecordPosition.h"
 #include "SessionProjPath.h"
 
@@ -300,13 +301,22 @@ void MainComponent::promptCueName (const juce::String& title,
     dialog::primeNameEditor (*aw, "cueName");
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    // A take started behind the prompt closes it. The answer is then "no name
+    // typed": a cue being added keeps its suggested name, as it does when + Cue
+    // is pressed during a take, and a rename does nothing.
+    zynforge::closesForTake (aw);
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
         juce::ModalCallbackFunction::create ([self, aw, accept = std::move (onAccept)] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result != 1 || self == nullptr) return;
+            if (self == nullptr) return;
+            if (result != 1)
+            {
+                if (self->engine.isRecording() && accept) accept ({});
+                return;
+            }
             const auto name = aw->getTextEditorContents ("cueName").trim();
             if (accept) accept (name);
         }),

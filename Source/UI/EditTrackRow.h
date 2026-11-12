@@ -9,6 +9,7 @@
 #include "ClipEditTargets.h"
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
+#include "FloatingLaunch.h"
 #include "LivePeakHistory.h"
 #include "WaveCacheFile.h"
 #include "WaveformOverview.h"
@@ -2341,15 +2342,15 @@ namespace zynforge
                     // files the player has open. Say so once, up front.
                     if (engine.getPlayer().isPlaying())
                     {
-                        juce::AlertWindow::showAsync (
-                            juce::MessageBoxOptions()
-                                .withIconType (juce::MessageBoxIconType::NoIcon)
-                                .withTitle ("Strip reorder paused")
-                                .withMessage ("Stop playback before reordering strips -- "
-                                              "moving a strip renames take files the "
-                                              "player has open.")
-                                .withButton ("OK"),
-                            nullptr);
+                        // The notice showAsync would show, marked so a take
+                        // started behind it closes it (it can be shown again).
+                        auto* notice = getLookAndFeel().createAlertWindow (
+                            "Strip reorder paused",
+                            "Stop playback before reordering strips -- moving a strip "
+                            "renames take files the player has open.",
+                            "OK", {}, {}, juce::MessageBoxIconType::NoIcon, 1, nullptr);
+                        closesForTake (notice);
+                        notice->enterModalState (true, nullptr, true);
                         reorderArmed = false;
                         return;
                     }
@@ -2620,7 +2621,8 @@ namespace zynforge
             // (header floats at headerOriginX while the timeline is scrolled).
             const auto screenArea = localAreaToGlobal (
                 juce::Rectangle<int> (headerOriginX(), 0, swatchW, getHeight()));
-            juce::CallOutBox::launchAsynchronously (std::move (picker), screenArea, nullptr);
+            // Each pick applies at once, so closing it for a take drops nothing.
+            closesForTake (&juce::CallOutBox::launchAsynchronously (std::move (picker), screenArea, nullptr));
         }
 
         int  getHeaderWidth() const noexcept { return headerW; }
@@ -2767,6 +2769,7 @@ namespace zynforge
                     dialog::primeNameEditor (*aw, "name");
                     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                    closesForTake (aw);
                     juce::Component::SafePointer<TrackRow> rowSafe (self);
                     aw->enterModalState (true, juce::ModalCallbackFunction::create (
                         [aw, rowSafe, clipIdx] (int r)
@@ -2803,6 +2806,7 @@ namespace zynforge
                     dialog::primeNameEditor (*aw, "dB");
                     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                    closesForTake (aw);
                     juce::Component::SafePointer<TrackRow> rowSafe (self);
                     aw->enterModalState (true, juce::ModalCallbackFunction::create (
                         [aw, rowSafe, clipIdx] (int r)

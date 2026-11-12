@@ -4,6 +4,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "EditTimeline.h"
+#include "FloatingLaunch.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -86,6 +87,7 @@ namespace zynforge
         void mouseDoubleClick (const juce::MouseEvent& e) override
         {
             if (e.y >= kMarkerStripH) return;   // double-clicks on the time scale ignored
+            if (engine.isRecording()) return;   // a rename prompt would stand in front of STOP
 
             const auto& player = engine.getPlayer();
             const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
@@ -133,13 +135,14 @@ namespace zynforge
             }
             aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
             aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            closesForTake (aw);   // a take started behind it closes it, as Cancel
 
             juce::Component::SafePointer<EditTimeRuler> self (this);
             aw->enterModalState (true,
                 juce::ModalCallbackFunction::create ([aw, self, markerId = marker.runtimeId] (int r)
                 {
                     std::unique_ptr<juce::AlertWindow> dispose (aw);
-                    if (r != 1 || self == nullptr) return;
+                    if (r != 1 || self == nullptr || self->engine.isRecording()) return;
                     const auto typed = dispose->getTextEditorContents ("n").trim();
                     if (typed.isEmpty()) return;
                     const int index = self->engine.getMarkers().indexOfId (markerId);

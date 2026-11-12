@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 
 #include "../Audio/AudioEngine.h"
 #include "../Theme/BrandColors.h"
@@ -13,7 +14,9 @@ namespace zynforge
     // Sortable marker list. Double-click a row to jump the player to
     // that sample position; right-click for rename / delete. The dialog
     // tracks marker mutations via a 4 Hz timer so adds / renames in the
-    // EDIT view show up live.
+    // EDIT view show up live. It closes when a take starts behind it, and
+    // refuses Rename / Delete while one rolls: a rename prompt would stand
+    // in front of STOP.
     class MarkerListDialog final : public juce::Component,
                                     private juce::TableListBoxModel,
                                     private juce::Timer
@@ -48,7 +51,7 @@ namespace zynforge
             table.setBounds (dialog::bodyBounds (*this).reduced (8));
         }
 
-        static void launch (AudioEngine& engine)
+        static juce::DialogWindow* launch (AudioEngine& engine)
         {
             auto* content = new MarkerListDialog (engine);
             juce::DialogWindow::LaunchOptions opts;
@@ -58,7 +61,58 @@ namespace zynforge
             opts.escapeKeyTriggersCloseButton = true;
             opts.useNativeTitleBar            = true;
             opts.resizable                    = true;
-            opts.launchAsync();
+            return launchClosesForTake (opts);
+        }
+
+        // What the right-click menu does with item `chosen` (1 Rename, 2 Delete)
+        // for the marker with this runtimeId. Split out of cellClicked's async
+        // callback so the suite can drive it without a popup (test seam).
+        void applyMenuChoice (int chosen, const juce::String& markerId)
+        {
+            // Asked when the item is chosen, not when the list opened: a take
+            // can start from a desk or a remote while the list is up.
+            if (engine.isRecording()) return;
+            juce::Component::SafePointer<MarkerListDialog> safeSelf (this);
+            const int row = engine.getMarkers().indexOfId (markerId);
+            if (row < 0) return;
+            if (chosen == 1)
+            {
+                auto* aw = new juce::AlertWindow ("Rename marker",
+                    "Name:", juce::MessageBoxIconType::NoIcon);
+                aw->addTextEditor ("n", engine.getMarkers().getMarker (row).name, {});
+                if (auto* ed = aw->getTextEditor ("n"))
+                {
+                    ed->setSelectAllWhenFocused (true);
+                    juce::MessageManager::callAsync (
+                        [safe = juce::Component::SafePointer<juce::TextEditor> (ed)]
+                        {
+                            if (safe != nullptr) safe->grabKeyboardFocus();
+                        });
+                }
+                aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+                aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                closesForTake (aw);
+                aw->enterModalState (true, juce::ModalCallbackFunction::create (
+                    [aw, safeSelf, markerId] (int r)
+                {
+                    std::unique_ptr<juce::AlertWindow> own (aw);
+                    // The dialog can be closed while the rename box is
+                    // open -- re-check before touching any member.
+                    if (r != 1 || safeSelf == nullptr || safeSelf->engine.isRecording()) return;
+                    const int target = safeSelf->engine.getMarkers().indexOfId (markerId);
+                    if (target < 0) return;
+                    safeSelf->engine.getMarkers().renameMarker (
+                        target, own->getTextEditorContents ("n").trim());
+                    safeSelf->engine.getMarkers().save();
+                    safeSelf->table.updateContent();
+                }));
+            }
+            else if (chosen == 2)
+            {
+                engine.getMarkers().removeMarker (row);
+                engine.getMarkers().save();
+                table.updateContent();
+            }
         }
 
     private:
@@ -108,8 +162,9 @@ namespace zynforge
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
                 juce::PopupMenu m;
-                m.addItem (1, "Rename...");
-                m.addItem (2, "Delete");
+                const bool idle = ! engine.isRecording();
+                m.addItem (1, idle ? "Rename..." : "Rename... (after the take)", idle);
+                m.addItem (2, idle ? "Delete"    : "Delete (after the take)",    idle);
                 // SafePointer, not raw `this`: showMenuAsync and the rename
                 // modal below both OUTLIVE this click, and the dialog can be
                 // closed while either is open -- dereferencing `engine`/`table`
@@ -119,46 +174,7 @@ namespace zynforge
                 const auto markerId = engine.getMarkers().getMarker (row).runtimeId;
                 m.showMenuAsync (juce::PopupMenu::Options(), [safeSelf, markerId] (int chosen)
                 {
-                    if (safeSelf == nullptr) return;
-                    const int row = safeSelf->engine.getMarkers().indexOfId (markerId);
-                    if (row < 0) return;
-                    if (chosen == 1)
-                    {
-                        auto* aw = new juce::AlertWindow ("Rename marker",
-                            "Name:", juce::MessageBoxIconType::NoIcon);
-                        aw->addTextEditor ("n", safeSelf->engine.getMarkers().getMarker (row).name, {});
-                        if (auto* ed = aw->getTextEditor ("n"))
-                        {
-                            ed->setSelectAllWhenFocused (true);
-                            juce::MessageManager::callAsync (
-                                [safe = juce::Component::SafePointer<juce::TextEditor> (ed)]
-                                {
-                                    if (safe != nullptr) safe->grabKeyboardFocus();
-                                });
-                        }
-                        aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
-                        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                        aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                            [aw, safeSelf, markerId] (int r)
-                        {
-                            std::unique_ptr<juce::AlertWindow> own (aw);
-                            // The dialog can be closed while the rename box is
-                            // open -- re-check before touching any member.
-                            if (r != 1 || safeSelf == nullptr) return;
-                            const int target = safeSelf->engine.getMarkers().indexOfId (markerId);
-                            if (target < 0) return;
-                            safeSelf->engine.getMarkers().renameMarker (
-                                target, own->getTextEditorContents ("n").trim());
-                            safeSelf->engine.getMarkers().save();
-                            safeSelf->table.updateContent();
-                        }));
-                    }
-                    else if (chosen == 2)
-                    {
-                        safeSelf->engine.getMarkers().removeMarker (row);
-                        safeSelf->engine.getMarkers().save();
-                        safeSelf->table.updateContent();
-                    }
+                    if (safeSelf != nullptr) safeSelf->applyMenuChoice (chosen, markerId);
                 });
             }
         }

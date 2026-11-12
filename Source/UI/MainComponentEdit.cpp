@@ -12,6 +12,7 @@
 #include "MainComponent.h"
 #include "../Theme/DialogChrome.h"
 #include "ClipEditTargets.h"
+#include "FloatingLaunch.h"
 #include "MarkerListDialog.h"
 #include "MixerSnapshot.h"
 #include "RecordPosition.h"
@@ -359,6 +360,19 @@ void MainComponent::pollMixerUndo()
     mixerChangeStableTicks = 0;
 }
 
+// The Delete / Cancel question AlertWindow::showAsync would ask, marked so a
+// take started behind it closes it as Cancel. (showAsync enters its modal state
+// a moment later, out of reach of the mark.) The LookAndFeel gives the first of
+// two buttons commandID 1 and the second 0 -- so "Delete" returns 1, not 0.
+static void askDelete (juce::Component& owner, const juce::String& title, const juce::String& message,
+                       std::function<void (int)> answered)
+{
+    auto* aw = owner.getLookAndFeel().createAlertWindow (title, message, "Delete", "Cancel", {},
+                                                         juce::MessageBoxIconType::WarningIcon, 2, nullptr);
+    zynforge::closesForTake (aw);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (std::move (answered)), true);
+}
+
 void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> onConfirm)
 {
     // Asked over a rolling take, this would stand in front of STOP for an edit
@@ -366,21 +380,16 @@ void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> o
     if (! canMutateTimeline ("deleting audio")) return;
     if (confirmForTests) { confirmForTests (std::move (onConfirm)); return; }
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle ("Delete recording?")
-            .withMessage (juce::String (ripple
-                ? "Delete the selected audio and close the gap?"
-                : "Delete the selected audio?")
-                + "\n\nThe recorded file stays on disk -- this only removes it "
-                  "from the arrangement, and Cmd+Z restores it.")
-            .withButton ("Delete")
-            .withButton ("Cancel"),
-        // LookAndFeel_V2::createAlertWindow gives the FIRST of two buttons
-        // commandID 1 and the second 0 -- so "Delete" returns 1, not 0.
-        [self, onConfirm] (int result)
-        { if (result == 1 && self != nullptr && onConfirm) onConfirm(); });
+    askDelete (*this, "Delete recording?",
+               juce::String (ripple ? "Delete the selected audio and close the gap?"
+                                    : "Delete the selected audio?")
+                   + "\n\nThe recorded file stays on disk -- this only removes it "
+                     "from the arrangement, and Cmd+Z restores it.",
+               [self, onConfirm] (int result)
+               {
+                   if (result == 1 && self != nullptr && self->canMutateTimeline ("deleting audio") && onConfirm)
+                       onConfirm();
+               });
 }
 
 void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
@@ -394,21 +403,17 @@ void MainComponent::confirmDeleteChannels (int n, std::function<void()> onConfir
     if (confirmForTests) { confirmForTests (std::move (onConfirm)); return; }
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle (n > 1 ? "Delete channels?" : "Delete channel?")
-            .withMessage (juce::String (n > 1
-                ? "Delete the " + juce::String (n) + " selected channels?"
-                : "Delete this channel?")
-                + "\n\nRecorded files stay on disk -- this removes the "
-                  "channel(s) from the session. It clears the undo history, "
-                  "so Cmd+Z cannot bring them back.")
-            .withButton ("Delete")
-            .withButton ("Cancel"),
-        // First of two buttons gets commandID 1 -- "Delete" returns 1.
-        [self, onConfirm] (int result)
-        { if (result == 1 && self != nullptr && onConfirm) onConfirm(); });
+    askDelete (*this, n > 1 ? "Delete channels?" : "Delete channel?",
+               juce::String (n > 1 ? "Delete the " + juce::String (n) + " selected channels?"
+                                   : "Delete this channel?")
+                   + "\n\nRecorded files stay on disk -- this removes the "
+                     "channel(s) from the session. It clears the undo history, "
+                     "so Cmd+Z cannot bring them back.",
+               [self, onConfirm] (int result)
+               {
+                   if (result == 1 && self != nullptr && self->canMutateTimeline ("deleting a channel") && onConfirm)
+                       onConfirm();
+               });
 }
 
 void MainComponent::editUndo()
@@ -633,6 +638,7 @@ void MainComponent::editCropToLoopRange()
     aw->setLookAndFeel (&laf);
     aw->addButton ("Crop",   kCrop,   juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::closesForTake (aw);
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
         juce::ModalCallbackFunction::create ([self, aw, a, b, cut, dir] (int result)
@@ -753,6 +759,7 @@ void MainComponent::dropMarkerAndPromptName()
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     dialog::primeNameEditor (*aw, "markerName");   // focus + select-all + Enter = OK
+    zynforge::closesForTake (aw);   // closed by a take, the marker keeps its default name
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,

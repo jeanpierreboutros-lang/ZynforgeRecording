@@ -8,8 +8,11 @@
 #include "../Audio/AudioEngine.h"
 #include "../UI/ChannelStrip.h"
 #include "../UI/EditPage.h"
+#include "../UI/EditTimeRuler.h"
 #include "../UI/EditTrackRow.h"
+#include "../UI/FloatingLaunch.h"
 #include "../UI/MainComponent.h"
+#include "../UI/MarkerListDialog.h"
 #include "../UI/PatchPage.h"
 #include "../UI/RenameLabel.h"
 #include "../UI/SessionProjPath.h"
@@ -173,6 +176,9 @@ namespace zynforge
             liveEnvelopeMeetsThePlayhead();
             scanRepaintsOnceMore();
             fadeToolGrabs();
+
+            // 2026-11-11 audit
+            promptsLetATakeThrough (main);
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1089,6 +1095,193 @@ namespace zynforge
                     expectEquals (patchOf (show.engine, 2), juce::String ("-1/-1"),
                                   "an input cleared by hand clears both, as before");
                 }
+            }
+        }
+
+        // ── 2026-11-11 audit ────────────────────────────────────────────────
+
+        static int modalCount() { return juce::ModalComponentManager::getInstance()->getNumModalComponents(); }
+        static juce::Component* topModal() { return juce::ModalComponentManager::getInstance()->getModalComponent (0); }
+
+        // Ends every open modal by its Cancel-style result and lets it clean up.
+        static void dismissModals()
+        {
+            auto* modals = juce::ModalComponentManager::getInstance();
+            for (int i = modals->getNumModalComponents(); --i >= 0;)
+                if (auto* c = modals->getModalComponent (i)) c->exitModalState (0);
+            pumpUntil ([] { return modalCount() == 0; }, 2000);
+        }
+
+        template <class T>
+        static T* findChild (juce::Component& root)
+        {
+            for (auto* child : root.getChildren())
+            {
+                if (auto* hit = dynamic_cast<T*> (child)) return hit;
+                if (auto* deeper = findChild<T> (*child)) return deeper;
+            }
+            return nullptr;
+        }
+
+        static juce::Button* buttonTitled (juce::Component& root, const juce::String& title)
+        {
+            for (auto* child : root.getChildren())
+            {
+                if (auto* b = dynamic_cast<juce::Button*> (child); b != nullptr && b->getTitle() == title) return b;
+                if (auto* deeper = buttonTitled (*child, title)) return deeper;
+            }
+            return nullptr;
+        }
+
+        // Nothing the window started is still writing the session: an edit or a
+        // take waits for that, as it would in the app.
+        static bool settle (Show& show)
+        {
+            return pumpUntil ([&]
+            {
+                return ! show.main.sessionIoBusy.load() && show.main.pendingMetadataSaves == 0
+                    && ! show.engine.isSessionTransitionActive() && ! show.engine.isCaptureFinalizing();
+            }, 10000);
+        }
+
+        // A continued take on the open session, as a desk or the twin would start it.
+        bool startTakeIn (Show& show, const juce::File& dir)
+        {
+            expect (settle (show), "setup: the session never settled");
+            show.engine.armContinue (show.engine.getCaptureLengthSamples());
+            const bool started = show.engine.startRecording (dir);
+            expect (started, "setup: " + show.engine.getRecorder().getStartError());
+            return started;
+        }
+
+        bool stopTake (Show& show)
+        {
+            show.main.stopActiveCaptureAsync (false);
+            return pumpUntil ([&]
+            {
+                return ! show.engine.isRecording() && ! show.engine.isCaptureFinalizing()
+                    && ! show.main.captureMetadataPending && show.main.pendingMetadataSaves == 0;
+            }, 10000);
+        }
+
+        // Where the ruler's double-click finds the marker at `seconds`, mapped the
+        // way the ruler maps it at that moment.
+        static int rulerFlagX (EditTimeRuler& ruler, AudioEngine& engine, double seconds)
+        {
+            const auto& player = engine.getPlayer();
+            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+            const auto total = player.getTotalLengthSamples();
+            const double totalSec = total > 0 ? (double) total / sr : kNotionalEmptyLaneSec;
+            return ruler.rulerTimeToX (seconds, ruler.rulerPxPerSec (totalSec));
+        }
+
+        void promptsLetATakeThrough (MainComponent& main)
+        {
+            beginTest ("Every prompt EDIT opens closes as Cancel when a take starts behind it");
+            {
+                Show show (main);
+                main.confirmForTests = nullptr;
+                show.session ({ "KICK", "SNARE" }, false, false);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                dismissModals();
+                auto& engine = show.engine;
+                const auto marked = [&] (const juce::String& what, const std::function<void()>& open)
+                {
+                    open();
+                    const bool opened = pumpUntil ([] { return modalCount() > 0; }, 2000);
+                    expect (opened, what + ": setup: nothing opened");
+                    if (opened)
+                        expect ((bool) topModal()->getProperties()[kClosesForTake],
+                                what + " would stand in front of STOP for a take started behind it");
+                    dismissModals();
+                };
+
+                engine.getPlayer().setLoopRegion (4800, 9600);
+                marked ("Crop to loop range", [&] { main.editCropToLoopRange(); });
+                marked ("Delete recording",   [&] { main.confirmDeleteRecording (false, [] {}); });
+                marked ("Delete channel",     [&] { main.confirmDeleteChannels (1, [] {}); });
+                engine.getPlayer().clearLoopRegion();
+                marked ("New marker name",    [&] { main.dropMarkerAndPromptName(); });
+                marked ("Add cue",            [&] { main.addCueAtTransport(); });
+                SetlistBar::Cue intro;
+                intro.name = "Intro";
+                main.cues = { intro };
+                main.currentCueIndex = 0;
+                marked ("Rename cue",         [&] { main.renameCurrentCue(); });
+                marked ("Memory Locations",   [&] { MarkerListDialog::launch (engine); });
+
+                const auto row = [&] (int i) { return rowsOf (show.page())[(size_t) i]; };
+                expectEquals ((int) rowsOf (show.page()).size(), 2, "setup: two rows");
+                if (rowsOf (show.page()).size() == 2)
+                {
+                    marked ("Rename clip",  [&] { row (0)->applyClipMenuChoice (0, 412); });
+                    marked ("Clip gain",    [&] { row (0)->applyClipMenuChoice (0, 510); });
+                    marked ("Strip colour", [&] { row (0)->openColourPicker(); });
+                    marked ("Strip reorder notice", [&]
+                    {
+                        auto& r = *row (1);
+                        const juce::Point<int> swatch (5, 30);
+                        r.mouseDown (mouseAt (r, swatch, swatch, false));
+                        engine.getPlayer().start();
+                        r.mouseDrag (mouseAt (r, swatch + juce::Point<int> (0, 20), swatch, true));
+                        engine.getPlayer().stop();
+                        r.mouseUp (mouseAt (r, swatch + juce::Point<int> (0, 20), swatch, true));
+                    });
+                }
+                if (auto* ruler = findChild<EditTimeRuler> (show.page()))
+                {
+                    engine.getMarkers().drop (kRate / 2, "Chorus");
+                    const int x = rulerFlagX (*ruler, engine, 0.5);
+                    marked ("Rename marker", [&] { ruler->mouseDoubleClick (mouseAt (*ruler, { x, 10 }, { x, 10 }, false)); });
+                }
+                else
+                    expect (false, "setup: no ruler");
+                main.cues.clear();
+                main.currentCueIndex = -1;
+            }
+
+            beginTest ("A take closes the prompt it starts behind, and nothing renames or deletes a marker during it");
+            {
+                Show show (main);
+                main.confirmForTests = nullptr;
+                const auto dir = show.session ({ "KICK" }, false, true);
+                expect (pumpUntil ([&] { return show.rowsReadLive(); }), "setup: rows");
+                dismissModals();
+                auto& engine = show.engine;
+                engine.getMarkers().drop (kRate / 2, "Chorus");
+                const auto markerId = engine.getMarkers().lastDroppedId;
+                main.cues.clear();
+                main.currentCueIndex = -1;
+
+                main.addCueAtTransport();
+                expect (pumpUntil ([] { return modalCount() > 0; }, 2000), "setup: the cue prompt");
+                if (startTakeIn (show, dir))
+                {
+                    main.serviceModalsAroundTakes();   // the window's 10 Hz tick (no timers in a test window)
+                    expect (pumpUntil ([] { return modalCount() == 0; }, 2000),
+                            "the cue prompt still stands in front of STOP");
+                    expect (pumpUntil ([&] { return main.cues.size() == 1; }, 1000),
+                            "the cue asked for was dropped with its prompt");
+
+                    MarkerListDialog list (engine);
+                    list.applyMenuChoice (2, markerId);
+                    expect (engine.getMarkers().indexOfId (markerId) >= 0,
+                            "Memory Locations deleted a marker during the take");
+                    list.applyMenuChoice (1, markerId);
+                    expectEquals (modalCount(), 0, "Memory Locations opened Rename over the take");
+
+                    if (auto* ruler = findChild<EditTimeRuler> (show.page()))
+                    {
+                        const int x = rulerFlagX (*ruler, engine, 0.5);
+                        ruler->mouseDoubleClick (mouseAt (*ruler, { x, 10 }, { x, 10 }, false));
+                        expectEquals (modalCount(), 0, "the ruler opened Rename over the take");
+                    }
+                    dismissModals();
+                    expect (stopTake (show), "setup: the take never stopped");
+                }
+                dismissModals();
+                main.cues.clear();
+                main.currentCueIndex = -1;
             }
         }
     };
