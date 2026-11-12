@@ -740,7 +740,16 @@ namespace zynforge
     EditPage::~EditPage()
     {
         stopTimer();
-        cancelWaveCacheWork();
+        // Quit waits a few seconds for the waveform cache at most: an
+        // unfinished write leaves the old file, and quit does not wait on a
+        // rescan's worth of peaks on a slow drive.
+        const auto giveUp = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+        waveCacheGiveUpMs = giveUp;
+        // A save in flight finishes inside that bound: cancelled, it left the
+        // file from before the take, which the next open throws away (it
+        // predates the audio) and rescans the whole session for. Anything else
+        // on the cache thread -- a load, a reset -- stops now.
+        if (! waveCacheSaving.load()) cancelWaveCacheWork();
         waveCacheThread.dropAndWait();
         // ~TimeSliceThread would kill a scan after two seconds. A scan on a
         // slow drive can easily run that long, and it holds locks.
@@ -748,20 +757,19 @@ namespace zynforge
             cache->getTimeSliceThread().stopThread (-1);
         // Flush the waveform cache to WaveCache.wfm in whichever session is
         // active. Best-effort: failure here only means the next launch
-        // re-scans waveforms, no data loss -- so SKIP it when the timer
-        // already wrote this session's cache (the common case), rather than
-        // paying a cache-sized synchronous write on every quit. Not while the
-        // session's saved peaks are still coming in: the caches hold part of
-        // them, and that part would replace the whole file. And never longer
-        // than a few seconds on a slow drive: an unfinished write leaves the
-        // old file, and quit does not wait on a rescan's worth of peaks.
+        // re-scans waveforms, no data loss -- so SKIP it when the timer's save
+        // already wrote this session's cache whole (the common case), rather
+        // than paying a cache-sized synchronous write on every quit. A save
+        // that was queued and never ran, failed, or ran out of time is not
+        // that. Not while the session's saved peaks are still coming in: the
+        // caches hold part of them, and that part would replace the whole file.
+        const bool written = waveCacheSaved && waveCacheSaveJob != 0
+                          && waveCacheWrittenJob.load() == waveCacheSaveJob;
         const auto sessionDir = engine.getActiveSessionDir();
-        if (! waveCacheSaved && ! waveCacheLoading && ! engine.isTakeOnDisk() && sessionDir.isDirectory())
-        {
-            const auto giveUp = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+        if (! written && ! waveCacheLoading && ! engine.isTakeOnDisk() && sessionDir.isDirectory()
+            && juce::Time::getMillisecondCounterHiRes() < giveUp)
             wavecache::save (sessionDir, thumbnailCaches,
                              [giveUp] { return juce::Time::getMillisecondCounterHiRes() > giveUp; });
-        }
     }
 
     void EditPage::cancelWaveCacheWork()
@@ -815,10 +823,16 @@ namespace zynforge
     {
         cancelWaveCacheWork();
         const auto job = ++waveCacheWork;
+        waveCacheSaveJob = job;
         waveCacheSaving = true;
         waveCacheThread.add ([this, sessionDir, job]
         {
-            wavecache::save (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
+            if (beforeWaveCacheSaveForTests) beforeWaveCacheSaveForTests();
+            // Stops when a take, a session change or new media cancels it, or
+            // when quit's bound runs out; only a whole file counts as written.
+            if (wavecache::save (sessionDir, thumbnailCaches,
+                                 [this, job] { return waveCacheWork.load() != job || waveCacheSaveTimedOut(); }))
+                waveCacheWrittenJob = job;
             waveCacheSaving = false;
         });
     }

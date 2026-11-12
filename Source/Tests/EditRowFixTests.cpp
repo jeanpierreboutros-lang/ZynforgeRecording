@@ -18,6 +18,7 @@
 #include "../UI/SessionProjPath.h"
 #include "../UI/WaveCacheFile.h"
 
+#include <atomic>
 #include <cmath>
 #include <functional>
 #include <set>
@@ -183,6 +184,7 @@ namespace zynforge
             continuedTakesKeepOneWaveform();
             clipPromptsFollowTheirClip();
             zoomStepsKeepThePlayhead (main);
+            quitKeepsTheCacheBeingWritten();
         }
 
         void rowsFollowTheSession (MainComponent& main)
@@ -1529,6 +1531,29 @@ namespace zynforge
                     expect (playheadOnScreen(), "Cmd+] zoomed the playhead off screen");
                     page.setZoom (1.0f);
                 }
+            }
+        }
+
+        void quitKeepsTheCacheBeingWritten()
+        {
+            beginTest ("Quitting while the waveform cache is being written keeps it");
+            {
+                Session s (1, { kRate });
+                std::atomic<bool> started { false };
+                {
+                    auto page = std::make_unique<EditPage> (s.engine);
+                    page->setBounds (0, 0, 1400, 300);
+                    page->beforeWaveCacheSaveForTests = [&started]
+                    {
+                        started = true;
+                        juce::Thread::sleep (300);   // a slow drive: quit lands mid-write
+                    };
+                    page->refresh();
+                    expect (pumpUntil ([&] { return started.load(); }, 10000), "setup: the cache save never started");
+                    page.reset();
+                }
+                expect (wavecache::fileIn (s.dir).existsAsFile(),
+                        "quitting threw away the waveform cache it was writing");
             }
         }
     };

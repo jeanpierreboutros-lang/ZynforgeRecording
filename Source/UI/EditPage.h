@@ -197,6 +197,12 @@ namespace zynforge
         void rescanWaveforms();     // drop cached peaks + re-scan every row (e.g. after a strip reorder renamed files)
         // Scan threads free to read right now.
         int  runningScanThreadsForTests() const;
+        // Runs on the cache thread as a WaveCache.wfm save begins (test seam).
+        std::function<void()> beforeWaveCacheSaveForTests;
+        // No WaveCache.wfm save or saved-peaks load is under way.
+        bool waveCacheIdleForTests() const noexcept { return ! waveCacheSaving.load() && ! waveCacheLoading; }
+        // The last cache reset (a saved-peaks load) has run on its thread.
+        bool waveCacheResetRanForTests() const noexcept { return waveCacheResetDone.load() >= waveCacheResetJob; }
         // New audio joined the session, so WaveCache.wfm predates a file and the
         // next open would throw the whole cache away. Writes a newer one.
         // `written`: the files it wrote. Peaks are keyed by path, so any still in
@@ -300,7 +306,7 @@ namespace zynforge
         bool       lastRecording   { false };
         bool       lastFinalizing  { false };   // async STOP still finalizing on the last tick
         juce::int64 recordingBaseSpanSamples { 0 };
-        bool       waveCacheSaved  { false };   // WaveCache.wfm written for this session yet?
+        bool       waveCacheSaved  { false };   // a save of this session's current peaks was queued
         std::set<int> capturedRows;             // tracks the current take writes
         juce::File lastSessionDir;
         // Session whose WaveCache.wfm has already been pulled into the
@@ -359,6 +365,15 @@ namespace zynforge
         std::atomic<int>  waveCacheResetDone { 0 };   // the last reset job that ran, cancelled or not
         int               waveCacheResetJob  { 0 };   // the reset the rows wait for
         std::atomic<bool> waveCacheSaving { false };
+        int               waveCacheSaveJob { 0 };            // the last save queued
+        std::atomic<int>  waveCacheWrittenJob { 0 };         // the last save that wrote the whole file
+        // Set by quit: a save in flight may run until then, and no longer.
+        std::atomic<double> waveCacheGiveUpMs { 0.0 };
+        bool waveCacheSaveTimedOut() const noexcept
+        {
+            const double giveUp = waveCacheGiveUpMs.load();
+            return giveUp > 0.0 && juce::Time::getMillisecondCounterHiRes() > giveUp;
+        }
         bool              waveCacheLoading { false };   // rows wait for waveCacheResetJob
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditPage)
