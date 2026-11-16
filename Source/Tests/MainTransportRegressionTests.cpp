@@ -252,6 +252,27 @@ namespace zynforge
                         .getChildFile ("zf-main-transport-" + juce::Uuid().toString());
                 };
 
+                beginTest ("A RECORD the helper answered late is taken up quietly, not as a reattach");
+                {
+                    auto late = makeSession();
+                    main.captureSupervisor.startReplyTimeoutMs = 200;
+                    daemon.beforeStartForTests = [] { juce::Thread::sleep (900); };
+                    main.requestDaemonTake (late, 2, armed, 1, true);
+                    expect (main.daemonStartUnansweredMs != 0, "the slow reply did not take the unanswered path");
+                    expect (pumpUntil ([&] { main.timerCallback(); return main.daemonTakeAdopted; }, 6000),
+                            "the late take was never taken up");
+                    // Its START has returned by now: the hook is no longer running.
+                    daemon.beforeStartForTests = nullptr;
+                    main.captureSupervisor.startReplyTimeoutMs = 5000;
+                    expect (! main.statusLabel.getText().containsIgnoreCase ("REATTACHED"),
+                            "a late answer read as a crash: " + main.statusLabel.getText());
+                    expect (main.daemonStartUnansweredMs == 0);
+                    expect (stopAndWait (main));
+                    expect (waitUntil ([&] { return main.captureSupervisor.hasStatus()
+                                                 && ! main.captureSupervisor.isDaemonRecording(); }, 3000));
+                    late.deleteRecursively();
+                }
+
                 beginTest ("remote STOP needs confirmation before finalising the capture daemon");
                 auto first = makeSession();
                 expect (main.captureSupervisor.startRecording (first, 2, 0, armed));

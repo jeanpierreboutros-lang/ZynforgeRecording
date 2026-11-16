@@ -54,6 +54,9 @@ namespace zynforge
                 while (file >= 0 && ::flock (file, LOCK_EX | LOCK_NB) != 0
                        && juce::Time::getMillisecondCounterHiRes() < giveUp)
                     juce::Thread::sleep (2);
+                // The lock file lives in /tmp: its dates say it is in use, so
+                // the system's /tmp cleaner never takes it from under a holder.
+                if (file >= 0) ::futimes (file, nullptr);
             }
             ~ReportFileLock() { if (file >= 0) ::close (file); }   // closing releases it
 

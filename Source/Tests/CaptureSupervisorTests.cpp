@@ -117,25 +117,18 @@ namespace zynforge
                             .getChildFile ("Track_01.wav").existsAsFile(),
                         "no take on disk");
 
-                // Idle now -- but `again` ATTACHED (didn't launch), so its
-                // shutdown must leave the daemon alone.
+                // Idle now. `again` attached (did not launch) and still asks it
+                // to quit, or it would hold the port and the inputs until logout
+                // and the next build of the app would drive it (2026-11-16).
+                // The port must come free, so the NEXT suite run launches fresh.
                 again.shutdown();
-                juce::Thread::sleep (200);
-                CaptureSupervisor third;
-                expect (third.connectOrLaunch (49745), "attached supervisor wrongly killed the daemon");
-                expect (! third.didLaunch());
-
-                // Cleanup over the wire: Quit (accepted -- idle), then the
-                // port must come free so the NEXT suite run launches fresh.
-                expect (third.requestQuit(), "quit send failed");
                 expect (waitUntil ([&]
                 {
                     CaptureClient probe;
                     const bool up = probe.connect ("127.0.0.1", 49745) && probe.hello (300).ok;
                     probe.disconnect();
                     return ! up;
-                }, 5000), "daemon did not exit after Quit -- would leak across runs");
-                third.disconnect();
+                }, 5000), "an idle attached daemon outlived the window -- would leak across runs");
                 sessionDir.deleteRecursively();
             }
 

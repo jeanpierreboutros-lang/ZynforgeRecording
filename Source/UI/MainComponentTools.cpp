@@ -626,9 +626,17 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
     // adopt it -- the engineer sees the take immediately.
     juce::Thread::sleep (250);   // let the first status push land
     if (captureSupervisor.isDaemonRecording())
+    {
         adoptDaemonTake (captureSupervisor.lastStatus(), announceReattach);
+        // Kept because it is rolling (connectOrLaunch replaces only an idle one).
+        if (captureSupervisor.helperIsOtherBuild())
+            showStatus ("REATTACHED to a take rolling in a capture daemon from another build of this app -- "
+                        "STOP closes it normally. Reopen the app after it to use this build's daemon.");
+    }
     else
-        showStatus (captureSupervisor.didLaunch()
+        showStatus (captureSupervisor.didReplaceOtherBuild()
+            ? "Capture daemon from another build of this app replaced -- RECORD now runs out-of-process."
+            : captureSupervisor.didLaunch()
             ? "Capture daemon launched (experimental) -- RECORD now runs out-of-process."
             : "Attached to running capture daemon -- RECORD now runs out-of-process.");
 }
@@ -796,8 +804,9 @@ void MainComponent::toggleCaptureDaemon()
                               { p.setValue ("useCaptureDaemon", useCaptureDaemon); });
 }
 
-bool MainComponent::configureCaptureDaemon()
+bool MainComponent::configureCaptureDaemon (juce::String* refusal)
 {
+    if (refusal != nullptr) refusal->clear();
     auto& manager = engine.getDeviceManager();
     auto* device = manager.getCurrentAudioDevice();
     if (device == nullptr) return false;
@@ -806,7 +815,7 @@ bool MainComponent::configureCaptureDaemon()
     o->setProperty ("deviceState", zynforge::capture::liveDeviceState (manager, *device)->toString());
     o->setProperty ("sampleRate", device->getCurrentSampleRate());
     o->setProperty ("captureDevice", manager.getAudioDeviceSetup().inputDeviceName);
-    return captureSupervisor.configureCapture (config);
+    return captureSupervisor.configureCapture (config, refusal);
 }
 
 juce::var MainComponent::captureDaemonSettings()

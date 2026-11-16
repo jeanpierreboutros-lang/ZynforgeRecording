@@ -3,11 +3,14 @@
 #include "SecureToken.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <array>
+#include <ctime>
 #include <filesystem>
+#include <mutex>
 #if JUCE_MAC || JUCE_LINUX
  #include <fcntl.h>
  #include <sys/file.h>
  #include <sys/stat.h>
+ #include <sys/time.h>
  #include <unistd.h>
 #endif
 
@@ -49,6 +52,13 @@ namespace zynforge::capture::identity
     // A held file lock protects restart/cleanup; old files from a crashed
     // process are replaced only after obtaining that lock. No path is followed
     // through a symlink, and ownership/mode/link count are checked on open fds.
+    //
+    // The folder is in /tmp, and macOS deletes files there whose access,
+    // change and modification dates are all over three days old (its nightly
+    // tmp_cleaner). Every build of this app, old and new, looks for these files
+    // here, so they stay here: a helper freshens what it holds (refresh) and
+    // writes back what the cleaner removed, and any claim is freshened when it
+    // is taken (SessionClaim::hold).
     class Endpoint final
     {
     public:
@@ -57,6 +67,7 @@ namespace zynforge::capture::identity
         bool create (int port)
         {
             reset();
+            const std::lock_guard<std::mutex> guard (fileLock);
            #if JUCE_MAC || JUCE_LINUX
             directory = openDirectory (true);
             if (directory < 0) return false;
@@ -84,8 +95,51 @@ namespace zynforge::capture::identity
 
         const juce::String& secret() const noexcept { return key; }
 
+        // The helper calls this about once a second (CaptureDaemon's status
+        // thread); it costs a few system calls. Its key is read only at a
+        // handshake, so after three days of a running show the cleaner took it
+        // and every later window was refused. Freshens the key and the claims
+        // marker at most hourly, and writes either back once it is gone. Any
+        // thread: it shares a lock with create and reset.
+        void refresh()
+        {
+            const std::lock_guard<std::mutex> guard (fileLock);
+           #if JUCE_MAC || JUCE_LINUX
+            if (! ownsFile || descriptor < 0 || ! validNonce (key)) return;
+            // An emptied folder goes too: hold the one that is on disk now.
+            const int folder = openDirectory (true);
+            if (folder < 0) return;
+            struct stat held {}, current {};
+            if (directory >= 0 && ::fstat (directory, &held) == 0 && ::fstat (folder, &current) == 0
+                && held.st_dev == current.st_dev && held.st_ino == current.st_ino)
+                ::close (folder);
+            else
+            {
+                if (directory >= 0) ::close (directory);
+                directory = folder;
+            }
+            struct stat opened {}, named {};
+            const bool nameExists = ::fstatat (directory, filename.toRawUTF8(), &named, AT_SYMLINK_NOFOLLOW) == 0;
+            const bool nameGone = ! nameExists && errno == ENOENT;
+            if (::fstat (descriptor, &opened) == 0 && nameExists
+                && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino)
+                freshen (descriptor, opened);
+            else if (nameGone)
+                rewriteKey();
+            const int claims = ::openat (directory, claimsName.toRawUTF8(),
+                                         O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+            if (claims >= 0)
+            {
+                struct stat marker {};
+                if (::fstat (claims, &marker) == 0) freshen (claims, marker);
+                ::close (claims);
+            }
+           #endif
+        }
+
         void reset()
         {
+            const std::lock_guard<std::mutex> guard (fileLock);
            #if JUCE_MAC || JUCE_LINUX
             if (ownsFile && directory >= 0 && descriptor >= 0)
             {
@@ -95,6 +149,7 @@ namespace zynforge::capture::identity
                     && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino)
                     ::unlinkat (directory, filename.toRawUTF8(), 0);
                 ::unlinkat (directory, claimsName.toRawUTF8(), 0);
+                ::unlinkat (directory, (filename + ".new").toRawUTF8(), 0);
             }
             if (descriptor >= 0) ::close (descriptor);
             if (directory >= 0) ::close (directory);
@@ -117,6 +172,38 @@ namespace zynforge::capture::identity
            #else
             juce::ignoreUnused (name, create);
             return -1;
+           #endif
+        }
+
+        // A lock this process holds on `name`, kept for the /tmp cleaner: its
+        // file freshened, and, if the cleaner removed it while held, taken
+        // again on a new file of that name (the old one now has no name, so
+        // nobody else could see it held).
+        static void keepHeldLock (const char* name, int& descriptor)
+        {
+           #if JUCE_MAC || JUCE_LINUX
+            if (descriptor < 0) return;
+            const int folder = openDirectory (true);
+            if (folder < 0) return;
+            struct stat opened {}, named {};
+            if (::fstat (descriptor, &opened) == 0
+                && ::fstatat (folder, name, &named, AT_SYMLINK_NOFOLLOW) == 0
+                && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino)
+                freshen (descriptor, opened);
+            else
+            {
+                const int fresh = ::openat (folder, name, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+                if (fresh >= 0 && ::flock (fresh, LOCK_EX | LOCK_NB) == 0)
+                {
+                    ::futimes (fresh, nullptr);
+                    ::close (descriptor);   // the nameless one
+                    descriptor = fresh;
+                }
+                else if (fresh >= 0) ::close (fresh);   // someone else holds the new file: keep ours
+            }
+            ::close (folder);
+           #else
+            juce::ignoreUnused (name, descriptor);
            #endif
         }
 
@@ -177,6 +264,37 @@ namespace zynforge::capture::identity
         { return S_ISREG (status.st_mode) && status.st_uid == ::geteuid()
                  && (status.st_mode & 0777) == 0600 && status.st_nlink == 1; }
 
+        // The cleaner wants all three dates over three days old; an hour-old
+        // modification date is far from that, and a touch per hour is enough.
+        static void freshen (int file, const struct stat& status)
+        {
+            if ((juce::int64) std::time (nullptr) - (juce::int64) status.st_mtime > 3600)
+                ::futimes (file, nullptr);
+        }
+
+        // Under fileLock. The window may read the name at any moment, so the
+        // key is written whole under a temporary name and renamed into place.
+        void rewriteKey()
+        {
+            const auto temporary = filename + ".new";
+            ::unlinkat (directory, temporary.toRawUTF8(), 0);
+            const int fresh = ::openat (directory, temporary.toRawUTF8(),
+                                        O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0600);
+            if (fresh < 0) return;
+            struct stat status {};
+            if (::fstat (fresh, &status) == 0 && validFile (status)
+                && ::flock (fresh, LOCK_EX | LOCK_NB) == 0
+                && ::pwrite (fresh, key.toRawUTF8(), 64, 0) == 64
+                && ::renameat (directory, temporary.toRawUTF8(), directory, filename.toRawUTF8()) == 0)
+            {
+                ::close (descriptor);   // the nameless one the cleaner took
+                descriptor = fresh;
+                return;
+            }
+            ::close (fresh);
+            ::unlinkat (directory, temporary.toRawUTF8(), 0);
+        }
+
         static int openDirectory (bool create)
         {
             const auto path = juce::String ("/tmp/zynforge-capture-") + juce::String ((int) ::geteuid());
@@ -190,6 +308,7 @@ namespace zynforge::capture::identity
             return -1;
         }
        #endif
+        std::mutex fileLock;   // create, reset and refresh: the files and descriptors below
         int directory { -1 }, descriptor { -1 };
         bool ownsFile { false };
         juce::String key, filename, claimsName;
@@ -209,11 +328,18 @@ namespace zynforge::capture::identity
         {
             release();
            #if JUCE_MAC || JUCE_LINUX
-            descriptor = Endpoint::openSharedFile (nameFor (kind, session).toRawUTF8());
+            lockName = nameFor (kind, session);
+            descriptor = Endpoint::openSharedFile (lockName.toRawUTF8());
             // Only a probe holds it otherwise, for an instant.
             for (int attempt = 0; descriptor >= 0 && attempt < 50; ++attempt)
             {
-                if (::flock (descriptor, LOCK_EX | LOCK_NB) == 0) return true;
+                if (::flock (descriptor, LOCK_EX | LOCK_NB) == 0)
+                {
+                    // The file may be days old (an earlier take of this
+                    // session): fresh dates keep the /tmp cleaner off it.
+                    ::futimes (descriptor, nullptr);
+                    return true;
+                }
                 juce::Thread::sleep (1);
             }
             release();
@@ -229,6 +355,14 @@ namespace zynforge::capture::identity
             if (descriptor >= 0) ::close (descriptor);   // closing releases it
            #endif
             descriptor = -1;
+        }
+
+        // For a holder that keeps it a long time (a helper's take): keeps its
+        // file from the /tmp cleaner (Endpoint::keepHeldLock). Same thread as
+        // hold and release.
+        void refresh()
+        {
+            if (descriptor >= 0) Endpoint::keepHeldLock (lockName.toRawUTF8(), descriptor);
         }
 
     protected:
@@ -250,6 +384,7 @@ namespace zynforge::capture::identity
         }
 
         const char* kind;
+        juce::String lockName;
         int descriptor { -1 };
         JUCE_DECLARE_NON_COPYABLE (SessionClaim)
     };

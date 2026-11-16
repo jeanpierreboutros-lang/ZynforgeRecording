@@ -123,7 +123,16 @@ void MainComponent::serviceCaptureDaemonLink()
                 if (daemonStatus.recording)
                 {
                     // Not from a status older than the take this window just ended.
-                    if (! daemonTakeAdopted && receivedAt > daemonTakeEndedAtMs) adoptDaemonTake (daemonStatus, true);
+                    if (! daemonTakeAdopted && receivedAt > daemonTakeEndedAtMs)
+                    {
+                        // This window's own RECORD, answered after it stopped
+                        // waiting: not a take that outlived a crash.
+                        const bool lateAnswer = daemonStartUnansweredMs != 0;
+                        adoptDaemonTake (daemonStatus, ! lateAnswer);
+                        if (lateAnswer)
+                            showStatus ("DAEMON recording -> " + juce::File (daemonStatus.sessionPath).getFileName()
+                                        + "  (the capture daemon answered RECORD late)");
+                    }
                 }
                 else if (daemonStartUnansweredMs != 0)
                 {

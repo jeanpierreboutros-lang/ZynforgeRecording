@@ -1,5 +1,6 @@
 #include "CaptureDaemon.h"
 #include "DeviceState.h"
+#include "HelperBuild.h"
 #include "../Audio/DisplayText.h"
 #include "../Audio/TakeNames.h"
 
@@ -23,6 +24,10 @@ namespace zynforge::capture
         // handshake is the server's own; commands and status wait on this lock.
         std::unique_lock<std::mutex> opening (commandLock);
         server.onCommand = [this] (const Command& c) { handleCommand (c); };
+        // Named once, from the executable as it is now: an update that
+        // replaces the file later must not change what this helper says it is.
+        if (buildId.isEmpty()) buildId = helperbuild::idOf (helperbuild::ownHelper());
+        server.buildId = buildId;
         if (! server.listen (port))
         {
             juce::Logger::writeToLog ("[capture] listen failed on port " + juce::String (port));
@@ -272,9 +277,13 @@ namespace zynforge::capture
 
     void CaptureDaemon::handleCommand (const Command& c)
     {
+        // Hello (the server already greeted) and Ping need nothing of the
+        // recorder. A window relaunched while another reader's STOP holds the
+        // command lock closing every file must not wait on it: its reader
+        // would sit here and every command it sends after would time out.
+        if (c.action == Action::Hello || c.action == Action::Ping) return;
         std::unique_lock<std::mutex> g (commandLock);
-        if (c.action != Action::Hello && c.action != Action::Ping)
-            commandGeneration.fetch_add (1, std::memory_order_acq_rel);
+        commandGeneration.fetch_add (1, std::memory_order_acq_rel);
         const auto sendReplyUnlocked = [this, &g] (const Reply& reply)
         {
             g.unlock();
@@ -295,7 +304,7 @@ namespace zynforge::capture
         };
         switch (c.action)
         {
-            case Action::Hello:           // server already replied
+            case Action::Hello:           // answered above, without the lock
             case Action::Ping:
                 break;
 
@@ -597,8 +606,20 @@ namespace zynforge::capture
     {
         // 10 Hz status push while a client is attached. Plain thread -- the
         // daemon has no message loop to depend on.
+        int sinceFilesKept = 0;
         while (running.load())
         {
+            // About once a second, attached or not: the files this helper keeps
+            // in the shared /tmp folder (its key, the claims marker, a take's
+            // claim) stay fresh for the system's /tmp cleaner, and come back if
+            // it removed them.
+            if (++sinceFilesKept >= 10)
+            {
+                sinceFilesKept = 0;
+                server.keepIdentityFiles();
+                const std::lock_guard<std::mutex> g (commandLock);
+                takeClaim.refresh();
+            }
             if (server.hasClient())
             {
                 EngineStatus snapshot;

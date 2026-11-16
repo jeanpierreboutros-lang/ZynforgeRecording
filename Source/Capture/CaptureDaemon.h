@@ -15,6 +15,7 @@
 namespace zynforge { class EngineFixTests; }
 namespace zynforge { class CapturePathTests; }
 namespace zynforge { class CaptureHelperTests; }
+namespace zynforge { class CaptureFix20261116Tests; }
 
 namespace zynforge::capture
 {
@@ -28,7 +29,8 @@ namespace zynforge::capture
     //
     // Threading: commands are handled inline on the CaptureServer reader
     // thread (exactly one exists at a time), serialised against the status
-    // ticker by `commandLock`. The audio callback touches only the
+    // ticker by `commandLock`. Hello and Ping are answered without it, so a
+    // new window is never held by an old window's STOP. The audio callback touches only the
     // recorder's RT-safe path. The device manager is the exception: JUCE
     // runs its own device-change handling on the message thread (CaptureMain's
     // main loop), so every command that opens, changes or detaches the device
@@ -62,6 +64,9 @@ namespace zynforge::capture
         }
 
         MultitrackRecorder& getRecorder() noexcept { return recorder; }
+        // What this helper names itself in the hello (HelperBuild.h). Empty
+        // until start(), which takes it from the executable if nobody set it.
+        void setBuildId (const juce::String& id) { buildId = id; }
 
         // Fired (on the command/reader thread) when a Quit command is
         // accepted -- only ever while idle; a rolling take refuses Quit.
@@ -103,6 +108,7 @@ namespace zynforge::capture
         friend class zynforge::EngineFixTests;
         friend class zynforge::CapturePathTests;
         friend class zynforge::CaptureHelperTests;
+        friend class zynforge::CaptureFix20261116Tests;
         std::function<void()> registerCallbackForTests;
         void handleCommand (const Command&);
         bool runDeviceWork (const std::function<void()>& work);
@@ -145,6 +151,7 @@ namespace zynforge::capture
         juce::String        deviceName;       // set while a device runs
         juce::String        appliedDeviceState; // message thread: the setup the last configure opened
         std::atomic<int>    stopsInFlight { 0 };
+        juce::String        buildId;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureDaemon)
     };

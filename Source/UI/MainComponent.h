@@ -376,7 +376,7 @@ private:
     bool crashScanHeld { false };
     juce::Array<juce::File> heldCrashReports;
     bool recoveryOfferHeld { false };
-    bool configureCaptureDaemon();
+    bool configureCaptureDaemon (juce::String* refusal = nullptr);   // refusal: the daemon's own reason
     juce::var captureDaemonSettings();   // what the daemon takes from this window, the device aside
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
     void toggleCaptureDaemon();

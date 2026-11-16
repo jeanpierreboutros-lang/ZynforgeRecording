@@ -48,6 +48,11 @@ namespace zynforge::capture
         // Fired on the reader thread for each parsed Command (a Hello is
         // delivered AFTER its auto-reply is sent).
         std::function<void (const Command&)> onCommand;
+        // Sent in every hello reply. Set before listen().
+        juce::String buildId;
+        // Keeps this endpoint's files in the shared /tmp folder from the
+        // system's /tmp cleaner (identity::Endpoint::refresh). Any thread.
+        void keepIdentityFiles() { endpointIdentity.refresh(); }
 
         // Push to the connected GUI. Thread-safe; no-op if no client. Returns
         // false if the write failed (peer gone). A reply sent from inside a

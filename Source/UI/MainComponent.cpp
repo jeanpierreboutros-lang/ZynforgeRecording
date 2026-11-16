@@ -590,7 +590,19 @@ bool MainComponent::saveMixerToTakeFolder (const juce::File& dir)
 void MainComponent::startDaemonTake (const RecordStartPlan& plan)
 {
     auto& recorder = engine.getRecorder();
-    const bool configured = configureCaptureDaemon();
+    juce::String configureRefusal;
+    const bool configured = configureCaptureDaemon (&configureRefusal);
+    // The daemon's own reason, when it refused this setup: "Press RECORD again"
+    // would only get the same answer.
+    if (! configured && configureRefusal.isNotEmpty())
+    {
+        juce::StringArray words;   // text from outside, one space between words (singleSpaced)
+        words.addTokens (configureRefusal, " \t\r\n", "");
+        words.removeEmptyStrings();
+        showRecordRefusal ("Daemon refused RECORD: it could not apply this window's audio device and tracks ("
+                           + words.joinIntoString (" ") + ")");
+        return;
+    }
     // This window's meters run from its own device, so nothing on screen would
     // show a daemon recording some other one.
     const auto ownDevice = engine.getDeviceManager().getAudioDeviceSetup().inputDeviceName;
