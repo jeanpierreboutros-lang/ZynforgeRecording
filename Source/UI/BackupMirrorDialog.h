@@ -10,6 +10,9 @@
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
 #include "FloatingLaunch.h"
+#include "RecordPosition.h"
+
+#include <filesystem>
 
 namespace zynforge
 {
@@ -50,13 +53,38 @@ namespace zynforge
 
         // Why this folder cannot be the backup; empty when it can. Creates a
         // folder that does not exist yet, as the chooser's New Folder would.
-        static juce::String backupFolderRefusal (const juce::File& folder, const juce::File& activeSession)
+        // With no session open, `sessionsRoot` is where the next one is made.
+        static juce::String backupFolderRefusal (const juce::File& folder, const juce::File& activeSession,
+                                                 const juce::File& sessionsRoot = {})
         {
             if ((! folder.isDirectory() && ! folder.createDirectory().wasOk())
                 || ! preflight::volumeWritable (folder))
                 return "Backup folder is not writable";
-            const auto rejection = MultitrackRecorder::mirrorRootRejection (folder, activeSession, {}, {});
+            auto rejection = MultitrackRecorder::mirrorRootRejection (folder, activeSession, {}, {});
+            if (rejection.isEmpty() && activeSession == juce::File())
+                rejection = sessionsRootRejection (folder, sessionsRoot);
             return rejection.isNotEmpty() ? "Backup folder rejected: " + rejection : juce::String();
+        }
+
+        // With no session open the next one is made in the sessions folder, so
+        // a copy rooted there writes <root>/<session>/Audio Files: the take's
+        // own files. RECORD would drop that copy (mirrorRootRejection); this
+        // says so while it can still be changed. A folder inside the sessions
+        // folder is not refused: a new session is always a new folder beside
+        // it, as with a session open. Reads the disk (canonical paths).
+        static juce::String sessionsRootRejection (const juce::File& root, const juce::File& sessionsRoot)
+        {
+            if (root == juce::File() || sessionsRoot == juce::File()) return {};
+            const auto canonical = [] (const juce::File& f)
+            {
+                std::error_code error;
+                const auto path = std::filesystem::weakly_canonical (f.getFullPathName().toStdString(), error);
+                return error ? f : juce::File (juce::String (path.string()));
+            };
+            return canonical (root) == canonical (sessionsRoot)
+                ? juce::String ("That folder is where new sessions are made -- a copy there would "
+                                "overwrite the take it is meant to protect")
+                : juce::String();
         }
 
     private:
@@ -65,6 +93,7 @@ namespace zynforge
 
     class DialogAuditTests;
     class MixerFixTests;
+    class MixerFix20261116Tests;
 
     namespace backupdlg
     {
@@ -82,6 +111,7 @@ namespace zynforge
         {
             juce::String rejection;            // why the recorder would refuse it
             bool         onSessionDrive { false };
+            bool         driveMissing { false };   // under /Volumes, and that drive is not plugged in
         };
 
         // One row per destination: path label + format combo + remove button.
@@ -189,6 +219,7 @@ namespace zynforge
 
         private:
             friend class zynforge::MixerFixTests;
+            friend class zynforge::MixerFix20261116Tests;
             void pickFolder()
             {
                 chooser = std::make_unique<juce::FileChooser> (
@@ -346,6 +377,7 @@ namespace zynforge
         private:
             friend class zynforge::DialogAuditTests;
             friend class zynforge::MixerFixTests;
+            friend class zynforge::MixerFix20261116Tests;
             static constexpr int kRowH = 36;
 
             void timerCallback() override
@@ -375,40 +407,54 @@ namespace zynforge
             // blocks as long as a dead mount does, so they all run on a thread
             // of their own in one wait with a limit (preflight::withinTime),
             // never on the message thread. Index 0 is the backup, then each
-            // mirror. Empty when the drives did not answer in time.
+            // mirror. Empty when the drives did not answer in time. With no
+            // session open, `sessionsRoot` (where the next one is made) stands
+            // in for it.
             static std::optional<std::vector<RootCheck>> checkRoots (const juce::File& session,
                                                                      const juce::File& backupRoot,
-                                                                     std::vector<juce::File> mirrorRoots)
+                                                                     std::vector<juce::File> mirrorRoots,
+                                                                     const juce::File& sessionsRoot = {})
             {
                 return preflight::withinTime (preflight::kDriveWaitMs,
-                    [session, backupRoot, mirrorRoots, stall = rootCheckStallForTests]
+                    [session, backupRoot, mirrorRoots, sessionsRoot, stall = rootCheckStallForTests]
                 {
                     if (stall) stall();
-                    const auto sessionVolume = session != juce::File() ? VolumeProbe::readVolume (session).volumeId : 0;
+                    // A folder on a drive that is not plugged in reads as the
+                    // volume /Volumes is on, the boot disk: it has no volume to
+                    // compare, and is said as what it is.
+                    const auto reference = session != juce::File() ? session : sessionsRoot;
+                    const auto sessionVolume = reference != juce::File() && ! folderDriveMissing (reference)
+                                                 ? VolumeProbe::readVolume (reference).volumeId : 0;
                     const auto onSessionDrive = [sessionVolume] (const juce::File& root)
                     { return sessionVolume != 0 && VolumeProbe::readVolume (root).volumeId == sessionVolume; };
+                    const auto check = [&] (const juce::File& root, const juce::File& backup, const std::vector<juce::File>& others)
+                    {
+                        RootCheck found;
+                        found.rejection = MultitrackRecorder::mirrorRootRejection (root, session, backup, others);
+                        if (found.rejection.isEmpty() && session == juce::File())
+                            found.rejection = BackupMirrorDialog::sessionsRootRejection (root, sessionsRoot);
+                        found.driveMissing = folderDriveMissing (root);
+                        found.onSessionDrive = ! found.driveMissing && onSessionDrive (root);
+                        return found;
+                    };
 
                     std::vector<RootCheck> found;
                     RootCheck backupCheck;
                     if (backupRoot != juce::File())
-                    {
-                        backupCheck.rejection = MultitrackRecorder::mirrorRootRejection (backupRoot, session, {}, {});
-                        backupCheck.onSessionDrive = onSessionDrive (backupRoot);
-                    }
+                        backupCheck = check (backupRoot, {}, {});
                     found.push_back (backupCheck);
                     for (size_t i = 0; i < mirrorRoots.size(); ++i)
                     {
-                        RootCheck check;
+                        RootCheck mirrorCheck;
                         if (mirrorRoots[i] != juce::File())   // blank rows are just dropped
                         {
                             // A row never conflicts with itself.
                             std::vector<juce::File> others;
                             for (size_t j = 0; j < mirrorRoots.size(); ++j)
                                 if (j != i && mirrorRoots[j] != juce::File()) others.push_back (mirrorRoots[j]);
-                            check.rejection = MultitrackRecorder::mirrorRootRejection (mirrorRoots[i], session, backupRoot, others);
-                            check.onSessionDrive = onSessionDrive (mirrorRoots[i]);
+                            mirrorCheck = check (mirrorRoots[i], backupRoot, others);
                         }
-                        found.push_back (check);
+                        found.push_back (mirrorCheck);
                     }
                     return found;
                 });
@@ -419,12 +465,21 @@ namespace zynforge
             void recheckRoots (bool force)
             {
                 const auto session = engine.getActiveSessionDir();
+                const auto sessionsRoot = nextSessionsRoot();
                 std::vector<juce::File> mirrorRoots;
-                juce::String key = session.getFullPathName() + "|" + backup.root.getFullPathName();
+                juce::String key = session.getFullPathName() + "|" + sessionsRoot.getFullPathName()
+                                 + "|" + backup.root.getFullPathName();
                 for (const auto& m : working) { mirrorRoots.push_back (m.root); key << "|" << m.root.getFullPathName(); }
                 if (! force && key == checkedRoots) return;
                 checkedRoots = key;
-                checks = checkRoots (session, backup.root, std::move (mirrorRoots));
+                checks = checkRoots (session, backup.root, std::move (mirrorRoots), sessionsRoot);
+            }
+
+            // Where the next session is made, while none is open. Settings
+            // only: no disk is asked here.
+            juce::File nextSessionsRoot() const
+            {
+                return engine.getActiveSessionDir() == juce::File() ? newSessionsRoot (engine) : juce::File();
             }
 
             // -1 is the backup, then the mirrors by index.
@@ -437,15 +492,20 @@ namespace zynforge
             juce::String noteFor (int index) const
             {
                 if (! checks.has_value()) return "drive not answering -- not checked yet";
-                return checkFor (index).onSessionDrive ? "on the same drive as the session -- not an independent copy"
-                                                       : juce::String();
+                const auto check = checkFor (index);
+                if (check.driveMissing) return "drive not connected";
+                if (! check.onSessionDrive) return {};
+                return engine.getActiveSessionDir() == juce::File()
+                    ? "on the same drive as the sessions folder -- not an independent copy"
+                    : "on the same drive as the session -- not an independent copy";
             }
 
             // The refusals a backup folder has always had, at the moment of
             // picking it. An offline drive already saved here is left alone.
             bool acceptBackup (const juce::File& folder)
             {
-                const auto refusal = BackupMirrorDialog::backupFolderRefusal (folder, engine.getActiveSessionDir());
+                const auto refusal = BackupMirrorDialog::backupFolderRefusal (folder, engine.getActiveSessionDir(),
+                                                                              nextSessionsRoot());
                 if (refusal.isEmpty()) return true;
                 status.setText (refusal, juce::dontSendNotification);
                 if (host.backupRefused) host.backupRefused (refusal);

@@ -1788,7 +1788,7 @@ static juce::String checklistFormatName (zynforge::CaptureFormat format)
                                     : "?";
 }
 
-juce::String MainComponent::backupChecklistRow (bool onSessionDrive)
+juce::String MainComponent::backupChecklistRow (bool onSessionDrive, bool driveMissing)
 {
     const auto backupDir = engine.getRecorder().getBackupDirectory();
     const bool backupConfigured = backupDir.getFullPathName().isNotEmpty();
@@ -1820,7 +1820,8 @@ juce::String MainComponent::backupChecklistRow (bool onSessionDrive)
     else if (backupState == BackupState::ConfiguredWritable)
         row << backupDir.getFullPathName() << " (configured + writable, " << format << ")";
     else if (backupState == BackupState::ConfiguredUnavailable)
-        row << backupDir.getFullPathName() << " (NOT writable / missing, " << format << ")";
+        row << backupDir.getFullPathName() << (driveMissing ? " (drive not connected, " : " (NOT writable / missing, ")
+            << format << ")";
     else if (backupState == BackupState::Active) row << "writer active (" << format << ")";
     else row << "configured but NOT WRITING (" << format << ")";
     return row;
@@ -1880,29 +1881,45 @@ void MainComponent::showPreflightChecklist()
     const auto sess   = engine.getActiveSessionDir();
     const auto sessionState = withinTime (kDriveWaitMs, [sess] { return sess.isDirectory(); });
     const bool hasSes = sessionState.value_or (false);
-    const auto root   = hasSes ? sess.getParentDirectory() : getSessionsRoot();
+    // With no session open, where the next one is made: the chosen folder even
+    // with its drive unplugged, never the ~/Music that stands in for it.
+    const auto root   = hasSes ? sess.getParentDirectory() : zynforge::newSessionsRoot (engine);
     const auto freeBytes = withinTime (kDriveWaitMs, [root]
                                        { return root.exists() ? root.getBytesFreeOnVolume() : juce::int64 (0); });
     const double freeGB = bytesToGB (freeBytes.value_or (0));
     // Every drive the record-time estimate stats from this thread -- the
     // session's, the backup's and each mirror's -- is asked first, in one wait
     // with a limit. The volume ids it brings back say which copies share the
-    // session's drive, where a second copy is no second copy at all.
+    // session's drive, where a second copy is no second copy at all. A drive
+    // that is not plugged in reads as the volume /Volumes is on, the boot disk,
+    // so it gets no id and is said as what it is.
     const auto backupFolder = engine.getRecorder().getBackupDirectory();
     const auto mirrors = engine.getMirrors();
     std::vector<juce::File> drives { hasSes ? sess : root, backupFolder };
     for (const auto& m : mirrors) drives.push_back (m.root);
+    struct DriveRead { juce::uint64 volume { 0 }; bool missing { false }; };
     const auto volumes = withinTime (kDriveWaitMs, [drives, stall = preflightStallForTests]
     {
         if (stall) stall();
-        std::vector<juce::uint64> ids;
+        std::vector<DriveRead> reads;
         for (const auto& drive : drives)
-            ids.push_back (drive.getFullPathName().isNotEmpty() ? zynforge::VolumeProbe::readVolume (drive).volumeId : 0);
-        return ids;
+        {
+            DriveRead read;
+            read.missing = zynforge::folderDriveMissing (drive);
+            if (! read.missing && drive.getFullPathName().isNotEmpty())
+                read.volume = zynforge::VolumeProbe::readVolume (drive).volumeId;
+            reads.push_back (read);
+        }
+        return reads;
     });
     const auto onSessionDrive = [&volumes] (size_t index)
     {
-        return volumes.has_value() && index < volumes->size() && (*volumes)[0] != 0 && (*volumes)[index] == (*volumes)[0];
+        return volumes.has_value() && index < volumes->size() && (*volumes)[0].volume != 0
+            && (*volumes)[index].volume == (*volumes)[0].volume;
+    };
+    const auto driveMissing = [&volumes] (size_t index)
+    {
+        return volumes.has_value() && index < volumes->size() && (*volumes)[index].missing;
     };
     const bool estimateAnswers = sessionState.has_value() && freeBytes.has_value() && volumes.has_value();
     const auto fmt    = engine.getRecorder().getCaptureFormat();
@@ -1946,13 +1963,14 @@ void MainComponent::showPreflightChecklist()
     rows.push_back ({ cues.empty() ? Row::Status::info : Row::Status::ok, "Setlist cues",
                       cues.empty() ? juce::String ("none (optional)") : juce::String ((int) cues.size()) });
     rows.push_back ({ chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0), "Disk free",
-                      juce::String (freeGB, 1) + " GB (" + recordTimeText (headroomMinutes * 60.0)
-                          + " at " + fmtStr + ")" });
+                      driveMissing (0) ? "drive not connected: " + root.getFullPathName()
+                                       : juce::String (freeGB, 1) + " GB (" + recordTimeText (headroomMinutes * 60.0)
+                                             + " at " + fmtStr + ")" });
     rows.push_back ({ chk (! engine.isRecording()), "Status",
                       engine.isRecording() ? juce::String ("RECORDING ROLLING")
                                            : engine.getPlayer().isPlaying() ? juce::String ("Playing back")
                                                                             : juce::String ("Idle") });
-    rows.push_back (Row::fromLine (backupChecklistRow (onSessionDrive (1))));
+    rows.push_back (Row::fromLine (backupChecklistRow (onSessionDrive (1), driveMissing (1))));
     if (consoleLink.isConnected() || consoleLink.wasLinkLost())
         rows.push_back (deskLinkRow());
     if (consoleLink.isConnected() || consoleLink.isOnSoundcheckPatch())
@@ -2064,8 +2082,9 @@ void MainComponent::showPreflightChecklist()
             rows.push_back ({ shared ? Row::Status::warning : chk (w), item,
                               shared ? juce::String ("writable, but on the same drive as the session -- not an independent copy")
                               : w ? juce::String ("writable")
-                                  : answer.has_value() ? juce::String ("NOT writable / missing")
-                                                       : juce::String ("drive not answering") });
+                              : driveMissing (2 + mirrorIndex) ? juce::String ("drive not connected")
+                              : answer.has_value() ? juce::String ("NOT writable / missing")
+                                                   : juce::String ("drive not answering") });
         }
     }
 

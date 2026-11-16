@@ -40,6 +40,7 @@
 
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
 namespace zynforge { class MixerFixTests; class UiFixTests; }
+namespace zynforge { class MixerFix20261116Tests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -647,7 +648,7 @@ private:
     std::function<void()> preflightStallForTests;   // runs where a dead drive would block
     zynforge::PreflightRow deskPatchRow() const;
     zynforge::PreflightRow deskLinkRow() const;
-    juce::String backupChecklistRow (bool onSessionDrive = false);
+    juce::String backupChecklistRow (bool onSessionDrive = false, bool driveMissing = false);
 
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
@@ -711,6 +712,7 @@ private:
     friend class zynforge::EditDetailTests;
     friend class zynforge::EditRowFixTests;
     friend struct zynforge::ConcurrencyAuditAccess;
+    friend class zynforge::MixerFix20261116Tests;
 
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of
