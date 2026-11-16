@@ -76,12 +76,12 @@ namespace zynforge::capture::identity
             struct stat status {};
             if (descriptor < 0 || ::fstat (descriptor, &status) != 0 || ! validFile (status)
                 || ::flock (descriptor, LOCK_EX | LOCK_NB) != 0)
-            { reset(); return false; }
+            { resetLocked(); return false; }
             ownsFile = true;
             key = securetoken::generate();
             if (! validNonce (key) || ::ftruncate (descriptor, 0) != 0
                 || ::pwrite (descriptor, key.toRawUTF8(), 64, 0) != 64)
-            { reset(); return false; }
+            { resetLocked(); return false; }
             claimsName = juce::String (port) + ".claims";
             const int claims = ::openat (directory, claimsName.toRawUTF8(),
                                          O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -140,23 +140,7 @@ namespace zynforge::capture::identity
         void reset()
         {
             const std::lock_guard<std::mutex> guard (fileLock);
-           #if JUCE_MAC || JUCE_LINUX
-            if (ownsFile && directory >= 0 && descriptor >= 0)
-            {
-                struct stat opened {}, named {};
-                if (::fstat (descriptor, &opened) == 0
-                    && ::fstatat (directory, filename.toRawUTF8(), &named, AT_SYMLINK_NOFOLLOW) == 0
-                    && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino)
-                    ::unlinkat (directory, filename.toRawUTF8(), 0);
-                ::unlinkat (directory, claimsName.toRawUTF8(), 0);
-                ::unlinkat (directory, (filename + ".new").toRawUTF8(), 0);
-            }
-            if (descriptor >= 0) ::close (descriptor);
-            if (directory >= 0) ::close (directory);
-           #endif
-            descriptor = directory = -1;
-            ownsFile = false;
-            key.clear();
+            resetLocked();
         }
 
         // A descriptor on a file in the same private folder, for a lock the
@@ -270,6 +254,28 @@ namespace zynforge::capture::identity
         {
             if ((juce::int64) std::time (nullptr) - (juce::int64) status.st_mtime > 3600)
                 ::futimes (file, nullptr);
+        }
+
+        // Under fileLock (create's failures, and reset).
+        void resetLocked()
+        {
+           #if JUCE_MAC || JUCE_LINUX
+            if (ownsFile && directory >= 0 && descriptor >= 0)
+            {
+                struct stat opened {}, named {};
+                if (::fstat (descriptor, &opened) == 0
+                    && ::fstatat (directory, filename.toRawUTF8(), &named, AT_SYMLINK_NOFOLLOW) == 0
+                    && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino)
+                    ::unlinkat (directory, filename.toRawUTF8(), 0);
+                ::unlinkat (directory, claimsName.toRawUTF8(), 0);
+                ::unlinkat (directory, (filename + ".new").toRawUTF8(), 0);
+            }
+            if (descriptor >= 0) ::close (descriptor);
+            if (directory >= 0) ::close (directory);
+           #endif
+            descriptor = directory = -1;
+            ownsFile = false;
+            key.clear();
         }
 
         // Under fileLock. The window may read the name at any moment, so the
