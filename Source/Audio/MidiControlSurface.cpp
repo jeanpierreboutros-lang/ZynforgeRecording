@@ -206,9 +206,18 @@ namespace zynforge
                     // refuses that, and says STOP ends a punch).
                     if (a == mcu::Action::Stop || (a == mcu::Action::Play && eng->isPlaying()))
                     {
-                        if (! eng->performRemoteTransport (AudioEngine::RemoteTransportAction::StopPlay, refused)
-                            && refused.isNotEmpty())
-                            eng->getRemotes().showHostStatus ("Surface STOP refused -- " + refused);
+                        const bool wasPlaying = eng->isPlaying();
+                        if (! eng->performRemoteTransport (AudioEngine::RemoteTransportAction::StopPlay, refused))
+                        {
+                            if (refused.isNotEmpty())
+                                eng->getRemotes().showHostStatus ("Surface STOP refused -- " + refused);
+                        }
+                        // It stops playback only, and a take ends at the Mac
+                        // (RECORD is not wired here either). A press that did
+                        // nothing during a take used to say nothing too. (A
+                        // PUNCH-mode pass it stopped ends where it stopped.)
+                        else if (a == mcu::Action::Stop && ! wasPlaying && eng->isRecording())
+                            eng->getRemotes().showHostStatus ("Surface STOP doesn't end a take; use STOP on the Mac");
                         return;
                     }
                     // The host's door, like every other remote: it refuses in
@@ -291,6 +300,15 @@ namespace zynforge
             send (mcu::led (mcu::Action::Play, 0, playing));
             send (mcu::led (mcu::Action::Stop, 0, ! playing));
             lastPlaying = playing;
+        }
+        // The REC light shows a take, local or the helper's, wherever it was
+        // started: with only PLAY and STOP lit, a punch the surface could not
+        // stop looked finished.
+        const bool recording = engine.isRecording();
+        if (force || recording != lastRecording)
+        {
+            send (mcu::led (mcu::Action::Record, 0, recording));
+            lastRecording = recording;
         }
 
         // Master / monitor motor fader (9th fader).

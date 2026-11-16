@@ -1166,14 +1166,18 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     {
         if (captureMetadataPending || pendingMetadataSaves != 0)
         { error = "session finalization or saving is pending"; return false; }
-        // A selection punch ends with STOP, which splices what it caught and
-        // stops the transport. Stopping playback under it (a tablet's PLAY
-        // release, a surface STOP) cut the punch short and rolled on by itself.
+        // A punch ends with STOP, which splices what it caught and stops the
+        // transport. Stopping playback under it (a tablet's PLAY release, a
+        // surface STOP or PLAY) cut a selection punch short and rolled on by
+        // itself, and left a manual punch recording over the take with the
+        // transport stopped and nothing lit to say so.
         const bool stopsPlayback = action == A::StopPlay || (action == A::TogglePlay && engine.isPlaying());
-        if (stopsPlayback && punchSessionActive)
+        const bool manualPunchRolling = manualPunchActive && engine.isRecording();
+        if (stopsPlayback && (punchSessionActive || manualPunchRolling))
         {
-            error = "a selection punch is running; STOP ends it";
-            showStatus ("Remote stop of playback refused -- a selection punch is running; use STOP");
+            error = juce::String (punchSessionActive ? "a selection punch" : "a punch")
+                  + " is running; STOP on the Mac ends it";
+            showStatus ("Remote stop of playback refused -- " + error);
             return false;
         }
         // Rolling into the selected range in PUNCH mode opens a punch, and no
