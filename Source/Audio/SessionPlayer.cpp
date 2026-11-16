@@ -21,6 +21,10 @@ namespace zynforge
     // block per track on a slow drive; a cue costs nothing if it comes early.
     static constexpr double kCueAheadSeconds = 1.5;
     static constexpr juce::uint32 kCuePassEveryBlocks = 8;
+    // A load waits primeTimeoutMs for each take's first read. A read that only
+    // ran late gets this much more, shared by all of them, before the load is
+    // published: a slow drive is not a failed take.
+    static constexpr int kSlowPrimeGraceMs = 5000;
 
     SessionPlayer::SessionPlayer()
     {
@@ -149,6 +153,23 @@ namespace zynforge
         std::vector<Pending> pending;
         int maxIndex = -1;
 
+        // Prime every reader before the session is playable (see below). A
+        // first read that timed out is only slow, and STOP's reload used to
+        // report a good take "could not be finalized or reopened" for it: those
+        // get a second, shared wait at the end. Only a block the disk failed to
+        // read makes the load incomplete.
+        struct SlowPrime { PlaybackReader* reader; juce::int64 at; int samples; };
+        std::vector<SlowPrime> slowPrimes;
+        const auto primeFirstRead = [&] (PlaybackReader& reader, juce::int64 at, int samples)
+        {
+            switch (reader.prime (at, samples, primeTimeoutMs))
+            {
+                case PlaybackReader::Prime::ready:   break;
+                case PlaybackReader::Prime::failed:  prepared->complete = false; break;
+                case PlaybackReader::Prime::pending: slowPrimes.push_back ({ &reader, at, samples }); break;
+            }
+        };
+
         // Group every file by its track index. Playback order is resolved by
         // findTakeParts' numeric part parsing, never lexicographic filename
         // order (which places part100 before part11).
@@ -172,11 +193,14 @@ namespace zynforge
                 { mainFile = f; break; }
             // Parts with no main file (the silence a lead-in owes goes there) or
             // a take that will not open: the strip is silent, and the load is
-            // not complete. It used to be skipped without a word.
+            // not complete. It used to be skipped without a word. It still
+            // counts as a strip: crash recovery sizes the mixer from the count,
+            // and a top strip left out did not come back.
             if (! mainFile.existsAsFile())
             {
                 prepared->complete = false;
                 prepared->unopened.push_back (idx);
+                maxIndex = juce::jmax (maxIndex, idx);
                 continue;
             }
             auto reader = ConcatReader::createUnchecked (formatManager, findTakeParts (mainFile));
@@ -184,6 +208,7 @@ namespace zynforge
             {
                 prepared->complete = false;
                 prepared->unopened.push_back (idx);
+                maxIndex = juce::jmax (maxIndex, idx);
                 continue;
             }
             const double fileSR = reader->sampleRate;
@@ -198,14 +223,7 @@ namespace zynforge
             // and a later track several callbacks afterwards, producing a
             // user-audible staggered start even though all files begin at the
             // same sample. Playback itself remains non-blocking below.
-            {
-                const int primeSamples = juce::jmax (1, juce::jmin (playbackBlock, 512));
-                juce::AudioBuffer<float> prime ((int) juce::jmax ((unsigned int) 1,
-                                                                 buf->numChannels),
-                                                 primeSamples);
-                buf->setReadTimeout (1000);
-                if (! buf->read (&prime, 0, primeSamples, 0, true, true)) prepared->complete = false;
-            }
+            primeFirstRead (*buf, 0, juce::jmax (1, juce::jmin (playbackBlock, 512)));
             buf->setReadTimeout (0); // non-blocking -- fill silence if not buffered yet
 
             pending.push_back ({ idx, std::move (buf), takeLen, stereo });
@@ -247,12 +265,19 @@ namespace zynforge
             const auto bufferSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
             auto buffered = std::make_unique<PlaybackReader> (
                 raw.release(), readerThread, bufferSamples);
-            juce::AudioBuffer<float> prime (2, 512);
-            buffered->setReadTimeout (1000);
-            if (! buffered->read (&prime, 0, 512, juce::jmax ((juce::int64) 0, clip.fileStartSamples), true, true))
-                prepared->complete = false;
+            primeFirstRead (*buffered, juce::jmax ((juce::int64) 0, clip.fileStartSamples), 512);
             buffered->setReadTimeout (0);
             prepared->explicitReaders.emplace (key, std::move (buffered));
+        }
+
+        // The late ones: one shared wait, then only a failed block counts.
+        const auto graceEnds = juce::Time::getMillisecondCounter() + (juce::uint32) kSlowPrimeGraceMs;
+        for (const auto& slow : slowPrimes)
+        {
+            const auto now = juce::Time::getMillisecondCounter();
+            const int left = now < graceEnds ? (int) (graceEnds - now) : 0;
+            if (slow.reader->prime (slow.at, slow.samples, left) == PlaybackReader::Prime::failed)
+                prepared->complete = false;
         }
         return prepared;
     }
@@ -296,7 +321,14 @@ namespace zynforge
         fileSampleRate = prepared->sampleRate;
         totalLength.store (prepared->length, std::memory_order_release);
         position.store (0, std::memory_order_release);
-        loaded.store (readerCount.load (std::memory_order_acquire) > 0, std::memory_order_release);
+        // Loaded means there is audio to play: a strip whose take would not
+        // open counts as a strip, not as audio.
+        bool anyReader = false;
+        {
+            const juce::ScopedLock sl (tracksLock);
+            for (const auto& t : tracks) anyReader = anyReader || t.reader != nullptr;
+        }
+        loaded.store (anyReader, std::memory_order_release);
         // Caller owns retirement: asynchronous STOP destroys these on its
         // worker, before the readerThread/engine can be destroyed.
         return retired;
@@ -637,7 +669,10 @@ namespace zynforge
         {
             const auto blockEnd = startPos + playableThisBlock;
             const auto ahead = (juce::int64) (deviceSampleRate * kCueAheadSeconds);
-            cueUpcoming (blockEnd, blockEnd + ahead,
+            // Nothing from the loop end on plays before the wrap; everything
+            // before it does, the wrap included.
+            const auto horizon = looping ? juce::jmin (blockEnd + ahead, lEnd - 1) : blockEnd + ahead;
+            cueUpcoming (blockEnd, horizon,
                          looping && lEnd - blockEnd <= ahead ? lStart : (juce::int64) -1, n);
         }
 
@@ -845,31 +880,30 @@ namespace zynforge
             if (i >= (int) clipsAuthoritative.size() || ! clipsAuthoritative[(size_t) i]
                 || i >= (int) activeClips.size())
             {
-                if (wrapTarget >= 0 && t.reader != nullptr) t.reader->cue (wrapTarget);
+                if (wrapTarget >= 0 && t.reader != nullptr) t.reader->cue (wrapTarget, PlaybackReader::kLoopWrapCue);
                 continue;
             }
 
-            // A wrap beats any clip before it: the playhead never gets there.
+            // The next clip before the horizon (the caller stops it at the loop
+            // end) and the clip the wrap lands in are cued on their own slots:
+            // a clip starting just before the loop end plays before the wrap,
+            // and on one slot the wrap's cue replaced it every pass.
             const Clip* next = nullptr;
             for (const auto& c : activeClips[(size_t) i])
             {
                 if (c.muted) continue;
-                if (wrapTarget >= 0)
-                {
-                    if (wrapTarget >= c.timelineStartSamples
-                        && wrapTarget < c.timelineStartSamples + c.fileLengthSamples)
-                        if (auto* reader = readerForClip (c, t))
-                            reader->cue (c.fileStartSamples + (wrapTarget - c.timelineStartSamples));
-                }
-                else if (c.timelineStartSamples > blockEnd && c.timelineStartSamples <= horizon
-                         && (next == nullptr || c.timelineStartSamples < next->timelineStartSamples))
-                {
+                if (wrapTarget >= 0 && wrapTarget >= c.timelineStartSamples
+                    && wrapTarget < c.timelineStartSamples + c.fileLengthSamples)
+                    if (auto* reader = readerForClip (c, t))
+                        reader->cue (c.fileStartSamples + (wrapTarget - c.timelineStartSamples),
+                                     PlaybackReader::kLoopWrapCue);
+                if (c.timelineStartSamples > blockEnd && c.timelineStartSamples <= horizon
+                    && (next == nullptr || c.timelineStartSamples < next->timelineStartSamples))
                     next = &c;
-                }
             }
             if (next != nullptr)
                 if (auto* reader = readerForClip (*next, t))
-                    reader->cue (next->fileStartSamples);
+                    reader->cue (next->fileStartSamples, PlaybackReader::kNextClipCue);
         }
     }
 }
