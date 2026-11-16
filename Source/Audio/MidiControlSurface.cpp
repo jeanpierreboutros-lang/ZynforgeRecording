@@ -118,9 +118,10 @@ namespace zynforge
                 const double sr = juce::jmax (1.0, player.getSampleRate());
                 const auto step = (juce::int64) std::lround (sr / 30.0) * (juce::int64) delta;
                 const auto target = player.getPositionSamples() + step;
-                if (eng->getPunchRange().contains (target))
+                // The same question every remote locate asks (SceneFollow.h).
+                if (const auto why = eng->getRemotes().punchLocateRefusal (target); why.isNotEmpty())
                 {
-                    eng->getRemotes().noteJogHeld();
+                    eng->getRemotes().noteJogHeld (why);
                     return;
                 }
                 player.setPositionSamples (target);

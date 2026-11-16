@@ -44,13 +44,15 @@ namespace zynforge
         void setHost (Host h) { host = std::move (h); }
         void showHostStatus (const juce::String& message) { if (host.showStatus) host.showStatus (message); }
         // A wheel sends thirty of these a second; one notice a second says it.
-        void noteJogHeld();
+        void noteJogHeld (const juce::String& why);
         bool isSessionBusy() const;
 
         // ── OSC remote ──────────────────────────────────────────────────
         // A depth-capped OscPacketReceiver bound to a UDP port, with a
         // dialect parser for DiGiCo / A&H / SSL / Yamaha consoles plus a
         // generic /zynforge/* schema for tablet apps.
+        // On the port it already listens on, switches the dialect in place and
+        // keeps the token; on another port, a new listener and a new token.
         bool         startOsc (int udpPort, int dialectIndex);
         void         stopOsc();
         bool         isOscListening() const;
@@ -91,8 +93,15 @@ namespace zynforge
         // is collected (1-based index -> name) AND applied to a matching track.
         // Used by "Create session from console". Enabling clears the buffer.
         void setConsoleNameCapture (bool on);
-        // Called by OscRemote for every incoming console channel name.
+        // Called by OscRemote for every incoming console channel name. A blank
+        // one names no strip (the console link drops it too).
         void onConsoleChannelName (int oneBasedIndex, const juce::String& name);
+        // The rest of what a desk or a tablet sets on "channel N" lands where
+        // its name does: on every strip that listens to desk channel N,
+        // wherever it sits (README: channel indices follow the console).
+        void onRemoteChannelColour (int oneBasedIndex, juce::uint32 argb);
+        void onRemoteChannelMute   (int oneBasedIndex, bool muted);
+        void onRemoteChannelArm    (int oneBasedIndex, bool armed);
         // Take + clear the captured names (message thread).
         std::map<int, juce::String> takeCapturedConsoleNames();
         // A desk's stereo link state, kept only during that same capture: a
@@ -124,6 +133,9 @@ namespace zynforge
         juce::String deskLocateRefusal() const;
         // The same question once the target is known.
         juce::String deskLocateRefusal (juce::int64 target) const;
+        // Only the PUNCH range's part of it (scenefollow::punchLocateRefusal),
+        // for the jog wheel, which may move under the other refusals.
+        juce::String punchLocateRefusal (juce::int64 target) const;
 
         // ── MIDI control surface (Mackie Control / FaderPort) ───────────
         // Open a control surface on the given MIDI in/out device names. `key`
@@ -140,6 +152,9 @@ namespace zynforge
         juce::uint32                  lastMarkerNoticeMs { 0 };
         juce::uint32                  lastJogNoticeMs { 0 };
         scenefollow::Facts sceneFacts() const;
+        scenefollow::Facts punchFacts() const;
+        // Every strip listening to this 0-based desk channel. Message thread.
+        template <typename Apply> void forStripsHearing (int oneBasedIndex, Apply&&);
 
         AudioEngine& engine;
         Host         host;

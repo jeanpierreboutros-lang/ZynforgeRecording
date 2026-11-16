@@ -332,11 +332,10 @@ namespace zynforge
             {
                 const int port = juce::jlimit (1, 65535, portEd.getText().getIntValue());
                 bool listening = true;
+                // Restarts only for a new port (startOsc): a restart makes a new
+                // token, and Apply with nothing changed stranded the tablet.
                 if (engine.getRemotes().isOscListening() && engine.getRemotes().getOscDialect() == info.dialect)
-                {
-                    engine.getRemotes().stopOsc();
                     listening = engine.getRemotes().startOsc (port, info.dialect);
-                }
                 connVal.setText (listening ? "osc.udp://" + juce::SystemStats::getComputerName() + ".local:"
                                                  + juce::String (port) + "/"
                                            : portTakenText (port),

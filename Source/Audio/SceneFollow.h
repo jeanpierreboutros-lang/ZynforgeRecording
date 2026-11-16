@@ -96,7 +96,8 @@ namespace zynforge::scenefollow
         bool seekLocked   { false };   // a punch holds the playhead
         bool sessionBusy  { false };   // a session job or capture finalization
         bool playerLoaded { false };   // nothing to move otherwise
-        juce::Range<juce::int64> punchRange;   // a locate may not land in here
+        bool rolling      { false };   // the transport is playing (punchLocateRefusal)
+        juce::Range<juce::int64> punchRange;   // a locate may not land in here, nor before it while rolling
     };
 
     struct Decision
@@ -132,6 +133,20 @@ namespace zynforge::scenefollow
     }
 
     inline const char* const kInsidePunchRange = "that lands inside the PUNCH range";
+    inline const char* const kBeforePunchRange = "playback would roll into the PUNCH range";
+
+    // A remote locate and the PUNCH range: never into it, and while the
+    // transport rolls never before it either, since rolling on into the range
+    // opens a punch, and no remote may start one. Stopped, a locate before it
+    // is harmless: remote PLAY is refused in PUNCH mode. Past it is harmless
+    // too: PUNCH mode holds loop-play off, so nothing wraps back.
+    inline juce::String punchLocateRefusal (const Facts& f, juce::int64 target)
+    {
+        if (f.punchRange.isEmpty()) return {};
+        if (f.punchRange.contains (target)) return kInsidePunchRange;
+        if (f.rolling && target < f.punchRange.getStart()) return kBeforePunchRange;
+        return {};
+    }
 
     // Empty when the playhead may move. The desk macro's marker commands use
     // this too, so a locate has one list of refusals.
@@ -153,8 +168,8 @@ namespace zynforge::scenefollow
             return { Action::Refused, -1, why };
         const int index = findMarker (markers, label, playhead);
         if (index < 0) return { Action::NoMatch };
-        if (f.punchRange.contains (markers[(size_t) index].sampleOffset))
-            return { Action::Refused, -1, kInsidePunchRange };
+        if (const auto why = punchLocateRefusal (f, markers[(size_t) index].sampleOffset); why.isNotEmpty())
+            return { Action::Refused, -1, why };
         return { Action::Locate, index };
     }
 

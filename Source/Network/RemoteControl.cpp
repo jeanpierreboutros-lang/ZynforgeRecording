@@ -22,6 +22,10 @@ namespace zynforge
     {
         if (osc == nullptr) osc = std::make_unique<OscRemote> (engine);
         osc->setDialect ((OscRemote::Dialect) juce::jlimit (0, 4, dialectIndex));
+        // Already listening there: only what it parses changes. A restart makes
+        // a new Generic token, and a tablet holding the old one is then ignored
+        // (Apply with nothing changed, or ticking another OSC console, did that).
+        if (osc->isListening() && osc->getPort() == udpPort) return true;
         return osc->start (udpPort);
     }
 
@@ -186,16 +190,12 @@ namespace zynforge
         consoleCapture.store (on, std::memory_order_relaxed);
     }
 
-    void RemoteControl::onConsoleChannelName (int oneBasedIndex, const juce::String& name)
+    // A desk channel belongs to the strip that hears that channel, as
+    // trim-follow's gain does (setDeskChannelGain): after a strip drag or a
+    // PATCH change, strip N is not desk channel N.
+    template <typename Apply>
+    void RemoteControl::forStripsHearing (int oneBasedIndex, Apply&& apply)
     {
-        if (oneBasedIndex >= 1 && consoleCapture.load (std::memory_order_relaxed))
-            capturedConsoleNames[oneBasedIndex] = name;
-        // The other console path refuses everything under LOCK. Names have no
-        // reason to differ from it, unlike a scene that marks a locked take.
-        if (engine.areControlsLocked()) return;
-        // A desk channel's name belongs to the strip that hears that channel,
-        // as trim-follow's gain does (setDeskChannelGain): after a strip drag
-        // or a PATCH change, strip N is not desk channel N.
         const int deskChannel = oneBasedIndex - 1;
         if (deskChannel < 0) return;
         auto& recorder = engine.getRecorder();
@@ -204,7 +204,38 @@ namespace zynforge
         for (int i = 0; i < recorder.getNumTracks(); ++i)
             if (listenedInput (i, recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed), numInputs)
                 == deskChannel)
-                engine.setTrackName (i, name);
+                apply (i);
+    }
+
+    void RemoteControl::onConsoleChannelName (int oneBasedIndex, const juce::String& name)
+    {
+        if (oneBasedIndex >= 1 && consoleCapture.load (std::memory_order_relaxed))
+            capturedConsoleNames[oneBasedIndex] = name;
+        // The other console path refuses everything under LOCK. Names have no
+        // reason to differ from it, unlike a scene that marks a locked take.
+        if (engine.areControlsLocked()) return;
+        // A desk channel nobody named sends an empty name. It must not erase
+        // the strip's own, which the next take's files are named for; the
+        // console link has always dropped it.
+        const auto trimmed = name.trim();
+        if (trimmed.isEmpty()) return;
+        forStripsHearing (oneBasedIndex, [&] (int strip) { engine.setTrackName (strip, trimmed); });
+    }
+
+    void RemoteControl::onRemoteChannelColour (int oneBasedIndex, juce::uint32 argb)
+    {
+        forStripsHearing (oneBasedIndex, [&] (int strip) { engine.setTrackColour (strip, juce::Colour (argb)); });
+    }
+
+    // Pair-aware and refused during a take by the engine's own setters.
+    void RemoteControl::onRemoteChannelMute (int oneBasedIndex, bool muted)
+    {
+        forStripsHearing (oneBasedIndex, [&] (int strip) { engine.setTrackMuted (strip, muted); });
+    }
+
+    void RemoteControl::onRemoteChannelArm (int oneBasedIndex, bool armed)
+    {
+        forStripsHearing (oneBasedIndex, [&] (int strip) { engine.setTrackArmed (strip, armed); });
     }
 
     std::map<int, juce::String> RemoteControl::takeCapturedConsoleNames()
@@ -241,8 +272,22 @@ namespace zynforge
         f.seekLocked   = engine.getPlayer().isSeekLocked();
         f.sessionBusy  = isSessionBusy();
         f.playerLoaded = engine.getPlayer().isLoaded();
+        f.rolling      = engine.getPlayer().isPlaying();
         f.punchRange   = engine.getPunchRange();
         return f;
+    }
+
+    scenefollow::Facts RemoteControl::punchFacts() const
+    {
+        scenefollow::Facts f;
+        f.rolling    = engine.getPlayer().isPlaying();
+        f.punchRange = engine.getPunchRange();
+        return f;
+    }
+
+    juce::String RemoteControl::punchLocateRefusal (juce::int64 target) const
+    {
+        return scenefollow::punchLocateRefusal (punchFacts(), target);
     }
 
     juce::String RemoteControl::deskLocateRefusal() const
@@ -254,16 +299,15 @@ namespace zynforge
     juce::String RemoteControl::deskLocateRefusal (juce::int64 target) const
     {
         if (const auto why = deskLocateRefusal(); why.isNotEmpty()) return why;
-        return engine.getPunchRange().contains (target) ? juce::String (scenefollow::kInsidePunchRange)
-                                                        : juce::String();
+        return punchLocateRefusal (target);
     }
 
-    void RemoteControl::noteJogHeld()
+    void RemoteControl::noteJogHeld (const juce::String& why)
     {
         const auto now = juce::Time::getMillisecondCounter();
         if (now - lastJogNoticeMs < 1000) return;
         lastJogNoticeMs = now;
-        showHostStatus ("Surface jog held -- " + juce::String (scenefollow::kInsidePunchRange));
+        showHostStatus ("Surface jog held -- " + why);
     }
 
     void RemoteControl::locate (juce::int64 samplePosition)
