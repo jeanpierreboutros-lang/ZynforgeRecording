@@ -12,6 +12,7 @@
 #include "CheckedFileStream.h"
 #include "MultiPartReader.h"
 #include "SessionInterchange.h"
+#include "TakeNames.h"
 
 #include <algorithm>
 #include <cmath>
@@ -844,6 +845,17 @@ namespace zynforge
     // Lazy bootstrap: ensure `track` has a clip list (one full-range clip
     // spanning the whole file) so edits have something to act on. Returns
     // false when there's no audio file backing the track.
+    // A consolidate render is named for its track the way the track's take is
+    // (TakeNames.h): "03 SNARE_consolidated_1.wav", or "Track_03_..." for a
+    // track whose take, or name, is from before.
+    static juce::String renderStem (const juce::File& audioDir, int track, MultitrackRecorder& recorder)
+    {
+        const auto existing = takenames::existingStem (audioDir, track);
+        if (existing.isNotEmpty()) return existing;
+        const bool strip = track >= 0 && track < recorder.getNumTracks();
+        return takenames::freshStem (track, strip ? recorder.getTrack (track).getNameThreadSafe() : juce::String());
+    }
+
     bool AudioEngine::ensureClipList (int track)
     {
         // Existing empty arrangements are deliberately silent.
@@ -854,10 +866,9 @@ namespace zynforge
         if (! list.empty()) return true;
 
         auto sessionDir = getActiveSessionDir();
-        const auto trackFile = sessionDir.isDirectory()
-            ? sessionDir.getChildFile ("Audio Files")
-                       .getChildFile (juce::String::formatted ("Track_%02d.wav", track + 1))
-            : juce::File();
+        const auto audioFiles = sessionDir.getChildFile ("Audio Files");
+        const auto stem = sessionDir.isDirectory() ? takenames::existingStem (audioFiles, track) : juce::String();
+        const auto trackFile = stem.isNotEmpty() ? audioFiles.getChildFile (stem + ".wav") : juce::File();
         if (! trackFile.existsAsFile()) return false;
 
         Clip c;
@@ -1580,9 +1591,10 @@ namespace zynforge
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
         audioDir.createDirectory();
         juce::File dst;
+        const auto stem = renderStem (audioDir, track, recorder);
         for (int k = 1; ; ++k)
         {
-            dst = audioDir.getChildFile (juce::String::formatted ("Track_%02d_consolidated_%d.wav", track + 1, k));
+            dst = audioDir.getChildFile (stem + "_consolidated_" + juce::String (k) + ".wav");
             if (! dst.existsAsFile()) break;
         }
 
@@ -1748,10 +1760,10 @@ namespace zynforge
 
             const auto audioDirNow = run.sessionDir.getChildFile ("Audio Files");
             juce::File destination;
+            const auto stem = renderStem (audioDirNow, job.track, recorder);
             for (int k = 1; ; ++k)
             {
-                destination = audioDirNow.getChildFile (
-                    juce::String::formatted ("Track_%02d_consolidated_%d.wav", job.track + 1, k));
+                destination = audioDirNow.getChildFile (stem + "_consolidated_" + juce::String (k) + ".wav");
                 if (! destination.existsAsFile()) break;
             }
             if (! job.temporary.moveFileTo (destination))

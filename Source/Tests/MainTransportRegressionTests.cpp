@@ -3,6 +3,7 @@
 #include "../UI/MainComponent.h"
 #include "../Capture/CaptureDaemon.h"
 #include "../Audio/SessionBackup.h"
+#include "../Audio/TakeNames.h"
 
 #include <array>
 #include <functional>
@@ -702,8 +703,9 @@ namespace zynforge
                             probe->host->lastCaptureFinalizationError);
                     const auto mix = juce::JSON::parse (probe->session.getChildFile ("session_mix.json"));
                     expectEquals ((int) mix["trackCount"], 27);
-                    const auto recordedFiles = probe->session.getChildFile ("Audio Files")
-                        .findChildFiles (juce::File::findFiles, false, "Track_*.wav");
+                    // Named strips record "NN Name.wav", the rest "Track_NN.wav".
+                    const auto recordedFiles = takenames::trackFilesWithExtension (
+                        probe->session.getChildFile ("Audio Files"), "wav");
                     expectEquals (recordedFiles.size(), 27);
                     juce::AudioFormatManager formats;
                     formats.registerBasicFormats();

@@ -7,30 +7,25 @@
 
 #include "CheckedAudioReader.h"
 #include "ScanInput.h"
+#include "TakeNames.h"
 
 namespace zynforge
 {
     // The 1-based track number of a take's MAIN file -- exactly
-    // "Track_NN.<ext>" in a supported container -- or 0 for everything else a
-    // Track_* glob also matches: continuation parts (Track_NN_partXX), punch
-    // sidecars (Track_NN.punchbase.<ext>) and consolidate renders
-    // (Track_NN_consolidated_K). Parsing "Track_" + getIntValue() read
-    // "02_consolidated_1" as track 2, so the analyzers (QC, song
-    // detection) treated a consolidate render as that
+    // "<stem>.<ext>" in a supported container, the stem "Track_NN" or
+    // "NN Label" (see TakeNames.h) -- or 0 for everything else in the folder:
+    // continuation parts (<stem>_partXX), punch sidecars
+    // (<stem>.punchbase.<ext>) and consolidate renders (<stem>_consolidated_K).
+    // Parsing "Track_" + getIntValue() once read "02_consolidated_1" as track 2,
+    // so the analyzers (QC, song detection) treated a consolidate render as that
     // track's take. Only main files count, as in SessionPlayer.
     inline int mainTakeTrackNumber (const juce::File& f)
     {
-        const auto ext = f.getFileExtension().toLowerCase();
-        if (ext != ".wav" && ext != ".flac" && ext != ".aif" && ext != ".aiff") return 0;
-        const auto stem = f.getFileNameWithoutExtension();
-        if (! stem.startsWith ("Track_")) return 0;
-        const auto digits = stem.substring (6);
-        if (digits.isEmpty() || digits.length() > 3 || ! digits.containsOnly ("0123456789")) return 0;
-        return digits.getIntValue();
+        return takenames::mainNumber (f);
     }
 
     // The files that make up one take, in playback order: the main
-    // Track_NN.<ext> followed by its Track_NN_partXX.<ext> continuations
+    // <stem>.<ext> followed by its <stem>_partXX.<ext> continuations
     // (from auto-split past the container cap, or from continue-recording).
     // Returns just the main file when there are no parts; empty if it's absent.
     inline std::vector<juce::File> findTakeParts (const juce::File& mainFile)
@@ -38,7 +33,7 @@ namespace zynforge
         std::vector<juce::File> parts;
         if (! mainFile.existsAsFile()) return parts;
         const auto dir  = mainFile.getParentDirectory();
-        const auto stem = mainFile.getFileNameWithoutExtension();   // "Track_07"
+        const auto stem = mainFile.getFileNameWithoutExtension();   // "Track_07" / "07 KiCK"
         const auto ext  = mainFile.getFileExtension();
 
         // Highest part index that exists. Scan the WHOLE set on disk rather
@@ -80,9 +75,11 @@ namespace zynforge
     {
         const auto findIn = [track] (const juce::File& directory)
         {
+            const auto stem = takenames::existingStem (directory, track);
+            if (stem.isEmpty()) return juce::File();
             for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
             {
-                const auto file = directory.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
+                const auto file = directory.getChildFile (stem + ext);
                 if (file.existsAsFile()) return file;
             }
             return juce::File();

@@ -256,7 +256,7 @@ void MainComponent::showUserGuide()
         "buttons, a pan knob, and a fader. Right-click for rename, "
         "colour, stereo link, stream send, output mute.\n\n"
         "EDIT VIEW\n"
-        "  Waveform of each Track_NN.wav. Edit tools palette top-right: "
+        "  Waveform of each track's take. Edit tools palette top-right: "
         "Smart / Selector / Trim / Grabber / Fade. "
         "Right-click a channel's name or an empty part of its lane to choose "
         "what the lane shows and the row size; right-click a clip for "

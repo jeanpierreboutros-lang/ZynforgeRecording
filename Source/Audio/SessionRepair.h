@@ -3,6 +3,7 @@
 #include "AtomicFile.h"
 #include "SessionBackup.h"
 #include "SessionMixFile.h"
+#include "TakeNames.h"
 #include "../UI/SessionProjPath.h"
 #include <algorithm>
 #include <vector>
@@ -78,9 +79,8 @@ namespace zynforge::sessionrepair
     inline bool hasTakeAudio (const juce::File& sessionDir)
     {
         const auto audio = sessionDir.getChildFile ("Audio Files");
-        const auto takes = (audio.isDirectory() ? audio : sessionDir)
-            .findChildFiles (juce::File::findFiles, false,
-                             "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff");
+        const auto takes = takenames::trackFilesWithExtension (audio.isDirectory() ? audio : sessionDir,
+                                                               "wav;flac;aif;aiff");
         return std::any_of (takes.begin(), takes.end(), [] (const juce::File& take)
                             { return ! take.getFileName().containsIgnoreCase (".punchbase"); });
     }

@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 
 #include "AtomicFile.h"
+#include "TakeNames.h"
 #include "TrackFileTransaction.h"
 
 #include <vector>
@@ -100,16 +101,21 @@ namespace zynforge::trackorder
                                                               const std::vector<int>& destination)
     {
         std::vector<TrackFileTransaction::Move> moves;
+        const takenames::StemIndex onDisk (audio);
         for (int old = 0; old < (int) destination.size(); ++old)
         {
-            const auto prefix = juce::String::formatted ("Track_%02d", old + 1);
+            // The number changes and a name stays: "03 SNARE" -> "01 SNARE",
+            // "Track_03" -> "Track_01" (TakeNames.h).
+            const auto prefix = onDisk.stem (old);
+            if (prefix.isEmpty()) continue;
             for (const auto& f : audio.findChildFiles (juce::File::findFiles, false, prefix + ".*;" + prefix + "_part*"))
             {
                 if (f.getFileName().containsIgnoreCase (".punchbase")) continue;
                 if (! f.hasFileExtension ("wav;flac;aif;aiff")) continue;
+                if (takenames::parse (f.getFileName()).stem != prefix) continue;
                 const int dest = destination[(size_t) old];
                 const auto target = dest >= 0
-                    ? audio.getChildFile (juce::String::formatted ("Track_%02d", dest + 1)
+                    ? audio.getChildFile (takenames::renumbered (prefix, dest)
                                            + f.getFileName().substring (prefix.length()))
                     : removedDir.getChildFile (f.getFileName());
                 if (target != f) moves.emplace_back (f, target);

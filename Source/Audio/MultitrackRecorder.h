@@ -184,7 +184,7 @@ namespace zynforge
         juce::int64 getPreRollHistorySamples() const noexcept { return preRollHistorySamples; }
 
         // True if the session's take for `trackIndex` was auto-split into
-        // multiple parts (Track_NN_partXX) -- punch-in must refuse these.
+        // multiple parts (<stem>_partXX, TakeNames.h) -- punch-in must refuse these.
         static bool takeIsMultiPart (const juce::File& sessionDir, int trackIndex);
 
         // Restore originals left in .punchbase sidecars by an interrupted
@@ -206,8 +206,8 @@ namespace zynforge
         // would write that silence over another channel's file.
         static bool leadInsPending (const juce::File& audioDir);
 
-        // Next continuation file for a take: Track_NN.<ext> is part 1, then
-        // Track_NN_part02, _part03 ... Returns the path to write next + its part
+        // Next continuation file for a take: <stem>.<ext> is part 1, then
+        // <stem>_part02, _part03 ... Returns the path to write next + its part
         // number (1 when no take exists yet -> a normal first recording).
         static std::pair<juce::File, int> nextContinuationPart (
             const juce::File& audioDir, const juce::String& trackName, const juce::String& ext);
@@ -758,6 +758,7 @@ namespace zynforge
         enum class CopyClaim { claimed, conflict, unwritable, interrupted };
         bool claimTakeIdentity (TakeStart&);
         bool recoverPrimaryPunches (const TakeStart&);
+        void resolveTakeStems (TakeStart&);
         static bool adoptExistingTakeFormat (const juce::File& copyAudioDir, TakeFormat& selected,
                                              const std::vector<FormatCheck>&, double sampleRate,
                                              juce::String& problem);
@@ -1104,7 +1105,7 @@ namespace zynforge
         struct PendingLeadIn
         {
             juce::File   audioDir;               // the copy's Audio Files folder
-            juce::String trackName, ext;         // "Track_05", ".wav"
+            juce::String trackName, ext;         // the stem, "Track_05" / "05 KiCK"; ".wav"
             int          firstPart { 1 }, parts { 1 };   // reserved part slots
             int          container { 0 }, bitDepth { 24 }, channels { 1 };
             double       sampleRate { 48000.0 };
@@ -1148,7 +1149,7 @@ namespace zynforge
         std::atomic<juce::int64> recordBaseSamples { 0 };       // timeline offset for a continue take
 
         // Sidecar path that holds an existing take while a punch records over
-        // it: "Audio Files/Track_01.wav" -> "Audio Files/Track_01.punchbase.wav".
+        // it: "Audio Files/01 KiCK.wav" -> "Audio Files/01 KiCK.punchbase.wav".
         static juce::File punchSidecar (const juce::File& take)
         {
             return take.getParentDirectory().getChildFile (

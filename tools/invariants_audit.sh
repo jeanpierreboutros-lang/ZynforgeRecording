@@ -108,30 +108,27 @@ report "TrackState::name written only via setNameThreadSafe" \
        "raw assignment races the locked read" \
        "$HITS"
 
-# ── 4. Take globs cover every container and exclude punch sidecars ──────────
-# "Takes are not always WAV" (CLAUDE.md). A .wav-only glob silently skipped
-# FLAC/AIFF sessions in the timeline CSV and the Crop
-# multi-part guard. And Track_NN.punchbase.<ext> matches a bare Track_* glob --
-# SessionPlayer stitched a crash-orphaned sidecar into the take as part 1.
-# WavRepair.h repairs the WAV header and nothing else, as its AIFF and FLAC twins do theirs.
-HITS=$(grep -rn '"Track_\*\.wav"' $SCOPE 2>/dev/null | grep -v 'Source/Audio/WavRepair.h')
-report "no .wav-only Track_* globs" \
-       "match .wav;.flac;.aif;.aiff -- takes are not always WAV" \
+# ── 4. Take files are named and found through TakeNames.h ──────────────────
+# Since 2026-11-16 a take is "NN Label.<ext>" or "Track_NN.<ext>" (TakeNames.h).
+# A "Track_*" glob misses every named take, and a hand-built "Track_%02d" stem
+# names a file nothing finds. Clip labels ("Track_03", "Track_03 continued")
+# and export file names ("Track_03 - KiCK.wav") are not take files.
+# Before names: a .wav-only glob silently skipped FLAC/AIFF sessions, and a bare
+# Track_* glob let SessionPlayer stitch a crash-orphaned .punchbase sidecar into
+# the take as part 1; takenames::takeAudioFiles holds both rules now.
+HITS=$(grep -rnE 'findChildFiles[^;]*"Track_' $SCOPE 2>/dev/null)
+report "no Track_* globs: list take files with takenames::" \
+       "use takenames::trackFiles / takeAudioFiles / trackFilesWithExtension" \
        "$HITS"
 
-HITS=""
-while IFS= read -r m; do
-    [[ -z "$m" ]] && continue
-    f="${m%%:*}"; ln="${m#*:}"; ln="${ln%%:*}"
-    # The exclusion must live NEAR the glob (next 25 lines = the loop body), not
-    # somewhere in the same file -- an unrelated comment mentioning punchbase
-    # used to satisfy this and hid an injected regression.
-    WIN=$(sed -n "${ln},$((ln + 25))p" "$f" 2>/dev/null | sed 's,//.*,,')
-    grep -q "punchbase" <<<"$WIN" || HITS+="$m"$'\n'
-done < <(grep -rn 'findChildFiles.*"Track_\*"' $SCOPE 2>/dev/null)
-report "bare Track_* globs account for .punchbase sidecars" \
-       "Track_NN.punchbase.<ext> passes an extension filter; exclude it by name" \
-       "$(printf '%s' "$HITS")"
+HITS=$(grep -rnE '"Track_%02d|"Track_" *\+' $SCOPE 2>/dev/null \
+      | grep -v 'Source/Audio/TakeNames.h' \
+      | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
+      | grep -v '"Track_%02d - "' \
+      | grep -vE '(c|appended)\.name ')
+report "take stems come from TakeNames.h" \
+       "use takenames::freshStem / StemIndex / existingStem, not a hand-built Track_NN" \
+       "$HITS"
 
 # ── 5. New sessions honour the Local Storage override ───────────────────────
 # Record entry points (OSC, transport bar) hardcoded

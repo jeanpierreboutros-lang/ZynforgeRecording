@@ -7,6 +7,7 @@
 #include "../Audio/SessionMixFile.h"
 #include "../Audio/SessionRemovedData.h"
 #include "../Audio/SessionRepair.h"
+#include "../Audio/MultiPartReader.h"
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/AtomicFile.h"
 #include "../Audio/SettingsFile.h"
@@ -1376,8 +1377,12 @@ public:
                 engine.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), 1,
                                                          out.getArrayOfWritePointers(), 2, 256, {});
             engine.stopRecording();
-            expect (! f.dir.getChildFile ("Audio Files").findChildFiles (juce::File::findFiles, false, "Track_03.*").isEmpty(),
-                    "the strip that was a bus did not record");
+            // The strip is named "Saved 3", so its take is "03 Saved 3", in the session's container.
+            juce::StringArray onDisk;
+            for (const auto& file : f.dir.getChildFile ("Audio Files").findChildFiles (juce::File::findFiles, false, "*"))
+                onDisk.add (file.getFileName());
+            expect (findTrackMedia (f.dir.getChildFile ("Audio Files"), 2).getFileNameWithoutExtension() == "03 Saved 3",
+                    "the strip that was a bus did not record: " + onDisk.joinIntoString (" | "));
             engine.clearSessionState(); engine.clearAllStripOverrides();
         }
     }

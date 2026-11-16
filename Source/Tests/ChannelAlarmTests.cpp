@@ -563,7 +563,7 @@ namespace zynforge
 
                 const auto audio = rig.dir.getChildFile ("Audio Files");
                 juce::AudioFormatManager fm; fm.registerBasicFormats();
-                std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (audio.getChildFile ("Track_01.wav")));
+                std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (audio.getChildFile ("01 Strip 1.wav")));
                 expect (reader != nullptr);
                 if (reader != nullptr)
                 {

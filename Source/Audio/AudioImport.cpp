@@ -3,6 +3,7 @@
 #include "CheckedFileStream.h"
 #include "CheckedReaderSource.h"
 #include "SincResampler.h"
+#include "TakeNames.h"
 
 namespace zynforge::audioimport
 {
@@ -210,12 +211,26 @@ namespace zynforge::audioimport
             std::vector<ImportedTrack> staged;
             const int outputTracks = sourceChannels > 2 ? sourceChannels : 1;
             bool failedSource = false, clipped = false;
+            // Import appends tracks. A strip number that already holds a take,
+            // under either name (TakeNames.h), is user media: the source is
+            // refused, as an existing destination file always was.
+            {
+                const takenames::StemIndex onDisk (audioFilesDir);
+                for (int channel = 0; channel < outputTracks && ! failedSource; ++channel)
+                    failedSource = onDisk.has (nextTrack + channel);
+            }
             for (int first = 0; first < outputTracks && ! failedSource; first += kChannelsPerPass)
             {
                 std::vector<Output> pass;
+                const auto nameFor = [&] (int channel)
+                {
+                    return sourceChannels > 2
+                        ? source.getFileNameWithoutExtension() + " Ch " + juce::String (channel + 1)
+                        : source.getFileNameWithoutExtension();
+                };
                 for (int channel = first; channel < juce::jmin (outputTracks, first + kChannelsPerPass); ++channel)
                     pass.push_back ({ audioFilesDir.getChildFile (
-                                          "Track_" + juce::String (nextTrack + channel + 1).paddedLeft ('0', 2) + ".wav"),
+                                          takenames::freshStem (nextTrack + channel, nameFor (channel)) + ".wav"),
                                       channel, stereo ? 2 : 1 });
                 if (! writeConvertedOutputs (*reader, pass, targetSampleRate, cancel, &clipped))
                 {
@@ -226,10 +241,7 @@ namespace zynforge::audioimport
                 {
                     const int channel = first + (int) i;
                     created.push_back (pass[i].destination);
-                    staged.push_back ({ nextTrack + channel, stereo,
-                        sourceChannels > 2
-                            ? source.getFileNameWithoutExtension() + " Ch " + juce::String (channel + 1)
-                            : source.getFileNameWithoutExtension() });
+                    staged.push_back ({ nextTrack + channel, stereo, nameFor (channel), pass[i].destination });
                 }
             }
             if (failedSource)

@@ -313,7 +313,8 @@ namespace zynforge
                 pumpUntil ([] { return false; }, 200);
 
                 const auto folder = s.dir.getSiblingFile (s.dir.getFileName() + "-source");
-                const auto source = folder.getChildFile ("Quiet.wav");
+                // Only digits: the import is unnamed and takes the freed "Track_03.wav".
+                const auto source = folder.getChildFile ("3.wav");
                 expect (writeWav (source, 48000, 1, 0.05f));
                 s.main.completeAudioImport ({ source });
                 expect (pumpUntil ([&] { return s.engine.getRecorder().getNumTracks() == 3 && ! s.main.sessionIoBusy.load(); }, 10000),
@@ -339,7 +340,9 @@ namespace zynforge
                 expect (pumpUntil ([&] { return rowsScanned (s.page(), 1); }, 5000), "setup: one row left");
 
                 const auto folder = s.dir.getSiblingFile (s.dir.getFileName() + "-source");
-                const auto source = folder.getChildFile ("Quiet.wav");
+                // A name of only digits leaves the file unnamed (TakeNames.h), so
+                // the import takes the freed "Track_02.wav" itself.
+                const auto source = folder.getChildFile ("2.wav");
                 expect (writeWav (source, 48000, 1, 0.05f));
                 s.main.completeAudioImport ({ source });
                 expect (pumpUntil ([&] { return s.engine.getRecorder().getNumTracks() == 2 && ! s.main.sessionIoBusy.load(); }, 10000),

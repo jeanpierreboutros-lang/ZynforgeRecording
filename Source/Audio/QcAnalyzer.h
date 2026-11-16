@@ -56,8 +56,7 @@ namespace zynforge::qc
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
         std::set<int> tracks;
         for (const auto& dir : { audioDir, sessionDir })
-            for (const auto& file : dir.findChildFiles (juce::File::findFiles, false,
-                                                        "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac"))
+            for (const auto& file : takenames::trackFiles (dir))
                 if (const int number = mainTakeTrackNumber (file); number > 0) tracks.insert (number);
 
         juce::Array<juce::File> takes;

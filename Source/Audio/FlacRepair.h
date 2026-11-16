@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "TakeNames.h"
 
 #include <vector>
 
@@ -173,7 +174,7 @@ namespace zynforge::flacrepair
 
     inline void repairTakeFolder (const juce::File& audioDir, int* repaired = nullptr, int* failed = nullptr)
     {
-        for (const auto& file : audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.flac"))
+        for (const auto& file : takenames::trackFilesWithExtension (audioDir, "flac"))
         {
             const auto result = repairStaleLength (file);
             if (result == Result::repaired && repaired != nullptr) ++*repaired;

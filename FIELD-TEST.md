@@ -1,4 +1,4 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-11-11)
+# ZynForge Recording — Field-Test Checklist (updated 2026-11-16)
 
 Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak, which ends only when someone presses STOP twice: nothing stops it unattended. Tick boxes only after performing them; the failure column tells you when to stop and report. The development Mac has `eca170e`, the Mac mini and the current DMG have `281c6c0`, all protocol 4, and `main` (now on JUCE 8.0.17-security) is ahead of both: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
 
@@ -7,6 +7,17 @@ Never force-quit, unplug hardware or delete sessions during production recording
 **Severity legend:** 🟥 = data-loss class (stop, report immediately) · 🟧 = audio-path class (stop if reproducible) · 🟨 = UX / stage-readiness · ⬜ = cosmetic.
 
 ---
+
+## Take file names (2026-11-16) — not yet performed
+
+Takes are named for their strips: `01 KiCK.wav` (see the 2026-11-16 ADR in [decisions.md](decisions.md)). Use a disposable session.
+
+- [ ] 🟨 **Names on disk.** Name strips from the desk (or by hand), leave one strip at its default number, record a minute. In Finder, `Audio Files` holds `01 <name>.wav` for each named strip and `Track_NN.wav` for the default one. Characters like `/ , ' .` in a name come out as spaces or are gone.
+- [ ] 🟨 **A DAW sees the names.** Drag the folder's files into Pro Tools, Reaper or Logic: each track is named from its file.
+- [ ] 🟥 **Rename, then continue and punch.** Rename a recorded strip, then continue the take and punch into it. No second file appears under the new name: the part is `01 <old name>_part02.wav`, the punch lands in `01 <old name>.wav`, and both play back in place.
+- [ ] 🟥 **A crash keeps names.** In daemon mode, end the window during a take and reopen: the take is adopted and its files keep their names. With the helper off, use a disposable rig for a hard stop, reopen, and `tools/verify_take.sh` the session: green apart from hashes still to finish.
+- [ ] 🟨 **Strip move.** Drag strip 3 to position 1: `03 SNARE.wav` becomes `01 SNARE.wav`, its parts follow, playback and EDIT show the same audio on the moved strip. A backup or mirror follows at its next take.
+- [ ] 🟨 **An old session.** Open a session recorded before this build (all `Track_NN.wav`), continue it: new parts are `Track_NN_part02.wav`; nothing is renamed.
 
 ## 2026-11-11 fix round — not yet performed
 

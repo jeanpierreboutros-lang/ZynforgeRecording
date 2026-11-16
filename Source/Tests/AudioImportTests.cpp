@@ -1,6 +1,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/AudioImport.h"
+#include "../Audio/MultiPartReader.h"
 #include "FailingAudioReader.h"
 
 // Internal seam into the same conversion routine used by importFiles. The
@@ -71,10 +72,13 @@ namespace zynforge
 
             juce::AudioFormatManager formats;
             formats.registerBasicFormats();
+            // Each file is named for its strip, after its source (TakeNames.h).
+            expect (audioDir.getChildFile ("03 Mono 44k.wav").existsAsFile());
+            expect (audioDir.getChildFile ("04 Stereo 48k.wav").existsAsFile());
             std::unique_ptr<juce::AudioFormatReader> monoReader (
-                formats.createReaderFor (audioDir.getChildFile ("Track_03.wav")));
+                formats.createReaderFor (findTrackMedia (audioDir, 2)));
             std::unique_ptr<juce::AudioFormatReader> stereoReader (
-                formats.createReaderFor (audioDir.getChildFile ("Track_04.wav")));
+                formats.createReaderFor (findTrackMedia (audioDir, 3)));
             expect (monoReader != nullptr && monoReader->numChannels == 1);
             expect (stereoReader != nullptr && stereoReader->numChannels == 2);
             if (monoReader != nullptr)
@@ -95,7 +99,7 @@ namespace zynforge
                     expect (! split.tracks[(size_t) channel].stereo);
                 }
                 const auto file = audioDir.getChildFile (
-                    "Track_" + juce::String (11 + channel).paddedLeft ('0', 2) + ".wav");
+                    juce::String (11 + channel) + " Console 4ch Ch " + juce::String (channel + 1) + ".wav");
                 std::unique_ptr<juce::AudioFormatReader> chReader (formats.createReaderFor (file));
                 expect (chReader != nullptr);
                 if (chReader != nullptr)
@@ -206,7 +210,7 @@ namespace zynforge
                 for (int c = 0; c < channels; ++c)
                 {
                     juce::AudioBuffer<float> take;
-                    const auto file = audioDir.getChildFile ("Track_" + juce::String (c + 1).paddedLeft ('0', 2) + ".wav");
+                    const auto file = findTrackMedia (audioDir, c);
                     expect (readAll (file, take), file.getFileName());
                     expectEquals (take.getNumChannels(), 1);
                     expectEquals (take.getNumSamples(), (int) frames);
@@ -249,8 +253,8 @@ namespace zynforge
                     expect (monoDir.createDirectory().wasOk());
                     audioimport::importFiles ({ single }, monoDir, 0, 48000.0);
                     juce::AudioBuffer<float> fromPoly, fromMono;
-                    expect (readAll (audioDir.getChildFile ("Track_0" + juce::String (c + 1) + ".wav"), fromPoly));
-                    expect (readAll (monoDir.getChildFile ("Track_01.wav"), fromMono));
+                    expect (readAll (findTrackMedia (audioDir, c), fromPoly));
+                    expect (readAll (findTrackMedia (monoDir, 0), fromMono));
                     expectEquals (fromPoly.getNumSamples(), fromMono.getNumSamples());
                     int wrong = 0;
                     for (int i = 0; i < juce::jmin (fromPoly.getNumSamples(), fromMono.getNumSamples()); ++i)

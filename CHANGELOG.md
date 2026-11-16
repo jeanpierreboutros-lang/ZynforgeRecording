@@ -17,6 +17,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed — take files are named for their strips, 2026-11-16
+
+- **A take file carries its strip's name**: `01 KiCK.wav`, `02 SNARE.wav`, `65 MIX LR.wav`, instead of `Track_01.wav`. The number keeps desk order in Finder and keeps two strips with the same name apart. The name is the strip's name when RECORD started; renaming a strip later does not rename its files, and a continue, a punch and every auto-split part keep the take's name (`01 KiCK_part02.wav`). Moving a strip renumbers its files and keeps the name.
+- Characters that trip a file system or a DAW import (`/ \ : * ? " ' < > | [ ] ; , . # _`) become spaces or are dropped: "VOX 1, LEAD" records as `03 VOX 1 LEAD.wav`, "GTR 80's" as `04 GTR 80s.wav`. Names are cut at 64 bytes.
+- A strip with no name of its own (its number, the default) keeps `Track_NN.wav`, and sessions recorded before this keep their files as they are; both open, play, continue, punch and export as before.
+- Imported files and Consolidate renders take the track's name too (`05 Intro.wav`, `03 SNARE_consolidated_1.wav`). Export file names (`Track_01 - KiCK.wav`) are unchanged.
+- `tools/verify_take.sh` checks named takes the same way it checks `Track_NN` ones.
+
+---
+
 Everything from here down to the next rule came from a second whole-codebase review on 2026-11-11. It made 82 findings (1 critical, 4 high, 28 medium, 49 low), fixed on six branches (engine, capture, remote, session, EDIT, main window) and merged on `main`. All 82 are closed except two that are fixed in part: lanes not yet loaded at RECORD stay blank until STOP (EDIT), and native file panels can't be closed for a take (prompts). None of it has run on real hardware. Installed builds are in [INSTALL.md](INSTALL.md). The choices the fixes made where the owner may want otherwise are in the top ADR of [decisions.md](decisions.md).
 
 ### Changed — what to know, 2026-11-11 review

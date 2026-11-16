@@ -1042,19 +1042,14 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     // Imported/generated media can coexist with legacy root-level takes.
     // Prefer the modern file for each track, then fall back to its legacy file.
     const auto audioDir = sourceDir.getChildFile ("Audio Files");
-    // Bare Track_* also matches Track_NN.punchbase.<ext> (a crash-orphaned punch
-    // sidecar). matchesIndex below demands an EXACT "Track_NN" stem so one can't
-    // slip through today, but exclude it here too rather than depend on that.
-    auto allFiles = audioDir.findChildFiles (juce::File::findFiles, false, "Track_*");
-    allFiles.addArray (sourceDir.findChildFiles (juce::File::findFiles, false, "Track_*"));
-    allFiles.removeIf ([] (const juce::File& f)
-                       { return f.getFileName().containsIgnoreCase (".punchbase"); });
+    // A track's main file, "Track_NN.<ext>" or "NN Label.<ext>" (TakeNames.h).
+    // Parts, punch sidecars and renders are never a track's main file.
+    auto allFiles = zynforge::takenames::trackFiles (audioDir);
+    allFiles.addArray (zynforge::takenames::trackFiles (sourceDir));
 
     auto matchesIndex = [] (const juce::File& f, int index1Based) -> bool
     {
-        const auto base = f.getFileNameWithoutExtension();
-        const auto suffix = juce::String::formatted ("Track_%02d", index1Based);
-        return base == suffix;
+        return zynforge::takenames::mainNumber (f) == index1Based;
     };
 
     auto findTrackFile = [&] (int index1Based) -> juce::File
@@ -1161,11 +1156,13 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
             // Empty, never-recorded strips are expected in Export All. A
             // selected strip, a previously loaded source, or a dangling
             // continuation part is missing media and makes the batch partial.
-            const auto stem = juce::String::formatted ("Track_%02d", i + 1);
-            const bool hasPart = ! audioDir.findChildFiles (juce::File::findFiles, false,
-                                                            stem + "_part*").isEmpty()
-                              || ! sourceDir.findChildFiles (juce::File::findFiles, false,
-                                                             stem + "_part*").isEmpty();
+            const auto hasPartIn = [i] (const juce::File& dir)
+            {
+                const auto stem = zynforge::takenames::existingStem (dir, i);
+                return stem.isNotEmpty()
+                    && ! dir.findChildFiles (juce::File::findFiles, false, stem + "_part*").isEmpty();
+            };
+            const bool hasPart = hasPartIn (audioDir) || hasPartIn (sourceDir);
             const auto* clips = engine.tryClipsFor (i);
             const bool hasArrangement = clips != nullptr && ! clips->empty();
             if (channelIndices.size() != (size_t) rec.getNumTracks()
@@ -1595,15 +1592,8 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     }();
 
     int firstTrack = engine.getRecorder().getNumTracks();
-    for (const auto& file : audioFilesDir.findChildFiles (juce::File::findFiles, false,
-                                                           "Track_*"))
-    {
-        const auto stem = file.getFileNameWithoutExtension();
-        if (! stem.startsWith ("Track_")) continue;
-        const int index = stem.fromFirstOccurrenceOf ("Track_", false, false)
-                              .upToFirstOccurrenceOf ("_part", false, false).getIntValue();
-        firstTrack = juce::jmax (firstTrack, index);
-    }
+    for (const auto& file : zynforge::takenames::trackFiles (audioFilesDir))
+        firstTrack = juce::jmax (firstTrack, zynforge::takenames::parse (file.getFileName()).number);
     engine.setSessionTransitionActive (true);
     if (editPage != nullptr) editPage->setEnabled (false);
     showStatus ("Importing " + zynforge::counted (picks.size(), "audio file") + "...");
@@ -1623,8 +1613,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
                 || result.tracks.empty())
             {
                 for (const auto& track : result.tracks)
-                    audioFilesDir.getChildFile (juce::String::formatted ("Track_%02d.wav",
-                                                                        track.trackIndex + 1)).deleteFile();
+                    track.file.deleteFile();
                 if (deleteOnCancel) sessionDir.deleteRecursively();
                 if (! result.cancelled)
                     self->showStatus (result.tracks.empty()
@@ -1674,7 +1663,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
                 self->editPage->setEnabled (! self->sessionLocked);
                 juce::Array<juce::File> written;
                 for (const auto& track : result.tracks)
-                    written.add (audioFilesDir.getChildFile (juce::String::formatted ("Track_%02d.wav", track.trackIndex + 1)));
+                    written.add (track.file);
                 self->editPage->sessionMediaAdded (written);
             }
 
@@ -2600,12 +2589,10 @@ void MainComponent::completeOpenFolder (const juce::File& dir)
     {
         const auto audioDir = dir.getChildFile ("Audio Files");
         const auto scanDir = audioDir.isDirectory() ? audioDir : dir;
-        const bool hasMedia = ! scanDir.findChildFiles (
-            juce::File::findFiles, false,
-            "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
+        const bool hasMedia = ! zynforge::takenames::trackFilesWithExtension (scanDir, "wav;flac;aif;aiff").isEmpty();
         statusLabel.setText (hasMedia
             ? "Session audio is unreadable. Existing files are protected; Record will append safely."
-            : "No Track_* audio found in folder",
+            : "No take audio found in folder",
             juce::dontSendNotification);
     }
     updateTransportLabels();

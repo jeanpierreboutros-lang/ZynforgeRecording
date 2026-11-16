@@ -10,6 +10,7 @@
 #include "EditTrackRow.h"
 #include "../Audio/TrackOrder.h"
 #include "../Audio/ScanInput.h"
+#include "../Audio/TakeNames.h"
 
 #include <algorithm>
 #include <map>
@@ -320,10 +321,11 @@ namespace zynforge
             const auto base = audioFiles.isDirectory() ? audioFiles : sessionDir;
             // Try .wav first, then .flac/.aif so backup-format sessions
             // still draw thumbnails.
+            // One listing for every row: "Track_NN" or "NN Label" (TakeNames.h).
+            const zynforge::takenames::StemIndex stems (base);
             auto findTrackFile = [&] (int trackIdx) -> juce::File
             {
-                auto pad = [] (int n) { return juce::String (n).paddedLeft ('0', 2); };
-                const juce::String stem = "Track_" + pad (trackIdx + 1);
+                const auto stem = stems.stemOrLegacy (trackIdx);
                 const char* exts[] = { ".wav", ".flac", ".aif", ".aiff" };
                 for (auto* ext : exts)
                 {

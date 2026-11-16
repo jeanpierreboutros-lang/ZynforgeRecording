@@ -467,12 +467,13 @@ namespace zynforge
                                           backup.getChildFile (session).getChildFile ("Audio Files"),
                                           mirror.getChildFile (session).getChildFile ("Audio Files") })
                 {
-                    const auto wav = copy.getChildFile ("Track_01.wav");
+                    // Named for the pair's left strip, the same on every copy.
+                    const auto wav = copy.getChildFile ("01 Overheads L.wav");
                     expectEquals (stampOf (wav), expected, copy.getFullPathName());
                     const auto description = metadataOf (wav)[juce::WavAudioFormat::bwavDescription];
                     expect (description.startsWith ("sTRK1=Overheads L\r\nsTRK2=Overheads R\r\n"), description);
                     expect (description.contains (session), "take text lost");
-                    expect (! copy.getChildFile ("Track_02.wav").exists(), "stereo pair wrote a second file");
+                    expectEquals (takenames::takeAudioFiles (copy).size(), 1, "stereo pair wrote a second file");
                 }
                 for (const auto& d : { backup, mirror }) d.deleteRecursively();
                 MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
@@ -610,9 +611,10 @@ namespace zynforge
                 const auto session = dir.getFileName();
                 juce::int64 original = 0;
                 record (dir, backup, -1, false, 1000.0, &original);
-                const auto wav = dir.getChildFile ("Audio Files").getChildFile ("Track_01.wav");
+                // The strip is renamed before the punch: the take keeps its name.
+                const auto wav = dir.getChildFile ("Audio Files").getChildFile ("01 Lead Vox.wav");
                 const auto backupWav = backup.getChildFile (session).getChildFile ("Audio Files")
-                                             .getChildFile ("Track_01.wav");
+                                             .getChildFile ("01 Lead Vox.wav");
                 const auto before = metadataOf (wav);
 
                 record (dir, backup, 512, false, 2000.0, nullptr);
@@ -634,6 +636,7 @@ namespace zynforge
                 const auto* failures = report.getProperty ("timeReferenceStampFailures", {}).getArray();
                 expect (failures != nullptr && failures->isEmpty(), "the patch was aimed at a spliced file");
                 expectEquals (lengthOf (wav), (juce::int64) (512 + 8 * kBlock));
+                expect (! wav.getSiblingFile ("01 Renamed.wav").exists(), "a punch after a rename started a second file");
                 backup.deleteRecursively();
                 MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
             }
@@ -645,11 +648,11 @@ namespace zynforge
                 record (dir, {}, -1, false, 1000.0, &original);
                 record (dir, {}, -1, true, 3000.0, nullptr);
                 const auto audio = dir.getChildFile ("Audio Files");
-                expect (audio.getChildFile ("Track_01_part02.wav").existsAsFile());
+                expect (audio.getChildFile ("01 Lead Vox_part02.wav").existsAsFile());
 
                 record (dir, {}, 256, false, 4000.0, nullptr);
-                expect (! audio.getChildFile ("Track_01_part02.wav").exists(), "the splice did not flatten");
-                expectEquals (stampOf (audio.getChildFile ("Track_01.wav")), original);
+                expect (! audio.getChildFile ("01 Lead Vox_part02.wav").exists(), "the splice did not flatten");
+                expectEquals (stampOf (audio.getChildFile ("01 Lead Vox.wav")), original);
                 MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
             }
 

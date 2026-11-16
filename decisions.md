@@ -2,6 +2,25 @@
 
 
 
+## Take files are named for their strips — 2026-11-16
+
+**Status:** Accepted (owner asked for it after the 2026-11-14 show: "the audio files on the hard drive have not the exact names of the tracks in the app").
+
+**Context.** Every take was `Track_NN.wav`, by design: about sixty places (capture, punch, continue, crash recovery, lead-ins, copies, strip moves, playback, QC, handoff, repair, `verify_take.sh`) found a track's files by that fixed name, and the strip name rode only inside the bext Description (`sTRK1=`), which most DAWs do not show. After a show the engineer opens the folder and sees numbers.
+
+**Decision:** A take file carries the strip's number and the strip's name at the moment RECORD started: `01 KiCK.wav`, `65 MIX LR.wav` (`Source/Audio/TakeNames.h`).
+- *The number is the identity.* Every lookup finds a track's files by the number; the name is a label. One folder holds one stem per number, and anything named for the number (an orphaned part, a punch sidecar) claims it.
+- *The name is fixed when the take starts* (`resolveTakeStems`, after punch recovery). A continue, a punch, a copy that already holds the strip and every auto-split part keep the take's existing stem. Renaming a strip never renames files.
+- *A strip with no name of its own keeps `Track_NN`*: empty, or only digits (the default name is the number, and "01 1.wav" says nothing more).
+- *A strip move renumbers and keeps the label* (`03 SNARE` to `01 SNARE`).
+- *Labels hold no `_` or `.`* (suffixes stay unambiguous) and none of `, ; [ ] * ? \ ' "` (JUCE wildcard matching), and are at most 64 bytes. Those characters become spaces; quotes are dropped.
+- *Imports and Consolidate renders follow it*; clip labels and export file names (`Track_01 - KiCK.wav`) are unchanged.
+- *Old sessions are not renamed.* Both forms are read everywhere, and a take from before continues as `Track_NN`.
+
+**Consequences.** Files are readable in Finder and in any DAW import. A file dropped into Audio Files that happens to be written exactly as a take (`05 Intro.wav`) is read as strip 5's take; before, only `Track_*` names were. A session folder can mix `Track_NN` (old or unnamed strips) and named files. The bext `sTRK` names stay.
+
+**Alternatives considered:** Renaming files after STOP (every lookup still breaks, and a crash between renames leaves a half-renamed take). Keeping `Track_NN` and writing named copies (doubles disk and time: 58 GB for the 2026-11-14 show). Hard links with names (APFS only, not exFAT; a punch replaces the inode and the link goes stale). `Track_01 - KiCK.wav`, the export pattern (keeps every `Track_*` glob working, but the owner asked for the track names, and the prefix is noise). Renaming files when a strip is renamed (a rename during a take or a punch would race the writers; a DAW session pointing at the old name would lose it).
+
 ## 2026-11-11 review fix round: the choices the fixes made — 2026-11-11
 
 **Status:** Made during the fixes; each is open to the owner's review.

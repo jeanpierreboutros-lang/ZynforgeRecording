@@ -10,6 +10,7 @@
 #include "PatchPage.h"
 #include "EditToolsBar.h"
 #include "../Audio/PreflightProbes.h"
+#include "../Audio/TakeNames.h"
 #include "PreflightDialog.h"
 #include "BackupMirrorDialog.h"
 #include "SessionRecoveryDialog.h"
@@ -514,8 +515,7 @@ void MainComponent::planRecordPosition (RecordStartPlan& plan)
     const auto activeAudioDir = activeDir.getChildFile ("Audio Files");
     const auto takeScanDir = activeAudioDir.isDirectory() ? activeAudioDir : activeDir;
     const bool existingTakeMedia = takeScanDir.isDirectory()
-        && ! takeScanDir.findChildFiles (juce::File::findFiles, false,
-                                         "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
+        && ! zynforge::takenames::trackFilesWithExtension (takeScanDir, "wav;flac;aif;aiff").isEmpty();
     auto& player = engine.getPlayer();
     // Continuing joins these strips to that session's tracks, so it needs that
     // session's mixer. One pinned but not loaded gets a new folder instead.

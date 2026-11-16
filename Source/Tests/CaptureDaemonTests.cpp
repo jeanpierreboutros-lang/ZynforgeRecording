@@ -94,7 +94,8 @@ namespace zynforge
                 }
                 const auto audio = dir.getChildFile ("Audio Files");
                 juce::AudioFormatManager fm; fm.registerBasicFormats();
-                for (auto* name : { "Track_01.wav", "Track_01_part02.wav" })
+                // Named for the strip ("Routed input"); the continue keeps the name.
+                for (auto* name : { "01 Routed input.wav", "01 Routed input_part02.wav" })
                 {
                     std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (audio.getChildFile (name)));
                     expect (reader != nullptr);
@@ -122,8 +123,8 @@ namespace zynforge
                         expect (files != nullptr);
                         if (files != nullptr)
                         {
-                            expect (files->contains ("Track_01.wav"));
-                            expect (files->contains ("Track_01_part02.wav"));
+                            expect (files->contains ("01 Routed input.wav"));
+                            expect (files->contains ("01 Routed input_part02.wav"));
                         }
                         expectEquals ((juce::int64) (*tracks)[0].getProperty ("totalSamplesPrimary", 0),
                                       (juce::int64) 512);

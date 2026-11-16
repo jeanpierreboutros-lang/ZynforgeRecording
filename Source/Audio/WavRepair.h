@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "TakeNames.h"
 
 namespace zynforge::wavrepair
 {
@@ -121,7 +122,7 @@ namespace zynforge::wavrepair
     // is restored as the take, and a partial replacement is kept as audio.
     inline void repairTakeFolder (const juce::File& audioDir, int* repaired = nullptr, int* failed = nullptr)
     {
-        for (const auto& file : audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav"))
+        for (const auto& file : takenames::trackFilesWithExtension (audioDir, "wav"))
         {
             const auto result = repairStaleHeader (file);
             if (result == Result::repaired && repaired != nullptr) ++*repaired;

@@ -1,5 +1,13 @@
 # Testing Strategy — ZynForge Recording
 
+## Take file names (2026-11-16)
+
+Takes are named for their strips (`Source/Audio/TakeNames.h`, ADR *Take files are named for their strips*). New file `Source/Tests/TakeNameTests.cpp`, *Take file names*, 13 groups: the label rules (wildcard and suffix characters, quotes, 64-byte cut on a character boundary, digits-only names), `parse` against both forms and against near misses (`1 intro.wav`, `001 X.wav`, `07 Vox, lead.wav`, `._07 KiCK.wav`, export names), `StemIndex` with a sidecar-only track, and through the real recorder: named and unnamed strips, playback of named takes on their strips, a continue after a rename (no second file), a fresh take refused on a named strip whatever its name now, a punch after a rename, a pre-names session continuing as `Track_NN`, strip-move renames, a named lead-in finished after a crash, and an import named for its source. The tests need the new header, so they were not run on the old code; the recording ones fail by construction there (`01 KiCK.wav` is never written).
+
+Existing tests that named their strips and then opened `Track_01.wav` now open the named file: *Capture metadata* (the copies and punch tests, which also prove a backup and a mirror carry the primary's name and a punch after a rename keeps it), *Capture daemon*, *Dead-channel alarm*, *Session safety* (the old bus strip, in the session's FLAC container), *Main daemon transport regressions* (27 files counted through `trackFilesWithExtension`), *Audio import worker* (files named for their sources). *EDIT integrity*'s two import-over-a-freed-name tests import a source named only by digits, so the import still takes the freed `Track_NN.wav`. The import's collision test found one real gap, fixed: an import onto a strip number that already held a take under the other name would have written beside it; it is refused now, as an existing destination always was.
+
+`tools/test_verify_tools.py` has five named-take cases (healthy, a render beside it, unlisted, orphan part, part gap). The invariants gate's *Take globs* section is replaced by two checks: no `Track_*` glob in `findChildFiles`, and no hand-built `"Track_%02d"` stem outside `TakeNames.h` (clip labels and export names excepted).
+
 ## 2026-11-11 fix round
 
 The review's 82 findings were fixed on six branches and merged on `main`. Each fix has a regression test, and each test was built and run on the unfixed code first and seen failing there, except ENG-08 (a lock in the callback, which no headless test can observe) and the tour's wording (MAIN-10), checked by eye. Nothing here has run on real hardware; the hardware steps are *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md).

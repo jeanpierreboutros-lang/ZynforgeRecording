@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Audio/DisplayText.h"
+#include "../Audio/TakeNames.h"
 #include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -59,9 +60,8 @@ namespace zynforge
                 int takes = 0;
                 const auto audio = d.getChildFile ("Audio Files").isDirectory()
                                      ? d.getChildFile ("Audio Files") : d;
-                for (const auto& f : audio.findChildFiles (juce::File::findFiles, false,
-                                        "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff"))
-                    if (! f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
+                for (const auto& f : zynforge::takenames::trackFiles (audio))
+                    if (zynforge::takenames::mainNumber (f) > 0)
                         ++takes;
                 r.trackCount = takes;
                 rows.push_back (std::move (r));

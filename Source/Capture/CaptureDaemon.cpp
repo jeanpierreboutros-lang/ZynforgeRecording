@@ -1,6 +1,7 @@
 #include "CaptureDaemon.h"
 #include "DeviceState.h"
 #include "../Audio/DisplayText.h"
+#include "../Audio/TakeNames.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -318,13 +319,9 @@ namespace zynforge::capture
                     // Continue into a new part even after reattaching/restarting
                     // the GUI. Existing takes must never be truncated.
                     const auto audio = dir.getChildFile ("Audio Files");
-                    for (const auto& file : audio.findChildFiles (juce::File::findFiles, false, "Track_*"))
-                    {
-                        if (file.getFileName().containsIgnoreCase (".punchbase")) continue;
-                        const auto number = file.getFileNameWithoutExtension().substring (6);
-                        if (number.isNotEmpty() && number.containsOnly ("0123456789"))
+                    for (const auto& file : zynforge::takenames::trackFiles (audio))
+                        if (zynforge::takenames::mainNumber (file) > 0)
                         { recorder.armContinue (0); break; }
-                    }
                     bwf::TimeAnchor timecode;
                     if (bwf::TimeAnchor::fromJson (c.configuration, timecode))
                         recorder.setTimeReferenceHint (timecode);

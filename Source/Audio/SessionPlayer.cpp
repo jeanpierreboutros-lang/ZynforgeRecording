@@ -99,37 +99,18 @@ namespace zynforge
         // Match every SUPPORTED audio container, not just .wav -- takes can be
         // captured as FLAC or AIFF (user-selectable), and a .wav-only glob left
         // those sessions loading zero tracks (no playback, no VSC, no waveforms).
-        // The extension filter also excludes .punchbase / other Track_* sidecars.
         const auto collect = [] (const juce::File& dir) -> juce::Array<juce::File>
         {
-            juce::Array<juce::File> out;
-            if (! dir.isDirectory()) return out;
-            for (const auto& f : dir.findChildFiles (juce::File::findFiles, false, "Track_*"))
-            {
-                const auto ext = f.getFileExtension().toLowerCase();
-                if (ext != ".wav" && ext != ".flac" && ext != ".aif" && ext != ".aiff")
-                    continue;
-                // Only the take's OWN files: Track_NN or Track_NN_partXX. Exclude
-                // consolidate/swap sidecars (Track_NN_consolidated_K, Track_NN_swap)
-                // that live in Audio Files/ but are referenced only by a clip's
-                // audioFile -- byIndex would otherwise stitch them onto the take
-                // as a phantom continuation, inflating its length / mis-ordering it.
-                const auto rest = f.getFileNameWithoutExtension()
-                                    .fromFirstOccurrenceOf ("Track_", false, false);  // "04" / "04_part02" / "04_consolidated_1"
-                // A punch sidecar is Track_NN.punchbase.<ext> -- the marker sits
-                // before the EXTENSION, so it has no '_' after the prefix and
-                // sailed through the suffix filter below. It then sorts BEFORE
-                // the real Track_NN.<ext> and was concatenated as part 1 of the
-                // take. Sidecars only survive a crash between the punch stash
-                // and the splice, which is exactly the recovery path. Excluded
-                // explicitly (matching swapTracks / takeIsMultiPart).
-                if (rest.containsIgnoreCase (".punchbase")) continue;
-                const int usc = rest.indexOfChar ('_');
-                if (usc >= 0 && ! rest.substring (usc + 1).startsWithIgnoreCase ("part"))
-                    continue;
-                out.add (f);
-            }
-            return out;
+            // Only the take's OWN files: <stem>.<ext> or <stem>_partXX.<ext>,
+            // the stem "Track_NN" or "NN Label" (TakeNames.h). Consolidate
+            // renders (<stem>_consolidated_K) live in Audio Files/ but are
+            // referenced only by a clip's audioFile -- byIndex would otherwise
+            // stitch them onto the take as a phantom continuation, inflating its
+            // length / mis-ordering it. A punch sidecar (<stem>.punchbase.<ext>)
+            // sorts BEFORE the real <stem>.<ext> and was once concatenated as
+            // part 1 of the take; sidecars only survive a crash between the punch
+            // stash and the splice, which is exactly the recovery path.
+            return takenames::takeAudioFiles (dir);
         };
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
         auto files = collect (audioFiles);
@@ -138,10 +119,10 @@ namespace zynforge
         const auto modern = files;
         for (const auto& legacy : collect (sessionDir))
         {
-            const auto slot = legacy.getFileName().fromFirstOccurrenceOf ("Track_", false, false).getIntValue();
+            const auto slot = takenames::parse (legacy.getFileName()).number;
             bool replaced = false;
             for (const auto& f : modern)
-                if (f.getFileName().fromFirstOccurrenceOf ("Track_", false, false).getIntValue() == slot)
+                if (takenames::parse (f.getFileName()).number == slot)
                 { replaced = true; break; }
             if (! replaced) files.add (legacy);
         }
@@ -174,14 +155,9 @@ namespace zynforge
         std::map<int, std::vector<juce::File>> byIndex;
         for (auto& f : files)
         {
-            // "Track_04.wav" -> 4 ; "Track_04_part02.wav" -> 4 (getIntValue
-            // stops at the underscore). 1-based on disk, so index = num - 1.
-            const auto digits = f.getFileNameWithoutExtension()
-                                 .fromFirstOccurrenceOf ("Track_", false, false)
-                                 .upToFirstOccurrenceOf ("_", false, false);
-            if (digits.isEmpty() || digits.length() > 3
-                || ! digits.containsOnly ("0123456789")) continue;
-            const int num = digits.getIntValue();
+            // "Track_04.wav", "04 KiCK.wav", "04 KiCK_part02.wav" -> 4.
+            // 1-based on disk, so index = num - 1.
+            const int num = takenames::parse (f.getFileName()).number;
             // A hostile or corrupt filename must not size the track vector to
             // millions of entries. The mixer/session schema accepts 256 slots.
             if (num < 1 || num > 256) continue;
@@ -192,7 +168,7 @@ namespace zynforge
         {
             juce::File mainFile;
             for (const auto& f : partFiles)
-                if (! f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
+                if (takenames::isMain (takenames::parse (f.getFileName())))
                 { mainFile = f; break; }
             // Parts with no main file (the silence a lead-in owes goes there) or
             // a take that will not open: the strip is silent, and the load is

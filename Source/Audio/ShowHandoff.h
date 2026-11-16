@@ -3,6 +3,7 @@
 #include "AtomicFile.h"
 #include "FastHash.h"
 #include "PathSafety.h"
+#include "TakeNames.h"
 #include "TimelineExport.h"
 
 #include <atomic>
@@ -138,24 +139,12 @@ namespace zynforge::showhandoff
         std::map<juce::String, juce::String> audioHashes;
         juce::int64 totalBytes = 0;
         int audioCount = 0;
+        // A take's main file or a continuation part, "Track_NN" or "NN Label"
+        // (TakeNames.h), on strips 1 to 256.
         const auto supportedTake = [] (const juce::String& name)
         {
-            const auto ext = juce::File (name).getFileExtension().toLowerCase();
-            if (! (ext == ".wav" || ext == ".flac" || ext == ".aif" || ext == ".aiff"))
-                return false;
-            const auto stem = juce::File (name).getFileNameWithoutExtension();
-            if (! stem.startsWith ("Track_")) return false;
-            const auto rest = stem.substring (6);
-            const auto digits = rest.upToFirstOccurrenceOf ("_", false, false);
-            if (digits.isEmpty() || digits.length() > 3
-                || ! digits.containsOnly ("0123456789")
-                || digits.getIntValue() < 1 || digits.getIntValue() > 256)
-                return false;
-            if (rest == digits) return true;
-            const auto suffix = rest.substring (digits.length());
-            return suffix.startsWith ("_part")
-                && suffix.substring (5).isNotEmpty()
-                && suffix.substring (5).containsOnly ("0123456789");
+            const auto parsed = takenames::parse (name);
+            return parsed.number <= 256 && takenames::isTakeAudio (parsed);
         };
         bool folderHasAudio = false;
         for (const auto& [relative, file] : originals)

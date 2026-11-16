@@ -8,6 +8,7 @@
 #include "PunchSplice.h"
 #include "MultiPartReader.h"
 #include "PreflightProbes.h"
+#include "TakeNames.h"
 #include "TrackOrderLog.h"
 #include "WavRepair.h"
 #include "../Network/CaptureIdentity.h"
@@ -673,8 +674,9 @@ namespace zynforge
         // a base part not yet deleted is kept aside, never put back on it.
         juce::StringArray installing;
         juce::File committedArchive;
-        for (const auto& marker : audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.punchinstall"))
+        for (const auto& marker : takenames::trackFiles (audioDir))
         {
+            if (takenames::parse (marker.getFileName()).rest != ".punchinstall") continue;
             const auto stem = marker.getFileNameWithoutExtension();
             if (! audioDir.findChildFiles (juce::File::findFiles, false, stem + ".punchbase.*").isEmpty())
             {
@@ -698,25 +700,15 @@ namespace zynforge
         }
 
         juce::Array<juce::File> sidecars;
-        for (const auto& file : audioDir.findChildFiles (juce::File::findFiles, false,
-                                                        "Track_*.punchbase.*"))
+        for (const auto& file : takenames::trackFiles (audioDir))
         {
-            const auto ext = file.getFileExtension().toLowerCase();
-            if (ext != ".wav" && ext != ".aif" && ext != ".aiff" && ext != ".flac")
+            // <stem>.punchbase.<ext> or <stem>_partKK.punchbase.<ext>: drop the
+            // marker and what is left must be a take's main file or a part.
+            const auto name = file.getFileName();
+            const auto at = name.lastIndexOf (".punchbase.");
+            if (at < 0 || ! takenames::isAudioExtension (name.substring (at + 10))) continue;
+            if (! takenames::isTakeAudio (takenames::parse (name.substring (0, at) + name.substring (at + 10))))
                 continue;
-            const auto stem = file.getFileNameWithoutExtension();
-            if (! stem.endsWith (".punchbase")) continue;
-            const auto realStem = stem.dropLastCharacters (10);
-            auto suffix = realStem.fromFirstOccurrenceOf ("Track_", false, false);
-            if (! realStem.startsWith ("Track_")) continue;
-            const auto partAt = suffix.indexOf ("_part");
-            const auto digits = partAt >= 0 ? suffix.substring (0, partAt) : suffix;
-            if (digits.isEmpty() || ! digits.containsOnly ("0123456789")) continue;
-            if (partAt >= 0)
-            {
-                const auto part = suffix.substring (partAt + 5);
-                if (part.isEmpty() || ! part.containsOnly ("0123456789")) continue;
-            }
             sidecars.add (file);
         }
         if (sidecars.isEmpty()) return true;
@@ -772,8 +764,9 @@ namespace zynforge
     {
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
         const auto base = audioFiles.isDirectory() ? audioFiles : sessionDir;
-        const auto stem = juce::String::formatted ("Track_%02d", trackIndex + 1);
-        // A take is multi-part if any Track_NN_partXX.<audio ext> sibling
+        const auto stem = takenames::existingStem (base, trackIndex);
+        if (stem.isEmpty()) return false;
+        // A take is multi-part if any <stem>_partXX.<audio ext> sibling
         // exists. The bare "_part*" glob also matched leftover
         // Track_NN_partXX.punchbase.<ext> sidecars from an aborted punch, so a
         // single-file take could be misreported as multi-part.
@@ -824,7 +817,8 @@ namespace zynforge
         bool         backupRequested { false }, backupReady { false };
         // Claimed on the first media mutation; see invalidateReportsBeforeMediaMutation.
         std::shared_ptr<std::atomic<juce::int64>> reportToken;
-        std::vector<bool> hadPrimaryBase;        // Track_NN existed before this pass
+        std::vector<juce::String> stems;         // each strip's file stem on the primary (TakeNames.h)
+        std::vector<bool> hadPrimaryBase;        // the strip's take existed before this pass
         std::vector<std::pair<juce::File, juce::File>> punchStashes;   // take -> .punchbase sidecar
         std::vector<juce::int64> previousLengths;                      // continue: length already on disk
         std::vector<TakeBase> primaryBases;                            // punch: what each copy must hold
@@ -944,6 +938,7 @@ namespace zynforge
             return refuse ("Recording refused: this session's capture identity could not be written; check the session drive.");
         if (! recoverPrimaryPunches (take))
             return refuse ("An interrupted punch was put back on this take. Reopen the session before recording.");
+        resolveTakeStems (take);
         if (! resolveTakeFormats (take))
             return refuse ("Recording refused: the existing take files are in mixed formats and cannot be continued.");
         if (! continuationBasesIntact (take))
@@ -1090,6 +1085,23 @@ namespace zynforge
             && recovered == 0; // > 0: the caller must reopen the restored take
     }
 
+    // Each strip's file name for this pass, fixed here once (TakeNames.h): the
+    // stem its take already has in the primary's Audio Files, or else a new one
+    // from the strip's name as it is now. Runs after punch recovery, which can
+    // put a take back under its own name.
+    void MultitrackRecorder::resolveTakeStems (TakeStart& take)
+    {
+        const takenames::StemIndex onDisk (take.audioFilesDir);
+        take.stems.clear();
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+        {
+            const auto existing = onDisk.stem ((int) i);
+            take.stems.push_back (existing.isNotEmpty()
+                                      ? existing
+                                      : takenames::freshStem ((int) i, tracks[i]->getNameThreadSafe()));
+        }
+    }
+
     // A punch must reopen the SAME container as the existing take. If the
     // capture format changed between passes, stashing only the newly
     // selected extension leaves the old Track_NN.wav untouched and writes
@@ -1104,9 +1116,11 @@ namespace zynforge
         if (! copyAudioDir.isDirectory()) return true;
         juce::AudioFormatManager fm; fm.registerBasicFormats();
         bool found = false;
+        const takenames::StemIndex onDisk (copyAudioDir);
         for (const auto& check : checks)
         {
-            const auto name = juce::String::formatted ("Track_%02d", check.track + 1);
+            const auto name = onDisk.stem (check.track);
+            if (name.isEmpty()) continue;
             for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
             {
                 const auto file = copyAudioDir.getChildFile (name + ext);
@@ -1201,7 +1215,7 @@ namespace zynforge
             for (std::size_t i = 0; i < tracks.size(); ++i)
             {
                 if (! opensOwnCaptureFile (i)) continue;
-                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+                const auto& name = take.stems[i];
                 for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
                     if (audioFilesDir.getChildFile (name + ext).existsAsFile())
                     {
@@ -1244,8 +1258,7 @@ namespace zynforge
         if (! continueAsPart) return true;
         for (std::size_t i = 0; i < tracks.size(); ++i)
             if (opensOwnCaptureFile (i)
-                && orphanedContinuation (take.audioFilesDir, juce::String::formatted ("Track_%02d", (int) i + 1),
-                                         take.primary.ext))
+                && orphanedContinuation (take.audioFilesDir, take.stems[i], take.primary.ext))
                 return false;
         return true;
     }
@@ -1270,10 +1283,7 @@ namespace zynforge
 
         take.hadPrimaryBase.assign (tracks.size(), false);
         for (std::size_t i = 0; i < tracks.size(); ++i)
-        {
-            const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
-            hadPrimaryBase[i] = audioFilesDir.getChildFile (name + primary.ext).existsAsFile();
-        }
+            hadPrimaryBase[i] = audioFilesDir.getChildFile (take.stems[i] + primary.ext).existsAsFile();
     }
 
     // Punch-in: move the existing take -- AND its continuation parts -- aside
@@ -1331,8 +1341,7 @@ namespace zynforge
             for (std::size_t i = 0; i < tracks.size(); ++i)
             {
                 if (! opensOwnCaptureFile (i)) continue;
-                const auto source = audioFilesDir.getChildFile (
-                    juce::String::formatted ("Track_%02d", (int) i + 1) + primary.ext);
+                const auto source = audioFilesDir.getChildFile (take.stems[i] + primary.ext);
                 if (! source.existsAsFile()) continue;
                 auto& base = take.primaryBases[i];
                 base.exists = true;
@@ -1347,8 +1356,7 @@ namespace zynforge
             for (std::size_t i = 0; i < tracks.size(); ++i)
             {
                 if (! opensOwnCaptureFile (i)) continue;
-                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
-                if (! stashForPunch (take, audioFilesDir.getChildFile (name + primary.ext)))
+                if (! stashForPunch (take, audioFilesDir.getChildFile (take.stems[i] + primary.ext)))
                 { restorePunchStashes (take); return false; }
             }
         }
@@ -1372,7 +1380,7 @@ namespace zynforge
             juce::int64 takeLen = recordBaseSamples; // caller's loaded-session hint
             for (std::size_t i = 0; i < tracks.size(); ++i)
             {
-                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+                const auto& name = take.stems[i];
                 for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
                 {
                     const auto mainFile = audioFilesDir.getChildFile (name + ext);
@@ -1493,15 +1501,13 @@ namespace zynforge
                 if (oldPath.isEmpty() || saved.getProperty ("id", {}).toString() != sessionId
                     || (oldPath != identity && juce::File (oldPath).exists())) return CopyClaim::conflict;
             }
-            else if (! copy.getChildFile ("Audio Files").findChildFiles (
-                         juce::File::findFiles, false, "Track_*").isEmpty()) return CopyClaim::conflict;
+            else if (! takenames::trackFiles (copy.getChildFile ("Audio Files")).isEmpty()) return CopyClaim::conflict;
             // A strip move a crash cut short goes back first, and that restores
             // the very file written below.
             if (! TrackFileTransaction::recover (copy)) return CopyClaim::interrupted;
             // A copy with no takes has nothing to move, so it starts where the
             // session is. One from before this log began starts at its beginning.
-            const bool holdsTakes = ! copy.getChildFile ("Audio Files").findChildFiles (
-                juce::File::findFiles, false, "Track_*").isEmpty();
+            const bool holdsTakes = ! takenames::trackFiles (copy.getChildFile ("Audio Files")).isEmpty();
             const auto position = holdsTakes ? juce::JSON::parse (owner).getProperty ("trackOrder", "").toString()
                                              : trackOrder.current;
             return copy.createDirectory().wasOk() && writeOwner (position)
@@ -1614,6 +1620,13 @@ namespace zynforge
                 return left ("holds its tracks in an older order and could not be moved to match");
             copy.noteProgress();
 
+            // A strip this copy already holds keeps the name its files have
+            // here (TakeNames.h); a strip new to it takes the primary's.
+            const takenames::StemIndex onCopy (audioDir);
+            for (auto& track : tracks)
+                if (const auto own = onCopy.stem ((int) track.index); own.isNotEmpty())
+                    track.name = own;
+
             auto selected = format;
             if (continuing || punching)
             {
@@ -1659,7 +1672,9 @@ namespace zynforge
             if (continuing)
                 for (std::size_t i = 0; i < allTrackCount; ++i)
                 {
-                    const auto base = audioDir.getChildFile (juce::String::formatted ("Track_%02d", (int) i + 1) + selected.ext);
+                    const auto stem = onCopy.stem ((int) i);
+                    if (stem.isEmpty()) continue;
+                    const auto base = audioDir.getChildFile (stem + selected.ext);
                     if (! base.existsAsFile()) continue;
                     const auto reader = ConcatReader::create (fm, findTakeParts (base));
                     if (reader == nullptr || reader->lengthInSamples > timelineBase)
@@ -1742,7 +1757,7 @@ namespace zynforge
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
             WriterChannel w;
-            const auto trackName = juce::String::formatted ("Track_%02d", (int) i + 1);
+            const auto& trackName = take.stems[i];
 
             // RIGHT half of an interleaved stereo pair. When the previous
             // track is an armed stereo-L, THIS track's audio is written into
@@ -1853,7 +1868,7 @@ namespace zynforge
             plan->beforeOpenForTests = beforeCopyOpenForTests;
             for (std::size_t i = 0; i < writers.size(); ++i)
                 if (writers[i].active)
-                    plan->tracks.push_back ({ i, juce::String::formatted ("Track_%02d", (int) i + 1),
+                    plan->tracks.push_back ({ i, take.stems[i],
                                               writers[i].numChannels, take.hadPrimaryBase[i],
                                               i < take.primaryBases.size() ? take.primaryBases[i] : TakeBase {} });
             plan->allTrackCount = tracks.size();
@@ -2099,14 +2114,16 @@ namespace zynforge
     juce::String MultitrackRecorder::describeOwedLeadIns (const juce::File& audioDir)
     {
         juce::StringArray strips;
+        // Every marker, a set-aside ".unreadable" one too: that strip is owed
+        // its silence as much as any.
         auto markers = audioDir.getChildFile ("Pending Lead-ins").findChildFiles (
-            juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "Track_*");
+            juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "*");
         markers.sort();
         for (const auto& marker : markers)
         {
-            const auto number = marker.getFileNameWithoutExtension().fromFirstOccurrenceOf ("Track_", false, false);
-            if (number.isNotEmpty() && number.containsOnly ("0123456789"))
-                strips.addIfNotAlreadyThere (juce::String (number.getIntValue()));
+            const auto named = takenames::parse (marker.getFileName());
+            if (named.number > 0 && (named.rest == ".json" || named.rest == ".unreadable"))
+                strips.addIfNotAlreadyThere (juce::String (named.number));
         }
         if (strips.isEmpty())
             return "A strip's silent lead-in could not be written; that strip is silent until the drive has room. "
@@ -2144,7 +2161,7 @@ namespace zynforge
             lead.sampleRate    = (double) v["sampleRate"];
             lead.priorLength   = (juce::int64) v["priorLength"];
             lead.timelineStart = (juce::int64) v["timelineStart"];
-            if (! lead.trackName.startsWith ("Track_") || lead.ext.isEmpty() || lead.parts < 1
+            if (! takenames::isStem (lead.trackName) || lead.ext.isEmpty() || lead.parts < 1
                 || lead.firstPart < 1 || lead.sampleRate <= 0.0)
             { setAside(); continue; }
             if (writeLeadIn (lead, lead.timelineStart, onProgress)) marker.deleteFile();
@@ -3106,7 +3123,8 @@ namespace zynforge
     {
         names.clear();
         samples = 0;
-        const auto stem = juce::String::formatted ("Track_%02d", index + 1);
+        const auto stem = takenames::existingStem (folder, index);
+        if (stem.isEmpty()) return;
         for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
         {
             const auto base = folder.getChildFile (stem + ext);

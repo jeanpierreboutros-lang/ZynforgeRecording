@@ -976,8 +976,7 @@ namespace zynforge
     {
         if (isTakeOnDisk()) return false;
         const auto folder = getActiveSessionDir().getChildFile ("Audio Files");
-        auto files = folder.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles, false, "Track_*");
-        files.sort();
+        auto files = takenames::trackFiles (folder);
         const double rate = player.getSampleRate();
         if (rate <= 0.0) return false;
         for (const auto& file : files)

@@ -8,7 +8,7 @@
 #
 #   • opens each file and reads its duration with ffprobe
 #   • validates each container header; WAVs over 4 GiB must be RF64 + ds64
-#   • continuation/split parts have a playable Track_NN base
+#   • continuation/split parts have a playable base (Track_NN or NN Name)
 #   • matches session.report.json: track count, complete per-file sha256,
 #     and reports `missedSamples`
 #
@@ -79,9 +79,18 @@ REPORT="$SESSION/session.report.json"
 
 hdr "Session: $SESSION"
 
+# A take file is named "Track_NN" (before 2026-11-16, or a strip with no name of
+# its own) or "NN Name" (the strip's name, see Source/Audio/TakeNames.h), then
+# _partKK for a continuation. A name never holds "_" or ".".
+TAKE_STEM_RE='(Track_[0-9]{1,3}|[0-9]{2,3} [^_.]+)'
+named_for_track() { [[ "$1" =~ ^(Track_[0-9]|[0-9]{2,3}\ ) ]]; }
+
 # ── Continuation parts need a playable base file ────────────────────────────
 hdr "1. Continuation-part check"
-parts=$(find "$AUDIO" -maxdepth 1 -type f \( -name 'Track_*_part*.wav' -o -name 'Track_*_part*.aif' -o -name 'Track_*_part*.aiff' -o -name 'Track_*_part*.flac' \) | sort)
+parts=$(for f in "$AUDIO"/*; do
+            name=$(basename "$f")
+            [[ -f "$f" && "$name" =~ ^${TAKE_STEM_RE}_part[0-9]+\.(wav|aif|aiff|flac)$ ]] && printf '%s\n' "$f"
+        done | sort)
 if [[ -n "$parts" ]]; then
     while IFS= read -r part; do
         name=$(basename "$part")
@@ -103,8 +112,9 @@ media=()
 renders=0
 # A Consolidate render sits beside the takes and is no part of one: the report
 # never lists it. QC, Export and the handoff skip the same exact name.
-for w in "$AUDIO"/Track_*.wav "$AUDIO"/Track_*.aif "$AUDIO"/Track_*.aiff "$AUDIO"/Track_*.flac; do
-    if [[ "$(basename "$w")" =~ ^Track_[0-9]{1,3}_consolidated_[0-9]+\.(wav|aif|aiff|flac)$ ]]; then
+for w in "$AUDIO"/*.wav "$AUDIO"/*.aif "$AUDIO"/*.aiff "$AUDIO"/*.flac; do
+    named_for_track "$(basename "$w")" || continue
+    if [[ "$(basename "$w")" =~ ^${TAKE_STEM_RE}_consolidated_[0-9]+\.(wav|aif|aiff|flac)$ ]]; then
         ((renders+=1))
     else
         media+=("$w")
@@ -112,7 +122,7 @@ for w in "$AUDIO"/Track_*.wav "$AUDIO"/Track_*.aif "$AUDIO"/Track_*.aiff "$AUDIO
 done
 (( renders == 0 )) || ylw "  $renders Consolidate render(s) skipped: they are not takes"
 if (( ${#media[@]} == 0 )); then
-    red "no Track_* take files found in $AUDIO"; exit 1
+    red "no take files (Track_NN or NN Name) found in $AUDIO"; exit 1
 fi
 for w in "${media[@]}"; do
     name=$(basename "$w")
@@ -235,12 +245,17 @@ from fractions import Fraction
 
 report = json.loads(pathlib.Path(sys.argv[1]).read_text())
 audio = pathlib.Path(sys.argv[2])
-pattern = re.compile(r"^Track_(\d{1,3})(?:_part(\d+))?\.(wav|aif|aiff|flac)$")
-render = re.compile(r"^Track_\d{1,3}_consolidated_\d+\.(wav|aif|aiff|flac)$")
+# "Track_NN" or "NN Name" (Source/Audio/TakeNames.h): a name holds no "_",
+# ".", wildcard or quote character, and no double or end spaces.
+label = r"[^\s_.,;:*?<>|\[\]#'\"`\\/]+(?: [^\s_.,;:*?<>|\[\]#'\"`\\/]+)*"
+stem = rf"(?:Track_\d{{1,3}}|\d{{2,3}} {label})"
+pattern = re.compile(rf"^({stem})(?:_part(\d+))?\.(wav|aif|aiff|flac)$")
+render = re.compile(rf"^{stem}_consolidated_\d+\.(wav|aif|aiff|flac)$")
+named = re.compile(r"^(?:Track_\d|\d{2,3} )")
 groups = {}
 problems = []
 for path in audio.iterdir():
-    if not path.is_file() or not path.name.startswith("Track_"):
+    if not path.is_file() or not named.match(path.name):
         continue
     if path.suffix.lower() not in (".wav", ".aif", ".aiff", ".flac"):
         continue
@@ -250,12 +265,12 @@ for path in audio.iterdir():
     if not match:
         problems.append(f"invalid take filename: {path.name}")
         continue
-    track, part, ext = match.groups()
-    groups.setdefault((int(track), ext), set()).add(int(part) if part else 1)
-for (track, ext), parts in groups.items():
+    base, part, ext = match.groups()
+    groups.setdefault((base, ext), set()).add(int(part) if part else 1)
+for (base, ext), parts in groups.items():
     missing = sorted(set(range(1, max(parts) + 1)) - parts)
     if missing:
-        problems.append(f"Track_{track:02d}.{ext}: missing part numbers {missing}")
+        problems.append(f"{base}.{ext}: missing part numbers {missing}")
 
 def frames(path):
     result = subprocess.run(

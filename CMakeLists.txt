@@ -297,6 +297,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/SongExportTests.cpp
     Source/Tests/TimelineExportTests.cpp
     Source/Tests/TakeSafetyTests.cpp
+    Source/Tests/TakeNameTests.cpp
     Source/Tests/TrackReorderTests.cpp
     Source/Tests/TwinLinkTests.cpp
     Source/Tests/TwinLinkHostTests.cpp

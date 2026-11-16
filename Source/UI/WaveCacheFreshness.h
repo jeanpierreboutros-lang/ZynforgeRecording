@@ -2,6 +2,8 @@
 
 #include <juce_core/juce_core.h>
 
+#include "../Audio/TakeNames.h"
+
 namespace zynforge
 {
     // AudioThumbnailCache keys entries by source path. A take can replace the
@@ -20,7 +22,7 @@ namespace zynforge
 
         for (const auto& file : files)
         {
-            if (! file.getFileName().startsWithIgnoreCase ("Track_")) continue;
+            if (takenames::parse (file.getFileName()).number <= 0) continue;
             const auto ext = file.getFileExtension().toLowerCase();
             if (ext != ".wav" && ext != ".flac" && ext != ".aif" && ext != ".aiff")
                 continue;

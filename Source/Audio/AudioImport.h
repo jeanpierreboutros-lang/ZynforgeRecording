@@ -19,6 +19,7 @@ namespace zynforge::audioimport
         int trackIndex { 0 };
         bool stereo { false };
         juce::String name;
+        juce::File file;      // what was written: "<NN> <name>.wav" (TakeNames.h)
     };
 
     struct Result

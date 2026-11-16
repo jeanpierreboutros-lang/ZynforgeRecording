@@ -86,12 +86,12 @@ def write_wav(path, frames=4800):
 @unittest.skipUnless(all(shutil.which(tool) for tool in ("ffprobe", "jq", "xxd", "shasum")),
                      "verify_take.sh needs ffprobe, jq, xxd and shasum")
 class VerifyTakeFiles(unittest.TestCase):
-    def run_on(self, build, edit_report=None, cwd=None):
+    def run_on(self, build, edit_report=None, cwd=None, take_name="Track_01.wav"):
         with tempfile.TemporaryDirectory(prefix="zf-verify-take-") as raw:
             session = pathlib.Path(raw) / "Show"
             audio = session / "Audio Files"
             audio.mkdir(parents=True)
-            take = audio / "Track_01.wav"
+            take = audio / take_name
             write_wav(take)
             report = {"numTracks": 1, "missedSamples": 0, "sha256Pending": False, "sampleRate": 48000,
                       "tracks": [{"files": [take.name], "totalSamplesPrimary": 4800,
@@ -170,7 +170,36 @@ class VerifyTakeFiles(unittest.TestCase):
             (audio / "Track_01.wav").rename(audio / "Track_01_consolidated_1.wav")
         status, output = self.run_on(only_renders)
         self.assertEqual(status, 1, output)
-        self.assertIn("no Track_* take files found", output)
+        self.assertIn("no take files (Track_NN or NN Name) found", output)
+
+    # Takes named for their strips (Source/Audio/TakeNames.h, 2026-11-16).
+    def test_a_named_take_passes(self):
+        status, output = self.run_on(lambda audio: None, take_name="01 KiCK.wav")
+        self.assertEqual(status, 0, output)
+
+    def test_a_named_take_with_a_render_passes(self):
+        status, output = self.run_on(lambda audio: write_wav(audio / "01 KiCK_consolidated_1.wav"),
+                                     take_name="01 KiCK.wav")
+        self.assertEqual(status, 0, output)
+        self.assertIn("Consolidate render", output)
+
+    def test_an_unlisted_named_take_fails(self):
+        status, output = self.run_on(lambda audio: write_wav(audio / "02 SNARE.wav"),
+                                     take_name="01 KiCK.wav")
+        self.assertEqual(status, 1, output)
+        self.assertIn("unlisted take file: 02 SNARE.wav", output)
+
+    def test_an_orphan_named_part_fails(self):
+        status, output = self.run_on(lambda audio: write_wav(audio / "02 SNARE_part02.wav"),
+                                     take_name="01 KiCK.wav")
+        self.assertEqual(status, 1, output)
+        self.assertIn("orphan continuation part: 02 SNARE_part02.wav (missing 02 SNARE.wav)", output)
+
+    def test_a_named_part_after_a_gap_fails(self):
+        status, output = self.run_on(lambda audio: write_wav(audio / "01 KiCK_part03.wav"),
+                                     take_name="01 KiCK.wav")
+        self.assertEqual(status, 1, output)
+        self.assertIn("01 KiCK.wav: missing part numbers [2]", output)
 
 
 APP_RUNNING = subprocess.run(["pgrep", "-x", "Zynforge Recording"], capture_output=True).returncode == 0

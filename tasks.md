@@ -1,5 +1,12 @@
 # Project Tasks
 
+## Take file names, 2026-11-16
+
+Takes are named for their strips (`01 KiCK.wav`); see the ADR at the top of [decisions.md](decisions.md).
+
+- [ ] Owner: run *Take file names (2026-11-16)* in [FIELD-TEST.md](FIELD-TEST.md): names in Finder and in a DAW import, a continue and a punch after a rename, a strip move, an old session.
+- [ ] Not installed on either Mac.
+
 ## Bug audit, 2026-11-11
 
 A second whole-codebase review made 82 findings (1 critical, 4 high, 28 medium, 49 low). All are fixed on six branches (engine, capture, remote, session, EDIT, main window) merged on `main`, two of them in part (below). What changed is at the top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md), the choices made for the owner are in the top ADR of [decisions.md](decisions.md), and the results are in [testing.md](testing.md). The audit list itself stays outside the repository. Installed builds are in [INSTALL.md](INSTALL.md). None of it has run on real hardware.
