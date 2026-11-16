@@ -141,6 +141,9 @@ namespace zynforge::capture
         juce::String error;
         int          id       { 0 };   // echoes the Command::id this replies to
         juce::String authProof;
+        // The hello names the helper's build (Capture/HelperBuild.h). Absent
+        // from helpers built before 2026-11-16, which reads as another build.
+        juce::String build;
 
         juce::var toJson() const
         {
@@ -152,6 +155,7 @@ namespace zynforge::capture
             if (error.isNotEmpty()) o->setProperty ("error", error);
             if (id > 0)             o->setProperty ("id", id);
             if (authProof.isNotEmpty()) o->setProperty ("authProof", authProof);
+            if (build.isNotEmpty()) o->setProperty ("build", build);
             return juce::var (o);
         }
 
@@ -164,6 +168,7 @@ namespace zynforge::capture
             r.error   = v.getProperty ("error", "").toString();
             r.id      = (int) v.getProperty ("id", 0);
             r.authProof = v.getProperty ("authProof", "").toString();
+            r.build = v.getProperty ("build", "").toString();
             return r;
         }
     };

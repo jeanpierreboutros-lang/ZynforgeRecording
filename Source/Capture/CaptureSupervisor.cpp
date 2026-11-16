@@ -1,4 +1,5 @@
 #include "CaptureSupervisor.h"
+#include "HelperBuild.h"
 #include "HelperExit.h"
 
 #include <juce_events/juce_events.h>
@@ -108,12 +109,70 @@ namespace zynforge::capture
         return asked;
     }
 
+    juce::String CaptureSupervisor::expectedHelperBuild()
+    {
+        return helperbuild::idOf (binaryPath.existsAsFile() ? binaryPath : discoverBinary());
+    }
+
+    // A fresh status, and it says no take: the only proof a daemon is idle.
+    bool CaptureSupervisor::idleByFreshStatus() const
+    {
+        return hasStatus() && juce::Time::currentTimeMillis() - lastStatusAtMs() <= 2000
+            && ! lastStatus().recording;
+    }
+
+    // Attached to a daemon of another build: an app updated while it ran, or
+    // one from before builds were named, that would otherwise go on being
+    // driven with nothing said. True when it has gone and this build's helper
+    // should be launched; false to stay attached to it. Never one with a take:
+    // only a fresh status that says idle lets this ask, and the daemon refuses
+    // Quit mid-take by itself. One closing a take sends no status until done,
+    // so it is kept too.
+    bool CaptureSupervisor::retireOtherBuild()
+    {
+        const auto wanted = expectedHelperBuild();
+        if (wanted.isEmpty() || attachedBuild == wanted) return false;
+        for (int waited = 0; waited < 1500 && ! hasStatus(); waited += 20)
+            juce::Thread::sleep (20);
+        if (! idleByFreshStatus() || ! requestQuit()) return false;
+        client.disconnect();
+        statusSeen.store (false);
+        { const std::lock_guard<std::mutex> g (statusLock); status = {}; statusAtMs = 0; }
+        everAttached = false;
+        attachedBuild.clear();
+        // It lets go of the port once it has shut down.
+        for (int attempt = 0; attempt < 50; ++attempt)
+        {
+            juce::StreamingSocket probe;
+            if (! probe.connect ("127.0.0.1", port, 200)) return true;
+            probe.close();
+            juce::Thread::sleep (100);
+        }
+        // Still there: stay with it rather than leave this window with none.
+        if (client.connect ("127.0.0.1", port))
+        {
+            const auto again = client.hello (1500);
+            if (again.ok)
+            {
+                everAttached = true;
+                deathReported = false;
+                attachedBuild = again.build;
+                attachedAtMs  = juce::Time::currentTimeMillis();
+                return false;
+            }
+            client.disconnect();
+        }
+        return true;   // the launch below says what holds the port
+    }
+
     bool CaptureSupervisor::connectOrLaunch (int wantPort, const juce::StringArray& extraArgs)
     {
         disconnect();
         configuredCapture.clear();
-        failedCapture.clear(); retryCaptureAtMs = 0;
+        failedCapture.clear(); failedCaptureReason.clear(); retryCaptureAtMs = 0;
         lastConnectError.clear();
+        attachedBuild.clear();
+        replacedOtherBuild = false;
         port = wantPort;
 
         client.onStatus = [this] (const EngineStatus& s)
@@ -127,18 +186,22 @@ namespace zynforge::capture
         // answers here and the take is re-adopted, not duplicated.
         if (client.connect ("127.0.0.1", port))
         {
-            if (client.hello (1500).ok)
+            const auto greeting = client.hello (1500);
+            if (! greeting.ok)
             {
-                launched      = false;   // pre-existing daemon, not ours to kill
-                everAttached  = true;
-                deathReported = false;
-                return true;
+                client.disconnect();         // wrong version / not our protocol
+                lastConnectError = "Something else answers on port " + juce::String (port)
+                                 + " and it is not a capture daemon this build can talk to. "
+                                   "If a daemon take is running there, it is not being watched.";
+                return false;                // fail LOUD rather than spawn a twin
             }
-            client.disconnect();         // wrong version / not our protocol
-            lastConnectError = "Something else answers on port " + juce::String (port)
-                             + " and it is not a capture daemon this build can talk to. "
-                               "If a daemon take is running there, it is not being watched.";
-            return false;                // fail LOUD rather than spawn a twin
+            launched      = false;   // pre-existing daemon, not ours to kill
+            everAttached  = true;
+            deathReported = false;
+            attachedBuild = greeting.build;
+            attachedAtMs  = juce::Time::currentTimeMillis();
+            if (! retireOtherBuild()) return true;
+            replacedOtherBuild = true;   // gone: this build's helper takes its place below
         }
 
         // Nothing there -- launch the binary.
@@ -166,7 +229,8 @@ namespace zynforge::capture
             juce::Thread::sleep (100);
             if (client.connect ("127.0.0.1", port))
             {
-                if (client.hello (1500).ok)
+                const auto greeting = client.hello (1500);
+                if (greeting.ok)
                 {
                     // Twin-launch race: if our spawned process already exited it
                     // lost the port bind and we actually attached to a
@@ -175,6 +239,8 @@ namespace zynforge::capture
                     if (! process.isRunning()) launched = false;
                     everAttached  = true;
                     deathReported = false;
+                    attachedBuild = greeting.build;
+                    attachedAtMs  = juce::Time::currentTimeMillis();
                     return true;
                 }
                 client.disconnect();
@@ -211,14 +277,17 @@ namespace zynforge::capture
         { const std::lock_guard<std::mutex> g (statusLock); statusAtMs = 0; }
         statusSeen.store (false);
         if (! client.connect ("127.0.0.1", port)) return Reattach::nothingThere;
-        if (! client.hello (1500).ok)
+        const auto greeting = client.hello (1500);
+        if (! greeting.ok)
         {
             client.disconnect();
             return Reattach::noAnswer;
         }
+        attachedBuild = greeting.build;
+        attachedAtMs  = juce::Time::currentTimeMillis();
         // A restarted daemon knows none of this GUI's configuration.
         configuredCapture.clear();
-        failedCapture.clear(); retryCaptureAtMs = 0;
+        failedCapture.clear(); failedCaptureReason.clear(); retryCaptureAtMs = 0;
         everAttached  = true;
         deathReported = false;
         return Reattach::attached;
@@ -281,6 +350,11 @@ namespace zynforge::capture
         }
         else
         {
+            // One this window attached to and did not start: it would hold the
+            // inputs and the port until logout, and the next build of the app
+            // would drive it. Asked only when a fresh status says it is idle; it
+            // refuses mid-take by itself. Not our child, so nothing signals it.
+            if (isAttached() && idleByFreshStatus()) requestQuit();
             client.disconnect();
         }
         launched     = false;
@@ -359,8 +433,9 @@ namespace zynforge::capture
              + ". It has been told to change. Press RECORD again.";
     }
 
-    bool CaptureSupervisor::configureCapture (const juce::var& config)
+    bool CaptureSupervisor::configureCapture (const juce::var& config, juce::String* refusal)
     {
+        if (refusal != nullptr) refusal->clear();
         const auto text = juce::JSON::toString (config);
         const auto wanted = config.getProperty ("captureDevice", {});
         // Two processes each hold a device, and the daemon's can fall back or die
@@ -369,20 +444,37 @@ namespace zynforge::capture
                         && heldDeviceDiffers (wanted.toString());
         if (text == configuredCapture && ! moved) return true;
         const auto now = juce::Time::currentTimeMillis();
-        if ((text == failedCapture || moved) && now < retryCaptureAtMs) return false;
+        if ((text == failedCapture || moved) && now < retryCaptureAtMs)
+        {
+            if (refusal != nullptr && text == failedCapture) *refusal = failedCaptureReason;
+            return false;
+        }
         if (! isAttached() || isDaemonRecording()) return false;
+        // A daemon sends its first status once it is free. One still closing a
+        // take for a window that crashed holds every command until then, and a
+        // request now would hold this window for its whole timeout, again at
+        // each retry. A free one's status follows its greeting within a tick:
+        // just after attaching, wait that long for it, never more.
+        while (! hasStatus() && isAttached() && juce::Time::currentTimeMillis() < attachedAtMs + 750)
+            juce::Thread::sleep (10);
+        if (! hasStatus()) return false;
         Command c; c.action = Action::ConfigureCapture; c.configuration = config;
-        if (! client.request (c, 5000).ok)
+        const auto reply = client.request (c, 5000);
+        if (! reply.ok)
         {
             // The idle UI polls configuration for pre-roll. A missing device
             // must not cause a new blocking request on every UI timer tick.
             failedCapture = text; retryCaptureAtMs = juce::Time::currentTimeMillis() + 5000;
+            failedCaptureReason = reply.error.isNotEmpty() ? reply.error
+                                                           : juce::String ("the capture daemon did not answer");
+            if (refusal != nullptr) *refusal = failedCaptureReason;
             // A device the daemon refused can leave it holding none, so what it
             // accepted before says nothing about it now.
             configuredCapture.clear();
             return false;
         }
         failedCapture.clear();
+        failedCaptureReason.clear();
         configuredCapture = text;
         // Its next status still shows the old device.
         retryCaptureAtMs = juce::Time::currentTimeMillis() + 5000;

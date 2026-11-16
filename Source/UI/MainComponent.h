@@ -399,7 +399,7 @@ private:
     // A Recover was tried from the launch's recovery list: the launch then
     // leaves its result in view instead of reopening the last session.
     bool launchRecoverAttempted { false };
-    bool configureCaptureDaemon();
+    bool configureCaptureDaemon (juce::String* refusal = nullptr);   // refusal: the daemon's own reason
     juce::var captureDaemonSettings();   // what the daemon takes from this window, the device aside
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
     void toggleCaptureDaemon();

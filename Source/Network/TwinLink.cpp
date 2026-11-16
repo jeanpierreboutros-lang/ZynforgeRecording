@@ -352,6 +352,7 @@ namespace zynforge::twin
         lastEvent.clear();
         compareLine.clear();
         compareMismatch = false;
+        awaiting = Awaiting::nothing;
         failedAuth.store (0);
         rejectedConnections.store (0);
         boundPort.store (-1);
@@ -372,6 +373,7 @@ namespace zynforge::twin
         stopRequested.store (true);
         if (worker.joinable()) worker.join();
         drainEvents();
+        awaiting = Awaiting::nothing;   // switched off on purpose: nothing to report
         state = LinkState::Off;
         linked = false;
         detail.clear();
@@ -588,9 +590,18 @@ namespace zynforge::twin
         const auto type = reply.getProperty ("type", "").toString();
         if (type == "twin.refused")
         {
-            if (reply.getProperty ("reason", "").toString() == "version") return versionRefused();
-            why = "The follower refused the pairing code; check it and connect again";
-            return Handshake::GiveUp;
+            const auto reason = reply.getProperty ("reason", "").toString();
+            if (reason == "version") return versionRefused();
+            if (reason == "code")
+            {
+                why = "The follower refused the pairing code; check it and connect again";
+                return Handshake::GiveUp;
+            }
+            // "protocol": the follower's side of the handshake timed out (this
+            // answer reached it late, on a congested switch or a cable just
+            // plugged back in) or read something else. Nothing is wrong with
+            // the pairing: try again, or a STOP would never reach it.
+            return Handshake::Retry;
         }
         if (type != "twin.accept"
             || ! identity::equalProof (reply.getProperty ("proof", "").toString(),
@@ -849,6 +860,9 @@ namespace zynforge::twin
 
         const auto text = textOf (body, "text");
         const auto ok = (bool) body.getProperty ("ok", false);
+        if ((message == "startResult" && awaiting == Awaiting::start)
+            || (message == "stopResult" && awaiting == Awaiting::stop))
+            if (textOf (body, "take") == awaitingTake) awaiting = Awaiting::nothing;
         if (message == "startResult")
         {
             if (! ok)
@@ -900,6 +914,7 @@ namespace zynforge::twin
     void TwinLink::onLinkDown (const juce::String& why)
     {
         const bool wasLinked = linked;
+        const auto unanswered = std::exchange (awaiting, Awaiting::nothing);
         linked = false;
         peer.reset();
         if (auto* record = openRecordOrNull())
@@ -908,12 +923,24 @@ namespace zynforge::twin
         state = LinkState::Lost;
         detail = why;
         if (wasLinked && localRolling) host.twinNotify ("TWIN LOST -- this take keeps rolling");
+        // The answer never came. Nothing is resent on the next link (a late
+        // start or stop must not act on a later take), so the engineer is told.
+        if (unanswered == Awaiting::stop)
+            lastEvent = "FOLLOWER NOT STOPPED: the link dropped before the follower confirmed STOP; "
+                        "check that Mac and stop it there";
+        else if (unanswered == Awaiting::start)
+            lastEvent = "FOLLOWER NOT STARTED: the link dropped before the follower confirmed RECORD; "
+                        "check that Mac";
+        if (unanswered != Awaiting::nothing) host.twinNotify (lastEvent);
     }
 
     void TwinLink::onPeerStatus (const Event& event)
     {
         const bool wasRolling = peer.has_value() && peer->recording;
         peer = statusFromBody (event.body);
+        // Stopped: its result follows once its files are closed, and a link
+        // lost before then has not left it recording.
+        if (awaiting == Awaiting::stop && ! peer->recording) awaiting = Awaiting::nothing;
         if (peer->recording != wasRolling) rollingChangedAtMs = juce::Time::getMillisecondCounter();
         const auto name = textOf (event.body, "name", kNameChars);
         if (name.isNotEmpty()) peerName = name;
@@ -1271,7 +1298,11 @@ namespace zynforge::twin
         else openRecord (leaderTakeId, status);
 
         if (linked)
+        {
             queueBody (makeObject ({ { "m", "start" }, { "take", leaderTakeId } }));
+            awaiting = Awaiting::start;
+            awaitingTake = leaderTakeId;
+        }
         else
         {
             lastEvent = "FOLLOWER NOT STARTED: the link is down; start it there";
@@ -1284,7 +1315,11 @@ namespace zynforge::twin
         if (config.role != Role::Leader || ! leaderTakeActive) return;
         leaderTakeActive = false;
         if (linked)
+        {
             queueBody (makeObject ({ { "m", "stop" }, { "take", leaderTakeId } }));
+            awaiting = Awaiting::stop;
+            awaitingTake = leaderTakeId;
+        }
         else
         {
             lastEvent = "FOLLOWER NOT STOPPED: the link is down; stop it there";

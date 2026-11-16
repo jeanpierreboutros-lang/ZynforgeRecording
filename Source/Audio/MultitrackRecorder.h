@@ -5,6 +5,7 @@
 #include <juce_core/juce_core.h>
 
 #include <atomic>
+#include <limits>
 #include <array>
 #include <functional>
 #include <memory>
@@ -524,15 +525,23 @@ namespace zynforge
         {
             juce::AbstractFifo fifo { 1 };
             std::vector<float> data;
-            // Audio and gaps occupy the SAME absolute capture timeline. All
-            // cursor/descriptor access uses captureBoundary; sample copies and
-            // disk writes never hold that lock on the consumer. Fixed metadata
-            // costs 4 KiB per channel, independent of take duration.
-            struct Gap { juce::int64 start {}, length {}; };
+            // Audio and gaps occupy the SAME absolute capture timeline, handed
+            // from the audio thread to the drain without a lock (CAP-05): the
+            // audio thread alone writes gap descriptors, gapWrite and
+            // producedFrames; the drain alone writes gapRead and consumedFrames.
+            // A descriptor's start never changes once published. Only the
+            // newest one's length grows, and only while no frame follows it
+            // (a saturated ring refuses real samples and extends it). The drain
+            // reads producedFrames before anything else and never consumes past
+            // it, so it frees a gap's slot only once a later frame has closed
+            // that gap. Fixed metadata costs 4 KiB per channel, independent of
+            // take duration.
+            struct Gap { juce::int64 start {}; std::atomic<juce::int64> length {}; };
             static constexpr size_t gapCapacity = 256;
             std::array<Gap, gapCapacity> gaps {};
-            size_t gapHead {}, gapCount {};
-            juce::int64 producedFrames {}, consumedFrames {};
+            std::atomic<juce::uint64> gapWrite { 0 }, gapRead { 0 };
+            std::atomic<juce::int64>  producedFrames { 0 };
+            juce::int64               consumedFrames {};   // drain only
 
             struct DrainPlan
             {
@@ -542,55 +551,103 @@ namespace zynforge
                 juce::AbstractFifo::ScopedRead samples;
             };
 
-            bool canAcceptAudio() const noexcept { return gapCount < gapCapacity; }
+            // Audio thread.
+            bool canAcceptAudio() const noexcept
+            {
+                return gapWrite.load (std::memory_order_relaxed)
+                     - gapRead.load (std::memory_order_acquire) < gapCapacity;
+            }
 
+            // Audio thread, after this block's samples are in the FIFO: the
+            // drain may read them as soon as producedFrames says so.
             void accountCapture (int written, int requested) noexcept
             {
+                const auto produced = producedFrames.load (std::memory_order_relaxed);
                 const int lost = requested - written;
                 if (lost > 0)
                 {
-                    const auto start = producedFrames + written;
-                    const auto tail = (gapHead + gapCount + gapCapacity - 1) % gapCapacity;
-                    if (gapCount > 0 && gaps[tail].start + gaps[tail].length == start)
-                        gaps[tail].length += lost;
+                    const auto start = produced + written;
+                    const auto next = gapWrite.load (std::memory_order_relaxed);
+                    auto* newest = next > 0 ? &gaps[(size_t) ((next - 1) % gapCapacity)] : nullptr;
+                    const auto newestLength = newest != nullptr ? newest->length.load (std::memory_order_relaxed) : 0;
+                    if (newest != nullptr && newest->start + newestLength == start)
+                        newest->length.store (newestLength + lost, std::memory_order_release);
                     else
                     {
                         // A saturated descriptor ring refuses further real
-                        // samples until a gap is consumed. They extend its last
-                        // contiguous gap and are counted in missedSamples.
-                        jassert (gapCount < gapCapacity);
-                        gaps[(gapHead + gapCount++) % gapCapacity] = { start, lost };
+                        // samples until a gap is consumed, so its newest gap
+                        // always ends here and is extended above. Counted in
+                        // missedSamples.
+                        jassert (canAcceptAudio());
+                        auto& gap = gaps[(size_t) (next % gapCapacity)];
+                        gap.start = start;
+                        gap.length.store (lost, std::memory_order_relaxed);
+                        gapWrite.store (next + 1, std::memory_order_release);
                     }
                 }
-                producedFrames += requested;
+                producedFrames.store (produced + requested, std::memory_order_release);
             }
 
+            // Drain: timeline frames the audio thread has handed over.
+            juce::int64 readyFrames() const noexcept
+            {
+                return producedFrames.load (std::memory_order_acquire) - consumedFrames;
+            }
+
+            // Drain. frames <= readyFrames().
             void reserveTimeline (DrainPlan& plan, int frames) noexcept
             {
+                // First: every descriptor and length that covers these frames
+                // is visible once this is.
+                const auto produced = producedFrames.load (std::memory_order_acquire);
+                jassert (consumedFrames + frames <= produced);
+                auto read = gapRead.load (std::memory_order_relaxed);
                 int offset = 0, realFrames = 0;
                 while (offset < frames)
                 {
-                    const bool silence = gapCount > 0 && gaps[gapHead].start == consumedFrames;
-                    const auto run = silence ? gaps[gapHead].length
-                        : (gapCount > 0 ? gaps[gapHead].start - consumedFrames : frames - offset);
-                    const int count = (int) juce::jmin ((juce::int64) (frames - offset), run);
+                    bool silence = false;
+                    auto run = (juce::int64) (frames - offset);
+                    if (read < gapWrite.load (std::memory_order_acquire))
+                    {
+                        const auto& gap = gaps[(size_t) (read % gapCapacity)];
+                        const auto end = gap.start + gap.length.load (std::memory_order_acquire);
+                        if (consumedFrames >= end)
+                        {
+                            // Consumed, and closed: frames after it were produced.
+                            gapRead.store (++read, std::memory_order_release);
+                            continue;
+                        }
+                        if (consumedFrames >= gap.start) { silence = true; run = juce::jmin (run, end - consumedFrames); }
+                        else run = juce::jmin (run, gap.start - consumedFrames);
+                    }
+                    const int count = (int) run;
                     jassert (count > 0 && plan.count < plan.spans.size());
                     plan.spans[plan.count++] = { offset, count, silence };
-                    if (silence)
-                    {
-                        auto& gap = gaps[gapHead];
-                        gap.start += count; gap.length -= count;
-                        if (gap.length == 0) { gapHead = (gapHead + 1) % gapCapacity; --gapCount; }
-                    }
-                    else realFrames += count;
-                    offset += count; consumedFrames += count;
+                    if (! silence) realFrames += count;
+                    offset += count;
+                    consumedFrames += count;
+                }
+                // A gap this finished frees its slot now when a later frame has
+                // closed it: a saturated producer is waiting for that slot.
+                while (read < gapWrite.load (std::memory_order_acquire))
+                {
+                    const auto& gap = gaps[(size_t) (read % gapCapacity)];
+                    const auto end = gap.start + gap.length.load (std::memory_order_acquire);
+                    if (consumedFrames < end || end >= produced) break;
+                    gapRead.store (++read, std::memory_order_release);
                 }
                 plan.samples = fifo.read (realFrames);
                 jassert (plan.samples.blockSize1 + plan.samples.blockSize2 == realFrames);
             }
 
+            // Neither side running: before a take, or while the FIFO is resized.
             void resetCaptureTimeline() noexcept
-            { gapHead = gapCount = 0; producedFrames = consumedFrames = 0; }
+            {
+                gapWrite.store (0, std::memory_order_relaxed);
+                gapRead.store (0, std::memory_order_relaxed);
+                producedFrames.store (0, std::memory_order_relaxed);
+                consumedFrames = 0;
+            }
 
             void resize (int size)
             {
@@ -916,6 +973,7 @@ namespace zynforge
         friend class CaptureCopyTests;
         friend class CapturePathTests;
         friend class CaptureFixTests;
+        friend class CaptureFix20261116Tests;
         friend class CaptureDaemonLinkTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
         friend class MixerFixTests;            // Add Tracks while a STOP finalizes
@@ -972,8 +1030,37 @@ namespace zynforge
         std::vector<WriterChannel>                   writers;
         std::vector<std::unique_ptr<PreRollBuffer>>  preRoll;
         std::vector<std::unique_ptr<PreRollBuffer>>  preRollSnapshot;
-        // Control side holds this only for pointer swaps/transport publication.
+        // Serialises the control side's transitions (take start and stop,
+        // pre-roll swaps). Never taken by the audio callback or the drain since
+        // CAP-05: a transition publishes a new LiveView and waits out the one
+        // block that may still be using the old view.
         juce::SpinLock captureBoundary;
+        // What the audio callback reads once per block, published whole: the
+        // pre-roll histories it feeds and whether the block is captured. A
+        // block never sees half a transition: it reads one view at its start
+        // and keeps it to its end.
+        struct LiveView
+        {
+            std::vector<PreRollBuffer*> rolls;
+            bool recording { false };
+        };
+        std::atomic<LiveView*>    liveView { nullptr };
+        std::unique_ptr<LiveView> liveViewOwned;          // control side, under captureBoundary
+        // Odd while processBlock or addCaptureGap runs. Both run on the one
+        // audio thread, one at a time.
+        std::atomic<juce::uint32> callbackEpoch { 0 };
+        struct CallbackSection
+        {
+            explicit CallbackSection (std::atomic<juce::uint32>& e) noexcept : epoch (e)
+            { epoch.fetch_add (1, std::memory_order_seq_cst); }
+            ~CallbackSection() { epoch.fetch_add (1, std::memory_order_seq_cst); }
+            std::atomic<juce::uint32>& epoch;
+        };
+        // Under captureBoundary, never on the audio thread. Publishes the first
+        // `count` of `rolls` and `recordingNow`, then returns once no block can
+        // still hold the previous view; it is freed here.
+        void publishLiveView (const std::vector<std::unique_ptr<PreRollBuffer>>& rolls, bool recordingNow,
+                              size_t count = std::numeric_limits<size_t>::max());
         std::atomic<bool> meterUnarmedInputs { false };
 
         juce::String startError;

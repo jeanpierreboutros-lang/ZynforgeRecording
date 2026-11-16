@@ -27,7 +27,11 @@ namespace zynforge::capture
     //    (the take is already lost; the engineer must see that).
     //  * shutdown() leaves a RECORDING daemon rolling (the whole point: the
     //    GUI quitting must not stop the take); an idle daemon we launched
-    //    is asked to exit, by Quit and then SIGTERM. It is never killed.
+    //    is asked to exit, by Quit and then SIGTERM. It is never killed. An
+    //    idle one we attached to is asked by Quit alone (it is not our child).
+    //  * An idle daemon of another build (HelperBuild.h) found at attach is
+    //    asked to quit and this build's helper launched in its place; one with
+    //    a take rolling is kept.
     //
     // The daemon side needs no watchdog: a vanished GUI just drops the
     // socket (SIGPIPE ignored) and recording continues.
@@ -121,7 +125,18 @@ namespace zynforge::capture
         bool isStopInFlight() const noexcept { return stopInFlight.load(); }
         int  startReplyTimeoutMs { 5000 };
         juce::String lastConnectError;   // why connectOrLaunch last failed
-        bool configureCapture (const juce::var&);
+        // False with `refusal` set: the daemon refused this configuration (now,
+        // or the last time it was sent, while the retry waits). False with it
+        // empty: nothing was asked, or no answer came.
+        bool configureCapture (const juce::var&, juce::String* refusal = nullptr);
+        // The build the attached daemon named in its hello; empty for one built
+        // before builds were named. And the one this window ships.
+        juce::String helperBuild() const { return attachedBuild; }
+        juce::String expectedHelperBuild();
+        bool helperIsOtherBuild() { return isAttached() && attachedBuild != expectedHelperBuild(); }
+        // The last connectOrLaunch asked an idle daemon of another build to
+        // quit and launched this build's in its place.
+        bool didReplaceOtherBuild() const noexcept { return replacedOtherBuild; }
         // Why this daemon must not take a RECORD for a window whose input device
         // is ownDevice, from its latest status. Empty when it may.
         juce::String deviceMismatch (const juce::String& ownDevice) const;
@@ -151,6 +166,12 @@ namespace zynforge::capture
         std::atomic<bool>  statusSeen { false };
 
         bool heldDeviceDiffers (const juce::String& wanted) const;
+        bool idleByFreshStatus() const;
+        bool retireOtherBuild();
+        juce::String       attachedBuild;
+        juce::int64        attachedAtMs { 0 };   // when the last hello was answered
+        juce::String       failedCaptureReason;
+        bool               replacedOtherBuild { false };
         void joinStop();
         std::thread        stopThread;
         std::atomic<bool>  stopInFlight { false };

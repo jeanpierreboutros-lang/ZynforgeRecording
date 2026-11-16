@@ -275,6 +275,7 @@ namespace zynforge::capture
         greeting.id = hello.id;
         greeting.ok = greeting.completed = true;
         greeting.authProof = std::move (serverProof);
+        greeting.build = buildId;
         if (sendReply (greeting) && onCommand) onCommand (hello);
 
         juce::MemoryBlock scratch;

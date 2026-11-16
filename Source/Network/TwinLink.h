@@ -332,6 +332,13 @@ namespace zynforge::twin
         juce::String followerTakeId;     // the take the link started here
         bool         adoptedUnlinked { false };   // a rolling take this window found, with no link record
         juce::String lastSummaryBody;
+        // A start or stop the leader sent that the follower has not answered.
+        // The link can die with it still queued here, or after it left on a
+        // cable nobody noticed was out: the leader then says so, instead of
+        // going on showing the last good news.
+        enum class Awaiting { nothing, start, stop };
+        Awaiting     awaiting { Awaiting::nothing };
+        juce::String awaitingTake;
         std::deque<TakeRecord> records;
         juce::uint64 nextRecordId { 1 };
         juce::StringArray warnings;

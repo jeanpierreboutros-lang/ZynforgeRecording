@@ -115,9 +115,13 @@ public:
             const auto before = recorder.getMissedSamples();
             recorder.processBlock (inputs, 1, 4);
             expectEquals (recorder.getMissedSamples() - before, (juce::int64) 4);
-            expectEquals ((int) fifo.gapCount, (int) fifo.gapCapacity);
+            const auto pendingGaps = [&fifo] { return (int) (fifo.gapWrite.load() - fifo.gapRead.load()); };
+            expectEquals (pendingGaps(), (int) fifo.gapCapacity);
             recorder.drainPendingForTests();
-            expectEquals ((int) fifo.gapCount, 0);
+            // Only the newest gap can stay: no frame has closed it yet, so the
+            // audio thread may still extend it (the lock-free hand-over).
+            expectLessOrEqual (pendingGaps(), 1);
+            expect (fifo.canAcceptAudio(), "the drained descriptor ring still refuses audio");
             recorder.processBlock (inputs, 1, 4); // capacity recovered: keep D.
             recorder.stopRecording();
             juce::AudioFormatManager formats; formats.registerBasicFormats();
@@ -136,9 +140,9 @@ public:
             reader.reset();
             recorder.armContinue (520);
             expect (recorder.startRecording (dir));
-            expectEquals (fifo.producedFrames, (juce::int64) 0);
+            expectEquals (fifo.producedFrames.load(), (juce::int64) 0);
             expectEquals (fifo.consumedFrames, (juce::int64) 0);
-            expectEquals ((int) fifo.gapCount, 0);
+            expectEquals (pendingGaps(), 0);
             recorder.processBlock (inputs, 1, 4);
             recorder.stopRecording();
             expectEquals (recorder.getMissedSamples(), (juce::int64) 0);
