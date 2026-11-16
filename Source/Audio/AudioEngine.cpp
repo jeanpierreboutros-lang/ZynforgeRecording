@@ -2298,9 +2298,21 @@ namespace zynforge
 
     void AudioEngine::noteChosenDevice (bool pickedByHand)
     {
+        noteChosenDevice (pickedByHand, pickedByHand);
+    }
+
+    void AudioEngine::noteChosenDevice (bool inputByHand, bool outputByHand)
+    {
         if (deviceManager.getCurrentAudioDevice() == nullptr) return;   // nothing is open to choose
         const auto setup = deviceManager.getAudioDeviceSetup();
-        if (! pickedByHand && chosenDevice.saved && setup.inputDeviceName != chosenDevice.input) return;
+        if (! inputByHand && ! outputByHand && chosenDevice.saved && setup.inputDeviceName != chosenDevice.input) return;
+
+        // A side nobody touched keeps its choice: what is open there may be the
+        // Mac's own device standing in for one that is not up yet (a new
+        // monitor output says nothing about the input). Before any choice
+        // exists, what is open is all there is.
+        const bool takeInput  = inputByHand  || ! chosenDevice.saved || setup.inputDeviceName  == chosenDevice.input;
+        const bool takeOutput = outputByHand || ! chosenDevice.saved || setup.outputDeviceName == chosenDevice.output;
 
         const auto uidOf = [] (const juce::String& name, const devicechoice::DeviceList& list)
         {
@@ -2316,17 +2328,23 @@ namespace zynforge
         {
             return uid.isNotEmpty() || ! chosenDevice.saved || name != savedName ? uid : savedUid;
         };
-        const auto inputUid  = keptUid (uidOf (setup.inputDeviceName, listDevices (true, true)),
-                                        setup.inputDeviceName, chosenDevice.input, chosenDevice.inputUid);
-        const auto outputUid = keptUid (uidOf (setup.outputDeviceName, listDevices (false, true)),
-                                        setup.outputDeviceName, chosenDevice.output, chosenDevice.outputUid);
-        chosenDevice.saved     = true;
-        chosenDevice.input     = setup.inputDeviceName;
-        chosenDevice.output    = setup.outputDeviceName;
-        chosenDevice.inputUid  = inputUid;
-        chosenDevice.outputUid = outputUid;
-        chosenDevice.inputs    = getCurrentDeviceInputCount();
-        chosenDevice.bufferSize = juce::jmax (0, setup.bufferSize);
+        if (takeInput)
+        {
+            const auto inputUid = keptUid (uidOf (setup.inputDeviceName, listDevices (true, true)),
+                                           setup.inputDeviceName, chosenDevice.input, chosenDevice.inputUid);
+            chosenDevice.input      = setup.inputDeviceName;
+            chosenDevice.inputUid   = inputUid;
+            chosenDevice.inputs     = getCurrentDeviceInputCount();
+            chosenDevice.bufferSize = juce::jmax (0, setup.bufferSize);   // the buffer goes with the input
+        }
+        if (takeOutput)
+        {
+            const auto outputUid = keptUid (uidOf (setup.outputDeviceName, listDevices (false, true)),
+                                            setup.outputDeviceName, chosenDevice.output, chosenDevice.outputUid);
+            chosenDevice.output    = setup.outputDeviceName;
+            chosenDevice.outputUid = outputUid;
+        }
+        chosenDevice.saved = true;
         monitorOutputDropped.store (false, std::memory_order_relaxed);
         updateSettings (appProps.get(), [this] (juce::PropertiesFile& p) { devicechoice::save (p, chosenDevice); });
         deviceAnswers.clear();

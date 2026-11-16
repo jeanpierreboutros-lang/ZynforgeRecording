@@ -360,14 +360,16 @@ bool MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
         }
         // The pickers show a device even when nobody touched them (the first
         // listed, when the one in use is not there). Only a pick by hand moves
-        // the session onto another device.
-        if (r.devicePicked && r.inputDeviceName.isNotEmpty() && r.inputDeviceName != setup.inputDeviceName)
+        // the session onto another device, and each side counts on its own:
+        // a new monitor output says nothing about the input, which may be the
+        // Mac's mic standing in for a Dante device that is not up yet.
+        if (r.inputPicked && r.inputDeviceName.isNotEmpty() && r.inputDeviceName != setup.inputDeviceName)
         {
             setup.inputDeviceName     = r.inputDeviceName;
             setup.useDefaultInputChannels = true;
             changed = true;
         }
-        if (r.devicePicked && r.outputDeviceName.isNotEmpty() && r.outputDeviceName != setup.outputDeviceName)
+        if (r.outputPicked && r.outputDeviceName.isNotEmpty() && r.outputDeviceName != setup.outputDeviceName)
         {
             setup.outputDeviceName     = r.outputDeviceName;
             setup.useDefaultOutputChannels = true;
@@ -379,7 +381,7 @@ bool MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
         // failure mode is bad enough to guard at the mutation itself.)
         if (changed && ! engine.isRecording())
             engine.getDeviceManager().setAudioDeviceSetup (setup, true);
-        engine.noteChosenDevice (r.devicePicked);
+        engine.noteChosenDevice (r.inputPicked, r.outputPicked);
     }
 
     // New session = clean slate. Wipe any per-strip persistence

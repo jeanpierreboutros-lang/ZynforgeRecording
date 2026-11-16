@@ -1470,12 +1470,12 @@ public:
             WelcomeDialog::NewResult r;
             r.name = "Gig"; r.location = root.dir; r.sampleRate = 48000.0;
             r.inputDeviceName = r.outputDeviceName = "Laptop";   // what the untouched pickers read
-            r.devicePicked = false;
+            r.inputPicked = r.outputPicked = false;
             host.createSessionFromWelcome (r);
             expectEquals (manager.getAudioDeviceSetup().inputDeviceName, juce::String ("Interface"),
                           "Create moved the input to a device nobody chose");
             expectEquals (manager.getAudioDeviceSetup().outputDeviceName, juce::String ("Interface"));
-            r.name = "Gig 2"; r.devicePicked = true;
+            r.name = "Gig 2"; r.inputPicked = r.outputPicked = true;
             host.createSessionFromWelcome (r);
             expectEquals (manager.getAudioDeviceSetup().inputDeviceName, juce::String ("Laptop"),
                           "a device picked by hand was not applied");
