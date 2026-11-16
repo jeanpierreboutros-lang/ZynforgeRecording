@@ -369,6 +369,10 @@ private:
     bool analysisResultWanted (const juce::File& scannedSession);
     void runQcAnalysis();
     void detectSongsToMarkers();
+    // Puts a song scan's markers on the timeline in place of the last scan's;
+    // returns how many. lastSongMarkersReplaced: how many it took out.
+    int placeSongMarkers (const std::vector<juce::int64>& songStarts);
+    int lastSongMarkersReplaced { 0 };
     // Launch-time crash telemetry: offer the newest report since last run.
     // Both wait for STOP while a take rolls (serviceModalsAroundTakes).
     void scanForCrashReports();
