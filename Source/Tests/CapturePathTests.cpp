@@ -517,6 +517,11 @@ namespace zynforge
             {
                 CopyRig rig (*this, 2);
                 rig.take (false);
+                // A strip move never runs while the take's hash pass does (the
+                // engine refuses it, CAP-02): neither may this one, which now
+                // also carries session.report.json.
+                std::atomic<bool> stop { false };
+                expect (MultitrackRecorder::waitForReportHashes (rig.session, stop, true));
                 expect (trackorder::ensureLog (rig.session));
                 TrackFileTransaction interrupted;
                 expect (interrupted.begin (rig.session, {}));
