@@ -168,6 +168,11 @@ namespace zynforge
         // the new sample rate; keep the TrackState atomics intact.
         if ((int) tracks.size() != numInputs)
         {
+            {
+                // No block may still hold a history freed below.
+                const juce::SpinLock::ScopedLockType guard (captureBoundary);
+                publishLiveView ({}, false);
+            }
             tracks.clear();
             fifos.clear();
             preRoll.clear();
@@ -264,6 +269,11 @@ namespace zynforge
     {
         if (isRecording() || isFinalizing() || tracks.empty()) return;
         const juce::ScopedLock sl (structureLock);   // off-thread readers are mid-getTrack
+        {
+            // The callback stops feeding the last history before it is freed.
+            const juce::SpinLock::ScopedLockType guard (captureBoundary);
+            publishLiveView (preRoll, recording.load (std::memory_order_acquire), preRoll.size() - 1);
+        }
         tracks.pop_back();
         fifos.pop_back();
         preRoll.pop_back();
@@ -315,8 +325,10 @@ namespace zynforge
         { const juce::SpinLock::ScopedLockType guard (captureBoundary);
           for (std::size_t i = 0; i < replacement.size(); ++i)
               if (replacement[i] == nullptr) replacement[i] = std::move (preRoll[i]);
+          // The callback feeds the new buffers from its next block on.
+          publishLiveView (replacement, recording.load (std::memory_order_acquire));
           preRoll.swap (replacement); }
-        // Release old storage outside the audio boundary lock.
+        // Release old storage outside the boundary lock, after no block holds it.
     }
 
     void MultitrackRecorder::reorderPreRoll (const std::vector<int>& order)
@@ -344,7 +356,27 @@ namespace zynforge
             if (next < preRoll.size()) slot = std::move (preRoll[next++]);
             else slot = std::make_unique<PreRollBuffer>();
         }
+        publishLiveView (moved, recording.load (std::memory_order_acquire));
         preRoll.swap (moved);
+    }
+
+    void MultitrackRecorder::publishLiveView (const std::vector<std::unique_ptr<PreRollBuffer>>& rolls,
+                                              bool recordingNow, size_t count)
+    {
+        auto next = std::make_unique<LiveView>();
+        count = juce::jmin (count, rolls.size());
+        next->rolls.reserve (count);
+        for (size_t i = 0; i < count; ++i) next->rolls.push_back (rolls[i].get());
+        next->recording = recordingNow;
+        liveView.store (next.get(), std::memory_order_seq_cst);
+        // A block that began before the store may still use the old view: wait
+        // for it to end. One that begins after reads the new one. The audio
+        // thread never waits on this side.
+        const auto epoch = callbackEpoch.load (std::memory_order_seq_cst);
+        if ((epoch & 1u) != 0)
+            while (callbackEpoch.load (std::memory_order_seq_cst) == epoch)
+                std::this_thread::yield();
+        liveViewOwned = std::move (next);   // frees the old view
     }
 
     void MultitrackRecorder::preparePreRollDump()
@@ -413,9 +445,14 @@ namespace zynforge
                                            int numSamples,
                                            juce::int64 playheadAtBlock) noexcept
     {
-        const juce::SpinLock::ScopedLockType boundaryGuard (captureBoundary);
+        // No lock: the view this block reads at its start holds for all of it
+        // (publishLiveView waits the block out), and the drain takes what this
+        // writes through each FIFO's lock-free timeline (CAP-05).
+        const CallbackSection section (callbackEpoch);
+        const auto* view = liveView.load (std::memory_order_seq_cst);
         const int n = juce::jmin (numChannels, (int) fifos.size());
-        const bool rec = recording.load (std::memory_order_acquire);
+        const bool rec = view != nullptr && view->recording;
+        const int rolls = view != nullptr ? (int) view->rolls.size() : 0;
         lastBlockCaptured = rec;
 
         // Where this block ends in the take. The first one also pins the
@@ -483,16 +520,17 @@ namespace zynforge
 
             // Histories share a block boundary, including unarmed and unrouted
             // inputs. Changing arm state must not compress a track's history.
-            if (ch < (int) preRoll.size() && ! preRoll[(size_t) ch]->data.empty())
+            if (ch < rolls && view->rolls[(size_t) ch] != nullptr && ! view->rolls[(size_t) ch]->data.empty())
             {
-                if (inputs[ch] != nullptr) preRoll[(size_t) ch]->push (inputs[ch], numSamples);
+                auto& history = *view->rolls[(size_t) ch];
+                if (inputs[ch] != nullptr) history.push (inputs[ch], numSamples);
                 else
                 {
                     for (int offset = 0; offset < numSamples;)
                     {
                         const int count = juce::jmin (numSamples - offset, (int) scratch.size());
                         if (count == 0) break;
-                        preRoll[(size_t) ch]->push (scratch.data(), count);
+                        history.push (scratch.data(), count);
                         offset += count;
                     }
                 }
@@ -516,14 +554,17 @@ namespace zynforge
                 const int  n0  = juce::jmin (numSamples, (int) scratch.size());
                 if (n0 <= 0) continue;
                 auto& cfz = *fifos[(std::size_t) ch];
-                const auto zs = cfz.fifo.write (cfz.canAcceptAudio() ? n0 : 0);
-                if (zs.blockSize1 > 0)
-                    std::memcpy (cfz.data.data() + zs.startIndex1, scratch.data(),
-                                 (std::size_t) zs.blockSize1 * sizeof (float));
-                if (zs.blockSize2 > 0)
-                    std::memcpy (cfz.data.data() + zs.startIndex2, scratch.data(),
-                                 (std::size_t) zs.blockSize2 * sizeof (float));
-                const int wroteZ = zs.blockSize1 + zs.blockSize2;
+                int wroteZ = 0;
+                {
+                    const auto zs = cfz.fifo.write (cfz.canAcceptAudio() ? n0 : 0);
+                    if (zs.blockSize1 > 0)
+                        std::memcpy (cfz.data.data() + zs.startIndex1, scratch.data(),
+                                     (std::size_t) zs.blockSize1 * sizeof (float));
+                    if (zs.blockSize2 > 0)
+                        std::memcpy (cfz.data.data() + zs.startIndex2, scratch.data(),
+                                     (std::size_t) zs.blockSize2 * sizeof (float));
+                    wroteZ = zs.blockSize1 + zs.blockSize2;
+                }   // in the FIFO before the timeline says so
                 cfz.accountCapture (wroteZ, numSamples);
                 if (wroteZ < numSamples)
                 {
@@ -588,18 +629,20 @@ namespace zynforge
                 t.liveWavePush (src, numSamples);
 
                 auto& cf = *fifos[(std::size_t) ch];
-                const auto scope = cf.fifo.write (cf.canAcceptAudio() ? numSamples : 0);
-                const int wrote = scope.blockSize1 + scope.blockSize2;
+                int wrote = 0;
+                {
+                    const auto scope = cf.fifo.write (cf.canAcceptAudio() ? numSamples : 0);
+                    wrote = scope.blockSize1 + scope.blockSize2;
+                    if (scope.blockSize1 > 0)
+                        std::memcpy (cf.data.data() + scope.startIndex1,
+                                     src,
+                                     (std::size_t) scope.blockSize1 * sizeof (float));
+                    if (scope.blockSize2 > 0)
+                        std::memcpy (cf.data.data() + scope.startIndex2,
+                                     src + scope.blockSize1,
+                                     (std::size_t) scope.blockSize2 * sizeof (float));
+                }   // the samples are in the FIFO before the timeline hands them over
                 cf.accountCapture (wrote, numSamples);
-
-                if (scope.blockSize1 > 0)
-                    std::memcpy (cf.data.data() + scope.startIndex1,
-                                 src,
-                                 (std::size_t) scope.blockSize1 * sizeof (float));
-                if (scope.blockSize2 > 0)
-                    std::memcpy (cf.data.data() + scope.startIndex2,
-                                 src + scope.blockSize1,
-                                 (std::size_t) scope.blockSize2 * sizeof (float));
 
                 if (wrote < numSamples)
                 {
@@ -624,8 +667,10 @@ namespace zynforge
     void MultitrackRecorder::addCaptureGap (juce::int64 frames) noexcept
     {
         if (frames <= 0) return;
-        const juce::SpinLock::ScopedLockType boundaryGuard (captureBoundary);
-        if (! recording.load (std::memory_order_acquire)) return;
+        // The audio thread, before this block's processBlock: as there, no lock.
+        const CallbackSection section (callbackEpoch);
+        const auto* view = liveView.load (std::memory_order_seq_cst);
+        if (view == nullptr || ! view->recording) return;
         const int lost = (int) juce::jmin (frames, (juce::int64) std::numeric_limits<int>::max());
         const int n = (int) juce::jmin (fifos.size(), captureArms.size());
         // The channels processBlock feeds: armed ones, and the right half of
@@ -2265,10 +2310,14 @@ namespace zynforge
         }
         {
             const juce::SpinLock::ScopedLockType guard (captureBoundary);
-            preRollSnapshot.swap (preRoll);
-            preRoll.swap (replacement);
             punchCaptureOrigin.store (-1, std::memory_order_relaxed);
             recording.store (true, std::memory_order_release);
+            // One step for the callback: its next block feeds the fresh
+            // histories and is captured; a block still on the old view ends in
+            // the old histories, which become this take's pre-roll.
+            publishLiveView (replacement, true);
+            preRollSnapshot.swap (preRoll);
+            preRoll.swap (replacement);
         }
         noteCapturing (true);
         preparePreRollDump();
@@ -2492,6 +2541,9 @@ namespace zynforge
         if (finalizing.load() || ! recording.load()) return false;
         finalizing.store (true, std::memory_order_release);
         recording.store (false, std::memory_order_release);
+        // Returns once no block can still be capturing: the final drain then
+        // has every sample.
+        publishLiveView (preRoll, false);
         noteCapturing (false);
         return true;
     }
@@ -4361,13 +4413,8 @@ namespace zynforge
             // real/silent spans, preserving alignment even for unequal drops.
             const int channels = w.numChannels == 2 && i + 1 < fifos.size() ? 2 : 1;
             auto* right = channels == 2 ? fifos[i + 1].get() : nullptr;
-            juce::int64 remaining;
-            {
-                const juce::SpinLock::ScopedLockType guard (captureBoundary);
-                remaining = cf.producedFrames - cf.consumedFrames;
-                if (right != nullptr)
-                    remaining = juce::jmin (remaining, right->producedFrames - right->consumedFrames);
-            }
+            juce::int64 remaining = cf.readyFrames();
+            if (right != nullptr) remaining = juce::jmin (remaining, right->readyFrames());
             constexpr int chunkLimit = CaptureCopy::kChunkFrames;
             if (remaining > 0)
             {
@@ -4378,14 +4425,11 @@ namespace zynforge
             {
                 const int frames = (int) juce::jmin (remaining, (juce::int64) chunkLimit);
                 ChannelFifo::DrainPlan leftPlan, rightPlan;
-                {
-                    // Only bounded cursor/descriptor operations. The reserved
-                    // sample ranges stay occupied until they reach the copies,
-                    // so the producer cannot overwrite a span being read.
-                    const juce::SpinLock::ScopedLockType guard (captureBoundary);
-                    cf.reserveTimeline (leftPlan, frames);
-                    if (right != nullptr) right->reserveTimeline (rightPlan, frames);
-                }
+                // Lock-free (CAP-05). The reserved sample ranges stay occupied
+                // until they reach the copies, so the producer cannot overwrite
+                // a span being read.
+                cf.reserveTimeline (leftPlan, frames);
+                if (right != nullptr) right->reserveTimeline (rightPlan, frames);
                 if (afterFifoReservationForTests) afterFifoReservationForTests();
                 auto materialize = [] (const ChannelFifo& source, const ChannelFifo::DrainPlan& plan,
                                        std::vector<float>& destination)
