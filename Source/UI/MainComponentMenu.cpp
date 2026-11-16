@@ -202,8 +202,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         sel.addItem (335, "Select all strips\tCmd+A",  stripCount > 0);
         sel.addItem (334, "Clear selection\tEsc",      selCount > 0);
         sel.addSeparator();
-        sel.addItem (330, "Move selected up",         selCount > 0);
-        sel.addItem (331, "Move selected down",       selCount > 0);
+        // A move renames take files, so it waits for a take, its STOP and any
+        // session job (all in the menu signature) and greys meanwhile.
+        const bool canMove = selCount > 0 && ! engine.isRecording() && ! engine.isCaptureFinalizing()
+                          && ! captureMetadataPending && ! sessionIoBusy.load();
+        sel.addItem (330, "Move selected up",         canMove);
+        sel.addItem (331, "Move selected down",       canMove);
         sel.addSeparator();
         sel.addItem (332, "Colour selected...",         selCount > 0);
         sel.addItem (333, "Delete selected",          selCount > 0);

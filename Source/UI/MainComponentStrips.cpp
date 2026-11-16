@@ -26,7 +26,12 @@ using namespace zynforge;
 
 void MainComponent::moveSelectedStrips (int delta)
 {
-    if (selectedLogical.empty() || engine.isRecording() || sessionIoBusy.load()) return;
+    if (selectedLogical.empty()) return;
+    // The menu greys these; a refusal that still gets here says why.
+    if (engine.isRecording() || engine.isCaptureFinalizing() || captureMetadataPending)
+    { showStatus ("Move refused -- strips stay put during a take and its STOP; move them after"); return; }
+    if (sessionIoBusy.load())
+    { showStatus ("Move refused -- wait for the session operation to finish"); return; }
     auto blocks = trackorder::logicalBlocks (trackorder::stereoFlags (engine.getRecorder()));
     std::vector<int> selected (selectedLogical.begin(), selectedLogical.end());
     if (delta > 0) std::reverse (selected.begin(), selected.end());

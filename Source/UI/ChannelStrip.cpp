@@ -633,6 +633,10 @@ namespace zynforge
         };
         addAndMakeVisible (inputCombo);
         addAndMakeVisible (outputCombo);
+        // A click leaves keyboard focus where it was: a combo that kept it took
+        // the next arrow key as a new patch, in the middle of a show.
+        inputCombo .setMouseClickGrabsKeyboardFocus (false);
+        outputCombo.setMouseClickGrabsKeyboardFocus (false);
 
         armButton.setToggleState (s.armed.load(), juce::dontSendNotification);
         armButton.onClick = [this]

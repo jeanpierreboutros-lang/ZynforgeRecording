@@ -17,6 +17,20 @@ namespace zynforge
         IconButton (zynforge::icons::Glyph g, const juce::String& label)
             : juce::TextButton (label), glyph (g) {}
 
+        // A button only a click (or VoiceOver's press) presses: it never holds
+        // keyboard focus, and a key that reaches it anyway goes on to the window.
+        void setKeyboardClicks (bool allowed)
+        {
+            keyboardClicks = allowed;
+            setWantsKeyboardFocus (allowed);
+            if (! allowed) setMouseClickGrabsKeyboardFocus (false);
+        }
+
+        bool keyPressed (const juce::KeyPress& key) override
+        {
+            return keyboardClicks && juce::TextButton::keyPressed (key);
+        }
+
         void paintButton (juce::Graphics& g,
                           bool over,
                           bool down) override
@@ -55,6 +69,7 @@ namespace zynforge
 
     private:
         zynforge::icons::Glyph glyph;
+        bool keyboardClicks = true;
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IconButton)
     };
 }

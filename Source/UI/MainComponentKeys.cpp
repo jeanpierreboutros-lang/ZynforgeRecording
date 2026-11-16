@@ -14,8 +14,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         // Metadata owns persistence and timeline mutations, not navigation.
         // Keep view switching, zoom, selection and explicit Save available.
         const auto kc = key.getKeyCode();
+        // Space is STOP while a take finalizes too: it keeps a punch's
+        // post-roll, or the playback a punch-out would restart, from starting.
         const bool stoppingTransport = key == juce::KeyPress::spaceKey
-            && (engine.isRecording() || engine.getPlayer().isPlaying());
+            && (engine.isRecording() || engine.getPlayer().isPlaying() || captureMetadataPending);
         const bool navigation = key == juce::KeyPress::escapeKey
             || (key.getModifiers().isCommandDown()
                 && (kc == '=' || kc == '+' || kc == juce::KeyPress::numberPadAdd
@@ -120,7 +122,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         //   3. Else if a session is loaded → start playback
         //   4. Otherwise let the engineer know nothing's loaded
         auto& player = engine.getPlayer();
-        if (engine.isRecording())
+        if (engine.isRecording() || captureMetadataPending)
         {
             onStopClicked();
         }

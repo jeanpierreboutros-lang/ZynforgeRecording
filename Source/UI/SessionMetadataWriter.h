@@ -5,7 +5,9 @@
 #include "../Audio/SessionMixFile.h"
 #include "../Audio/SessionRepair.h"
 #include "SessionProjPath.h"
+#include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -157,6 +159,40 @@ namespace zynforge
         return { true, {}, false, keptAside.joinIntoString ("; ") };
     }
 
+    // Finished saves' completions, waiting for the message thread. Each is
+    // queued before its message is posted, and every message runs all that are
+    // queued, oldest first, so a caller on the message thread that has waited
+    // out the writer (waitUntilIdle) can run them at once instead of a message
+    // later. Shared, so the worker never reaches into a window being deleted.
+    class MetadataDeliveries
+    {
+    public:
+        void push (std::function<void()> delivery)
+        {
+            const std::lock_guard<std::mutex> guard (lock);
+            waiting.push_back (std::move (delivery));
+        }
+
+        void runAll()
+        {
+            for (;;)
+            {
+                std::function<void()> next;
+                {
+                    const std::lock_guard<std::mutex> guard (lock);
+                    if (waiting.empty()) return;
+                    next = std::move (waiting.front());
+                    waiting.pop_front();
+                }
+                if (next) next();
+            }
+        }
+
+    private:
+        std::mutex lock;
+        std::deque<std::function<void()>> waiting;
+    };
+
     class SessionMetadataWriter
     {
     public:
@@ -206,6 +242,15 @@ namespace zynforge
             if (worker.joinable()) worker.join();
         }
 
+        // Waits at most `timeoutMs` for every queued save to be written. True
+        // when none is left: each one's completion has been called by then.
+        bool waitUntilIdle (int timeoutMs)
+        {
+            std::unique_lock<std::mutex> guard (mutex);
+            return idle.wait_for (guard, std::chrono::milliseconds (juce::jmax (0, timeoutMs)),
+                                  [this] { return jobs.empty() && ! writing; });
+        }
+
     private:
         struct Job { SessionMetadataSnapshot snapshot; bool automatic; Completion completion; };
         void run()
@@ -219,15 +264,19 @@ namespace zynforge
                     if (jobs.empty()) return;
                     job = std::move (jobs.front());
                     jobs.pop_front();
+                    writing = true;
                 }
                 auto result = writeSessionMetadata (job.snapshot);
                 if (job.completion) job.completion (std::move (result));
+                { const std::lock_guard<std::mutex> guard (mutex); writing = false; }
+                idle.notify_all();
             }
         }
         std::mutex mutex;
-        std::condition_variable wake;
+        std::condition_variable wake, idle;
         std::deque<Job> jobs;
         bool stopping = false;
+        bool writing = false;
         std::thread worker;
     };
 }

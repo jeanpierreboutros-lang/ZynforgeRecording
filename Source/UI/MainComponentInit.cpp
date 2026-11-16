@@ -247,7 +247,7 @@ MainComponent::MainComponent()
 
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
     addChannelButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
-    addChannelButton.setTooltip ("Set the number of recording channels -- opens a prompt where you type the count (1-256).");
+    addChannelButton.setTooltip ("Add channels -- opens a dialog to add mono or stereo channels, with names, after the last strip.");
     addChannelButton.onClick = [this]
     {
         // The empty mixer's Add tracks button lands here past the disabled one.
@@ -309,6 +309,19 @@ MainComponent::MainComponent()
     backupButton .setTooltip ("Backup & Mirror Drives -- pick the drives every track is copied to as you record, and their formats.");
     patchButton  .setTooltip ("Open the patch matrix: route hardware inputs / outputs to channel strips.");
     titleLabel   .setTooltip ("ZynForge Recording -- JUCE 8 multitrack recorder + virtual soundcheck.");
+
+    // A click leaves keyboard focus where it was. A header button that took it
+    // pressed itself again on the next stray Return: on LOCK, that unlocked a
+    // locked show. LOCK never holds focus at all, so no key turns it off.
+    for (juce::Button* b : { (juce::Button*) &deviceButton, (juce::Button*) &lockButton,
+                             (juce::Button*) &backupButton, (juce::Button*) &patchButton,
+                             (juce::Button*) &vscButton, (juce::Button*) &metersButton,
+                             (juce::Button*) &addChannelButton, (juce::Button*) &mixViewButton,
+                             (juce::Button*) &editViewButton, (juce::Button*) &stripXsButton,
+                             (juce::Button*) &stripSButton, (juce::Button*) &stripMButton,
+                             (juce::Button*) &stripLButton, (juce::Button*) &gridButton })
+        b->setMouseClickGrabsKeyboardFocus (false);
+    lockButton.setKeyboardClicks (false);
 
     addAndMakeVisible (bigClock);
     addAndMakeVisible (perfDashboard);

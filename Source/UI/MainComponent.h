@@ -40,6 +40,7 @@
 
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
 namespace zynforge { class MixerFixTests; class UiFixTests; class NetFix20261116Tests; }
+namespace zynforge { class SessionFix20261116Tests; class MainWindowFix20261116Tests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -153,6 +154,8 @@ private:
     void completeBounceStems (juce::File, const std::vector<int>& tracks);
     void completeBounceStereoMix (juce::File);
     void completeAudioImport (const juce::Array<juce::File>&);
+    // The Import panel's answer counts only for the session it was opened over.
+    bool importAnswerInScope (const juce::Array<juce::File>& picks, const QuestionScope& scope);
     void exportShowHandoff();
     void exportDawProject (zynforge::projectexport::Format);
     void exportSongs();
@@ -254,6 +257,14 @@ private:
     void saveCueChanges (const juce::String& success);
     zynforge::SessionMetadataWriter metadataWriter;
     int pendingMetadataSaves = 0;
+    // Completions of saves the writer has finished, waiting for the message thread.
+    std::shared_ptr<zynforge::MetadataDeliveries> metadataDeliveries { std::make_shared<zynforge::MetadataDeliveries>() };
+    // A desk, tablet or twin RECORD can't be held for later: its sender is told
+    // now whether a take started. It waits out a save in flight this long.
+    static constexpr int kRemoteRecordSaveWaitMs = 1500;
+    bool waitOutMetadataSaves (int timeoutMs);
+    // Why RECORD can't start while a stop, a save or a session job holds it.
+    juce::String recordBlockedReason (bool remote) const;
     juce::uint64 metadataRevision = 0;
     bool captureMetadataPending = false; // holds the entire media + metadata STOP operation
     // A rolling punch-out restarts playback once its files are final; STOP in
@@ -376,6 +387,9 @@ private:
     bool crashScanHeld { false };
     juce::Array<juce::File> heldCrashReports;
     bool recoveryOfferHeld { false };
+    // A Recover was tried from the launch's recovery list: the launch then
+    // leaves its result in view instead of reopening the last session.
+    bool launchRecoverAttempted { false };
     bool configureCaptureDaemon();
     juce::var captureDaemonSettings();   // what the daemon takes from this window, the device aside
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
@@ -565,6 +579,12 @@ private:
     // 0 = no outstanding warning, so we warn once per distinct device rate.
     double srMismatchWarned  { 0.0 };
     void   checkDeviceSampleRate (double deviceSampleRate);
+    // The rate RECORD refuses a device on: the take's once there is one, else
+    // the rate the session was made at. Pre-flight and the warning use it too.
+    double recordGuardSampleRate();
+    // The one "Sample-Rate Mismatch" notice up, if any: refused presses from a
+    // desk or the twin must not stack one each on an unattended Mac.
+    juce::Component::SafePointer<juce::AlertWindow> sampleRateNotice;
     bool   chaseWasLive      { false };   // external-timecode chase: did we start playback?
     void   serviceTimecodeChase();
     void   serviceTrimFollowNotice();
@@ -711,6 +731,8 @@ private:
     friend class zynforge::PunchRuleTests;
     friend class zynforge::EditDetailTests;
     friend class zynforge::EditRowFixTests;
+    friend class zynforge::SessionFix20261116Tests;
+    friend class zynforge::MainWindowFix20261116Tests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.
