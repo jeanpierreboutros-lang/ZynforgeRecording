@@ -1575,11 +1575,22 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
         showStatus ("Import refused -- " + originalSession.getFileName() + " is not loaded; open it first");
         return;
     }
+    // An import with no session open makes one, like New Session: in the
+    // chosen sessions folder, and never on the boot disk in place of its
+    // unplugged drive.
+    const auto sessionsRoot = zynforge::newSessionsRoot (engine);
+    if (const auto refusal = newSession ? zynforge::newSessionDriveRefusal (sessionsRoot) : juce::String();
+        refusal.isNotEmpty())
+    {
+        sessionJobs.release();
+        showStatus ("Import refused -- " + refusal);
+        return;
+    }
     // makeNewSessionDir may reuse a persisted named folder even when the
     // engine has no active session. Import must start in its own unique
     // folder in that case, never write into an unrelated old take.
     auto sessionDir = newSession
-        ? getSessionsRoot().getNonexistentChildFile (
+        ? sessionsRoot.getNonexistentChildFile (
             "Imported_" + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S"),
             {}, false)
         : originalSession;
@@ -2915,6 +2926,12 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // and STOP would then save the wiped state over the real session.
     sessionCreateRefusal.clear();
     if (engine.isRecording() || engine.isCaptureFinalizing())
+        return {};
+
+    // A sessions folder on an unplugged drive is reported, and no other
+    // folder stands in for it.
+    sessionCreateRefusal = zynforge::newSessionDriveRefusal (r.location);
+    if (sessionCreateRefusal.isNotEmpty())
         return {};
 
     // Resolve a safe folder name even if the engineer typed something

@@ -531,9 +531,13 @@ void MainComponent::registerMenuCommands()
     m.add (255, [this]
     {
         if (waitsForTake ("Session Format & Recording")) return;
+        // Its Apply writes format, rate and pre-roll into "the session": only
+        // into the one it was opened over.
         SessionSettingsDialog::launch (engine,
             [self = juce::Component::SafePointer<MainComponent> (this)] { if (self != nullptr) self->relocateActiveSession(); },
-            [self = juce::Component::SafePointer<MainComponent> (this)] (double sr) { if (self != nullptr) self->applySessionSampleRate (sr); });
+            [self = juce::Component::SafePointer<MainComponent> (this)] (double sr) { if (self != nullptr) self->applySessionSampleRate (sr); },
+            [self = juce::Component::SafePointer<MainComponent> (this), scope = questionScope()]
+            { return self != nullptr && self->stillInScope (scope); });
     });
     m.add (256, [this]
     {

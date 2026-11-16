@@ -28,7 +28,11 @@ namespace zynforge
             double        sampleRate { 48000.0 };
             juce::String  inputDeviceName;   // chosen record-from input device ("" = unchanged)
             juce::String  outputDeviceName;  // chosen monitor output device  ("" = unchanged)
-            bool          devicePicked { false };   // a device picker was changed by hand
+            // Which picker was changed by hand. Each side is saved as the
+            // engineer's choice only when it was: an untouched picker shows
+            // whatever stands in for a device that is not up yet.
+            bool          inputPicked  { false };
+            bool          outputPicked { false };
         };
 
         // Each returns whether it worked. The Welcome closes only on true: a

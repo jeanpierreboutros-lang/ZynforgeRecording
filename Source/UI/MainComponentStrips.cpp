@@ -19,6 +19,7 @@
 #include "FloatingLaunch.h"
 #include "NewSessionDialog.h"
 #include "Meterbridge.h"
+#include "RecordPosition.h"
 #include "../Audio/ChannelCsv.h"
 #include "../Audio/TrackOrder.h"
 
@@ -491,12 +492,17 @@ void MainComponent::addTracks (const std::vector<zynforge::AddTracksDialog::Entr
         for (int i = 0; i < e.count && cursor < target; ++i)
         {
             const int suffix = e.count > 1 ? i + 1 : 0;
-            const auto base  = e.baseName.isNotEmpty() ? e.baseName : juce::String (cursor + 1);
+            // No name typed: the strip stays unnamed, shown by its number and
+            // recorded as Track_NN (TakeNames.h), as a cleared name leaves it.
+            // Its number written in as a name stayed behind when the strip
+            // moved, and a right half's "5 R" named its file once unlinked.
+            const auto label = e.baseName.isEmpty() ? juce::String()
+                             : suffix > 0           ? e.baseName + " " + juce::String (suffix)
+                                                    : e.baseName;
             if (e.stereo && cursor + 1 < target)
             {
-                const auto label = suffix > 0 ? base + " " + juce::String (suffix) : base;
                 engine.setTrackName  (cursor,     label);
-                engine.setTrackName  (cursor + 1, label + " R");
+                engine.setTrackName  (cursor + 1, label.isEmpty() ? juce::String() : label + " R");
                 engine.setTrackStereo (cursor,     true);
                 engine.setTrackStereo (cursor + 1, false);
                 // Hard-pan the new pair L/R so it reproduces its full
@@ -508,8 +514,7 @@ void MainComponent::addTracks (const std::vector<zynforge::AddTracksDialog::Entr
             }
             else
             {
-                engine.setTrackName  (cursor, suffix > 0 ? base + " " + juce::String (suffix)
-                                                          : base);
+                engine.setTrackName  (cursor, label);
                 engine.setTrackStereo (cursor, false);
                 ++cursor;
             }
@@ -763,6 +768,9 @@ void MainComponent::createSessionFromCsv()
     if (refuseWhileSessionPickerOpen()) return;
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
+    // Said before a file is picked: the session could not be made anyway.
+    if (const auto refusal = newSessionDriveRefusal (newSessionsRoot (engine)); refusal.isNotEmpty())
+    { showStatus (refusal); return; }
 
     chooser = std::make_unique<juce::FileChooser> (
         "New session from CSV", getSessionsRoot(), "*.csv;*.txt");
@@ -792,7 +800,7 @@ void MainComponent::completeSessionFromCsv (const juce::File& f)
 
     zynforge::NewSessionDialog::Result r;
     r.name          = f.getFileNameWithoutExtension();
-    r.location      = getSessionsRoot();
+    r.location      = newSessionsRoot (engine);   // never ~/Music in place of an unplugged drive
     r.captureFormat = engine.getRecorder().getCaptureFormat();
     r.sampleRate    = pendingSampleRate;
     const auto dir  = createSessionFolderStructure (r);
@@ -851,6 +859,9 @@ void MainComponent::createSessionFromConsole()
 {
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
+    // Said before the desk is asked: the session could not be made anyway.
+    if (const auto refusal = newSessionDriveRefusal (newSessionsRoot (engine)); refusal.isNotEmpty())
+    { showStatus (refusal); return; }
 
     // A connected console link is the one place an X32 can answer from, and
     // the only path that hears stereo links. The OSC listener path below is
@@ -960,7 +971,7 @@ void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& 
 
     zynforge::NewSessionDialog::Result r;
     r.name          = namePrefix + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M");
-    r.location      = getSessionsRoot();
+    r.location      = newSessionsRoot (engine);   // never ~/Music in place of an unplugged drive
     r.captureFormat = engine.getRecorder().getCaptureFormat();
     r.sampleRate    = pendingSampleRate;
     const auto dir  = createSessionFolderStructure (r);

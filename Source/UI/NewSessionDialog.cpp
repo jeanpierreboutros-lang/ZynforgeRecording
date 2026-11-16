@@ -1,5 +1,6 @@
 #include "NewSessionDialog.h"
 #include "FloatingLaunch.h"
+#include "RecordPosition.h"
 #include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -49,6 +50,13 @@ namespace zynforge
                 pathButton.setButtonText (compactPath (storageDir));
                 pathButton.setTooltip ("Choose the folder to create the session in.");
                 pathButton.onClick = [this] { pickFolder(); };
+
+                // A drive that is not plugged in is said here, as the Welcome
+                // says it, and Create waits for it or another folder.
+                addAndMakeVisible (driveLabel);
+                driveLabel.setFont (brand::type::caption());
+                driveLabel.setColour (juce::Label::textColourId, brand::alertAmber);
+                showDrive();
 
                 // ─── Section header ───
                 addAndMakeVisible (sectionHeader);
@@ -141,7 +149,7 @@ namespace zynforge
                 storageLabel.setBounds (local.removeFromLeft (130));
                 local.removeFromLeft (brand::space::xs);
                 pathButton.setBounds (local.removeFromLeft (juce::jmin (local.getWidth(), 280)));
-                b.removeFromTop (18);
+                driveLabel.setBounds (b.removeFromTop (18).withTrimmedLeft (130 + brand::space::xs));
 
                 // Section header
                 sectionHeader.setBounds (b.removeFromTop (brand::space::ctrlH));
@@ -279,8 +287,19 @@ namespace zynforge
                     {
                         self->storageDir = chosen;
                         self->pathButton.setButtonText (compactPath (self->storageDir));
+                        self->showDrive();
                     }
                 });
+            }
+
+            // Whether the folder's drive is there. True when it is.
+            bool showDrive()
+            {
+                const bool missing = folderDriveMissing (storageDir);
+                driveLabel.setText (missing ? juce::String ("Drive not connected -- connect it or choose another folder")
+                                            : juce::String(),
+                                    juce::dontSendNotification);
+                return ! missing;
             }
 
             static juce::String compactPath (const juce::File& f)
@@ -294,6 +313,7 @@ namespace zynforge
 
             void dismiss (bool create)
             {
+                if (create && ! showDrive()) return;   // stays up: nothing is made on another drive
                 if (create && callback)
                 {
                     NewSessionDialog::Result r;
@@ -319,6 +339,7 @@ namespace zynforge
             juce::TextEditor   nameEditor;
             juce::Label        storageLabel;
             juce::TextButton   pathButton;
+            juce::Label        driveLabel;
             juce::Label        sectionHeader;
             juce::Label        fileTypeLabel, sampleRateLabel, bitDepthLabel;
             juce::ComboBox     fileTypeCombo, sampleRateCombo, bitDepthCombo;

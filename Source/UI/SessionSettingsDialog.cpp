@@ -15,8 +15,10 @@ namespace
 {
     struct SessionFormatContent final : public juce::Component
     {
-        SessionFormatContent (AudioEngine& e, std::function<void()> relocate, std::function<void (double)> applyRate)
-            : eng (e), onRelocate (std::move (relocate)), onApplySampleRate (std::move (applyRate)) { rebuild(); setSize (460, 378); }
+        SessionFormatContent (AudioEngine& e, std::function<void()> relocate, std::function<void (double)> applyRate,
+                              std::function<bool()> inScope)
+            : eng (e), onRelocate (std::move (relocate)), onApplySampleRate (std::move (applyRate)),
+              stillInScope (std::move (inScope)) { rebuild(); setSize (460, 378); }
 
         void rebuild()
         {
@@ -88,8 +90,9 @@ namespace
             changePathB.onClick = [this]
             {
                 auto relocate = onRelocate;   // copy first: close() retires this dialog
+                const bool moveThisOne = sessionStillOpen();
                 close();                      // dismiss settings first
-                if (relocate) relocate();     // then run the move flow
+                if (relocate && moveThisOne) relocate();   // then run the move flow
             };
             addAndMakeVisible (changePathB);
 
@@ -138,9 +141,13 @@ namespace
                 bitsBox.setSelectedId (2, juce::dontSendNotification);
         }
 
+        // The session this dialog shows is still the one open. A Finder open,
+        // a twin or a remote can change it behind the dialog; the host says so.
+        bool sessionStillOpen() const { return ! stillInScope || stillInScope(); }
+
         void apply()
         {
-            if (eng.isRecording()) { close(); return; }
+            if (eng.isRecording() || ! sessionStillOpen()) { close(); return; }
             using F = zynforge::CaptureFormat;
             F f = F::Wav24;
             const int c = fmtBox.getSelectedId(), b = bitsBox.getSelectedId();
@@ -203,6 +210,7 @@ namespace
         AudioEngine& eng;
         std::function<void()>         onRelocate;
         std::function<void (double)>  onApplySampleRate;
+        std::function<bool()>         stillInScope;
         juce::Label fmtL, rateL, bitsL, preRollL, pathL, pathVal;
         juce::ComboBox fmtBox, rateBox, bitsBox, preRollBox;
         juce::TextButton applyB, cancelB, changePathB;
@@ -212,9 +220,11 @@ namespace
 
 void SessionSettingsDialog::launch (AudioEngine& engine,
                                     std::function<void()> onRelocate,
-                                    std::function<void (double)> onApplySampleRate)
+                                    std::function<void (double)> onApplySampleRate,
+                                    std::function<bool()> stillInScope)
 {
-    auto* content = new SessionFormatContent (engine, std::move (onRelocate), std::move (onApplySampleRate));
+    auto* content = new SessionFormatContent (engine, std::move (onRelocate), std::move (onApplySampleRate),
+                                              std::move (stillInScope));
 
     juce::DialogWindow::LaunchOptions opts;
     opts.content.setOwned (content);

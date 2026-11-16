@@ -111,6 +111,9 @@ namespace zynforge
         // was only accepted as it stood: that keeps a choice that is merely
         // away, or the stand-in would replace the interface for good.
         void noteChosenDevice (bool pickedByHand = true);
+        // The same, side by side: only a side picked by hand (or open on its
+        // own chosen device) is saved; the other keeps its choice.
+        void noteChosenDevice (bool inputByHand, bool outputByHand);
         const devicechoice::Chosen& getChosenDevice() const noexcept { return chosenDevice; }
         devicechoice::DeviceState getDeviceState();
         // What RECORD has to ask before this press rolls, for this session.

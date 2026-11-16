@@ -265,8 +265,8 @@ namespace zynforge
                     const int idx = dev.outputs.indexOf (dev.currentOutput);
                     outputDevCombo.setSelectedId (juce::jmax (1, idx + 1), juce::dontSendNotification);
                 }
-                inputDevCombo .onChange = [this] { devicePicked = true; };
-                outputDevCombo.onChange = [this] { devicePicked = true; };
+                inputDevCombo .onChange = [this] { inputPicked  = true; };
+                outputDevCombo.onChange = [this] { outputPicked = true; };
             }
 
             juce::String  getName()        const { return nameEditor.getText().trim(); }
@@ -276,7 +276,8 @@ namespace zynforge
             double        getSampleRate() const { return hzFromSampleRateId (sampleRateCombo.getSelectedId()); }
             juce::String  getInputDevice()  const { return inputDevCombo.getNumItems()  > 0 ? inputDevCombo.getText()  : juce::String(); }
             juce::String  getOutputDevice() const { return outputDevCombo.getNumItems() > 0 ? outputDevCombo.getText() : juce::String(); }
-            bool          wasDevicePicked() const { return devicePicked; }
+            bool          wasInputPicked()  const { return inputPicked; }
+            bool          wasOutputPicked() const { return outputPicked; }
 
             void resized() override
             {
@@ -395,7 +396,7 @@ namespace zynforge
             juce::Label        bitDepthLabel;
             juce::ComboBox     bitDepthCombo;
             juce::Label        inputDevLabel;
-            bool               devicePicked { false };
+            bool               inputPicked { false }, outputPicked { false };
             juce::ComboBox     inputDevCombo;
             juce::Label        outputDevLabel;
             juce::ComboBox     outputDevCombo;
@@ -631,7 +632,8 @@ namespace zynforge
                 r.sampleRate    = newPanel->getSampleRate();
                 r.inputDeviceName  = newPanel->getInputDevice();
                 r.outputDeviceName = newPanel->getOutputDevice();
-                r.devicePicked     = newPanel->wasDevicePicked();
+                r.inputPicked      = newPanel->wasInputPicked();
+                r.outputPicked     = newPanel->wasOutputPicked();
                 if (onCreate (r)) dismiss();
             }
 

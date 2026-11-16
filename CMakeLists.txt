@@ -272,6 +272,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/MainWindowFixTests.cpp
     Source/Tests/MainWindowFix20261116Tests.cpp
     Source/Tests/MixerFixTests.cpp
+    Source/Tests/MixerFix20261116Tests.cpp
     Source/Tests/PunchSpliceTests.cpp
     Source/Tests/QcAnalyzerTests.cpp
     Source/Tests/RecorderPlayerTests.cpp
