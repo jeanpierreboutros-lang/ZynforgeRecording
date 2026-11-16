@@ -358,10 +358,16 @@ void MainComponent::promptConsoleConnect()
         : juce::String ("192.168.1.10");
     const int lastProfile = props != nullptr ? props->getIntValue ("consoleProfile", 0) : 0;
 
+    // After a lost link this is the way to its warning, which otherwise stood
+    // until a reconnect worked (all show, with the desk gone for good).
+    const bool linkLost = consoleLink.wasLinkLost();
     auto* aw = new juce::AlertWindow ("Connect to console",
-                                      "Pick your console family and enter its IP. The X32 / M32 "
-                                      "is driven fully over OSC (repatch + head-amp gains); the "
-                                      "large-format desks use their own Virtual Soundcheck mode.",
+                                      (linkLost ? "The link to " + consoleLink.getLostHost() + " was lost. Connect "
+                                                  "again, or Dismiss Warning to clear CONSOLE LINK LOST.\n\n"
+                                                : juce::String())
+                                      + "Pick your console family and enter its IP. The X32 / M32 "
+                                        "is driven fully over OSC (repatch + head-amp gains); the "
+                                        "large-format desks use their own Virtual Soundcheck mode.",
                                       juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
 
@@ -376,6 +382,7 @@ void MainComponent::promptConsoleConnect()
     aw->addTextEditor ("host", lastHost, "Console IP:");
     dialog::primeNameEditor (*aw, "host");
     aw->addButton ("Connect", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    if (linkLost) aw->addButton ("Dismiss Warning", 2);
     aw->addButton ("Cancel",  0, juce::KeyPress (juce::KeyPress::escapeKey));
     zynforge::closesForTake (aw);
 
@@ -384,7 +391,14 @@ void MainComponent::promptConsoleConnect()
         juce::ModalCallbackFunction::create ([self, aw, profiles] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result != 1 || self == nullptr) return;
+            if (self == nullptr) return;
+            if (result == 2)
+            {
+                self->consoleLink.disconnect();   // nothing open: clears the report only
+                self->showStatus ("Console link warning dismissed -- names and scene markers stay off until you connect");
+                return;
+            }
+            if (result != 1) return;
             const auto host = aw->getTextEditorContents ("host").trim();
             if (host.isEmpty()) return;
 
@@ -469,12 +483,14 @@ void MainComponent::wireConsoleLink()
     {
         if (self == nullptr) return;
         auto& link = self->consoleLink;
-        const int got = (int) link.getCapturedGains().size();
+        const int got = link.getLastCaptureReplyCount();
         if (! complete)
         {
-            self->showStatus (got == 0 ? juce::String ("No head-amp replies from the console -- gains not saved")
-                                       : juce::String (got) + " of the requested head-amp gains came back -- PARTIAL capture "
-                                         "NOT saved. Check the console link and capture again.");
+            // The link put back the last complete set, if there was one.
+            const juce::String kept (link.isGainCaptureComplete() ? " The gains captured before are kept for Restore." : "");
+            self->showStatus ((got == 0 ? juce::String ("No head-amp replies from the console -- gains not saved")
+                                        : juce::String (got) + " of the requested head-amp gains came back -- PARTIAL capture "
+                                          "NOT saved. Check the console link and capture again.") + kept);
             return;
         }
         const auto sess = self->engine.getActiveSessionDir();

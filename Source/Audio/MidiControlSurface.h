@@ -34,6 +34,7 @@ namespace zynforge
         friend class EngineReviewRepairTests;
         friend class NetworkFixTests;
         friend class NetworkStateTests;
+        friend class NetFix20261116Tests;
         void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
         void timerCallback() override;   // push fader / name / LED state to the surface
         void send (const juce::MidiMessage&);

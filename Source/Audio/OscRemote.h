@@ -103,5 +103,8 @@ namespace zynforge
         deskmacro::Debouncer sceneDebouncer;    // /zynforge/scene presses
         double lastValuelessStopNoticeMs { -1.0e9 };
         void refuseValuelessStop (double nowMs);
+        static constexpr double kWrongTokenNoticeMs = 5000.0;
+        double lastWrongTokenNoticeMs { -1.0e9 };
+        void refuseWrongToken (double nowMs);
     };
 }

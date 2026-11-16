@@ -105,6 +105,18 @@ namespace zynforge
         engine.getRemotes().showHostStatus (notice);
     }
 
+    // Never the token itself, which a log line or a screen photo would carry
+    // off. Every few seconds at most: a fader on the tablet sends dozens.
+    void OscRemote::refuseWrongToken (double nowMs)
+    {
+        if (nowMs - lastWrongTokenNoticeMs < kWrongTokenNoticeMs) return;
+        lastWrongTokenNoticeMs = nowMs;
+        const juce::String notice ("OSC command ignored -- its access token is missing or out of date. Copy the "
+                                   "token again from Control Surfaces > Open Sound Control.");
+        engine.getRemotes().logOsc ("osc: " + notice);
+        engine.getRemotes().showHostStatus (notice);
+    }
+
     void OscRemote::dropMarker (const juce::String& name)
     {
         // Pass the name INTO the drop so it names the just-dropped marker
@@ -124,14 +136,16 @@ namespace zynforge
         // from console" can collect names for channels that don't exist yet.
         engine.getRemotes().onConsoleChannelName (idx1, s);
     }
-    // Pair-aware + lock-held: the OSC receiver runs on its own thread, so the
-    // old check-then-index was a TOCTOU against the vector shrinking, and it
-    // half-updated stereo pairs (mirroring lived only in ChannelStrip).
-    void OscRemote::setChannelMute (int idx1, bool m) { engine.setTrackMuted (idx1 - 1, m); }
-    void OscRemote::setChannelArm  (int idx1, bool a) { engine.setTrackArmed (idx1 - 1, a); }
+    // Channel N is desk channel N, as for names and gain: the strips that
+    // listen to it, wherever they sit (they went to strip position N, so a
+    // colour or a mute landed on another strip than its name after a drag or
+    // a PATCH change). Pair-aware + lock-held: the old check-then-index was a
+    // TOCTOU against the vector shrinking, and it half-updated stereo pairs.
+    void OscRemote::setChannelMute (int idx1, bool m) { engine.getRemotes().onRemoteChannelMute (idx1, m); }
+    void OscRemote::setChannelArm  (int idx1, bool a) { engine.getRemotes().onRemoteChannelArm (idx1, a); }
     void OscRemote::setChannelColour (int idx1, juce::uint32 rgb)
     {
-        engine.setTrackColour (idx1 - 1, juce::Colour ((juce::uint32) (rgb | 0xff000000)));
+        engine.getRemotes().onRemoteChannelColour (idx1, (juce::uint32) (rgb | 0xff000000));
     }
     void OscRemote::setChannelGain (int idx1, float dB)
     {
@@ -182,6 +196,7 @@ namespace zynforge
     bool OscRemote::handleGeneric (const juce::OSCMessage& m)
     {
         const auto path = m.getAddressPattern().toString();
+        const double nowMs = testNowMs >= 0.0 ? testNowMs : juce::Time::getMillisecondCounterHiRes();
 
         // Generic OSC is reachable over UDP and has no connection identity.
         // Require an unguessable token as the final argument for every command
@@ -191,7 +206,13 @@ namespace zynforge
         if (! testDispatch
             && (accessToken.isEmpty() || m.size() == 0 || ! m[m.size() - 1].isString()
                 || m[m.size() - 1].getString() != accessToken))
+        {
+            // A tablet left with an old token (the listener restarted) was
+            // ignored in silence, STOP included. A desk's own addresses fall
+            // through here too and are none of this.
+            if (path.startsWith ("/zynforge/")) refuseWrongToken (nowMs);
             return false;
+        }
 
         // Authentication is an envelope, never a command argument. The test
         // dispatch seam omits that envelope deliberately.
@@ -202,7 +223,6 @@ namespace zynforge
         // its release must never be two taps of the two-tap STOP, and letting
         // go of RECORD must never be one. STOP is /zynforge/stop. A held or
         // bouncing STOP repeats; repeats are counted from the last one seen.
-        const double nowMs = testNowMs >= 0.0 ? testNowMs : juce::Time::getMillisecondCounterHiRes();
         const bool releaseValue = payloadCount >= 1 && (m[0].isInt32() || m[0].isFloat32())
                                && toFloat (m[0]) == 0.0f;
         if (path == "/zynforge/record")
@@ -251,9 +271,16 @@ namespace zynforge
         {
             if (payloadCount < 1) return false;
             if (releaseValue) return true;
-            const int scene = toInt (m[0], 0);
-            if (! sceneDebouncer.admit ({ deskmacro::Command::MarkerGoto, scene }, nowMs)) return true;
-            sceneRecalled (scene, payloadCount > 1 ? toString (m[1]) : juce::String());
+            // A string first is the scene's name (README); a number may carry a
+            // name after it. A string of digits stays a number, as it was.
+            const bool named = m[0].isString() && ! m[0].getString().trim().containsOnly ("0123456789");
+            const int scene = named ? 0 : toInt (m[0], 0);
+            const auto name = named ? m[0].getString() : payloadCount > 1 ? toString (m[1]) : juce::String();
+            // A repeat is the same scene by what it is called, not by number:
+            // every named scene used to be "scene 0" and share one slot.
+            const auto label = scenefollow::sceneLabel (scene, name).toLowerCase();
+            if (! sceneDebouncer.admit ({ deskmacro::Command::MarkerGoto, label.hashCode() }, nowMs)) return true;
+            sceneRecalled (scene, name);
             return true;
         }
 

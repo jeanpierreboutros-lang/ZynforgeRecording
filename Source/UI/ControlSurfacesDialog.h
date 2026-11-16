@@ -332,11 +332,10 @@ namespace zynforge
             {
                 const int port = juce::jlimit (1, 65535, portEd.getText().getIntValue());
                 bool listening = true;
+                // Restarts only for a new port (startOsc): a restart makes a new
+                // token, and Apply with nothing changed stranded the tablet.
                 if (engine.getRemotes().isOscListening() && engine.getRemotes().getOscDialect() == info.dialect)
-                {
-                    engine.getRemotes().stopOsc();
                     listening = engine.getRemotes().startOsc (port, info.dialect);
-                }
                 connVal.setText (listening ? "osc.udp://" + juce::SystemStats::getComputerName() + ".local:"
                                                  + juce::String (port) + "/"
                                            : portTakenText (port),
@@ -446,11 +445,28 @@ namespace zynforge
 
             void save()
             {
-                updateSettings (engine.getAppProps(), [&] (juce::PropertiesFile& p)
+                const auto inKeyName  = juce::String ("cs_") + info.key + "_midiin";
+                const auto outKeyName = juce::String ("cs_") + info.key + "_midiout";
+                auto* props = engine.getAppProps();
+                const auto inBefore  = props != nullptr ? props->getValue (inKeyName)  : juce::String();
+                const auto outBefore = props != nullptr ? props->getValue (outKeyName) : juce::String();
+                const auto in  = inBox.getSelectedId()  > 1 ? inBox.getText()  : juce::String();
+                const auto out = outBox.getSelectedId() > 1 ? outBox.getText() : juce::String();
+                updateSettings (props, [&] (juce::PropertiesFile& p)
                 {
-                    p.setValue (juce::String ("cs_") + info.key + "_midiin",  inBox.getSelectedId()  > 1 ? inBox.getText()  : juce::String());
-                    p.setValue (juce::String ("cs_") + info.key + "_midiout", outBox.getSelectedId() > 1 ? outBox.getText() : juce::String());
+                    p.setValue (inKeyName,  in);
+                    p.setValue (outKeyName, out);
                 });
+                // The surface that is on was opened on the ports saved before,
+                // and kept them until an untick and a tick. It takes these now.
+                if (protoEnabled (engine, info) && (in != inBefore || out != outBefore))
+                    if (const auto refusal = setProtoEnabled (engine, info, true); refusal.isNotEmpty())
+                    {
+                        // The surface is off now: stay open and say why.
+                        note.setText (refusal, juce::dontSendNotification);
+                        note.setColour (juce::Label::textColourId, brand::textDanger);
+                        return;
+                    }
                 if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0);
             }
 

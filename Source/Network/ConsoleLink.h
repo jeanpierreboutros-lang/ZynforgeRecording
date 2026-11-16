@@ -54,12 +54,15 @@ namespace zynforge
         // 0 port = use the active profile's default port. `host` is a numeric
         // IPv4 address; anything else (a name, a typo) is refused.
         bool connect (const juce::String& host, int port = 0);
+        // Closes the link on purpose, which also clears a lost link's report.
         void disconnect();
         bool isConnected() const noexcept { return connected; }
         juce::String getHost() const      { return host; }
         // The desk dropped a TCP link and the watchdog closed it. Stands until
-        // a link is made again, so the loss is not one status line that the
-        // next one covers: names and scene markers stopped with it.
+        // a link is made again, a deliberate disconnect() or another console
+        // profile, so the loss is not one status line that the next one
+        // covers: names and scene markers stopped with it. A retry that fails
+        // leaves it standing.
         bool wasLinkLost() const noexcept   { return lostHost.isNotEmpty(); }
         juce::String getLostHost() const    { return lostHost; }
 
@@ -105,7 +108,11 @@ namespace zynforge
         // persisting that as if it were the show's gains would restore only
         // some channels and silently leave the rest at soundcheck settings.
         // A capture loaded from console_state.json counts as complete.
+        // A capture that does not finish (timed out, or the link closed) puts
+        // back the last complete set, so this is true again if there was one.
         bool isGainCaptureComplete() const noexcept { return gainCaptureComplete; }
+        // How many replies the last capture that ended had received.
+        int  getLastCaptureReplyCount() const noexcept { return lastCaptureReplies; }
         // A capture ended: every reply in (true), or its deadline passed
         // (false). Message thread. This, not a guess at how long the desk
         // takes, is when the host saves the gains.
@@ -195,6 +202,7 @@ namespace zynforge
         bool stateLoadPending { false };
         friend class NetworkFixTests;
         friend class NetworkStateTests;
+        friend class NetFix20261116Tests;
         void handleMessage (const ConsoleMessage&);
         // ONE repeating heartbeat; it runs while the link is up.
         //
@@ -230,6 +238,10 @@ namespace zynforge
         void finishPatchCheck();
         void finishGainCheck();
         void cancelDeskReads();
+        void closeLink();              // disconnect() without clearing lostHost
+        void abandonGainCapture();
+        bool pushContradictsPatch (int block, int value) const;
+        void readMovedPatch();
         void loadSessionState (const juce::File& dir);
         bool persistPatch();
         bool takeIsHoldingDesk() const { return takeHoldsDesk != nullptr && takeHoldsDesk(); }
@@ -272,6 +284,8 @@ namespace zynforge
         // it ends, or reopening one lights the chip over a desk that is fine.
         juce::Array<juce::File> sessionsOnSoundcheck;
         std::map<int, float> gains;          // headamp idx -> raw 0..1
+        std::map<int, float> gainsBeforeCapture;   // the complete set a capture in flight would replace
+        int                  lastCaptureReplies { 0 };
         int                  expectedGainReplies { 0 };
         bool                 gainCaptureComplete { false };
         bool                 gainCheckPending { false };   // a restore waits on these
