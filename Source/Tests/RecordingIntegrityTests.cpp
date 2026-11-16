@@ -210,6 +210,9 @@ namespace zynforge
                 gi += block;
             }
             rec.stopRecording();
+            // A strip move waits for the take's hash pass (CAP-02).
+            std::atomic<bool> stop { false };
+            MultitrackRecorder::waitForReportHashes (dir, stop);
             return dir;
         }
 

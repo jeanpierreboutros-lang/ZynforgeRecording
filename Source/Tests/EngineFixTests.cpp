@@ -402,6 +402,8 @@ namespace zynforge
             engine.stopRecording();
             engine.setActiveSessionDir (dir);
             engine.claimMixerFor (dir);
+            std::atomic<bool> stop { false };   // a move waits for the take's hashes (CAP-02)
+            MultitrackRecorder::waitForReportHashes (dir, stop);
         }
 
         void takeLeavesASessionWhoseFolderWent()
@@ -632,7 +634,9 @@ namespace zynforge
                 engine.stopRecording();
                 engine.setActiveSessionDir (dir);
                 engine.claimMixerFor (dir);
-                expect (engine.reorderTracks ({ 1, 0 }));
+                std::atomic<bool> stop { false };   // a move waits for the take's hashes (CAP-02)
+                MultitrackRecorder::waitForReportHashes (dir, stop);
+                expect (engine.reorderTracks ({ 1, 0 }), engine.getReorderRefusal());
                 engine.clearSessionState();
                 engine.clearAllStripOverrides();
                 dir.deleteRecursively();

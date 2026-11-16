@@ -55,6 +55,9 @@ namespace zynforge
             rec.startRecording (dir);
             for (int b = 0; b < blocks; ++b) rec.processBlock (inputs.data(), tracks, kBlock);
             rec.stopRecording();
+            // A strip move waits for the take's hash pass (CAP-02).
+            std::atomic<bool> stop { false };
+            MultitrackRecorder::waitForReportHashes (dir, stop);
         }
 
         juce::File trackFile (const juce::File& dir, int track)
