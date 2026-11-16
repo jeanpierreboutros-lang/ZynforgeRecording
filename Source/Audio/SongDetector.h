@@ -49,6 +49,8 @@ namespace zynforge::songs
         // strip plays channel 1 of the left's file. -1 = every channel, as a
         // stereo strip plays it.
         int channel { -1 };
+        // Who it is, for a failure: "strip 5 (KiCK)".
+        juce::String strip;
     };
 
     // Per-file peak-envelope flags: flags[w] = 1 when window w's peak is
@@ -129,7 +131,7 @@ namespace zynforge::songs
 
     // Every voice's envelope on the timeline. Each file is read once however
     // many clips use it. Empty when cancelled or when a take could not be read.
-    // `unreadable` names the first take that could not be read.
+    // `unreadable` names the first take that could not be read, and its strip.
     inline std::vector<std::vector<char>> scanVoices (const std::vector<Voice>& voices, const Params& params,
                                                       double& srOut, const std::atomic<bool>* cancel = nullptr,
                                                       bool* readFailed = nullptr, juce::String* unreadable = nullptr)
@@ -155,7 +157,12 @@ namespace zynforge::songs
                     if (failed)
                     {
                         if (readFailed != nullptr) *readFailed = true;
-                        if (unreadable != nullptr && unreadable->isEmpty()) *unreadable = file.getFileName();
+                        // The strip, and its file when it has one: a take whose
+                        // lead-in is still owed has parts and no main file.
+                        if (unreadable != nullptr && unreadable->isEmpty())
+                            *unreadable = voice.strip.isEmpty() ? file.getFileName()
+                                        : file == juce::File() ? voice.strip + "'s take"
+                                        : voice.strip + "'s take " + file.getFileName();
                     }
                 }
                 return &known->second;

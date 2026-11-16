@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "BwfStamp.h"
+#include "TakeNames.h"
 #include "ChannelAlarm.h"
 #include "ClockSource.h"
 #include "TrackState.h"
@@ -59,6 +60,10 @@ namespace zynforge
 
         bool startRecording (const juce::File& sessionDir);
         juce::String getStartError() const { return startError; }
+        // Strips (0-based) the last start continued or punched under a
+        // "Track_NN" take although the strip now has a name of its own: the
+        // take keeps its stem (TakeNames.h), so its files stay Track_NN.
+        std::vector<int> getStripsKeepingLegacyNames() const { return stripsKeepingLegacyNames; }
         // The caller refused this start before it reached the recorder.
         void refuseStart (const juce::String& reason)
         {
@@ -758,8 +763,11 @@ namespace zynforge
         enum class CopyClaim { claimed, conflict, unwritable, interrupted };
         bool claimTakeIdentity (TakeStart&);
         bool recoverPrimaryPunches (const TakeStart&);
-        void resolveTakeStems (TakeStart&);
+        bool resolveTakeStems (TakeStart&);
         static bool adoptExistingTakeFormat (const juce::File& copyAudioDir, TakeFormat& selected,
+                                             const std::vector<FormatCheck>&, double sampleRate,
+                                             juce::String& problem);
+        static bool adoptExistingTakeFormat (const takenames::StemIndex& onDisk, TakeFormat& selected,
                                              const std::vector<FormatCheck>&, double sampleRate,
                                              juce::String& problem);
         bool resolveTakeFormats (TakeStart&);
@@ -964,6 +972,8 @@ namespace zynforge
         std::atomic<bool> meterUnarmedInputs { false };
 
         juce::String startError;
+        std::vector<int> stripsKeepingLegacyNames;     // see getStripsKeepingLegacyNames
+        std::vector<juce::String> stripNamesAtStart;   // each strip's name when the take started, for the report
         juce::AudioFormatManager formatManager;
 
         // The distributor's thread (see chooseShardCount). rebuildShards()

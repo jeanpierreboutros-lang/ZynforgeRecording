@@ -818,6 +818,8 @@ namespace zynforge
         // Claimed on the first media mutation; see invalidateReportsBeforeMediaMutation.
         std::shared_ptr<std::atomic<juce::int64>> reportToken;
         std::vector<juce::String> stems;         // each strip's file stem on the primary (TakeNames.h)
+        std::vector<juce::String> names;         // each strip's name as the take starts
+        TrackMediaIndex media;                   // the primary's takes, listed once after punch recovery
         std::vector<bool> hadPrimaryBase;        // the strip's take existed before this pass
         std::vector<std::pair<juce::File, juce::File>> punchStashes;   // take -> .punchbase sidecar
         std::vector<juce::int64> previousLengths;                      // continue: length already on disk
@@ -938,7 +940,8 @@ namespace zynforge
             return refuse ("Recording refused: this session's capture identity could not be written; check the session drive.");
         if (! recoverPrimaryPunches (take))
             return refuse ("An interrupted punch was put back on this take. Reopen the session before recording.");
-        resolveTakeStems (take);
+        if (! resolveTakeStems (take))
+            return refuse ("Recording refused: two take files claim one track.");
         if (! resolveTakeFormats (take))
             return refuse ("Recording refused: the existing take files are in mixed formats and cannot be continued.");
         if (! continuationBasesIntact (take))
@@ -1088,18 +1091,37 @@ namespace zynforge
     // Each strip's file name for this pass, fixed here once (TakeNames.h): the
     // stem its take already has in the primary's Audio Files, or else a new one
     // from the strip's name as it is now. Runs after punch recovery, which can
-    // put a take back under its own name.
-    void MultitrackRecorder::resolveTakeStems (TakeStart& take)
+    // put a take back under its own name. The folder is listed here once for
+    // the whole start (take.media), not once per strip.
+    //
+    // A strip about to record whose number two takes claim (a Finder copy, a
+    // main renamed away from its parts, a Track_NN an older build wrote beside
+    // a named take) refuses the start: a continue would stitch onto whichever
+    // sorted first, a punch would splice it, and a fresh take would hide both.
+    bool MultitrackRecorder::resolveTakeStems (TakeStart& take)
     {
-        const takenames::StemIndex onDisk (take.audioFilesDir);
+        take.media = TrackMediaIndex (take.audioFilesDir);
+        const auto& onDisk = take.media.audioFiles();
         take.stems.clear();
+        take.names.clear();
+        stripsKeepingLegacyNames.clear();
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
+            const auto name = tracks[i]->getNameThreadSafe();
             const auto existing = onDisk.stem ((int) i);
-            take.stems.push_back (existing.isNotEmpty()
-                                      ? existing
-                                      : takenames::freshStem ((int) i, tracks[i]->getNameThreadSafe()));
+            take.names.push_back (name);
+            take.stems.push_back (existing.isNotEmpty() ? existing : takenames::freshStem ((int) i, name));
+            if (! opensOwnCaptureFile (i)) continue;
+            if (const auto clash = take.media.clash ((int) i); clash.isNotEmpty())
+            {
+                startError = "Recording refused: track " + juce::String ((int) i + 1) + " has " + clash + ".";
+                stripsKeepingLegacyNames.clear();
+                return false;
+            }
+            if (existing.startsWith ("Track_") && takenames::labelFor (name).isNotEmpty())
+                stripsKeepingLegacyNames.push_back ((int) i);
         }
+        return true;
     }
 
     // A punch must reopen the SAME container as the existing take. If the
@@ -1114,9 +1136,17 @@ namespace zynforge
                                                       juce::String& problem)
     {
         if (! copyAudioDir.isDirectory()) return true;
+        return adoptExistingTakeFormat (takenames::StemIndex (copyAudioDir), selected, checks, sampleRate, problem);
+    }
+
+    bool MultitrackRecorder::adoptExistingTakeFormat (const takenames::StemIndex& onDisk, TakeFormat& selected,
+                                                      const std::vector<FormatCheck>& checks, double sampleRate,
+                                                      juce::String& problem)
+    {
+        const auto& copyAudioDir = onDisk.directory();
+        if (! copyAudioDir.isDirectory()) return true;
         juce::AudioFormatManager fm; fm.registerBasicFormats();
         bool found = false;
-        const takenames::StemIndex onDisk (copyAudioDir);
         for (const auto& check : checks)
         {
             const auto name = onDisk.stem (check.track);
@@ -1186,7 +1216,7 @@ namespace zynforge
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
             if (! opensOwnCaptureFile (i)) continue;
-            const auto media = findTrackMedia (audioFilesDir, (int) i);
+            const auto media = take.media.find ((int) i);
             if (media.existsAsFile() && media.getParentDirectory() != audioFilesDir)
             {
                 startError = "Recording refused: track " + juce::String ((int) i + 1)
@@ -1199,7 +1229,7 @@ namespace zynforge
         }
 
         if ((continueAsPart || punchInActive)
-            && ! adoptExistingTakeFormat (audioFilesDir, primary, formatChecks(), sampleRate, startError))
+            && ! adoptExistingTakeFormat (take.media.audioFiles(), primary, formatChecks(), sampleRate, startError))
         {
             cancelPunchIn();
             continueAsPart = false;
@@ -1550,8 +1580,13 @@ namespace zynforge
                 if (copy.abandoned.load (std::memory_order_acquire)) return false;
                 const auto& step = trackOrder.steps[next];
                 const auto removed = copyDir.getChildFile ("Removed Tracks").getChildFile (juce::Uuid().toString());
+                // Two takes on one number that has to move: nothing here picks
+                // one, so the copy stays in its old order (and out of the take).
+                juce::String clash;
+                const auto moves = trackorder::takeMoves (audioDir, removed, step.destination, &clash);
+                if (clash.isNotEmpty()) return false;
                 TrackFileTransaction files;
-                if (! files.begin (copyDir, trackorder::takeMoves (audioDir, removed, step.destination)))
+                if (! files.begin (copyDir, moves))
                     return false;
                 if (! writeOwner (step.to) || ! files.commit())
                 {
@@ -1623,6 +1658,9 @@ namespace zynforge
             // A strip this copy already holds keeps the name its files have
             // here (TakeNames.h); a strip new to it takes the primary's.
             const takenames::StemIndex onCopy (audioDir);
+            for (const auto& track : tracks)
+                if (const auto clash = onCopy.clash ((int) track.index); clash.isNotEmpty())
+                    return left ("has, for track " + juce::String ((int) track.index + 1) + ", " + clash);
             for (auto& track : tracks)
                 if (const auto own = onCopy.stem ((int) track.index); own.isNotEmpty())
                     track.name = own;
@@ -2197,6 +2235,9 @@ namespace zynforge
     void MultitrackRecorder::goLive (const TakeStart& take)
     {
         const auto& sessionDir = take.sessionDir;
+        // The report names each strip as its files were named, at RECORD: a
+        // rename during the take does not rename them.
+        stripNamesAtStart = take.names;
         const bool backupRequested = take.backupRequested;
         auto& backupReady = take.backupReady;
         auto& primaryAttempts = take.primaryAttempts;
@@ -3116,14 +3157,16 @@ namespace zynforge
         droppedCopies.add (problem);
     }
 
-    // One track's files and length in one copy's Audio Files folder.
-    static void collectTrackMedia (juce::AudioFormatManager& fm, const juce::File& folder, int index,
+    // One track's files and length in one copy's Audio Files folder, listed
+    // once for every track (`onDisk`).
+    static void collectTrackMedia (juce::AudioFormatManager& fm, const takenames::StemIndex& onDisk, int index,
                                    juce::StringArray& names, juce::int64& samples,
                                    const std::function<void()>& onProgress = {})
     {
         names.clear();
         samples = 0;
-        const auto stem = takenames::existingStem (folder, index);
+        const auto& folder = onDisk.directory();
+        const auto stem = onDisk.stem (index);
         if (stem.isEmpty()) return;
         for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
         {
@@ -3227,8 +3270,9 @@ namespace zynforge
             {
                 partFiles.resize ((size_t) trackCount);
                 samples.assign ((size_t) trackCount, 0);
+                const takenames::StemIndex onDisk (audioFolder);
                 for (int i = 0; i < trackCount; ++i)
-                    collectTrackMedia (fm, audioFolder, i, partFiles[(size_t) i], samples[(size_t) i], tick);
+                    collectTrackMedia (fm, onDisk, i, partFiles[(size_t) i], samples[(size_t) i], tick);
             }
         }
     };
@@ -3347,7 +3391,7 @@ namespace zynforge
     {
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
-        const auto primaryFolder = activeSessionDir.getChildFile ("Audio Files");
+        const takenames::StemIndex primaryFolder (activeSessionDir.getChildFile ("Audio Files"));
         for (size_t i = 0; i < stop.writers.size(); ++i)
             collectTrackMedia (fm, primaryFolder, (int) i, stop.writers[i].partFilesPrimary,
                                stop.writers[i].totalSamplesPrimary);
@@ -3381,7 +3425,7 @@ namespace zynforge
         {
             const auto& ts = *tracks[i];
             const auto clipFrame = ts.takeLastClipFrame.load (std::memory_order_relaxed);
-            trackMetas.push_back ({ (int) i, ts.getNameThreadSafe(),
+            trackMetas.push_back ({ (int) i, i < stripNamesAtStart.size() ? stripNamesAtStart[i] : ts.getNameThreadSafe(),
                                     ts.takeClipCount.load (std::memory_order_relaxed),
                                     clipFrame >= 0 ? liveOrigin + clipFrame : (juce::int64) -1,
                                     ts.inputRouting .load (std::memory_order_relaxed),

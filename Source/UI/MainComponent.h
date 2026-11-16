@@ -119,6 +119,10 @@ private:
     void startDaemonTake (const RecordStartPlan&);
     bool startSelectionPunch (const RecordStartPlan&);
     void startLocalTake (const RecordStartPlan&);
+    // Once per session: the strips this take continued or punched under a
+    // Track_NN take although they have names now ("" when none, or said).
+    juce::String legacyTakeNamesNotice (const juce::File& session);
+    juce::File legacyTakeNamesNoticeSession;
     void onDeviceClicked();
     void onLoadSessionClicked();
     void completeOpenFolder (const juce::File& dir);

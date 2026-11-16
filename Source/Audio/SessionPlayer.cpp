@@ -58,6 +58,7 @@ namespace zynforge
         juce::int64 length = 0;
         bool complete = true;
         std::vector<int> unopened;   // strips whose take is on disk and would not open
+        juce::StringArray clashes;   // "Track 5 has two take files, ...": see loadProblems
     };
 
     int SessionPlayer::loadSession (const juce::File& directory)
@@ -99,34 +100,26 @@ namespace zynforge
         // Match every SUPPORTED audio container, not just .wav -- takes can be
         // captured as FLAC or AIFF (user-selectable), and a .wav-only glob left
         // those sessions loading zero tracks (no playback, no VSC, no waveforms).
-        const auto collect = [] (const juce::File& dir) -> juce::Array<juce::File>
-        {
-            // Only the take's OWN files: <stem>.<ext> or <stem>_partXX.<ext>,
-            // the stem "Track_NN" or "NN Label" (TakeNames.h). Consolidate
-            // renders (<stem>_consolidated_K) live in Audio Files/ but are
-            // referenced only by a clip's audioFile -- byIndex would otherwise
-            // stitch them onto the take as a phantom continuation, inflating its
-            // length / mis-ordering it. A punch sidecar (<stem>.punchbase.<ext>)
-            // sorts BEFORE the real <stem>.<ext> and was once concatenated as
-            // part 1 of the take; sidecars only survive a crash between the punch
-            // stash and the splice, which is exactly the recovery path.
-            return takenames::takeAudioFiles (dir);
-        };
+        // Only the take's OWN files: <stem>.<ext> or <stem>_partXX.<ext>, the
+        // stem "Track_NN" or "NN Label" (TakeNames.h). Consolidate renders
+        // (<stem>_consolidated_K) live in Audio Files/ but are referenced only
+        // by a clip's audioFile -- byIndex would otherwise stitch them onto the
+        // take as a phantom continuation, inflating its length / mis-ordering
+        // it. A punch sidecar (<stem>.punchbase.<ext>) sorts BEFORE the real
+        // <stem>.<ext> and was once concatenated as part 1 of the take; sidecars
+        // only survive a crash between the punch stash and the splice, which is
+        // exactly the recovery path.
+        // The session folder itself is read only for "Track_NN" names: takes
+        // lived there before Audio Files existed, and a song kept there
+        // ("01 Intro.wav") is not strip 1's take.
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
-        auto files = collect (audioFiles);
+        const takenames::StemIndex modern (audioFiles);
+        const takenames::StemIndex legacy (sessionDir, takenames::StemIndex::Names::legacyOnly);
         // Prefer Audio Files per track, not per session. Imported/generated
         // media may coexist with older root-level takes and their parts.
-        const auto modern = files;
-        for (const auto& legacy : collect (sessionDir))
-        {
-            const auto slot = takenames::parse (legacy.getFileName()).number;
-            bool replaced = false;
-            for (const auto& f : modern)
-                if (takenames::parse (f.getFileName()).number == slot)
-                { replaced = true; break; }
-            if (! replaced) files.add (legacy);
-        }
-        files.sort();
+        std::map<int, const takenames::StemIndex*> holder;
+        for (const int track : legacy.tracksWithTakeAudio()) holder[track] = &legacy;
+        for (const int track : modern.tracksWithTakeAudio()) holder[track] = &modern;
 
         juce::int64 maxLen = 0;
         double      sr     = playbackRate;
@@ -152,22 +145,24 @@ namespace zynforge
         // Group every file by its track index. Playback order is resolved by
         // findTakeParts' numeric part parsing, never lexicographic filename
         // order (which places part100 before part11).
-        std::map<int, std::vector<juce::File>> byIndex;
-        for (auto& f : files)
+        for (const auto& [idx, folder] : holder)
         {
             // "Track_04.wav", "04 KiCK.wav", "04 KiCK_part02.wav" -> 4.
-            // 1-based on disk, so index = num - 1.
-            const int num = takenames::parse (f.getFileName()).number;
             // A hostile or corrupt filename must not size the track vector to
             // millions of entries. The mixer/session schema accepts 256 slots.
-            if (num < 1 || num > 256) continue;
-            byIndex[num - 1].push_back (f);
-        }
-
-        for (auto& [idx, partFiles] : byIndex)
-        {
+            if (idx < 0 || idx > 255) continue;
+            // Two takes claim the strip (a Finder copy, a main renamed away from
+            // its parts, a Track_NN an older build wrote beside a named take):
+            // neither plays, and the load says which files.
+            if (folder->clashes (idx))
+            {
+                prepared->complete = false;
+                prepared->unopened.push_back (idx);
+                prepared->clashes.add ("Track " + juce::String (idx + 1) + " has " + folder->clash (idx));
+                continue;
+            }
             juce::File mainFile;
-            for (const auto& f : partFiles)
+            for (const auto& f : folder->takeAudio (idx))
                 if (takenames::isMain (takenames::parse (f.getFileName())))
                 { mainFile = f; break; }
             // Parts with no main file (the silence a lead-in owes goes there) or
@@ -278,6 +273,7 @@ namespace zynforge
             retired->tracks.swap (tracks);
             tracks.swap (prepared->tracks);
             unopenedTracks.swap (prepared->unopened);
+            clashText.swapWith (prepared->clashes);
             readerCount.store ((int) tracks.size(), std::memory_order_release);
         }
         {
@@ -321,6 +317,7 @@ namespace zynforge
             const juce::ScopedLock sl (tracksLock);
             tracks.clear();
             unopenedTracks.clear();
+            clashText.clear();
         }
         readerCount.store (0, std::memory_order_release);
         loaded     .store (false, std::memory_order_release);

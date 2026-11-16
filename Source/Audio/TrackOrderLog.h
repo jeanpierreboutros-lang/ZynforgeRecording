@@ -94,29 +94,44 @@ namespace zynforge::trackorder
     }
 
     // Every take file a step renames in one Audio Files folder: all containers
-    // and continuation parts move together, and removed audio is archived, never
-    // deleted. Sidecars stay out of it. They belong to a punch's recovery, which
-    // runs under the old names first.
+    // and continuation parts move together, and so do the strip's Consolidate
+    // renders, whatever stem they carry, so a render never stays behind to name
+    // the next strip at that number; removed audio is archived, never deleted.
+    // Clips that name a render follow it through the caller's remap. Sidecars
+    // stay out of it. They belong to a punch's recovery, which runs under the
+    // old names first.
+    //
+    // A number two takes claim (TakeNames.h) cannot move: nothing here picks
+    // which stem to renumber. Then `clash` (when given) says which files, and
+    // nothing at all is returned, so no strip moves. `names` reads a session
+    // folder's root, from before Audio Files, as Track_NN only.
     inline std::vector<TrackFileTransaction::Move> takeMoves (const juce::File& audio, const juce::File& removedDir,
-                                                              const std::vector<int>& destination)
+                                                              const std::vector<int>& destination,
+                                                              juce::String* clash = nullptr,
+                                                              takenames::StemIndex::Names names
+                                                                  = takenames::StemIndex::Names::any)
     {
         std::vector<TrackFileTransaction::Move> moves;
-        const takenames::StemIndex onDisk (audio);
+        const takenames::StemIndex onDisk (audio, names);
         for (int old = 0; old < (int) destination.size(); ++old)
         {
+            const int dest = destination[(size_t) old];
+            if (dest == old) continue;
+            if (onDisk.clashes (old))
+            {
+                if (clash != nullptr)
+                    *clash = "Track " + juce::String (old + 1) + " has " + onDisk.clash (old);
+                return {};
+            }
             // The number changes and a name stays: "03 SNARE" -> "01 SNARE",
             // "Track_03" -> "Track_01" (TakeNames.h).
-            const auto prefix = onDisk.stem (old);
-            if (prefix.isEmpty()) continue;
-            for (const auto& f : audio.findChildFiles (juce::File::findFiles, false, prefix + ".*;" + prefix + "_part*"))
+            auto files = onDisk.takeAudio (old);
+            files.addArray (onDisk.renders (old));
+            for (const auto& f : files)
             {
-                if (f.getFileName().containsIgnoreCase (".punchbase")) continue;
-                if (! f.hasFileExtension ("wav;flac;aif;aiff")) continue;
-                if (takenames::parse (f.getFileName()).stem != prefix) continue;
-                const int dest = destination[(size_t) old];
+                const auto p = takenames::parse (f.getFileName());
                 const auto target = dest >= 0
-                    ? audio.getChildFile (takenames::renumbered (prefix, dest)
-                                           + f.getFileName().substring (prefix.length()))
+                    ? audio.getChildFile (takenames::renumbered (p.stem, dest) + p.rest)
                     : removedDir.getChildFile (f.getFileName());
                 if (target != f) moves.emplace_back (f, target);
             }

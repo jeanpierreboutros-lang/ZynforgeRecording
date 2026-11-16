@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 
 #include <map>
+#include <vector>
 
 // How a take file is named (2026-11-16).
 //
@@ -80,6 +81,26 @@ namespace zynforge::takenames
                                : juce::String::formatted ("%02d ", track + 1) + label;
     }
 
+    // A label as a file name holds it: what labelFor writes, at any length.
+    // No character labelFor turns into a space or drops, single spaces only,
+    // none at either end, and not only digits. The 64-byte cap is not checked:
+    // a name read back decomposed (NFD) from HFS+ or a backup drive spells an
+    // accented letter as the letter and a combining accent, a byte longer each
+    // time, and it is still the take labelFor named.
+    inline bool isLabel (const juce::String& label)
+    {
+        static const juce::String toSpace ("/\\:*?<>|[];,.#_'\"`");
+        if (label.isEmpty() || label.startsWithChar (' ') || label.endsWithChar (' ') || label.contains ("  "))
+            return false;
+        for (auto p = label.getCharPointer(); ! p.isEmpty(); ++p)
+        {
+            const auto c = *p;
+            if (c < 0x20 || c == 0x7f || toSpace.containsChar (c)) return false;
+            if (c != ' ' && juce::CharacterFunctions::isWhitespace (c)) return false;
+        }
+        return ! label.removeCharacters (" ").containsOnly ("0123456789");
+    }
+
     struct Parsed
     {
         int          number { 0 };   // 1-based track number; 0 = not named for a track
@@ -89,8 +110,8 @@ namespace zynforge::takenames
 
     // Reads a file NAME (no folder). "Track_" takes 1 to 3 digits, as before. A
     // named stem's number is written exactly as freshStem writes it ("07", "123")
-    // and its label exactly as labelFor makes one, so a file someone drops in the
-    // folder ("1 intro.wav", "07 Vox, lead.wav") is not taken for a track's.
+    // and its label as labelFor makes one (isLabel), so a file someone drops in
+    // the folder ("1 intro.wav", "07 Vox, lead.wav") is not taken for a track's.
     inline Parsed parse (const juce::String& fileName)
     {
         Parsed p;
@@ -113,8 +134,7 @@ namespace zynforge::takenames
             const int labelStart = end + 1;
             end = labelStart;
             while (end < length && fileName[end] != '_' && fileName[end] != '.') ++end;
-            const auto label = fileName.substring (labelStart, end);
-            if (label.isEmpty() || labelFor (label) != label) return {};
+            if (! isLabel (fileName.substring (labelStart, end))) return {};
         }
         if (p.number < 1) return {};
         p.stem = fileName.substring (0, end);
@@ -150,11 +170,46 @@ namespace zynforge::takenames
     // The main file or a continuation part of a take: what plays.
     inline bool isTakeAudio (const Parsed& p) { return isMain (p) || partNumber (p) > 0; }
 
+    // A punch's copy of a take file, moved aside until the splice:
+    // "<stem>.punchbase.<ext>" or "<stem>_partKK.punchbase.<ext>".
+    inline bool isPunchSidecar (const Parsed& p)
+    {
+        const auto at = p.rest.lastIndexOf (".punchbase.");
+        if (p.number <= 0 || at < 0 || ! isAudioExtension (p.rest.substring (at + 10))) return false;
+        return isTakeAudio (parse (p.stem + p.rest.substring (0, at) + p.rest.substring (at + 10)));
+    }
+
+    // A Consolidate render: "<stem>_consolidated_K.<ext>".
+    inline bool isRender (const Parsed& p)
+    {
+        if (p.number <= 0 || ! p.rest.startsWith ("_consolidated_")) return false;
+        const auto dot = p.rest.indexOfChar ('.');
+        if (dot < 0 || ! isAudioExtension (p.rest.substring (dot))) return false;
+        const auto digits = p.rest.substring (14, dot);
+        return digits.isNotEmpty() && digits.containsOnly ("0123456789");
+    }
+
     // The 1-based track a main take file belongs to, or 0.
     inline int mainNumber (const juce::File& f)
     {
         const auto p = parse (f.getFileName());
         return isMain (p) ? p.number : 0;
+    }
+
+    // Whole-folder listings (every file stat'ed) made on this thread: what
+    // the tests count to see that one operation lists a folder once, not once
+    // per strip.
+    inline int& folderListingsOnThisThread() noexcept
+    {
+        static thread_local int listings = 0;
+        return listings;
+    }
+
+    inline juce::Array<juce::File> listFolder (const juce::File& dir)
+    {
+        if (! dir.isDirectory()) return {};
+        ++folderListingsOnThisThread();
+        return dir.findChildFiles (juce::File::findFiles, false, "*");
     }
 
     // Every file in `dir` (not below it) named for a track, sorted by name:
@@ -164,8 +219,7 @@ namespace zynforge::takenames
     inline juce::Array<juce::File> trackFiles (const juce::File& dir)
     {
         juce::Array<juce::File> out;
-        if (! dir.isDirectory()) return out;
-        for (const auto& f : dir.findChildFiles (juce::File::findFiles, false, "*"))
+        for (const auto& f : listFolder (dir))
             if (parse (f.getFileName()).number > 0) out.add (f);
         out.sort();
         return out;
@@ -192,39 +246,88 @@ namespace zynforge::takenames
     // Does `dir` hold any track's take audio?
     inline bool holdsTakeAudio (const juce::File& dir)
     {
-        if (! dir.isDirectory()) return false;
-        for (const auto& f : dir.findChildFiles (juce::File::findFiles, false, "*"))
+        for (const auto& f : listFolder (dir))
             if (isTakeAudio (parse (f.getFileName()))) return true;
         return false;
     }
 
-    // Every track's base stem in one folder, from one listing. A main file's
-    // stem wins; without one, the stem of any other file named for the track
-    // (a part, a punch sidecar, a render) stands for it (a take whose main file a punch has moved aside, or an
-    // orphaned part), so nothing new is ever named beside it. With two main
-    // stems for one number, which nothing here writes, the first by name wins.
+    // "two take files, 05 KiCK copy.wav and 05 KiCK.wav: move one of them out
+    // of Audio Files": why a strip has no take anything here may pick.
+    inline juce::String describeClash (const juce::StringArray& files, const juce::File& folder)
+    {
+        static const char* const counts[] = { "no", "one", "two", "three", "four", "five" };
+        const auto count = files.size() < 6 ? juce::String (counts[files.size()]) : juce::String (files.size());
+        juce::String list;
+        for (int i = 0; i < files.size(); ++i)
+            list << (i == 0 ? "" : i == files.size() - 1 ? " and " : ", ") << files[i];
+        return count + " take files, " + list + ": move one of them out of " + folder.getFileName();
+    }
+
+    // Every track's take in one folder, from one listing. The number is the
+    // identity, and a folder holds one stem per number. A main file's stem
+    // names the track; without one, a part's (a take whose lead-in is still
+    // owed); without either, a punch sidecar's (a take whose files a punch has
+    // moved aside), so nothing new is ever named beside it. Nothing else claims
+    // a number: a Consolidate render, a DAW's peak file ("03 SNARE.wav.reapeaks")
+    // or any other file that starts like a take is not one.
+    //
+    // A number whose mains and parts carry more than one stem CLASHES: a Finder
+    // duplicate ("05 KiCK copy.wav"), a "Keep Both" or sync copy, a DAW glue, a
+    // main renamed in Finder away from its parts, or a "Track_05.wav" an older
+    // build wrote beside "05 KiCK.wav". Nothing here picks one: mainFile is
+    // empty for it, and every caller that plays, records, moves, checks or
+    // exports a strip says so and names the files (clash).
+    //
+    // Names::legacyOnly reads only "Track_NN" names: a session folder's root,
+    // where takes lived before Audio Files existed. A song kept there
+    // ("01 Intro.wav") is not a take.
     class StemIndex
     {
     public:
+        enum class Names { any, legacyOnly };
+
         StemIndex() = default;
 
-        explicit StemIndex (const juce::File& dir)
+        explicit StemIndex (const juce::File& dir, Names names = Names::any)
+            : folder (dir)
         {
-            std::map<int, juce::String> other;
-            for (const auto& f : trackFiles (dir))
+            juce::Array<juce::File> files;
+            for (const auto& f : listFolder (dir))
             {
                 const auto p = parse (f.getFileName());
-                if (isMain (p)) stems.emplace (p.number, p.stem);
-                else            other.emplace (p.number, p.stem);
+                if (p.number > 0 && (names == Names::any || p.stem.startsWith ("Track_"))) files.add (f);
             }
-            for (const auto& [number, stem] : other) stems.emplace (number, stem);
+            files.sort();
+            for (const auto& f : files)
+            {
+                const auto p = parse (f.getFileName());
+                auto& n = numbers[p.number];
+                if (isMain (p) || partNumber (p) > 0)
+                {
+                    (isMain (p) ? n.mains : n.parts).add (f);
+                    if (! n.stems.contains (p.stem))
+                    {
+                        n.stems.add (p.stem);
+                        n.clashFiles.add (f.getFileName());
+                    }
+                }
+                else if (isPunchSidecar (p)) { if (n.sidecarStem.isEmpty()) n.sidecarStem = p.stem; }
+                else if (isRender (p)) n.renders.add (f);
+            }
         }
 
+        const juce::File& directory() const noexcept { return folder; }
+
         // The stem on disk for strip `track` (0-based); empty when it has none.
+        // For a number that clashes, the first main's: never write by it
+        // without checking clashes first.
         juce::String stem (int track) const
         {
-            const auto it = stems.find (track + 1);
-            return it == stems.end() ? juce::String() : it->second;
+            const auto* n = find (track);
+            if (n == nullptr) return {};
+            if (! n->mains.isEmpty()) return parse (n->mains.getFirst().getFileName()).stem;
+            if (! n->parts.isEmpty()) return parse (n->parts.getFirst().getFileName()).stem;
+            return n->sidecarStem;
         }
 
         // The stem on disk, or else the legacy name (what a reader of an
@@ -235,10 +338,102 @@ namespace zynforge::takenames
             return s.isNotEmpty() ? s : legacyStem (track);
         }
 
-        bool has (int track) const { return stems.count (track + 1) > 0; }
+        // Does a take, a part or a punch sidecar claim strip `track`?
+        bool has (int track) const { return stem (track).isNotEmpty(); }
+
+        // Does strip `track` hold a main file or a part?
+        bool holdsTakeAudio (int track) const
+        {
+            const auto* n = find (track);
+            return n != nullptr && ! (n->mains.isEmpty() && n->parts.isEmpty());
+        }
+
+        bool clashes (int track) const
+        {
+            const auto* n = find (track);
+            return n != nullptr && n->stems.size() > 1;
+        }
+
+        // One file of each stem that claims a clashing strip, by name; empty
+        // when it does not clash.
+        juce::StringArray clashingFiles (int track) const
+        {
+            const auto* n = find (track);
+            return n != nullptr && n->stems.size() > 1 ? n->clashFiles : juce::StringArray();
+        }
+
+        // "two take files, A and B: move one of them out of Audio Files ...",
+        // or empty.
+        juce::String clash (int track) const
+        {
+            const auto files = clashingFiles (track);
+            return files.isEmpty() ? juce::String() : describeClash (files, folder);
+        }
+
+        // Strips (0-based) that clash, in order.
+        std::vector<int> clashingTracks() const
+        {
+            std::vector<int> out;
+            for (const auto& [number, n] : numbers)
+                if (n.stems.size() > 1) out.push_back (number - 1);
+            return out;
+        }
+
+        // Strips (0-based) holding a main file or a part, in order.
+        std::vector<int> tracksWithTakeAudio() const
+        {
+            std::vector<int> out;
+            for (const auto& [number, n] : numbers)
+                if (! (n.mains.isEmpty() && n.parts.isEmpty())) out.push_back (number - 1);
+            return out;
+        }
+
+        // The take's main file as the readers pick it: .wav, then .flac, .aif,
+        // .aiff. Empty when the strip has none, or clashes.
+        juce::File mainFile (int track) const
+        {
+            const auto* n = find (track);
+            if (n == nullptr || n->stems.size() > 1 || n->mains.isEmpty()) return {};
+            for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+                for (const auto& f : n->mains)
+                    if (f.getFileExtension().equalsIgnoreCase (ext)) return f;
+            return {};
+        }
+
+        // The take's mains and parts, by name; empty for none.
+        juce::Array<juce::File> takeAudio (int track) const
+        {
+            const auto* n = find (track);
+            if (n == nullptr) return {};
+            auto files = n->mains;
+            files.addArray (n->parts);
+            files.sort();
+            return files;
+        }
+
+        // The strip's Consolidate renders, whatever stem they carry.
+        juce::Array<juce::File> renders (int track) const
+        {
+            const auto* n = find (track);
+            return n != nullptr ? n->renders : juce::Array<juce::File>();
+        }
 
     private:
-        std::map<int, juce::String> stems;   // 1-based number -> stem
+        struct Number
+        {
+            juce::Array<juce::File> mains, parts, renders;   // by name
+            juce::StringArray stems, clashFiles;             // each main/part stem once, and its first file
+            juce::String sidecarStem;
+        };
+
+        const Number* find (int track) const
+        {
+            const auto it = numbers.find (track + 1);
+            return it == numbers.end() ? nullptr : &it->second;
+        }
+
+        juce::File folder;
+        std::map<int, Number> numbers;   // 1-based number
     };
 
     inline juce::String existingStem (const juce::File& dir, int track)

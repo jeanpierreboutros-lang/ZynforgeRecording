@@ -1915,6 +1915,9 @@ namespace zynforge
             if (old < 0 || old >= n || destination[(size_t) old] >= 0) return false;
             destination[(size_t) old] = i;
         }
+        // The session's takes, listed once for every strip below.
+        const auto session = activeSession;
+        const auto media = takeMedia();
         // The right half of one stereo file has no file of its own. Every
         // reader finds it as the strip straight after its left half, so an
         // unlinked pair can't be parted: the right channel would reach no strip,
@@ -1924,10 +1927,29 @@ namespace zynforge
             const int left = destination[(size_t) old - 1], right = destination[(size_t) old];
             if (left < 0 || right < 0 || right == left + 1) continue;
             int channel = 0;
-            getTrackAudioFile (old, &channel);
+            getTrackAudioFile (media, old, &channel);
             if (channel != 1) continue;
             reorderRefusal = "Those two strips share one stereo file, so they have to stay side by side";
             return false;
+        }
+        // Which files move, worked out before anything stops. A number two takes
+        // claim refuses the move: nothing picks which one to renumber.
+        auto audio = session.getChildFile ("Audio Files");
+        const bool legacyRoot = ! audio.isDirectory();
+        if (legacyRoot) audio = session;
+        std::vector<TrackFileTransaction::Move> moves;
+        const auto removedDir = session.getChildFile ("Removed Tracks").getChildFile (juce::Uuid().toString());
+        if (session.isDirectory())
+        {
+            juce::String clash;
+            moves = trackorder::takeMoves (audio, removedDir, destination, &clash,
+                                           legacyRoot ? takenames::StemIndex::Names::legacyOnly
+                                                      : takenames::StemIndex::Names::any);
+            if (clash.isNotEmpty())
+            {
+                reorderRefusal = clash;
+                return false;
+            }
         }
         // The strips move, the takes are renamed and the session reloads, so
         // playback stops for it and goes on afterwards from where it was.
@@ -1948,13 +1970,6 @@ namespace zynforge
         }
         auto oldClips = trackClips;
         auto oldPlaylists = trackPlaylists;
-        const auto session = activeSession;
-        auto audio = session.getChildFile ("Audio Files");
-        if (! audio.isDirectory()) audio = session;
-        std::vector<TrackFileTransaction::Move> moves;
-        const auto removedDir = session.getChildFile ("Removed Tracks").getChildFile (juce::Uuid().toString());
-        if (session.isDirectory())
-            moves = trackorder::takeMoves (audio, removedDir, destination);
         auto remapClip = [&] (Clip& c, int oldTrack)
         {
             // Make implicit references explicit before filenames move, so a
@@ -1962,7 +1977,7 @@ namespace zynforge
             if (c.audioFile == juce::File())
             {
                 int channel = 0;
-                auto source = getTrackAudioFile (oldTrack, &channel);
+                auto source = getTrackAudioFile (media, oldTrack, &channel);
                 if (destination[(size_t) oldTrack] >= 0
                     && ! (channel == 1 && oldTrack > 0 && destination[(size_t) oldTrack - 1] < 0)) return;
                 c.audioFile = source; c.sourceChannel = channel;

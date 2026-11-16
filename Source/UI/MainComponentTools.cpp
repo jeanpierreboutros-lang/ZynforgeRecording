@@ -274,8 +274,8 @@ void MainComponent::runQcAnalysis()
         return;
     }
 
-    const auto files = zynforge::qc::sessionTakes (sessionDir);
-    if (files.isEmpty())
+    const auto takes = zynforge::qc::sessionTakeEntries (sessionDir);
+    if (takes.empty())
     {
         showStatus ("No recorded audio to QC -- record a take first.");
         return;
@@ -289,21 +289,26 @@ void MainComponent::runQcAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    analysisJobs.start ([self, sessionDir, files, names] (const std::atomic<bool>& cancel)
+    analysisJobs.start ([self, sessionDir, takes, names] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
         const auto stopped = [self]
         { if (self != nullptr) self->showStatus ("QC stopped: a take started. No report was written."); };
 
         std::vector<zynforge::qc::TrackQc> results;
-        for (const auto& f : files)
+        for (const auto& take : takes)
         {
-            const auto stem = f.getFileNameWithoutExtension();
-            const int idx = zynforge::mainTakeTrackNumber (f) - 1;
-            auto q = zynforge::qc::analyzeFile (f, &cancel);
+            const int idx = take.trackIndex;
+            // A take with no main file to read, or two that claim the strip,
+            // is reported as not read, never left out.
+            zynforge::qc::TrackQc q;
+            if (take.problem.isNotEmpty()) { q.file = take.file; q.error = take.problem; }
+            else q = zynforge::qc::analyzeFile (take.file, &cancel);
             if (cancel.load (std::memory_order_relaxed)) return stopped;
             q.trackIndex = idx;
-            q.name = (idx < names.size() && names[idx].isNotEmpty()) ? names[idx] : stem;
+            q.name = (idx < names.size() && names[idx].isNotEmpty()) ? names[idx]
+                   : take.file != juce::File() ? take.file.getFileNameWithoutExtension()
+                                               : juce::String ("Track ") + juce::String (idx + 1);
             results.push_back (std::move (q));
         }
 
