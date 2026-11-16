@@ -42,9 +42,17 @@ void MainComponent::loadSetlistFromActiveSession()
     // Rebind those legacy snapshots by their saved physical order once; newly
     // saved sessions then use portable identities normally. Never apply this
     // fallback to a strip that already has an authoritative session UUID.
+    // Only a mixer file that was read can say a strip is legacy. Missing or
+    // damaged, it says nothing, and the strips may have moved since the cue
+    // was saved: rebinding by position then recalled one strip's mix onto
+    // another. Each snapshot keeps its own uid, and recall finds the strip
+    // by it or says it is not there.
     std::vector<bool> portableIds;
+    bool mixRead = false;
     const auto mix = juce::JSON::parse (engine.getActiveSessionDir().getChildFile ("session_mix.json"));
     if (auto* strips = mix["strips"].getArray())
+    {
+        mixRead = true;
         for (const auto& strip : *strips)
         {
             const int index = (int) strip["index"];
@@ -52,6 +60,7 @@ void MainComponent::loadSetlistFromActiveSession()
             if (index >= (int) portableIds.size()) portableIds.resize ((size_t) index + 1, false);
             portableIds[(size_t) index] = strip["uid"].toString().isNotEmpty();
         }
+    }
 
     const auto proj = findSessionProj (engine.getActiveSessionDir());
     if (proj.existsAsFile())
@@ -84,7 +93,7 @@ void MainComponent::loadSetlistFromActiveSession()
                                     zynforge::SetlistBar::StripSnapshot s;
                                     s.stripId      = so->getProperty ("uid").toString();
                                     const int physical = (int) cue.strips.size();
-                                    if (physical < engine.getRecorder().getNumTracks()
+                                    if (mixRead && physical < engine.getRecorder().getNumTracks()
                                         && (physical >= (int) portableIds.size() || ! portableIds[(size_t) physical]))
                                         s.stripId = engine.getRecorder().getTrack (physical).stripId;
                                     s.gainDb       = (float) (double) so->getProperty ("gainDb");
@@ -239,11 +248,12 @@ void MainComponent::jumpToCue (int index)
     const auto pairedLeft = [&rec, total] (int t)
     { return t >= 0 && t + 1 < total && rec.getTrack (t).isStereo.load (std::memory_order_relaxed); };
     const int n = (int) cue.strips.size();
+    int missing = 0;   // snapshots whose strip is not in this mixer
     for (int i = 0; i < n; ++i)
     {
         const auto& s = cue.strips[(size_t) i];
         const int target = resolveTarget (s, i);
-        if (target < 0) continue;
+        if (target < 0) { ++missing; continue; }
 
         engine.setTrackPanRamped (target, s.pan, kCueRecallSeconds);
         if (pairedLeft (target - 1)) continue;
@@ -284,8 +294,15 @@ void MainComponent::jumpToCue (int index)
     lastTrackCount = -1;   // force strip refresh so combos + buttons redraw
 
     updateTransportLabels();
+    if (n > 0 && missing == n)
+    {
+        showStatus ("Cue " + juce::String (index + 1) + " '" + cue.name + "' mix not recalled -- none of its "
+                    + zynforge::counted (n, "strip") + " is in this mixer (deleted, or the mixer file was lost)");
+        return;
+    }
     showStatus ("Cue " + juce::String (index + 1) + " '" + cue.name + "' recalled -- "
-                + juce::String (n) + " strips"
+                + juce::String (n - missing) + " strips"
+                + (missing > 0 ? "; " + zynforge::counted (missing, "strip") + " in the cue not found" : juce::String())
                 + (recording ? " (arm + input held -- recording)" : ""));
 }
 

@@ -251,6 +251,8 @@ namespace zynforge
         void applyReadOnly (bool readOnly);
         void syncFollowButton();
         void pauseFollowForZoom();
+        juce::int64 navigationSpanSamples() const;
+        double contentWidthPerZoom() const;
 
         // Viewport that reports scroll changes so the EDIT rows can re-pin
         // their header column to the left edge when the timeline scrolls
@@ -286,6 +288,9 @@ namespace zynforge
         // (not CPU-derived) keeps the on-disk cache layout portable between
         // machines. WaveCache.wfm stores one length-prefixed section per shard.
         static constexpr int               kNumScanShards = 4;
+        // Peaks the scans have finished, ever (before the caches: they count
+        // into it until they go).
+        std::atomic<juce::uint32>          peaksStored { 0 };
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>> thumbnailCaches;
         ScrollViewport                     viewport;
         TimelineFollowState                followState;
@@ -375,6 +380,14 @@ namespace zynforge
             return giveUp > 0.0 && juce::Time::getMillisecondCounterHiRes() > giveUp;
         }
         bool              waveCacheLoading { false };   // rows wait for waveCacheResetJob
+        juce::File        waveCacheResetFor;              // the session of waveCacheResetJob
+        std::atomic<int>  waveCacheCleanJob { 0 };        // the last reset that loaded WaveCache.wfm whole
+        // The session whose WaveCache.wfm holds exactly what the caches do (a
+        // whole load, nothing scanned since); empty once a save or a scan has
+        // taken over. peaksAtSaved: peaksStored when the caches last matched
+        // the file, or a save of them was queued.
+        juce::File        waveCacheCleanFor;
+        juce::uint32      peaksAtSaved { 0 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditPage)
     };

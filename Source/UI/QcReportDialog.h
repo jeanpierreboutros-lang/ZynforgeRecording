@@ -109,7 +109,7 @@ namespace zynforge
                         break;
                 case 5: text = q.clipEvents.empty()
                                  ? juce::String ("--")
-                                 : qc::timecode (q.clipEvents.front().startSample, q.sampleRate);
+                                 : qc::eventTimecode (q, q.clipEvents.front().startSample);
                         break;
                 case 6: text = juce::String (q.noiseFloorDb, 1);
                         if (q.noiseFloorDb > -50.0f)      fg = brand::accentRecord;
@@ -151,8 +151,8 @@ namespace zynforge
                         case 2: return num (qa.peakDb) < num (qb.peakDb);
                         case 3: return num (qa.integratedLufs) < num (qb.integratedLufs);
                         case 4: return qa.clipEventCount < qb.clipEventCount;
-                        case 5: return (qa.clipEvents.empty() ? -1 : (juce::int64) qa.clipEvents.front().startSample)
-                                     < (qb.clipEvents.empty() ? -1 : (juce::int64) qb.clipEvents.front().startSample);
+                        case 5: return (qa.clipEvents.empty() ? -1 : qc::timelinePosition (qa, qa.clipEvents.front().startSample))
+                                     < (qb.clipEvents.empty() ? -1 : qc::timelinePosition (qb, qb.clipEvents.front().startSample));
                         case 6: return num (qa.noiseFloorDb) < num (qb.noiseFloorDb);
                     }
                     return false;

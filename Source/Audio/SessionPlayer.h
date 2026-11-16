@@ -158,6 +158,9 @@ namespace zynforge
         void setTrackClips (int trackIdx, std::vector<Clip> clips);
         void clearAllClips();
 
+        // How long a load waits for each take's first read before it moves on.
+        void setPrimeTimeoutForTests (int milliseconds) noexcept { primeTimeoutMs = milliseconds; }
+
     private:
         // Where playback wraps right now. A punch take is never looped: its
         // timeline is the punch clock, so an already-enabled loop stays inert
@@ -259,6 +262,7 @@ namespace zynforge
         double deviceSampleRate { 48000.0 };
         double fileSampleRate   { 48000.0 };
         int    blockSize        { 512 };
+        int    primeTimeoutMs   { 1000 };
         juce::String sessionName;
         juce::File   sessionDir;
 

@@ -77,18 +77,19 @@ namespace zynforge::wavecache
 
     // Pulls the session's peaks into the caches. Anything that cannot be
     // trusted is deleted and those thumbnails re-scan: worst case a slow first
-    // paint, never wrong audio.
-    inline void load (const juce::File& sessionDir, Caches& caches, const StopCheck& stop)
+    // paint, never wrong audio. True when the whole file loaded: the caches
+    // then hold exactly what is on disk, and writing them back changes nothing.
+    inline bool load (const juce::File& sessionDir, Caches& caches, const StopCheck& stop)
     {
         const auto cacheFile = fileIn (sessionDir);
-        if (! cacheFile.existsAsFile() || cacheFile.getSize() < 16) return;
+        if (! cacheFile.existsAsFile() || cacheFile.getSize() < 16) return false;
 
         // A normal take may reuse Track_NN paths while an earlier waveform
         // cache still exists. Never load those stale peaks into the new rows.
         if (waveCachePredatesAudio (cacheFile, sessionDir))
         {
             cacheFile.deleteFile();
-            return;
+            return false;
         }
 
         // Versioned header: magic + (resolution<<8|rev). A cache baked at a
@@ -98,10 +99,10 @@ namespace zynforge::wavecache
         // magic -- means delete the stale file and let the thumbnails
         // re-scan. The stream is scoped so its file handle is released before
         // we delete.
-        bool stale = false;
+        bool stale = false, whole = true;
         {
             juce::FileInputStream in (cacheFile);
-            if (! in.openedOk()) return;
+            if (! in.openedOk()) return false;
 
             const int magic  = in.readInt();
             const int ver    = in.readInt();
@@ -109,7 +110,7 @@ namespace zynforge::wavecache
             stale = magic != kMagic || ver != kVersion || shards != (int) caches.size();
             for (auto it = caches.begin(); ! stale && it != caches.end(); ++it)
             {
-                if (stop()) return;
+                if (stop()) return false;
                 const int length = in.readInt();
                 if (length <= 0) continue;
                 // A section running past the end is a file cut short by a
@@ -118,10 +119,11 @@ namespace zynforge::wavecache
                 juce::MemoryBlock section;
                 in.readIntoMemoryBlock (section, length);
                 juce::MemoryInputStream stream (section, false);
-                (*it)->readFromStream (stream);
+                whole = (*it)->readFromStream (stream) && whole;
             }
         }
         if (stale)
             cacheFile.deleteFile();
+        return ! stale && whole;
     }
 }

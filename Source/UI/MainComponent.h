@@ -41,7 +41,7 @@
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
 namespace zynforge { class MixerFixTests; class UiFixTests; class NetFix20261116Tests; }
 namespace zynforge { class SessionFix20261116Tests; class MainWindowFix20261116Tests; class MixerFix20261116Tests; }
-namespace zynforge { class EngineFix20261116Tests; }
+namespace zynforge { class EngineFix20261116Tests; class PlayFix20261116Tests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -385,6 +385,10 @@ private:
     bool analysisResultWanted (const juce::File& scannedSession);
     void runQcAnalysis();
     void detectSongsToMarkers();
+    // Puts a song scan's markers on the timeline in place of the last scan's;
+    // returns how many. lastSongMarkersReplaced: how many it took out.
+    int placeSongMarkers (const std::vector<juce::int64>& songStarts);
+    int lastSongMarkersReplaced { 0 };
     // Launch-time crash telemetry: offer the newest report since last run.
     // Both wait for STOP while a take rolls (serviceModalsAroundTakes).
     void scanForCrashReports();
@@ -741,6 +745,7 @@ private:
     friend class zynforge::EngineFix20261116Tests;
     friend struct zynforge::ConcurrencyAuditAccess;
     friend class zynforge::MixerFix20261116Tests;
+    friend class zynforge::PlayFix20261116Tests;
 
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of

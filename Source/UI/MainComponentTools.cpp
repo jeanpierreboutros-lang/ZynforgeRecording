@@ -17,7 +17,91 @@
 #include "SessionInfoDialog.h"
 #include "SessionProjPath.h"
 
+#include <algorithm>
+#include <map>
+#include <set>
+
 using namespace zynforge;
+
+namespace
+{
+    // A song scan's markers replacing the last scan's, as one undo step. Each
+    // direction takes out one set, by id, and puts the other back. What it
+    // takes out is kept as it is then, so a marker renamed since survives the
+    // next redo; one deleted since does not come back.
+    struct SongMarkersAction final : public juce::UndoableAction
+    {
+        SongMarkersAction (MarkersManager& m, std::vector<Marker> replaced, std::vector<Marker> dropped)
+            : markers (m), before (std::move (replaced)), after (std::move (dropped)) {}
+
+        bool perform() override
+        {
+            if (firstRun) { firstRun = false; return true; }   // already applied
+            swapIn (before, after);
+            return true;
+        }
+        bool undo() override { swapIn (after, before); return true; }
+
+        void swapIn (std::vector<Marker>& out, const std::vector<Marker>& in)
+        {
+            std::vector<Marker> kept, taken;
+            for (const auto& m : markers.getAll())
+            {
+                const bool goes = std::any_of (out.begin(), out.end(),
+                                               [&m] (const Marker& o) { return o.runtimeId == m.runtimeId; });
+                (goes ? taken : kept).push_back (m);
+            }
+            out = std::move (taken);
+            kept.insert (kept.end(), in.begin(), in.end());
+            markers.replaceAll (std::move (kept));
+        }
+
+        MarkersManager& markers;
+        std::vector<Marker> before, after;
+        bool firstRun { true };
+    };
+
+    // Where each take plays on the timeline, by file: every clip of every strip
+    // that plays it. QC reads the take files, and their sample positions stop
+    // being timeline positions after a Crop, a Ripple Delete or a moved clip. A
+    // take some strip plays whole, never arranged, is left out: file time is then
+    // timeline time.
+    std::map<juce::String, std::vector<qc::TimelineSpan>> qcTimeline (AudioEngine& engine)
+    {
+        std::map<juce::String, std::vector<qc::TimelineSpan>> placed;
+        std::set<juce::String> whole;
+        const int tracks = juce::jmax (engine.getRecorder().getNumTracks(), engine.getPlayer().getNumTracks());
+        for (int t = 0; t < tracks; ++t)
+        {
+            const auto* clips = engine.tryClipsFor (t);
+            juce::File own;
+            bool ownLooked = false;
+            const auto ownTake = [&]
+            {
+                if (! ownLooked) { own = engine.getTrackAudioFile (t); ownLooked = true; }
+                return own;
+            };
+            if (clips == nullptr)
+            {
+                // Every clip deleted plays none of the take; never arranged, all of it.
+                if (const auto take = ownTake(); take != juce::File())
+                {
+                    if (engine.isTrackArrangementEmpty (t)) placed[take.getFullPathName()];
+                    else                                    whole.insert (take.getFullPathName());
+                }
+                continue;
+            }
+            for (const auto& c : *clips)
+            {
+                const auto file = c.audioFile != juce::File() ? c.audioFile : ownTake();
+                if (file == juce::File() || c.fileLengthSamples <= 0) continue;
+                placed[file.getFullPathName()].push_back ({ c.fileStartSamples, c.fileLengthSamples, c.timelineStartSamples });
+            }
+        }
+        for (const auto& file : whole) placed.erase (file);
+        return placed;
+    }
+}
 
 void MainComponent::togglePunchMode()
 {
@@ -287,9 +371,10 @@ void MainComponent::runQcAnalysis()
     juce::StringArray names;
     for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
         names.add (engine.getRecorder().getTrack (i).name);
+    const auto timeline = qcTimeline (engine);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    analysisJobs.start ([self, sessionDir, takes, names] (const std::atomic<bool>& cancel)
+    analysisJobs.start ([self, sessionDir, takes, names, timeline] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
         const auto stopped = [self]
@@ -309,6 +394,12 @@ void MainComponent::runQcAnalysis()
             q.name = (idx < names.size() && names[idx].isNotEmpty()) ? names[idx]
                    : take.file != juce::File() ? take.file.getFileNameWithoutExtension()
                                                : juce::String ("Track ") + juce::String (idx + 1);
+            if (take.file != juce::File())
+                if (const auto placed = timeline.find (take.file.getFullPathName()); placed != timeline.end())
+                {
+                    q.arranged = true;
+                    q.timeline = placed->second;
+                }
             results.push_back (std::move (q));
         }
 
@@ -978,14 +1069,43 @@ void MainComponent::detectSongsToMarkers()
                 self->showStatus ("The arrangement changed during the scan; no markers were added");
                 return;
             }
-            auto& markers = self->engine.getMarkers();
-            int n = 0;
-            for (const auto& s : found)
-                markers.drop (s.startSample, "Song " + juce::String (++n), "song");
+            std::vector<juce::int64> starts;
+            for (const auto& s : found) starts.push_back (s.startSample);
+            const int n = self->placeSongMarkers (starts);
+            const int replaced = self->lastSongMarkersReplaced;
             self->showStatus (juce::String (n) + " song marker" + (n == 1 ? "" : "s")
-                              + " dropped -- rename them in the Marker List.");
+                              + (replaced > 0 ? " replaced the last scan's " + juce::String (replaced)
+                                                    + " (Cmd+Z brings them back)"
+                                              : juce::String (" dropped"))
+                              + " -- rename them in the Marker List.");
         };
     });
+}
+
+// A scan run again replaces the "song" markers the last one dropped: a second
+// full set on top of the first doubled every song boundary. One undo step, and
+// the engineer's own markers stay.
+int MainComponent::placeSongMarkers (const std::vector<juce::int64>& songStarts)
+{
+    auto& markers = engine.getMarkers();
+    std::vector<Marker> kept, replaced, dropped;
+    for (const auto& m : markers.getAll())
+        (m.type == "song" ? replaced : kept).push_back (m);
+    int n = 0;
+    for (const auto start : songStarts)
+    {
+        Marker m;
+        m.sampleOffset = start;
+        m.name = "Song " + juce::String (++n);
+        m.type = "song";
+        dropped.push_back (m);
+        kept.push_back (std::move (m));
+    }
+    lastSongMarkersReplaced = (int) replaced.size();
+    markers.replaceAll (std::move (kept));
+    undoManager.beginNewTransaction ("Detect Songs");
+    undoManager.perform (new SongMarkersAction (markers, std::move (replaced), std::move (dropped)));
+    return n;
 }
 
 void MainComponent::writeSoundcheckReport()

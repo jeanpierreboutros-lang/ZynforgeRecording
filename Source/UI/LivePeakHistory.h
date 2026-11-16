@@ -50,13 +50,34 @@ namespace zynforge
             points.push_back (pendingPeak);
             pendingPeak = 0.0f;
             pendingBins = 0;
-            if (points.size() < maxPoints) return;
+            if (points.size() >= maxPoints) compact();
+        }
 
-            const size_t half = points.size() / 2;
-            for (size_t i = 0; i < half; ++i)
-                points[i] = juce::jmax (points[2 * i], points[2 * i + 1]);
-            points.resize (half);
-            binsPerPoint *= 2;
+        // `bins` silent bins: what as many append (0.0f) calls leave, one step
+        // per overview point rather than per bin (an hour's gap is 675,000).
+        void appendSilence (juce::int64 bins)
+        {
+            if (bins <= 0) return;
+            // The ring keeps raw bins, so only its newest recentPoints matter.
+            for (auto n = juce::jmin (bins, (juce::int64) recentPoints); n > 0; --n)
+            {
+                if (recent.size() < recentPoints)
+                    recent.push_back (0.0f);
+                else
+                    recent[recentNext] = 0.0f;
+                recentNext = (recentNext + 1) % recentPoints;
+            }
+            totalBins += bins;
+            while (bins > 0)
+            {
+                const auto room = binsPerPoint - pendingBins;   // bins until the open point closes
+                if (bins < room) { pendingBins += bins; return; }
+                bins -= room;
+                points.push_back (pendingPeak);
+                pendingPeak = 0.0f;
+                pendingBins = 0;
+                if (points.size() >= maxPoints) compact();
+            }
         }
 
         size_t size() const noexcept { return points.size() + (pendingBins > 0 ? 1 : 0); }
@@ -99,6 +120,16 @@ namespace zynforge
         }
 
     private:
+        // Halve the overview: each pair of points becomes its louder one.
+        void compact()
+        {
+            const size_t half = points.size() / 2;
+            for (size_t i = 0; i < half; ++i)
+                points[i] = juce::jmax (points[2 * i], points[2 * i + 1]);
+            points.resize (half);
+            binsPerPoint *= 2;
+        }
+
         std::vector<float> points;
         std::vector<float> recent;
         size_t recentNext { 0 };

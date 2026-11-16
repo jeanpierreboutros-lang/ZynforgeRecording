@@ -2264,18 +2264,61 @@ namespace zynforge
         return true;
     }
 
+    juce::String AudioEngine::duplicateRefusal (int track, int clipIndex) const
+    {
+        if (isArrangementFrozen()) return "Clips cannot change while recording or while the session is busy";
+        const auto* list = tryClipsFor (track);
+        if (list == nullptr || clipIndex < 0 || clipIndex >= (int) list->size()) return "That clip is gone";
+        const auto& source = (*list)[(size_t) clipIndex];
+        if (source.locked) return "Clip is locked -- unlock it before duplicating";
+        const auto from = source.timelineStartSamples + source.fileLengthSamples;
+        const auto to   = from + source.fileLengthSamples;
+        for (int i = 0; i < (int) list->size(); ++i)
+        {
+            const auto& c = (*list)[(size_t) i];
+            if (i != clipIndex && c.locked && c.timelineStartSamples < to
+                && c.timelineStartSamples + c.fileLengthSamples > from)
+                return "A locked clip is where the copy would go -- unlock it or move it first";
+        }
+        return {};
+    }
+
     bool AudioEngine::duplicateClip (int track, int clipIndex)
     {
-        if (isArrangementFrozen()) return false;
+        if (duplicateRefusal (track, clipIndex).isNotEmpty()) return false;
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
-        if ((*list)[(size_t) clipIndex].locked) return false;   // lock protects against duplicate
         Clip copy = (*list)[(size_t) clipIndex];
         copy.timelineStartSamples += copy.fileLengthSamples;   // place after the source
         copy.name = copy.name + " (copy)";
         copy.locked = false;
         copy.selectionId = 0;
-        list->insert (list->begin() + clipIndex + 1, std::move (copy));
+
+        // The copy takes its place on the timeline, as a paste over audio does
+        // in Pro Tools: what lay under it goes, in the same undo step. Left
+        // there, both played summed (+6 dB, or a comb) to the desk in Virtual
+        // Soundcheck and into every bounce. The take file is not touched.
+        const auto from = copy.timelineStartSamples;
+        const auto to   = from + copy.fileLengthSamples;
+        std::vector<Clip> kept;
+        kept.reserve (list->size() + 2);
+        int copyAt = -1;
+        for (int i = 0; i < (int) list->size(); ++i)
+        {
+            const auto& c  = (*list)[(size_t) i];
+            const auto  cs = c.timelineStartSamples;
+            const auto  ce = cs + c.fileLengthSamples;
+            if (i == clipIndex || ce <= from || cs >= to)
+            {
+                kept.push_back (c);
+                if (i == clipIndex) copyAt = (int) kept.size();   // right after its source
+                continue;
+            }
+            if (cs < from) kept.push_back (clipSlice (c, 0, from - cs));
+            if (ce > to)   kept.push_back (clipSlice (c, to - cs, ce - to));
+        }
+        kept.insert (kept.begin() + copyAt, std::move (copy));
+        *list = std::move (kept);
         player.setTrackClips (track, *list);
         syncActiveTake (track);
         return true;

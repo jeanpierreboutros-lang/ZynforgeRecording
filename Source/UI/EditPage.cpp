@@ -17,6 +17,19 @@
 
 namespace zynforge
 {
+    namespace
+    {
+        // Counts the peaks scans finish, so a WaveCache.wfm that loaded whole
+        // is written again only once something new is in the caches.
+        struct CountingThumbnailCache final : public juce::AudioThumbnailCache
+        {
+            CountingThumbnailCache (int maxThumbs, std::atomic<juce::uint32>& counter)
+                : juce::AudioThumbnailCache (maxThumbs), stored (counter) {}
+            void saveNewlyFinishedThumbnail (const juce::AudioThumbnailBase&, juce::int64) override
+            { stored.fetch_add (1, std::memory_order_relaxed); }
+            std::atomic<juce::uint32>& stored;
+        };
+    }
 
     // Owner of the TrackRow vertical list. EditPage drops this into the
     // viewport; this lets the rows scroll while the page header stays put.
@@ -638,7 +651,7 @@ namespace zynforge
         // disk tier. Not background: see scanio::startScanThread.
         for (int s = 0; s < kNumScanShards; ++s)
         {
-            auto cache = std::make_unique<juce::AudioThumbnailCache> (256);
+            auto cache = std::make_unique<CountingThumbnailCache> (256, peaksStored);
             scanio::startScanThread (cache->getTimeSliceThread());
             thumbnailCaches.push_back (std::move (cache));
         }
@@ -782,9 +795,10 @@ namespace zynforge
         // that was queued and never ran, failed, or ran out of time is not
         // that. Not while the session's saved peaks are still coming in: the
         // caches hold part of them, and that part would replace the whole file.
-        const bool written = waveCacheSaved && waveCacheSaveJob != 0
-                          && waveCacheWrittenJob.load() == waveCacheSaveJob;
         const auto sessionDir = engine.getActiveSessionDir();
+        const bool written = waveCacheSaved && peaksStored.load() == peaksAtSaved
+                          && ((waveCacheSaveJob != 0 && waveCacheWrittenJob.load() == waveCacheSaveJob)
+                              || (waveCacheCleanFor != juce::File() && waveCacheCleanFor == sessionDir));
         if (! written && ! waveCacheLoading && ! engine.isTakeOnDisk() && sessionDir.isDirectory()
             && juce::Time::getMillisecondCounterHiRes() < giveUp)
             wavecache::save (sessionDir, thumbnailCaches,
@@ -801,13 +815,16 @@ namespace zynforge
         const auto job = ++waveCacheWork;   // also stops what runs now
         waveCacheLoading = true;
         waveCacheResetJob = job;
+        waveCacheResetFor = sessionDir;
+        waveCacheCleanFor = juce::File();
         waveCacheThread.add ([this, sessionDir, job, what]
         {
             // Here, after whatever ran before: a load stopped in the middle of
             // a shard still fills that shard.
             for (auto& cache : thumbnailCaches) cache->clear();
-            if (what == CacheReset::load)
-                wavecache::load (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
+            if (what == CacheReset::load
+                && wavecache::load (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; }))
+                waveCacheCleanJob.store (job);
             else if (what == CacheReset::forget && sessionDir.isDirectory())
                 wavecache::fileIn (sessionDir).deleteFile();
             waveCacheResetDone.store (job);
@@ -844,6 +861,8 @@ namespace zynforge
         const auto job = ++waveCacheWork;
         waveCacheSaveJob = job;
         waveCacheSaving = true;
+        peaksAtSaved = peaksStored.load();
+        waveCacheCleanFor = juce::File();
         waveCacheThread.add ([this, sessionDir, job]
         {
             if (beforeWaveCacheSaveForTests) beforeWaveCacheSaveForTests();
@@ -1220,7 +1239,22 @@ namespace zynforge
         if (waveCacheLoading && waveCacheResetDone.load() >= waveCacheResetJob)
         {
             waveCacheLoading = false;
+            // WaveCache.wfm loaded whole: the file already holds every peak the
+            // caches do, so writing them back would rewrite hundreds of MB onto
+            // the show drive for nothing. New peaks from here on (a row that
+            // scans, a rescan) mark it unsaved below.
+            if (waveCacheCleanJob.load() == waveCacheResetJob && waveCacheResetFor == engine.getActiveSessionDir())
+            {
+                waveCacheSaved = true;
+                waveCacheCleanFor = waveCacheResetFor;
+                peaksAtSaved = peaksStored.load();
+            }
             refresh();
+        }
+        if (waveCacheSaved && peaksStored.load() != peaksAtSaved)
+        {
+            waveCacheSaved = false;
+            waveCacheCleanFor = juce::File();
         }
 
         // Session-change detection + waveform attach run REGARDLESS of EDIT
@@ -1313,8 +1347,11 @@ namespace zynforge
         if (loaded != lastLoaded || rec != lastRecording || captureJustSettled
             || engine.getActiveSessionDir() != lastSessionDir)
         {
-            if (engine.getActiveSessionDir() != lastSessionDir)
-                waveCacheSaved = false;   // new session -> its cache needs (re)writing
+            // New session -> its cache needs (re)writing, unless it is the one
+            // whose WaveCache.wfm just loaded whole (the page's first tick).
+            if (engine.getActiveSessionDir() != lastSessionDir
+                && engine.getActiveSessionDir() != waveCacheCleanFor)
+                waveCacheSaved = false;
             lastSessionDir = engine.getActiveSessionDir();
             lastRecording  = rec;
             refresh();
@@ -1560,11 +1597,45 @@ namespace zynforge
         list->setRowsVisibility (visibleRows);
     }
 
+    // The span the lanes and the ruler map across the content width: the live
+    // span during a take (TrackRow::laneTimelineSamples), else the session's.
+    // Navigation that used the session length during a continue take scrolled
+    // to the wrong part of a timeline five or more times wider.
+    juce::int64 EditPage::navigationSpanSamples() const
+    {
+        const auto& player = engine.getPlayer();
+        if (! engine.isRecording()) return player.isLoaded() ? player.getTotalLengthSamples() : 0;
+        const double rate = engine.getDeviceSampleRate() > 0.0
+            ? engine.getDeviceSampleRate()
+            : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+        const auto head = engine.isCaptureWindowActive() && player.isPlaying()
+            ? player.getPositionSamples() : engine.getRecordTimelineSamples();
+        return recordingTimelineSpanSamples (head, player.getTotalLengthSamples(), rate);
+    }
+
+    // Content width per unit of zoom: the viewport's width, or during a take
+    // that times the live span's growth (recordingContentWidth, as resized).
+    double EditPage::contentWidthPerZoom() const
+    {
+        const int viewW = juce::jmax (1, viewport.getWidth());
+        if (! engine.isRecording()) return (double) viewW;
+        const auto& player = engine.getPlayer();
+        const double rate = engine.getDeviceSampleRate() > 0.0
+            ? engine.getDeviceSampleRate()
+            : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+        const auto liveSpan = recordingTimelineSpanSamples (engine.getRecordTimelineSamples(),
+                                                            player.getTotalLengthSamples(), rate);
+        const auto baseSpan = recordingBaseSpanSamples > 0
+            ? recordingBaseSpanSamples
+            : recordingTimelineSpanSamples (0, player.getTotalLengthSamples(), rate);
+        return (double) viewW * (double) juce::jmax (liveSpan, baseSpan)
+             / (double) juce::jmax ((juce::int64) 1, baseSpan);
+    }
+
     void EditPage::scrollToSample (juce::int64 sample)
     {
         if (list == nullptr || sample < 0) return;
-        const auto& player = engine.getPlayer();
-        const auto totalSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+        const auto totalSamples = navigationSpanSamples();
         if (totalSamples <= 0) return;
         const int contentW = list->getWidth();
         if (contentW <= 0) return;
@@ -1584,8 +1655,7 @@ namespace zynforge
     void EditPage::zoomToSamples (juce::int64 a, juce::int64 b)
     {
         if (list == nullptr) return;
-        const auto& player = engine.getPlayer();
-        const auto total = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+        const auto total = navigationSpanSamples();
         if (total <= 0 || b <= a) return;
         pauseFollowForZoom();
         // Zoom so the selection ~fills the VISIBLE lane (a little headroom),
@@ -1599,7 +1669,7 @@ namespace zynforge
         if (frac > 0.0)
             setZoom ((float) juce::jlimit (1.0, (double) kMaxTimelineZoom,
                                            (0.9 * visibleLane / frac + kHeaderW + 8)
-                                               / (double) juce::jmax (1, viewport.getWidth())));
+                                               / juce::jmax (1.0, contentWidthPerZoom())));
         scrollToSample ((a + b) / 2);
     }
 

@@ -25,6 +25,12 @@ namespace zynforge::qc
         int         lengthSamples { 0 };
     };
 
+    // Where a stretch of a take file plays on the session timeline: a clip.
+    struct TimelineSpan
+    {
+        juce::int64 fileStart { 0 }, length { 0 }, timelineStart { 0 };
+    };
+
     struct TrackQc
     {
         juce::String name;                  // engineer-facing strip name
@@ -36,9 +42,38 @@ namespace zynforge::qc
         float        integratedLufs { -120.0f };
         float        noiseFloorDb   { -120.0f };  // 10th percentile of 100 ms RMS windows
         int          clipEventCount { 0 };
-        std::vector<ClipEvent> clipEvents;  // first kMaxStoredClipEvents only
+        std::vector<ClipEvent> clipEvents;  // first kMaxStoredClipEvents only, in take-file samples
         juce::String error;                 // nonempty: these figures do not cover the take
+        // Where the take plays. Not arranged: whole, from 0, so file time is
+        // timeline time. Arranged: only where a clip plays it (after a Crop,
+        // a Ripple Delete or a moved clip the two differ).
+        bool arranged { false };
+        std::vector<TimelineSpan> timeline;
     };
+
+    // Timeline sample a take-file sample plays at, or -1 where no clip plays it.
+    // A stretch two clips play is given where it plays first.
+    inline juce::int64 timelinePosition (const TrackQc& q, juce::int64 fileSample)
+    {
+        if (! q.arranged) return fileSample;
+        juce::int64 at = -1;
+        for (const auto& span : q.timeline)
+            if (fileSample >= span.fileStart && fileSample < span.fileStart + span.length)
+            {
+                const auto here = span.timelineStart + (fileSample - span.fileStart);
+                if (at < 0 || here < at) at = here;
+            }
+        return at;
+    }
+
+    // Where the take's audio ends on the timeline.
+    inline juce::int64 timelineEnd (const TrackQc& q)
+    {
+        if (! q.arranged) return q.lengthSamples;
+        juce::int64 end = 0;
+        for (const auto& span : q.timeline) end = juce::jmax (end, span.timelineStart + span.length);
+        return end;
+    }
 
     // A clip = a run of >= kClipRunSamples consecutive samples at (or
     // beyond) kClipThreshold of full scale -- the classic flat-top test.
@@ -222,6 +257,15 @@ namespace zynforge::qc
         return juce::String::formatted ("%02d:%02d:%02d.%03d", h, m, s, ms);
     }
 
+    // A clip event as the engineer finds it: timeline time, or the take-file
+    // time, said as such, for audio no clip plays any more.
+    inline juce::String eventTimecode (const TrackQc& q, juce::int64 fileSample)
+    {
+        const auto at = timelinePosition (q, fileSample);
+        return at >= 0 ? timecode (at, q.sampleRate)
+                       : "file " + timecode (fileSample, q.sampleRate) + " (not on the timeline)";
+    }
+
     // Plain-text report -- what gets written to Export Files/ so the
     // engineer can read it the morning after (or hand it to the band).
     inline juce::String reportText (const juce::String& sessionName,
@@ -250,14 +294,17 @@ namespace zynforge::qc
             t << "  Peak: "        << juce::String (q.peakDb, 1)         << " dBFS"
               << "   LUFS-I: "     << juce::String (q.integratedLufs, 1)
               << "   Noise floor: "<< juce::String (q.noiseFloorDb, 1)   << " dBFS"
-              << "   Length: "     << timecode (q.lengthSamples, q.sampleRate) << "\n";
+              << "   Length: "     << timecode (timelineEnd (q), q.sampleRate)
+              << (timelineEnd (q) != q.lengthSamples
+                      ? "  (take file " + timecode (q.lengthSamples, q.sampleRate) + ")" : juce::String())
+              << "\n";
             if (q.clipEventCount > 0)
             {
                 t << "  CLIPPING: " << q.clipEventCount << " event"
                   << (q.clipEventCount == 1 ? "" : "s");
                 const int show = juce::jmin (10, (int) q.clipEvents.size());
                 for (int i = 0; i < show; ++i)
-                    t << (i == 0 ? " at " : ", ") << timecode (q.clipEvents[(size_t) i].startSample, q.sampleRate);
+                    t << (i == 0 ? " at " : ", ") << eventTimecode (q, q.clipEvents[(size_t) i].startSample);
                 if (q.clipEventCount > show) t << ", ...";
                 t << "\n";
             }

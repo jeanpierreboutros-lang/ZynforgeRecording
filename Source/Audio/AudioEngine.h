@@ -894,8 +894,12 @@ namespace zynforge
                                          int windowSamples);
         bool deleteClip      (int track, int clipIndex);
         // Duplicate the clip onto the same track, placed after the end
-        // of the source so the engineer doesn't have to nudge it.
+        // of the source so the engineer doesn't have to nudge it. The copy
+        // replaces what lay there (other clips are cut back around it), so two
+        // clips never play summed; refused when a locked clip is in the way.
+        // duplicateRefusal says why a duplicate would be refused, or nothing.
         bool duplicateClip   (int track, int clipIndex);
+        juce::String duplicateRefusal (int track, int clipIndex) const;
 
         // Recent sessions -- maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0

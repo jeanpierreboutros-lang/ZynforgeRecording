@@ -139,7 +139,12 @@ namespace zynforge
                 writeDc (baf.getChildFile ("Track_01.wav"), 0.1f, 64, sr);
                 writeDc (baf.getChildFile ("Track_01_part03.wav"), 0.3f, 64, sr);
                 AudioEngine eng;
-                expectEquals (eng.loadSession (broken), 0);
+                // The strip still counts (crash recovery sizes the mixer from
+                // it), but its take does not open: nothing plays, shifted or not.
+                expectEquals (eng.loadSession (broken), 1);
+                expect (eng.getPlayer().trackFailedToOpen (0), "a take missing its middle part opened");
+                expect (! eng.getPlayer().isLoaded(), "a take missing its middle part plays");
+                expectEquals (eng.getPlayer().getTrackLengthSamples (0), (juce::int64) 0);
                 broken.deleteRecursively();
             }
 

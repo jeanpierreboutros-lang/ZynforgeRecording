@@ -773,8 +773,26 @@ namespace zynforge
                 // the new audio draws AFTER the existing take (continue) or AT the
                 // punch point (punch) -- the silent run encodes the timeline
                 // offset; drawRecEnvelope confines the whole thing to its share.
-                recPeakL.reset (prefillSilentPoints);
-                recPeakR.reset (prefillSilentPoints);
+                // A take still held from the last STOP (its rescan paused for
+                // this one) is the start of that run: a continue draws after it.
+                // Silence there left the previous take drawn only as far as its
+                // paused scan had got. A punch inside the held take resets.
+                const auto heldBins = recPeakL.binCount();
+                if (liveHold && heldBins > 0 && heldBins <= prefillSilentPoints)
+                {
+                    recPeakL.appendSilence (prefillSilentPoints - heldBins);
+                    if (stereo && recPeakR.binCount() == heldBins)
+                        recPeakR.appendSilence (prefillSilentPoints - heldBins);
+                    else
+                        recPeakR.reset (prefillSilentPoints);
+                    liveSeededBins = heldBins;
+                }
+                else
+                {
+                    recPeakL.reset (prefillSilentPoints);
+                    recPeakR.reset (prefillSilentPoints);
+                    liveSeededBins = 0;
+                }
                 liveHold = false;           // a new take supersedes any held envelope
             }
             liveRecording = on;
@@ -802,17 +820,21 @@ namespace zynforge
         // audio on un-armed rows keeps showing its real thumbnail.
         void holdLiveEnvelopeUntilScanned()
         {
-            // Only a row that captured holds: another keeps its waveform, not
-            // the envelope left over from an earlier take.
+            // Only a row that captured starts holding: another keeps its
+            // waveform, not the envelope left over from an earlier take. One
+            // still holding the take before (its rescan paused for this one)
+            // keeps that hold: dropping it drew that take only as far as the
+            // paused scan had got.
             const bool captured = liveRecording;
             liveRecording = false;
+            if (! captured) return;
             // Released only by a scan issued after this point. During the take
             // the row had no source (which counts as loaded), and an async STOP
             // clears isCaptureFinalizing() a tick before the settle rescan:
             // a visible row that repainted in that gap dropped its 4-hour
             // envelope for a scan that had not started, and drew the take as
             // it trickled in. Rows off screen never painted, so kept theirs.
-            liveHold = captured && ! recPeakL.empty();
+            liveHold = ! recPeakL.empty();
             reloadsAtHold = waveformReloads;
         }
         bool isHoldingLiveEnvelope() const noexcept { return liveHold; }
@@ -854,22 +876,28 @@ namespace zynforge
 
         // Daemon snapshots carry meter peaks rather than the local fine
         // FIFO. Fill the elapsed bins with that coarse peak so the waveform
-        // and playhead still advance on the daemon's capture clock.
+        // and playhead still advance on the daemon's capture clock. A gap
+        // longer than kMaxFilledGapBins (~44 s at 48 kHz without a status) is
+        // drawn silent up to the newest bin: one peak smeared over minutes
+        // would draw audio that was never measured, and starting again from
+        // there (a reset) wiped all the take the lane had drawn.
+        static constexpr juce::int64 kMaxFilledGapBins = 8192;
+        static void appendRemotePeak (LivePeakHistory& peaks, float peak, juce::int64 absoluteBin)
+        {
+            if (absoluteBin - peaks.binCount() > kMaxFilledGapBins)
+                peaks.appendSilence (absoluteBin - 1 - peaks.binCount());
+            while (peaks.binCount() < absoluteBin)
+                peaks.append (peak);
+        }
         void appendRemotePeakL (float peak, juce::int64 absoluteBin)
         {
             if (! liveRecording) return;
-            if (absoluteBin - recPeakL.spanSamples() / TrackState::kLiveBinSamples > 8192)
-                recPeakL.reset (absoluteBin - 1);
-            while (recPeakL.spanSamples() / TrackState::kLiveBinSamples < absoluteBin)
-                recPeakL.append (peak);
+            appendRemotePeak (recPeakL, peak, absoluteBin);
         }
         void appendRemotePeakR (float peak, juce::int64 absoluteBin)
         {
             if (! liveRecording || ! stereo) return;
-            if (absoluteBin - recPeakR.spanSamples() / TrackState::kLiveBinSamples > 8192)
-                recPeakR.reset (absoluteBin - 1);
-            while (recPeakR.spanSamples() / TrackState::kLiveBinSamples < absoluteBin)
-                recPeakR.append (peak);
+            appendRemotePeak (recPeakR, peak, absoluteBin);
         }
 
         void mouseEnter (const juce::MouseEvent&) override
@@ -1108,16 +1136,15 @@ namespace zynforge
                 // A take rolling on this row shows here too, under the markers.
                 if (liveRecording)
                 {
-                    g.setColour (brand::meterHot);
                     if (stereo)
                     {
                         const int laneH = inner.getHeight() / 2;
-                        drawRecEnvelope (g, confineLive (inner.withHeight (laneH)), recPeakL, vz);
-                        drawRecEnvelope (g, confineLive (inner.withTrimmedTop (laneH)), recPeakR, vz);
+                        drawLiveEnvelope (g, confineLive (inner.withHeight (laneH)), recPeakL, vz, brand::meterHot);
+                        drawLiveEnvelope (g, confineLive (inner.withTrimmedTop (laneH)), recPeakR, vz, brand::meterHot);
                     }
                     else
                     {
-                        drawRecEnvelope (g, confineLive (inner), recPeakL, vz);
+                        drawLiveEnvelope (g, confineLive (inner), recPeakL, vz, brand::meterHot);
                     }
                 }
 
@@ -1226,14 +1253,18 @@ namespace zynforge
                 {
                     // Existing take dim under the capture; capture confined to its
                     // timeline fraction so a punch lands at the punch point.
-                    drawContinueExisting (g, laneL, thumbnailL, ! stereoOneFile, 0, waveZoom (thumbnailL), existingFrac);
-                    drawContinueExisting (g, laneR, rightThumb(), ! stereoOneFile, 1, waveZoom (rightThumb()), existingFrac);
+                    // A take seeded from the held one draws that take itself.
+                    if (! seededFromHold())
+                    {
+                        drawContinueExisting (g, laneL, thumbnailL, ! stereoOneFile, 0, waveZoom (thumbnailL), existingFrac);
+                        drawContinueExisting (g, laneR, rightThumb(), ! stereoOneFile, 1, waveZoom (rightThumb()), existingFrac);
+                    }
                     // Live capture glows hot (recording NOW); the post-stop hold dims
-                // to the channel colour so it matches the clean thumbnail that
-                // replaces it (no flash of orange barcode on stop).
-                g.setColour (liveRecording ? brand::meterHot : waveColour);
-                    drawRecEnvelope (g, confineLive (laneL), recPeakL, vz);
-                    drawRecEnvelope (g, confineLive (laneR), recPeakR, vz);
+                    // to the channel colour so it matches the clean thumbnail that
+                    // replaces it (no flash of orange barcode on stop).
+                    const auto liveColour = liveRecording ? brand::meterHot : waveColour;
+                    drawLiveEnvelope (g, confineLive (laneL), recPeakL, vz, liveColour);
+                    drawLiveEnvelope (g, confineLive (laneR), recPeakR, vz, liveColour);
                 }
                 // Thin divider between lanes
                 g.setColour (brand::edge);
@@ -1249,12 +1280,12 @@ namespace zynforge
                 // thumbnail, or the lane shows blocky garbage instead of the
                 // growing capture. After stop it dims to ember and holds until
                 // the real thumbnail finishes scanning (no blank gap).
-                drawContinueExisting (g, inner, thumbnailL, false, monoFileChannel, waveZoom (thumbnailL), existingFrac);
+                if (! seededFromHold())
+                    drawContinueExisting (g, inner, thumbnailL, false, monoFileChannel, waveZoom (thumbnailL), existingFrac);
                 // Live capture glows hot (recording NOW); the post-stop hold dims
                 // to the channel colour so it matches the clean thumbnail that
                 // replaces it (no flash of orange barcode on stop).
-                g.setColour (liveRecording ? brand::meterHot : waveColour);
-                drawRecEnvelope (g, confineLive (inner), recPeakL, vz);
+                drawLiveEnvelope (g, confineLive (inner), recPeakL, vz, liveRecording ? brand::meterHot : waveColour);
             }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
                 drawWaveOutlined (thumbnailL, inner, false, monoFileChannel,
@@ -2717,6 +2748,8 @@ namespace zynforge
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
         bool         isArmShownForTests()    const { return armButton.getToggleState(); }
         juce::int64  getLiveEnvelopeSamplesForTests() const { return recPeakL.spanSamples(); }
+        float        getLiveEnvelopePeakForTests (juce::int64 firstBin, juce::int64 endBin) const
+        { return recPeakL.maxPeakInBinRange (firstBin, endBin); }
         int          getOwnThumbnailCountForTests() const noexcept { return (int) ownThumbs.size(); }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
         float        getWaveformPeakForTests() const { return thumbnailL.getApproximatePeak(); }
@@ -2812,6 +2845,16 @@ namespace zynforge
                             page->onStatus ("A peer of this clip is locked -- unlock it first");
                         return;
                     }
+                    // A copy replaces what lies where it lands: refuse before any
+                    // peer changes when that is a locked clip on one of them.
+                    if (chosen == 410)
+                        for (auto [p, pi] : targets)
+                            if (const auto refusal = self->engine.duplicateRefusal (p, pi); refusal.isNotEmpty())
+                            {
+                                if (auto* page = self->findParentComponentOfClass<EditPage>(); page != nullptr && page->onStatus)
+                                    page->onStatus (refusal);
+                                return;
+                            }
                     // Each peer's own index: a duplicate or delete on one track
                     // leaves the others' lists alone.
                     if (chosen == 410) withUndo ("Duplicate clip", [&]{ for (auto [p, pi] : targets) self->engine.duplicateClip (p, pi); });
@@ -3205,10 +3248,13 @@ namespace zynforge
         // in the record colour. `vz` is the same vertical zoom the file
         // thumbnails use so the live take and the post-stop waveform sit
         // at the same scale.
+        // Only the columns whose first bin is in [fromBin, toBin).
         static void drawRecEnvelope (juce::Graphics& g,
                                      juce::Rectangle<int> area,
                                      const LivePeakHistory& peaks,
-                                     float vz)
+                                     float vz,
+                                     juce::int64 fromBin = 0,
+                                     juce::int64 toBin = std::numeric_limits<juce::int64>::max())
         {
             const int w = area.getWidth();
             const juce::int64 n = peaks.binCount();
@@ -3224,12 +3270,29 @@ namespace zynforge
                 // point count. This lets the recent fine-detail ring draw the
                 // live edge sharply even after hours of overview compaction.
                 const auto a = (juce::int64) x * n / w;
+                if (a < fromBin || a >= toBin) continue;
                 const auto b = juce::jmax (a + 1, (juce::int64) (x + 1) * n / w);
                 const float pk = peaks.maxPeakInBinRange (a, b);
                 const float h = juce::jlimit (0.0f, halfH, pk * vz * halfH);
                 if (h <= 0.0f) continue;
                 g.drawVerticalLine (drawX, midY - h, midY + h);
             }
+        }
+
+        // While capturing, a start seeded from the held previous take (see
+        // setLiveRecording) is the existing take: drawn in its dim colour.
+        bool seededFromHold() const noexcept { return liveRecording && liveSeededBins > 0; }
+        void drawLiveEnvelope (juce::Graphics& g, juce::Rectangle<int> area,
+                               const LivePeakHistory& peaks, float vz, juce::Colour liveColour)
+        {
+            const auto seeded = seededFromHold() ? liveSeededBins : (juce::int64) 0;
+            if (seeded > 0)
+            {
+                g.setColour (brand::clipWave (getStripColour()).withAlpha (brand::alpha::muted));
+                drawRecEnvelope (g, area, peaks, vz, 0, seeded);
+            }
+            g.setColour (liveColour);
+            drawRecEnvelope (g, area, peaks, vz, seeded);
         }
 
         // Pro Tools-style three-column header layout:
@@ -3335,6 +3398,9 @@ namespace zynforge
         // INSTANTLY on stop instead of "building" for a beat.
         bool                      liveHold              { false };
         int                       reloadsAtHold         { 0 };   // waveformReloads when the hold began
+        // Bins at the start of the live envelope that are the held previous
+        // take (setLiveRecording), drawn as the existing take, not as capture.
+        juce::int64               liveSeededBins        { 0 };
         int                       lastInputDeviceCount  { -1 };
         int                       lastOutputDeviceCount { -1 };
         unsigned int              lastColourArgb        { 0 };
