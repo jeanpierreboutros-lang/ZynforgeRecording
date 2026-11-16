@@ -338,6 +338,7 @@ public:
         noReturnWithinGraceEndsTheTake();   // C5
         halErrorRidesThrough();   // C5
         restartInPlaceKeepsMonitoring();   // C5
+        restartInPlaceGetsAHeadStart();   // ENG-02, 2026-11-16
     }
 
 private:
@@ -868,6 +869,70 @@ private:
         engine.serviceDeviceWatch (juce::Time::getMillisecondCounter() + AudioEngine::kRideThroughGraceMs + 100);
         expect (! engine.isRecording(), "the take is still open");
         expect (enginedevice::pumpUntil ([&] { return interrupted && ! engine.isCaptureFinalizing(); }));
+    }
+
+    // ── ENG-02, 2026-11-16 ─────────────────────────────────────────────
+    // A restart CoreAudio runs in place (DVS or Dante reconfigured, a clock
+    // re-lock) stops the device, and JUCE starts it again from a 100 ms timer
+    // on this thread. The watch's 10 Hz tick can land first: reopening the
+    // input alone then destroyed the device holding that restart, and every
+    // output was gone until STOP.
+    void restartInPlaceGetsAHeadStart()
+    {
+        beginTest ("ENG-02 (2026-11-16): a restart in place keeps its outputs: the watch waits for the device's own restart");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        Rig rig;
+        enginedevice::OnRig on (engine, rig, "Interface", "Headphones");
+        enginedevice::readyTwoStrips (engine);
+        bool interrupted = false;
+        engine.onTakeInterrupted = [&interrupted] (bool) { interrupted = true; };
+        expect (engine.startRecording (session.dir), engine.getRecorder().getStartError());
+        enginedevice::Feeder feed { engine, 8 };
+        feed.blocks (20, 0.25f);
+
+        auto* device = on.device();
+        expect (device != nullptr);
+        if (device == nullptr) return;
+        juce::AudioIODeviceCallback* callback = nullptr;
+        std::thread coreAudio ([&] { callback = device->stopForRestart(); });
+        coreAudio.join();
+        expect (engine.isRidingThroughDeviceStop());
+        // The watch ticks before the device's own restart timer has fired.
+        const auto now = juce::Time::getMillisecondCounter();
+        engine.serviceDeviceWatch (now + 100);
+        const auto output = on.manager().getAudioDeviceSetup().outputDeviceName;
+        expectEquals (output, juce::String ("Headphones"),
+                      "the watch reopened the input alone before the device's own restart could run");
+        if (output == "Headphones")
+        {
+            device->startAgain (callback);
+            expect (! engine.isRidingThroughDeviceStop(), "the restarted device was not taken back");
+            feed.blocks (20, 0.5f);
+            const auto notice = engine.captureStatus().deviceNotice;
+            expect (notice.contains ("continues") && ! notice.contains ("MONITOR OUTPUT LOST"), notice);
+        }
+        engine.stopRecording();
+        expect (! interrupted);
+
+        beginTest ("ENG-02 (2026-11-16): a restart that never comes still falls back to the input alone");
+        enginedevice::Folder second;
+        expect (engine.startRecording (second.dir), engine.getRecorder().getStartError());
+        feed.blocks (20, 0.25f);
+        device = on.device();
+        if (device == nullptr) return;
+        std::thread stopped ([&] { device->stopForRestart(); });
+        stopped.join();
+        const auto start = juce::Time::getMillisecondCounter();
+        engine.serviceDeviceWatch (start + 100);
+        expect (engine.isRidingThroughDeviceStop());
+        engine.serviceDeviceWatch (start + 1000);
+        expect (! engine.isRidingThroughDeviceStop(), "the input was never opened again on its own");
+        expect (on.manager().getAudioDeviceSetup().outputDeviceName.isEmpty());
+        feed.blocks (20, 0.5f, 0);
+        expect (engine.captureStatus().deviceNotice.contains ("MONITOR OUTPUT LOST"), engine.captureStatus().deviceNotice);
+        engine.stopRecording();
+        expect (! interrupted, "a lost output ended the take");
     }
 };
 

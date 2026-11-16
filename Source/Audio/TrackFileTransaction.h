@@ -96,9 +96,11 @@ public:
             entries.add (juce::var (e));
         }
         // Hidden files too: each says how far along its strip moves this folder
-        // is, so it has to roll back with the files it describes.
+        // is, so it has to roll back with the files it describes. The report
+        // names the take files a move renames, so it rolls back with them.
         for (const auto& f : session.findChildFiles (juce::File::findFiles, false,
-                                                     "*.zfproj;session_mix.json;.zynforge-track-order.json;.zynforge-primary"))
+                                                     "*.zfproj;session_mix.json;session.report.json;"
+                                                     ".zynforge-track-order.json;.zynforge-primary"))
         {
             auto backup = folder.getChildFile ("metadata_" + f.getFileName());
             if (! f.copyFileTo (backup)) return false;

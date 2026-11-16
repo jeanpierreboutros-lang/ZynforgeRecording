@@ -9,6 +9,7 @@
 #include "MultiPartReader.h"
 #include "StereoMixWriter.h"
 
+#include <map>
 #include <vector>
 
 namespace zynforge
@@ -165,7 +166,8 @@ namespace zynforge
             t.liveInputGainDb.store (0); t.captureInputGainDb.store (0);
             t.liveInputGainKnown.store (false); t.captureInputGainKnown.store (false);
             t.referenceMedia.store (false); t.inputPeak.store (0);
-            t.rampSamplesRemaining.store (0);
+            t.rampTargetPan.store (0.0f);
+            t.rampSamplesRemaining.store (0); t.rampPanSamplesRemaining.store (0);
         }
         // Reload AFTER the Strip* writes above so our whole-file save doesn't
         // undo them, THEN apply the appProps-owned stereo flags and save once.
@@ -729,6 +731,12 @@ namespace zynforge
                     stopPlayback();
                     return true;
                 }
+                // From where a local PLAY starts: a placed EDIT cursor, else
+                // where the player is (MainComponent::startPlaybackFromCursor).
+                // Never under a take: the player's place is the take's then.
+                if (const auto cursor = getEditCursorSample();
+                    cursor >= 0 && ! isTakeOnDisk() && player.isLoaded() && ! player.isPlaying())
+                    player.setPositionSamples (cursor);
                 if (startPlayback()) return true;
                 error = isTakeOnDisk() ? juce::String ("capture is running")
                       : getPlaybackRateRefusal().isNotEmpty() ? getPlaybackRateRefusal()
@@ -871,18 +879,44 @@ namespace zynforge
         }
     }
 
-    void AudioEngine::setLtcSourceStrip (int oneBasedIndex) noexcept
+    void AudioEngine::setLtcSourceStrip (int oneBasedIndex)
     {
-        ltcSourceStrip.store (oneBasedIndex - 1, std::memory_order_release);
+        ltcLegacyIndex = -1;   // chosen now, so nothing older is adopted
+        storeLtcSource (oneBasedIndex - 1);
+    }
+
+    // Message thread. The strip at `index` (or none) is the LTC source, held by
+    // its uid, which moves with it and is saved with its session.
+    void AudioEngine::storeLtcSource (int index)
+    {
+        if (index < 0 || index >= recorder.getNumTracks()) index = -1;
+        ltcSourceUid = index >= 0 ? recorder.getTrack (index).stripId : juce::String();
+        ltcSourceStrip.store (index, std::memory_order_release);
         // Only the atomics: the callback may be inside feedLtc with the old
         // source, and the decoder's scratch is its own (TimecodeChase.h).
-        if (oneBasedIndex <= 0) timecodeChase.clearFreewheel();
+        if (index < 0) timecodeChase.clearFreewheel();
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();
-            appProps->setValue ("ltcSourceStrip", oneBasedIndex);
+            appProps->setValue ("ltcSourceStrip", index + 1);
+            appProps->setValue ("ltcSourceUid", ltcSourceUid);
             appProps->saveIfNeeded();
         }
+    }
+
+    // Message thread, after the strips' uids may have changed (another
+    // session's mixer, a new session's strips, a cleared mixer). The source
+    // follows its strip, or goes: an index alone would feed the decoder
+    // whatever strip sits there now.
+    void AudioEngine::rebindLtcSource()
+    {
+        const int current = ltcSourceStrip.load (std::memory_order_acquire);
+        int found = -1;
+        if (ltcSourceUid.isNotEmpty())
+            for (int i = 0; i < recorder.getNumTracks(); ++i)
+                if (recorder.getTrack (i).stripId == ltcSourceUid) { found = i; break; }
+        if (found == current && (found >= 0 || ltcSourceUid.isEmpty())) return;
+        storeLtcSource (found);
     }
 
     juce::StringArray AudioEngine::getMidiInputNames() const
@@ -972,24 +1006,38 @@ namespace zynforge
         return true;
     }
 
-    bool AudioEngine::setChaseStartFromTake()
+    bool AudioEngine::setChaseStartFromTake (juce::String* whyNot)
     {
-        if (isTakeOnDisk()) return false;
+        const auto refuse = [whyNot] (const juce::String& why)
+        {
+            if (whyNot != nullptr) *whyNot = why;
+            return false;
+        };
+        if (isTakeOnDisk()) return refuse ("Wait until the take has stopped");
         const auto folder = getActiveSessionDir().getChildFile ("Audio Files");
         auto files = takenames::trackFiles (folder);
         const double rate = player.getSampleRate();
-        if (rate <= 0.0) return false;
+        if (rate <= 0.0) return refuse ("No take here carries a time stamp");
         for (const auto& file : files)
         {
             juce::uint64 stamp = 0;
             if (file.getFileName().contains (".punchbase") || mainTakeTrackNumber (file) <= 0
                 || bwf::readTimeReference (file, stamp) != bwf::StampResult::ok) continue;
+            // The stamp counts real seconds and the start is a label, which
+            // only the master's frame rate turns into seconds again. Converted
+            // at a guessed 30 fps, chase ran up to 0.24 s off at 24 or 25 fps
+            // and about 36 s off at 29.97 or 23.976 non-drop.
+            if (timecodeChase.getFps() <= 0.0f)
+                return refuse ("No timecode heard yet: start the timecode source so its frame rate is known, "
+                               "then Use Take Stamp");
             // The stamp counts real seconds, which a pulled-down rate's labels do not.
             const auto label = timecodeChase.labelAt ((double) stamp / rate);
-            return setChaseStartTimecode (juce::String::formatted ("%02d:%02d:%02d:%02d",
-                (int) (label >> 24), (int) ((label >> 16) & 0xFF), (int) ((label >> 8) & 0xFF), (int) (label & 0xFF)));
+            if (setChaseStartTimecode (juce::String::formatted ("%02d:%02d:%02d:%02d",
+                    (int) (label >> 24), (int) ((label >> 16) & 0xFF), (int) ((label >> 8) & 0xFF), (int) (label & 0xFF))))
+                return true;
+            return refuse ("The take's time stamp is not a time of day");
         }
-        return false;
+        return refuse ("No take here carries a time stamp");
     }
 
     // The player has no converter: what it plays, it plays at the device's rate.
@@ -1415,6 +1463,9 @@ namespace zynforge
         root->setProperty ("strips", arr);
 
         root->setProperty ("chaseStartTimecode", getChaseStartTimecode());
+        // The LTC strip, by uid: it is this session's, and no other's.
+        root->setProperty ("ltcSourceUid", ltcSourceStrip.load (std::memory_order_acquire) >= 0
+                                               ? ltcSourceUid : juce::String());
         root->setProperty ("streamOutL", streamOutL.load (std::memory_order_relaxed));
         root->setProperty ("streamOutR", streamOutR.load (std::memory_order_relaxed));
         return juce::JSON::toString (juce::var (root.get()), true);
@@ -1531,6 +1582,15 @@ namespace zynforge
                 appProps->setValue ("strip_uid_" + juce::String (i), recorder.getTrack (i).stripId);
             appProps->saveIfNeeded();
         }
+
+        // The LTC strip is the session's own. A session saved before it was
+        // kept that way adopts the index the app kept for every session, once.
+        if (root->hasProperty ("ltcSourceUid"))
+            ltcSourceUid = root->getProperty ("ltcSourceUid").toString();
+        else if (ltcLegacyIndex >= 0 && ltcLegacyIndex < recorder.getNumTracks())
+            ltcSourceUid = recorder.getTrack (ltcLegacyIndex).stripId;
+        ltcLegacyIndex = -1;
+        rebindLtcSource();
         return true;
     }
 
@@ -1545,9 +1605,30 @@ namespace zynforge
 
     int AudioEngine::dropMarkerAtCurrentPosition (const juce::String& name, const juce::String& type)
     {
-        if (! markers.hasContext()) return -1;
+        markerRefusal.clear();
+        const auto refuse = [this] (const juce::String& why)
+        {
+            markerRefusal = why;
+            return -1;
+        };
+        if (! markers.hasContext()) return refuse ("no session is open");
+        // A helper's take is where its last status said, and that is only
+        // known while the status is fresh: a marker placed from an old one
+        // lands seconds early, and a guess is worse than no marker.
         if (externalRecording.load (std::memory_order_acquire)
-            && captureStatus().source != "daemon") return -1;
+            && captureStatus().source != "daemon")
+        {
+            juce::int64 receivedAt = 0;
+            {
+                std::lock_guard<std::mutex> lock (externalStatusLock);
+                receivedAt = externalStatusAtMs;
+            }
+            const auto age = juce::Time::currentTimeMillis() - receivedAt;
+            return refuse (receivedAt == 0 || age < 0
+                ? juce::String ("the capture helper has not reported the take's position yet")
+                : "the capture helper has not reported for " + juce::String ((int) (age / 1000))
+                      + " s, so the take's position is not known");
+        }
 
         // Pro Tools-style: when the engineer has placed the edit
         // cursor in the EDIT view, the marker lands there. Otherwise
@@ -1570,14 +1651,14 @@ namespace zynforge
             pos = isCaptureWindowActive() && player.isPlaying()
                 ? player.getPositionSamples()
                 : getRecordTimelineSamples();
-            if (pos < 0) return -1;
+            if (pos < 0) return refuse ("the take's position is not known yet");
         }
         else if (cursor >= 0)
             pos = cursor;
         else if (player.isLoaded())
             pos = player.getPositionSamples();
         else
-            return -1;
+            return refuse ("nothing is loaded to mark");
 
         markers.drop (pos, name, type);
         if (onMarkerDropped)
@@ -1626,6 +1707,7 @@ namespace zynforge
             appProps->setValue ("stripCount", juce::var (0));
             appProps->saveIfNeeded();
         }
+        ltcLegacyIndex = -1;   // a clean slate adopts nothing from before
 
         // Reset live state on whatever strips currently exist so the
         // change is visible immediately, not only after the recorder
@@ -1643,6 +1725,7 @@ namespace zynforge
             t.colourARGB.store (0,   std::memory_order_relaxed);
             t.stripId.clear();
         }
+        rebindLtcSource();   // no strip is the one it was
     }
 
     void AudioEngine::clearStripOverridesRange (int firstIndex, int lastIndexExclusive)
@@ -1705,6 +1788,7 @@ namespace zynforge
         deviceManager.addAudioCallback (this);
         layoutRestart = false;
         if (wasPlaying && ! player.isPlaying()) startPlayback();
+        rebindLtcSource();   // a new session's strips are new strips
     }
 
     void AudioEngine::addOneStrip()
@@ -1886,6 +1970,77 @@ namespace zynforge
             player.setLoopEnabled (punchLoopWasEnabled);
     }
 
+    namespace
+    {
+        // session.report.json lists one entry per strip, in strip order, and
+        // names each strip's take files. A move renames those files, so each
+        // entry goes to its strip's new place with the new names, inside the
+        // move's transaction (its journal keeps a copy of the report, and a
+        // rollback puts it back). Without this the hash pass, Show Handoff and
+        // verify_take checked names that no longer existed, and the next
+        // continue added a strip's clip count to whatever strip took its place.
+        // Backup and mirror names stay: those files are renamed when the copy
+        // catches up, before it next joins a take (TrackOrderLog.h), and that
+        // take's report names them anew. A report that does not read is left.
+        bool moveReportEntries (const juce::File& session, const juce::File& audio,
+                                const std::vector<int>& destination, int count,
+                                const std::vector<TrackFileTransaction::Move>& moves)
+        {
+            const auto file = session.getChildFile ("session.report.json");
+            if (! file.existsAsFile() || ! juce::JSON::parse (file).isObject()) return true;
+            std::map<juce::String, juce::String> renamed;
+            for (const auto& m : moves)
+                if (m.first.getParentDirectory() == audio && m.second.getParentDirectory() == audio)
+                    renamed[m.first.getFileName()] = m.second.getFileName();
+            return MultitrackRecorder::editSessionReport (session, [&] (juce::DynamicObject& report)
+            {
+                auto* tracks = report.getProperty ("tracks").getArray();
+                if (tracks == nullptr) return;
+                // An entry past the strips there are now (a report older than
+                // a delete) keeps its place: no move touched its files.
+                std::vector<juce::var> placed ((size_t) juce::jmax (count, tracks->size()));
+                for (int old = 0; old < tracks->size(); ++old)
+                {
+                    const int dest = old < (int) destination.size() ? destination[(size_t) old] : old;
+                    if (dest < 0) continue;   // removed: its files went to Removed Tracks
+                    auto entry = tracks->getReference (old);
+                    if (auto* t = entry.getDynamicObject())
+                    {
+                        t->setProperty ("index", dest);
+                        if (auto* names = t->getProperty ("files").getArray())
+                            for (auto& name : *names)
+                                if (const auto it = renamed.find (name.toString()); it != renamed.end())
+                                    name = it->second;
+                    }
+                    placed[(size_t) dest] = entry;
+                }
+                // A strip added after the take has no entry. It gets an empty
+                // one, so every entry still stands at its strip's place.
+                int last = -1;
+                for (int i = 0; i < (int) placed.size(); ++i)
+                    if (! placed[(size_t) i].isVoid()) last = i;
+                juce::Array<juce::var> next;
+                for (int i = 0; i <= last; ++i)
+                {
+                    if (placed[(size_t) i].isVoid())
+                    {
+                        auto* empty = new juce::DynamicObject();
+                        empty->setProperty ("index", i);
+                        empty->setProperty ("name", juce::String());
+                        empty->setProperty ("clipCount", 0);
+                        empty->setProperty ("lastClipSample", -1);
+                        empty->setProperty ("files", juce::Array<juce::var>());
+                        empty->setProperty ("sha256", juce::Array<juce::var>());
+                        placed[(size_t) i] = juce::var (empty);
+                    }
+                    next.add (placed[(size_t) i]);
+                }
+                report.setProperty ("tracks", next);
+                report.setProperty ("numTracks", next.size());
+            });
+        }
+    }
+
     bool AudioEngine::swapTracks (int a, int b)
     {
         const int n = recorder.getNumTracks();
@@ -1898,21 +2053,53 @@ namespace zynforge
     bool AudioEngine::reorderTracks (const std::vector<int>& order)
     {
         reorderRefusal.clear();
-        if (isRecording() || isSessionTransitionActive()) return false;
+        // Every refusal says why: the strip menus show it, and "check disk
+        // permissions" sent the engineer after a disk that was fine.
+        const auto refuse = [this] (const juce::String& why)
+        {
+            reorderRefusal = why;
+            return false;
+        };
+        if (isRecording()) return refuse ("A take is recording; move or remove strips after STOP");
+        if (isSessionTransitionActive())
+            return refuse ("A take is still being finalized, or a session job is running; "
+                           "move or remove strips when it ends");
         // Refused before any take file is renamed: the indices below describe
         // the strips in memory, which only match this folder's takes if they
         // are its mixer, and emptying a saved mixer is not a save we allow.
-        if (activeSession.isDirectory()
-            && (! mixerBelongsTo (activeSession)
-                || (order.empty() && sessionmix::stripCountIn (activeSession) > 0)
-                || MultitrackRecorder::leadInsPending (activeSession.getChildFile ("Audio Files"))))
-            return false;
+        // A session pinned with its drive gone keeps its files in the old
+        // order: moving the strips in memory alone would bind every moved
+        // strip to another strip's take once the drive is back.
+        const auto pinned = activeSession != juce::File() ? activeSession : mixerSession;
+        if (pinned != juce::File() && ! pinned.isDirectory())
+            return refuse ("Session folder is missing: " + pinned.getFullPathName()
+                           + "; reconnect its drive before moving or removing strips");
+        if (activeSession == juce::File() && mixerSession != juce::File())
+            return refuse ("These strips are " + mixerSession.getFileName()
+                           + "'s mixer, which is not the open session; open it before moving or removing strips");
+        if (activeSession.isDirectory())
+        {
+            if (! mixerBelongsTo (activeSession))
+                return refuse ("These strips were not loaded from " + activeSession.getFileName()
+                               + "; open the session before moving or removing strips");
+            if (order.empty() && sessionmix::stripCountIn (activeSession) > 0)
+                return refuse ("A saved session keeps at least one strip; nothing was removed");
+            if (MultitrackRecorder::leadInsPending (activeSession.getChildFile ("Audio Files")))
+                return refuse ("A track's silent lead-in is still owed; strips can move once it is written");
+            // The hash pass reads the take by the names in session.report.json
+            // and then writes the whole report back from them: a move under it
+            // fails an intact take and puts the old names back.
+            if (MultitrackRecorder::reportHashesRunning (activeSession))
+                return refuse ("The last take's integrity hashes are still being written; strips can move "
+                               "when that ends (it ends on its own)");
+        }
         const int n = recorder.getNumTracks();
         std::vector<int> destination ((size_t) n, -1);
         for (int i = 0; i < (int) order.size(); ++i)
         {
             const int old = order[(size_t) i];
-            if (old < 0 || old >= n || destination[(size_t) old] >= 0) return false;
+            if (old < 0 || old >= n || destination[(size_t) old] >= 0)
+                return refuse ("The strip layout changed; nothing was moved");
             destination[(size_t) old] = i;
         }
         // The session's takes, listed once for every strip below.
@@ -1997,7 +2184,11 @@ namespace zynforge
         TrackFileTransaction files;
         const bool disk = session.isDirectory();
         if (disk && (! trackorder::ensureLog (session) || ! files.begin (session, moves)))
-        { deviceManager.addAudioCallback (this); return false; }
+        {
+            deviceManager.addAudioCallback (this);
+            return refuse ("Could not move the take files; check disk permissions and Session File Backups "
+                           "before retrying");
+        }
 
         trackClips.clear(); trackPlaylists.clear();
         for (int i = 0; i < (int) order.size(); ++i)
@@ -2050,16 +2241,29 @@ namespace zynforge
                 if (auto* root = project.getDynamicObject())
                 {
                     root->setProperty ("playlists", playlistsToJson());
+                    // Each strip's media length goes with it, like its
+                    // playlists: left in the old order, a reopen before the
+                    // next save regrew trimmed tails on the moved strips.
+                    if (auto* lengths = root->getProperty ("mediaLengths").getArray())
+                    {
+                        juce::Array<juce::var> moved;
+                        for (const int old : order)
+                            moved.add (old < lengths->size() ? (*lengths)[old] : juce::var ((juce::int64) 0));
+                        root->setProperty ("mediaLengths", moved);
+                    }
                     saved = atomicfile::writeText (f, juce::JSON::toString (project)) && saved;
                 }
                 else saved = false;
             }
+            if (saved) saved = moveReportEntries (session, audio, destination, (int) order.size(), moves);
             // Backups and mirrors follow this log before they next join a take.
             if (saved) saved = trackorder::append (session, destination);
             if (saved) saved = files.commit();
         }
         if (! saved)
         {
+            reorderRefusal = "Could not save the session after moving the strips; nothing was moved. "
+                             "Check disk permissions and Session File Backups before retrying";
             TrackFileTransaction::recoverOne (files.folder);
             for (int i = 0; i < n; ++i) recorder.getTrack (i).copySettingsFrom (*states[(size_t) i]);
             trackClips = std::move (oldClips); trackPlaylists = std::move (oldPlaylists);
@@ -2198,9 +2402,13 @@ namespace zynforge
             }
         }
 
-        // Restore the LTC source strip (1-based stored, internal 0-based).
+        // Restore the LTC source strip (1-based stored, internal 0-based), and
+        // the uid that makes it that strip's. One saved before uids were has no
+        // uid: the first session opened adopts it (loadSessionMixFrom).
         ltcSourceStrip.store (appProps->getIntValue ("ltcSourceStrip", 0) - 1,
                               std::memory_order_release);
+        ltcSourceUid = appProps->getValue ("ltcSourceUid", {});
+        if (ltcSourceUid.isEmpty()) ltcLegacyIndex = ltcSourceStrip.load();
 
         // Master bus state -- gain + mute + L/R output routing + stereo mode.
         masterState.name  = "MASTER";
@@ -2481,7 +2689,8 @@ namespace zynforge
                     applyDeviceConfiguration (sr, blockSize, device->getWorkgroup());
                     return;
                 }
-                beginRideThrough (juce::Time::getMillisecondCounter());
+                // A device starting is no restart still to come.
+                beginRideThrough (juce::Time::getMillisecondCounter(), false);
             }
             if (rideThroughAccepts (*device)) resumeRideThrough();
             else ride.standIn = DeferredDeviceConfiguration { sr, blockSize, device->getWorkgroup() };
@@ -2777,8 +2986,9 @@ namespace zynforge
         dB = juce::jlimit (-60.0f, 12.0f, dB);
         auto& t = recorder.getTrack (channelIndex);
         t.gainDb.store (dB, std::memory_order_relaxed);
-        // Direct set cancels any in-flight ramp so the engineer's slow
-        // physical fader move doesn't fight a finishing cue ramp.
+        // Direct set cancels the in-flight gain ramp so the engineer's slow
+        // physical fader move doesn't fight a finishing cue ramp. A cue's pan
+        // ramp has its own countdown and finishes.
         t.rampTargetGainDb.store (dB, std::memory_order_relaxed);
         t.rampSamplesRemaining.store (0, std::memory_order_relaxed);
         stripGains.setGainDb (channelIndex, dB);
@@ -2810,10 +3020,10 @@ namespace zynforge
             ? (juce::int64) (sr * juce::jmax (0.0, seconds))
             : 0;
         t.rampTargetPan       .store (pan,     std::memory_order_relaxed);
-        // Reuse rampSamplesRemaining for pan -- gain + pan ramp together
-        // during a cue recall, same duration, so one counter is enough.
-        // (Pan ramp uses the same countdown as the gain ramp.)
-        t.rampSamplesRemaining.store (samples, std::memory_order_relaxed);
+        // Its own countdown. Sharing the gain ramp's let a fader move within
+        // the ramp leave the pan part-way, and a cue's gain ramp on a strip
+        // the cue had no pan for swing that pan to a stale target.
+        t.rampPanSamplesRemaining.store (samples, std::memory_order_relaxed);
         if (samples == 0)
             t.pan.store (pan, std::memory_order_relaxed);
         // Persisted target, like the gain ramp: applyPersistedStripState
@@ -2870,38 +3080,30 @@ namespace zynforge
     {
         if (numSamples <= 0) return;
 
+        // One step of one ramp: `value` toward `target`, `remaining` samples
+        // to go. Gain and pan each run their own (see TrackState).
+        const auto step = [numSamples] (std::atomic<float>& value, const std::atomic<float>& target,
+                                        std::atomic<juce::int64>& countdown)
+        {
+            const juce::int64 remaining = countdown.load (std::memory_order_relaxed);
+            if (remaining <= 0) return;
+            const float cur = value .load (std::memory_order_relaxed);
+            const float tgt = target.load (std::memory_order_relaxed);
+            // Defensive: clamp denominator so a stale remaining can't
+            // produce NaN/inf values.
+            const juce::int64 denom = juce::jmax ((juce::int64) numSamples, remaining);
+            const float frac = (float) numSamples / (float) denom;
+            const juce::int64 next = remaining - (juce::int64) numSamples;
+            value.store (next <= 0 ? tgt : cur + (tgt - cur) * frac, std::memory_order_relaxed);
+            countdown.store (juce::jmax ((juce::int64) 0, next), std::memory_order_relaxed);
+        };
+
         const int n = recorder.getNumTracks();
         for (int i = 0; i < n; ++i)
         {
             auto& t = recorder.getTrack (i);
-            const juce::int64 remaining = t.rampSamplesRemaining.load (std::memory_order_relaxed);
-            if (remaining <= 0) continue;
-
-            const float curG = t.gainDb.load (std::memory_order_relaxed);
-            const float tgtG = t.rampTargetGainDb.load (std::memory_order_relaxed);
-            const float curP = t.pan   .load (std::memory_order_relaxed);
-            const float tgtP = t.rampTargetPan   .load (std::memory_order_relaxed);
-
-            // Defensive: clamp denominator so a stale remaining can't
-            // produce NaN/inf gain values.
-            const juce::int64 denom = juce::jmax ((juce::int64) numSamples, remaining);
-            const float frac = (float) numSamples / (float) denom;
-            const float newG = curG + (tgtG - curG) * frac;
-            const float newP = curP + (tgtP - curP) * frac;
-
-            const juce::int64 next = remaining - (juce::int64) numSamples;
-            if (next <= 0)
-            {
-                t.gainDb.store (tgtG, std::memory_order_relaxed);
-                t.pan   .store (tgtP, std::memory_order_relaxed);
-                t.rampSamplesRemaining.store (0, std::memory_order_relaxed);
-            }
-            else
-            {
-                t.gainDb.store (newG, std::memory_order_relaxed);
-                t.pan   .store (newP, std::memory_order_relaxed);
-                t.rampSamplesRemaining.store (next, std::memory_order_relaxed);
-            }
+            step (t.gainDb, t.rampTargetGainDb, t.rampSamplesRemaining);
+            step (t.pan,    t.rampTargetPan,    t.rampPanSamplesRemaining);
         }
     }
 
@@ -2909,7 +3111,12 @@ namespace zynforge
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         pan = juce::jlimit (-1.0f, 1.0f, pan);
-        recorder.getTrack (channelIndex).pan.store (pan, std::memory_order_relaxed);
+        auto& t = recorder.getTrack (channelIndex);
+        // A pan set by hand ends a cue's pan ramp, and only that: the gain
+        // ramp beside it runs on, like the fader's own direct set.
+        t.rampTargetPan.store (pan, std::memory_order_relaxed);
+        t.rampPanSamplesRemaining.store (0, std::memory_order_relaxed);
+        t.pan.store (pan, std::memory_order_relaxed);
         stripGains.setPan (channelIndex, pan);
     }
 
@@ -2980,11 +3187,22 @@ namespace zynforge
         return type != nullptr && type->getDeviceNames (true).contains (takeDevice.setup.inputDeviceName);
     }
 
+    // Message thread. Whether the take's output device is still there: a
+    // device that stopped with it listed is restarting, not lost.
+    bool AudioEngine::takeOutputListed()
+    {
+        auto* type = deviceManager.getCurrentDeviceTypeObject();
+        return type != nullptr && takeDevice.setup.outputDeviceName.isNotEmpty()
+            && type->getDeviceNames (false).contains (takeDevice.setup.outputDeviceName);
+    }
+
     // deviceLifecycleLock held. Capture holds, every output goes silent.
-    void AudioEngine::beginRideThrough (juce::uint32 nowMs)
+    void AudioEngine::beginRideThrough (juce::uint32 nowMs, bool restartMayFollow)
     {
         ride = {};
         ride.active = true;
+        // A take with no output has nothing a restart would bring back.
+        ride.headStart = restartMayFollow && takeDevice.setup.outputDeviceName.isNotEmpty();
         ride.startedMs = nowMs;
         ride.nextAttemptMs = nowMs;
         rideOutcome.store ((int) RideOutcome::waiting, std::memory_order_relaxed);
@@ -3105,7 +3323,7 @@ namespace zynforge
                 if ((juce::int32) (nowMs - watchProgressMs) < (juce::int32) kSilentStopMs) return;
                 // A punch keeps today's behaviour: the stall alarm, take open.
                 if (! mayRideThrough()) return;
-                beginRideThrough (nowMs);
+                beginRideThrough (nowMs, false);   // stopped by an error: JUCE restarts nothing
             }
             // The input itself gone, or not back in time: a device loss.
             if (! takeInputListed() || (juce::int32) (nowMs - ride.startedMs) >= (juce::int32) kRideThroughGraceMs)
@@ -3124,6 +3342,12 @@ namespace zynforge
                 resumeRideThrough();
                 return;
             }
+            // A restart in place: JUCE is about to start this device again,
+            // outputs included, and closing it now would end that restart.
+            // Its output gone instead is a real loss, and waits for nothing.
+            if (ride.headStart && (juce::int32) (nowMs - ride.startedMs) < (juce::int32) kRestartHeadStartMs
+                && takeOutputListed())
+                return;
             if ((juce::int32) (nowMs - ride.nextAttemptMs) < 0) return;
             ride.nextAttemptMs = nowMs + kRideThroughRetryMs;
             reopen = true;
@@ -3172,7 +3396,7 @@ namespace zynforge
             // take is held open for it. Otherwise a device loss, as always.
             if (mayRideThrough())
             {
-                beginRideThrough (juce::Time::getMillisecondCounter());
+                beginRideThrough (juce::Time::getMillisecondCounter(), true);
                 return;
             }
             if (finalizeDeviceLoss()) return;

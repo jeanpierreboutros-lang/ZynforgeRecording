@@ -632,6 +632,8 @@ namespace zynforge
                 e.setActiveSessionDir (f.dir);
                 expectEquals (e.loadSession (f.dir), 1);
                 const auto now = juce::Time::getCurrentTime();
+                // The master's frame rate, which turning the stamp into a label needs.
+                e.getTimecodeChase().feedMtcFullFrame (0, 0, 0, 0, 25.0f, false);
                 expect (e.setChaseStartFromTake(), "a recorded WAV carries a stamp");
                 expect (e.getChaseStartTimecode().startsWith (juce::String::formatted ("%02d:", now.getHours()))
                             || now.getMinutes() == 0,

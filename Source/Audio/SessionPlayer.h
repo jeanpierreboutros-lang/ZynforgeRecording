@@ -37,8 +37,11 @@ namespace zynforge
     // own output stream and the index→output mapping is unchanged.
     // Legacy two-mono-file pairs load as two independent mono tracks and
     // keep working untouched.
+    class EngineFix20261116Tests;
+
     class SessionPlayer
     {
+        friend class EngineFix20261116Tests;   // holds tracksLock as a render would
     public:
         SessionPlayer();
         ~SessionPlayer();
@@ -63,25 +66,28 @@ namespace zynforge
         bool isPlaying()      const noexcept { return playing.load (std::memory_order_acquire); }
         int  getNumTracks()   const noexcept { return (int) readerCount.load(); }
         juce::int64 getTotalLengthSamples() const noexcept { return totalLength.load(); }
+        // Under infoLock, never the render's tracksLock: a .zfproj save reads
+        // every track's length, and each wait there made a block's try-lock
+        // fail (a dropped block, or a jump hold) during playback.
         juce::int64 getTrackLengthSamples (int trackIdx) const
         {
-            const juce::ScopedLock sl (tracksLock);
-            if (trackIdx < 0 || trackIdx >= (int) tracks.size()) return 0;
-            return tracks[(size_t) trackIdx].length;
+            const juce::ScopedLock sl (infoLock);
+            if (trackIdx < 0 || trackIdx >= (int) trackLengths.size()) return 0;
+            return trackLengths[(size_t) trackIdx];
         }
         // A strip whose take is on disk but would not open: a part missing (a
         // silent lead-in still owed), no main file, a file that will not read.
         // It plays silence, and its clips must not be reseeded from length 0.
         bool trackFailedToOpen (int trackIdx) const
         {
-            const juce::ScopedLock sl (tracksLock);
+            const juce::ScopedLock sl (infoLock);
             return std::find (unopenedTracks.begin(), unopenedTracks.end(), trackIdx) != unopenedTracks.end();
         }
         // Strips the last load left silent because two takes claim them, one
         // line each naming the files ("Track 5 has two take files, ...").
         juce::StringArray loadClashes() const
         {
-            const juce::ScopedLock sl (tracksLock);
+            const juce::ScopedLock sl (infoLock);
             return clashText;
         }
         juce::int64 getPositionSamples()    const noexcept { return position   .load(); }
@@ -185,13 +191,18 @@ namespace zynforge
         juce::TimeSliceThread    readerThread { "ZF Player Reader" };
 
         std::vector<Track> tracks;
-        std::vector<int>   unopenedTracks;   // see trackFailedToOpen; under tracksLock
-        juce::StringArray  clashText;        // see loadClashes; under tracksLock
         // Reader lifetime guard. The audio thread only try-locks (and emits
         // silence on contention), while load/unload take the lock before
         // replacing readers. This makes teardown safe even with a stopped
         // device where the old generation-counter drain cannot advance.
         mutable juce::CriticalSection tracksLock;
+        // What the message thread asks about the tracks, under a lock the
+        // audio thread never takes. Written with `tracks`, under tracksLock
+        // then this one (never the other way round).
+        mutable juce::CriticalSection infoLock;
+        std::vector<juce::int64> trackLengths;     // tracks[i].length
+        std::vector<int>   unopenedTracks;         // see trackFailedToOpen
+        juce::StringArray  clashText;              // see loadClashes
 
         // Active clip lists, keyed by track index. Audio thread reads
         // under clipsLock -- UI thread holds it just long enough to

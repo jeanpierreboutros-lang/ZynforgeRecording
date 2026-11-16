@@ -110,8 +110,10 @@ namespace zynforge
         std::map<int, bool> takeCapturedStereoLinks();
 
         // A marker asked for over the network, held to scenefollow::MarkerBudget.
-        // What dropMarkerAtCurrentPosition returns, or -1 when refused.
+        // What dropMarkerAtCurrentPosition returns, or -1 when refused, and
+        // then getMarkerRefusal says why, for the remote that asked to show.
         int dropRemoteMarker (const juce::String& name = {}, const juce::String& type = "user");
+        juce::String getMarkerRefusal() const { return markerRefusal; }
 
         // Both console paths report a scene / snapshot recall here. The rule
         // is scenefollow::decide; this applies it and tells the engineer.
@@ -150,6 +152,7 @@ namespace zynforge
         scenefollow::MarkerBudget     markerBudget;
         juce::int64                   markersRefused { 0 };
         juce::uint32                  lastMarkerNoticeMs { 0 };
+        juce::String                  markerRefusal;
         juce::uint32                  lastJogNoticeMs { 0 };
         scenefollow::Facts sceneFacts() const;
         scenefollow::Facts punchFacts() const;

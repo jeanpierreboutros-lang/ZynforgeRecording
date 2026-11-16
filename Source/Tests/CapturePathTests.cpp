@@ -328,7 +328,10 @@ namespace zynforge
             {
                 std::vector<float> next;
                 for (const int old : order) next.push_back (levels[(size_t) old]);
-                test.expect (engine.reorderTracks (order), "the strip move was refused");
+                // A strip move waits for the last take's hash pass (CAP-02).
+                std::atomic<bool> stop { false };
+                MultitrackRecorder::waitForReportHashes (session, stop);
+                test.expect (engine.reorderTracks (order), "the strip move was refused: " + engine.getReorderRefusal());
                 levels = std::move (next);
             }
 

@@ -174,8 +174,11 @@ namespace zynforge
         juce::String getChaseStartTimecode() const;
         bool         setChaseStartTimecode (const juce::String& hhmmssff);   // false = not a timecode
         // Line the session's first sample up with the first take's BWF stamp,
-        // the time of day it was recorded. False when no take carries one.
-        bool         setChaseStartFromTake();
+        // the time of day it was recorded. False when no take carries one, or
+        // no timecode has been heard yet: the stamp is real time and the start
+        // is a label, so it needs the master's frame rate (30 fps was a guess,
+        // up to 36 s out at 29.97 non-drop). `whyNot` says which.
+        bool         setChaseStartFromTake (juce::String* whyNot = nullptr);
         // Empty while the timecode lands inside the session. Otherwise why
         // chase is holding off instead of throwing the playhead at the end.
         juce::String getChaseParkReason() const;
@@ -192,8 +195,11 @@ namespace zynforge
         void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
 
         // -1 = no LTC source. Otherwise the strip whose device input
-        // feeds the LTC zero-crossing analyzer once per audio block.
-        void setLtcSourceStrip (int oneBasedIndex) noexcept;
+        // feeds the LTC zero-crossing analyzer once per audio block. The
+        // choice is that STRIP's (by its uid) and is saved with the session:
+        // another session's mixer, or a new one, never feeds the decoder
+        // whatever strip sits at the same position. Message thread.
+        void setLtcSourceStrip (int oneBasedIndex);
         int  getLtcSourceStrip() const noexcept { return ltcSourceStrip.load() + 1; }
 
         // ── Master bus ────────────────────────────────────────────────
@@ -476,8 +482,8 @@ namespace zynforge
         // strips don't dangle. Returns true on success.
         bool swapTracks (int a, int b);
         bool reorderTracks (const std::vector<int>& order);
-        // Why the last reorder was refused, when the engineer can do something
-        // about it. Empty for any other failure.
+        // Why the last reorder was refused or failed, for the engineer. Every
+        // refusal sets it.
         juce::String getReorderRefusal() const { return reorderRefusal; }
         std::function<void (const std::vector<int>&)> onTracksReordered;
 
@@ -966,9 +972,11 @@ namespace zynforge
         // Drops a marker at the current record or playback position. Pass a
         // name to set it atomically (drop re-sorts by position, so a separate
         // rename-by-index afterwards can hit the wrong marker). Returns the new
-        // marker count, or -1 if no session active.
+        // marker count, or -1 when refused; getMarkerRefusal says why.
         int dropMarkerAtCurrentPosition (const juce::String& name = {},
                                          const juce::String& type = "user");
+        // Why the last dropMarkerAtCurrentPosition refused. Message thread.
+        juce::String getMarkerRefusal() const { return markerRefusal; }
 
         // ── A take outlives a device that is not its input ─────────────
         // A device pair runs through JUCE's combiner, named after its OUTPUT:
@@ -987,6 +995,14 @@ namespace zynforge
         // manager passes no error on. A device that says it is not playing,
         // with no block for this long during a take, has stopped.
         static constexpr juce::uint32 kSilentStopMs = 500;
+        // A restart CoreAudio runs in place (DVS or Dante reconfigured, a clock
+        // re-lock) stops the device, and JUCE starts it again, outputs and all,
+        // from its own 100 ms timer. Reopening the input alone before that
+        // destroys the device holding the restart and leaves the take with no
+        // outputs until STOP. While the take's output is still listed, the
+        // watch gives that restart this long first. An output that is gone is
+        // a real loss, and the input alone opens at once as it always did.
+        static constexpr juce::uint32 kRestartHeadStartMs = 500;
         // Runs from the 100 ms watch timer while a take rolls; tests call it
         // with their own clock. Message thread.
         void serviceDeviceWatch (juce::uint32 nowMs);
@@ -1057,6 +1073,7 @@ namespace zynforge
         struct RideThrough
         {
             bool active { false };
+            bool headStart { false };   // see kRestartHeadStartMs
             juce::uint32 startedMs { 0 }, nextAttemptMs { 0 };
             // A device JUCE opened meanwhile. Never prepared for: it runs
             // silent, and takes over once the take is over.
@@ -1084,7 +1101,10 @@ namespace zynforge
         void startDeviceWatch();
         bool mayRideThrough();
         bool takeInputListed();
-        void beginRideThrough (juce::uint32 nowMs);
+        bool takeOutputListed();
+        // restartMayFollow: the device told us it stopped, so JUCE may be
+        // restarting it (kRestartHeadStartMs). Not when the watch found it silent.
+        void beginRideThrough (juce::uint32 nowMs, bool restartMayFollow);
         bool rideThroughAccepts (juce::AudioIODevice&);
         void resumeRideThrough();
         bool finalizeDeviceLoss();
@@ -1092,6 +1112,7 @@ namespace zynforge
         void reopenTakeInput();
         juce::String deviceNotice() const;
         juce::String             reorderRefusal;
+        juce::String             markerRefusal;   // message thread
         devicechoice::Chosen     chosenDevice;
         devicechoice::Answers    deviceAnswers;
         // The ids go with a device list; the list changes far less often than
@@ -1130,6 +1151,12 @@ namespace zynforge
 
         TimecodeChase    timecodeChase;
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
+        // Message thread. The LTC strip's uid, and an index saved before uids
+        // were (adopted once, by the first session opened). See rebindLtcSource.
+        juce::String     ltcSourceUid;
+        int              ltcLegacyIndex { -1 };
+        void             rebindLtcSource();
+        void             storeLtcSource (int index);
         std::atomic<int> testDeviceInputs { 0 };  // see setDeviceInputCountForTests
         std::atomic<int> testDeviceOutputs { 0 }; // see setDeviceOutputCountForTests
         std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
