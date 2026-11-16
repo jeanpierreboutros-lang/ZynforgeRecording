@@ -273,12 +273,17 @@ namespace zynforge
         if (! prepared) return {};
         playing.store (false, std::memory_order_release);
         auto retired = std::make_shared<PreparedLoad>();
+        std::vector<juce::int64> lengths;   // built before the render's lock is taken
+        lengths.reserve (prepared->tracks.size());
+        for (const auto& t : prepared->tracks) lengths.push_back (t.length);
         {
             const juce::ScopedLock sl (tracksLock);
             retired->tracks.swap (tracks);
             tracks.swap (prepared->tracks);
-            unopenedTracks.swap (prepared->unopened);
             readerCount.store ((int) tracks.size(), std::memory_order_release);
+            const juce::ScopedLock info (infoLock);
+            unopenedTracks.swap (prepared->unopened);
+            trackLengths.swap (lengths);
         }
         {
             const juce::ScopedLock sl (clipsLock);
@@ -320,7 +325,9 @@ namespace zynforge
         {
             const juce::ScopedLock sl (tracksLock);
             tracks.clear();
+            const juce::ScopedLock info (infoLock);
             unopenedTracks.clear();
+            trackLengths.clear();
         }
         readerCount.store (0, std::memory_order_release);
         loaded     .store (false, std::memory_order_release);
@@ -475,7 +482,12 @@ namespace zynforge
         {
             const juce::ScopedLock tl (tracksLock);
             const juce::ScopedLock sl (clipsLock);
-            if (trackIdx >= (int) tracks.size()) tracks.resize ((size_t) trackIdx + 1);
+            if (trackIdx >= (int) tracks.size())
+            {
+                tracks.resize ((size_t) trackIdx + 1);
+                const juce::ScopedLock info (infoLock);
+                trackLengths.resize (tracks.size(), 0);
+            }
             readerCount.store ((int) tracks.size(), std::memory_order_release);
             for (auto& b : built)
                 if (extraReaders.find (b.first) == extraReaders.end())
