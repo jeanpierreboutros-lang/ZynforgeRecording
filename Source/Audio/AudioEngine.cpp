@@ -873,18 +873,44 @@ namespace zynforge
         }
     }
 
-    void AudioEngine::setLtcSourceStrip (int oneBasedIndex) noexcept
+    void AudioEngine::setLtcSourceStrip (int oneBasedIndex)
     {
-        ltcSourceStrip.store (oneBasedIndex - 1, std::memory_order_release);
+        ltcLegacyIndex = -1;   // chosen now, so nothing older is adopted
+        storeLtcSource (oneBasedIndex - 1);
+    }
+
+    // Message thread. The strip at `index` (or none) is the LTC source, held by
+    // its uid, which moves with it and is saved with its session.
+    void AudioEngine::storeLtcSource (int index)
+    {
+        if (index < 0 || index >= recorder.getNumTracks()) index = -1;
+        ltcSourceUid = index >= 0 ? recorder.getTrack (index).stripId : juce::String();
+        ltcSourceStrip.store (index, std::memory_order_release);
         // Only the atomics: the callback may be inside feedLtc with the old
         // source, and the decoder's scratch is its own (TimecodeChase.h).
-        if (oneBasedIndex <= 0) timecodeChase.clearFreewheel();
+        if (index < 0) timecodeChase.clearFreewheel();
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();
-            appProps->setValue ("ltcSourceStrip", oneBasedIndex);
+            appProps->setValue ("ltcSourceStrip", index + 1);
+            appProps->setValue ("ltcSourceUid", ltcSourceUid);
             appProps->saveIfNeeded();
         }
+    }
+
+    // Message thread, after the strips' uids may have changed (another
+    // session's mixer, a new session's strips, a cleared mixer). The source
+    // follows its strip, or goes: an index alone would feed the decoder
+    // whatever strip sits there now.
+    void AudioEngine::rebindLtcSource()
+    {
+        const int current = ltcSourceStrip.load (std::memory_order_acquire);
+        int found = -1;
+        if (ltcSourceUid.isNotEmpty())
+            for (int i = 0; i < recorder.getNumTracks(); ++i)
+                if (recorder.getTrack (i).stripId == ltcSourceUid) { found = i; break; }
+        if (found == current && (found >= 0 || ltcSourceUid.isEmpty())) return;
+        storeLtcSource (found);
     }
 
     juce::StringArray AudioEngine::getMidiInputNames() const
@@ -1417,6 +1443,9 @@ namespace zynforge
         root->setProperty ("strips", arr);
 
         root->setProperty ("chaseStartTimecode", getChaseStartTimecode());
+        // The LTC strip, by uid: it is this session's, and no other's.
+        root->setProperty ("ltcSourceUid", ltcSourceStrip.load (std::memory_order_acquire) >= 0
+                                               ? ltcSourceUid : juce::String());
         root->setProperty ("streamOutL", streamOutL.load (std::memory_order_relaxed));
         root->setProperty ("streamOutR", streamOutR.load (std::memory_order_relaxed));
         return juce::JSON::toString (juce::var (root.get()), true);
@@ -1533,6 +1562,15 @@ namespace zynforge
                 appProps->setValue ("strip_uid_" + juce::String (i), recorder.getTrack (i).stripId);
             appProps->saveIfNeeded();
         }
+
+        // The LTC strip is the session's own. A session saved before it was
+        // kept that way adopts the index the app kept for every session, once.
+        if (root->hasProperty ("ltcSourceUid"))
+            ltcSourceUid = root->getProperty ("ltcSourceUid").toString();
+        else if (ltcLegacyIndex >= 0 && ltcLegacyIndex < recorder.getNumTracks())
+            ltcSourceUid = recorder.getTrack (ltcLegacyIndex).stripId;
+        ltcLegacyIndex = -1;
+        rebindLtcSource();
         return true;
     }
 
@@ -1628,6 +1666,7 @@ namespace zynforge
             appProps->setValue ("stripCount", juce::var (0));
             appProps->saveIfNeeded();
         }
+        ltcLegacyIndex = -1;   // a clean slate adopts nothing from before
 
         // Reset live state on whatever strips currently exist so the
         // change is visible immediately, not only after the recorder
@@ -1645,6 +1684,7 @@ namespace zynforge
             t.colourARGB.store (0,   std::memory_order_relaxed);
             t.stripId.clear();
         }
+        rebindLtcSource();   // no strip is the one it was
     }
 
     void AudioEngine::clearStripOverridesRange (int firstIndex, int lastIndexExclusive)
@@ -1707,6 +1747,7 @@ namespace zynforge
         deviceManager.addAudioCallback (this);
         layoutRestart = false;
         if (wasPlaying && ! player.isPlaying()) startPlayback();
+        rebindLtcSource();   // a new session's strips are new strips
     }
 
     void AudioEngine::addOneStrip()
@@ -2305,9 +2346,13 @@ namespace zynforge
             }
         }
 
-        // Restore the LTC source strip (1-based stored, internal 0-based).
+        // Restore the LTC source strip (1-based stored, internal 0-based), and
+        // the uid that makes it that strip's. One saved before uids were has no
+        // uid: the first session opened adopts it (loadSessionMixFrom).
         ltcSourceStrip.store (appProps->getIntValue ("ltcSourceStrip", 0) - 1,
                               std::memory_order_release);
+        ltcSourceUid = appProps->getValue ("ltcSourceUid", {});
+        if (ltcSourceUid.isEmpty()) ltcLegacyIndex = ltcSourceStrip.load();
 
         // Master bus state -- gain + mute + L/R output routing + stereo mode.
         masterState.name  = "MASTER";

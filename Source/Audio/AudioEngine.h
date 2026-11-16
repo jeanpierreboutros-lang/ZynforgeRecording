@@ -188,8 +188,11 @@ namespace zynforge
         void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
 
         // -1 = no LTC source. Otherwise the strip whose device input
-        // feeds the LTC zero-crossing analyzer once per audio block.
-        void setLtcSourceStrip (int oneBasedIndex) noexcept;
+        // feeds the LTC zero-crossing analyzer once per audio block. The
+        // choice is that STRIP's (by its uid) and is saved with the session:
+        // another session's mixer, or a new one, never feeds the decoder
+        // whatever strip sits at the same position. Message thread.
+        void setLtcSourceStrip (int oneBasedIndex);
         int  getLtcSourceStrip() const noexcept { return ltcSourceStrip.load() + 1; }
 
         // ── Master bus ────────────────────────────────────────────────
@@ -1120,6 +1123,12 @@ namespace zynforge
 
         TimecodeChase    timecodeChase;
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
+        // Message thread. The LTC strip's uid, and an index saved before uids
+        // were (adopted once, by the first session opened). See rebindLtcSource.
+        juce::String     ltcSourceUid;
+        int              ltcLegacyIndex { -1 };
+        void             rebindLtcSource();
+        void             storeLtcSource (int index);
         std::atomic<int> testDeviceInputs { 0 };  // see setDeviceInputCountForTests
         std::atomic<int> testDeviceOutputs { 0 }; // see setDeviceOutputCountForTests
         std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
