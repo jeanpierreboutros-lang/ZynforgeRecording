@@ -487,12 +487,17 @@ void MainComponent::addTracks (const std::vector<zynforge::AddTracksDialog::Entr
         for (int i = 0; i < e.count && cursor < target; ++i)
         {
             const int suffix = e.count > 1 ? i + 1 : 0;
-            const auto base  = e.baseName.isNotEmpty() ? e.baseName : juce::String (cursor + 1);
+            // No name typed: the strip stays unnamed, shown by its number and
+            // recorded as Track_NN (TakeNames.h), as a cleared name leaves it.
+            // Its number written in as a name stayed behind when the strip
+            // moved, and a right half's "5 R" named its file once unlinked.
+            const auto label = e.baseName.isEmpty() ? juce::String()
+                             : suffix > 0           ? e.baseName + " " + juce::String (suffix)
+                                                    : e.baseName;
             if (e.stereo && cursor + 1 < target)
             {
-                const auto label = suffix > 0 ? base + " " + juce::String (suffix) : base;
                 engine.setTrackName  (cursor,     label);
-                engine.setTrackName  (cursor + 1, label + " R");
+                engine.setTrackName  (cursor + 1, label.isEmpty() ? juce::String() : label + " R");
                 engine.setTrackStereo (cursor,     true);
                 engine.setTrackStereo (cursor + 1, false);
                 // Hard-pan the new pair L/R so it reproduces its full
@@ -504,8 +509,7 @@ void MainComponent::addTracks (const std::vector<zynforge::AddTracksDialog::Entr
             }
             else
             {
-                engine.setTrackName  (cursor, suffix > 0 ? base + " " + juce::String (suffix)
-                                                          : base);
+                engine.setTrackName  (cursor, label);
                 engine.setTrackStereo (cursor, false);
                 ++cursor;
             }

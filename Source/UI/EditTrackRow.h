@@ -222,13 +222,16 @@ namespace zynforge
                 // getNameThreadSafe() off the message thread (torn / freed
                 // juce::String) -- and it was redundant, since
                 // setTrackName does the locked write plus persistence.
-                engine.setTrackName (index, newName);
+                // A cleared name is no name, as on the MIXER: the strip shows
+                // its number and its takes stay Track_NN.
+                engine.setTrackName (index, typed);
                 // A stereo pair is ONE logical strip: mirror the name onto the
                 // R half like arm / mon / mute / solo already do, or the R
                 // track keeps a stale name in session_mix.json and shows it
-                // the moment the pair is unlinked.
+                // the moment the pair is unlinked. An unnamed pair's R half is
+                // unnamed too, never "5 R", which would name its file.
                 if (stereo && index + 1 < engine.getRecorder().getNumTracks())
-                    engine.setTrackName (index + 1, newName + " R");
+                    engine.setTrackName (index + 1, typed.isEmpty() ? juce::String() : typed + " R");
                 nameLabel.setText (newName, juce::dontSendNotification);
             };
             nameLabel.onTabKey = [this] (bool shift)

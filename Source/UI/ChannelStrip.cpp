@@ -599,7 +599,10 @@ namespace zynforge
             state.setNameThreadSafe (newName);
             nameLabel.setText (newName, juce::dontSendNotification);
             setTitle (newName);   // keep the strip's accessible name in sync
-            if (renameCb) renameCb (newName);
+            // A cleared name is no name, as Reset Name and Batch Rename leave
+            // it: the strip shows its number and records as Track_NN, and the
+            // pair's right half gets no "5 R" to name its file once unlinked.
+            if (renameCb) renameCb (typed.isEmpty() ? juce::String() : newName);
         };
         nameLabel.onTabKey = [this] (bool shift)
         {
