@@ -962,9 +962,11 @@ namespace zynforge
         // Drops a marker at the current record or playback position. Pass a
         // name to set it atomically (drop re-sorts by position, so a separate
         // rename-by-index afterwards can hit the wrong marker). Returns the new
-        // marker count, or -1 if no session active.
+        // marker count, or -1 when refused; getMarkerRefusal says why.
         int dropMarkerAtCurrentPosition (const juce::String& name = {},
                                          const juce::String& type = "user");
+        // Why the last dropMarkerAtCurrentPosition refused. Message thread.
+        juce::String getMarkerRefusal() const { return markerRefusal; }
 
         // ── A take outlives a device that is not its input ─────────────
         // A device pair runs through JUCE's combiner, named after its OUTPUT:
@@ -1100,6 +1102,7 @@ namespace zynforge
         void reopenTakeInput();
         juce::String deviceNotice() const;
         juce::String             reorderRefusal;
+        juce::String             markerRefusal;   // message thread
         devicechoice::Chosen     chosenDevice;
         devicechoice::Answers    deviceAnswers;
         // The ids go with a device list; the list changes far less often than

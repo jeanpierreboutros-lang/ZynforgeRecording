@@ -279,8 +279,13 @@ namespace zynforge
     {
         const auto now = juce::Time::getMillisecondCounter();
         if (markerBudget.take (now))
-            return engine.dropMarkerAtCurrentPosition (name, type);
+        {
+            const int count = engine.dropMarkerAtCurrentPosition (name, type);
+            markerRefusal = count < 0 ? engine.getMarkerRefusal() : juce::String();
+            return count;
+        }
 
+        markerRefusal = "remote markers are arriving too fast";
         ++markersRefused;
         if (now - lastMarkerNoticeMs >= 1000)
         {
@@ -312,8 +317,12 @@ namespace zynforge
         switch (decision.action)
         {
             case Action::DropMarker:
+                // A refusal is said too: a scene that left no marker must not
+                // look like one that did.
                 if (dropRemoteMarker (label, "scene") >= 0)
                     tell ("marker dropped");
+                else
+                    tell ("marker refused -- " + markerRefusal);
                 break;
 
             case Action::Locate:

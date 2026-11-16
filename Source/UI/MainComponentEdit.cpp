@@ -714,8 +714,12 @@ void MainComponent::dropMarkerAndPromptName()
     const int newCount = engine.dropMarkerAtCurrentPosition();
     if (newCount < 0)
     {
-        showStatus (noFolderText ("No active session -- create or open one before dropping markers",
-                                  "dropping markers"));
+        // A session is open and the marker was refused for another reason
+        // (a helper take that has gone quiet): say that one.
+        showStatus (engine.getMarkers().hasContext()
+                        ? "Marker refused -- " + engine.getMarkerRefusal()
+                        : noFolderText ("No active session -- create or open one before dropping markers",
+                                        "dropping markers"));
         return;
     }
 

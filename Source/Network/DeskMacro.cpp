@@ -166,7 +166,7 @@ namespace zynforge
                 if (engine.getRemotes().dropRemoteMarker() >= 0)
                     report ("marker dropped");
                 else
-                    report ("marker refused -- no session is open, or too many too fast");
+                    report ("marker refused -- " + engine.getRemotes().getMarkerRefusal());
                 break;
 
             case Command::MarkerNext:

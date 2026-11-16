@@ -731,6 +731,12 @@ namespace zynforge
                     stopPlayback();
                     return true;
                 }
+                // From where a local PLAY starts: a placed EDIT cursor, else
+                // where the player is (MainComponent::startPlaybackFromCursor).
+                // Never under a take: the player's place is the take's then.
+                if (const auto cursor = getEditCursorSample();
+                    cursor >= 0 && ! isTakeOnDisk() && player.isLoaded() && ! player.isPlaying())
+                    player.setPositionSamples (cursor);
                 if (startPlayback()) return true;
                 error = isTakeOnDisk() ? juce::String ("capture is running")
                       : getPlaybackRateRefusal().isNotEmpty() ? getPlaybackRateRefusal()
@@ -1599,9 +1605,30 @@ namespace zynforge
 
     int AudioEngine::dropMarkerAtCurrentPosition (const juce::String& name, const juce::String& type)
     {
-        if (! markers.hasContext()) return -1;
+        markerRefusal.clear();
+        const auto refuse = [this] (const juce::String& why)
+        {
+            markerRefusal = why;
+            return -1;
+        };
+        if (! markers.hasContext()) return refuse ("no session is open");
+        // A helper's take is where its last status said, and that is only
+        // known while the status is fresh: a marker placed from an old one
+        // lands seconds early, and a guess is worse than no marker.
         if (externalRecording.load (std::memory_order_acquire)
-            && captureStatus().source != "daemon") return -1;
+            && captureStatus().source != "daemon")
+        {
+            juce::int64 receivedAt = 0;
+            {
+                std::lock_guard<std::mutex> lock (externalStatusLock);
+                receivedAt = externalStatusAtMs;
+            }
+            const auto age = juce::Time::currentTimeMillis() - receivedAt;
+            return refuse (receivedAt == 0 || age < 0
+                ? juce::String ("the capture helper has not reported the take's position yet")
+                : "the capture helper has not reported for " + juce::String ((int) (age / 1000))
+                      + " s, so the take's position is not known");
+        }
 
         // Pro Tools-style: when the engineer has placed the edit
         // cursor in the EDIT view, the marker lands there. Otherwise
@@ -1624,14 +1651,14 @@ namespace zynforge
             pos = isCaptureWindowActive() && player.isPlaying()
                 ? player.getPositionSamples()
                 : getRecordTimelineSamples();
-            if (pos < 0) return -1;
+            if (pos < 0) return refuse ("the take's position is not known yet");
         }
         else if (cursor >= 0)
             pos = cursor;
         else if (player.isLoaded())
             pos = player.getPositionSamples();
         else
-            return -1;
+            return refuse ("nothing is loaded to mark");
 
         markers.drop (pos, name, type);
         if (onMarkerDropped)
