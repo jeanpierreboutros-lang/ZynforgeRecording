@@ -73,6 +73,14 @@ namespace zynforge
         updateButton.setTitle ("Update cue");   updateButton.setHelpText (updateButton.getTooltip());
         recallButton.setTitle ("Recall cue");   recallButton.setHelpText (recallButton.getTooltip());
 
+        // A click leaves keyboard focus where it was. A focused Next or Recall
+        // took the next stray Return as a press, jumped to another cue and
+        // recalled every strip's mix; a focused cue list took the arrows.
+        for (juce::Component* c : { (juce::Component*) &prevButton, (juce::Component*) &nextButton,
+                                    (juce::Component*) &cueCombo, (juce::Component*) &addCueButton,
+                                    (juce::Component*) &updateButton, (juce::Component*) &recallButton })
+            c->setMouseClickGrabsKeyboardFocus (false);
+
         // Listen for mouse events bubbling up from every child so a
         // right-click anywhere on the bar -- combo, arrow, button --
         // opens the same context menu.

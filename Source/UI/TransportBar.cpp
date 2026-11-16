@@ -219,8 +219,11 @@ namespace zynforge
         gotoStart->setTooltip ("Go to session start (rewind playback to 0).");
         gotoEnd  ->setTooltip ("Go to session end.");
         play     ->setTooltip ("Play / pause VSC playback.");
-        stop     ->setTooltip ("Stop everything (recording + playback) and rewind.");
-        record   ->setTooltip ("Toggle recording.");
+        stop     ->setTooltip ("Stop playback and go back to the start. In a take, press twice within 2 s "
+                               "to end it (a punch ends on one press).");
+        record   ->setTooltip ("Record the armed tracks: continues the open session's take, or punches in at the "
+                               "cursor or over a selected range. In a take, press twice within 2 s to end it "
+                               "(a punch ends on one press).");
         loop     ->setTooltip ("Loop play: repeat the selected range (or the whole take) while playing.");
 
         // Accessibility: icon-only buttons need an explicit spoken name --

@@ -663,7 +663,9 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             if (status.deviceStalled) warn << "!! NO AUDIO FROM THE DEVICE -- the take is open but nothing is being captured; check the interface  ";
             else if (deviceStalled)   warn << "! DEVICE STOPPED FOR " << juce::String (status.deviceStallMs / 1000.0, 1)
                                            << " s -- that time is not in the take  ";
-            warn << status.deviceNotice;   // a take held open through a device stop
+            // A take held open through a device stop. It names the device, and a
+            // name with two spaces in it would split the alarm in two.
+            if (status.deviceNotice.isNotEmpty()) warn << singleSpaced (status.deviceNotice) << "  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (primaryNotAnswering) warn << "! PRIMARY DRIVE NOT ANSWERING -- free space unknown  ";
@@ -894,10 +896,7 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     // at. Either way the comparison catches ANY divergence -- 44.1 / 48 /
     // 88.2 / 96 / 176.4 / 192 -- since it's a numeric difference, not a
     // fixed list.
-    const double sessionSR = (engine.getPlayer().isLoaded()
-                              && engine.getPlayer().getSampleRate() > 0.0)
-                                 ? engine.getPlayer().getSampleRate()
-                                 : pendingSampleRate;
+    const double sessionSR = recordGuardSampleRate();
 
     // Keep the engine's record-guard rate in lockstep with what we display,
     // so AudioEngine::startRecording refuses a mismatched take from ANY caller.
@@ -922,8 +921,10 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     setWarning ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
                 + "  vs  session " + fmt (sessionSR) + "  - recording blocked, PLAY refused");
 
-    // One-shot modal, once per distinct device rate, and never mid-take.
-    if (std::abs (deviceSampleRate - srMismatchWarned) < 1.0 || engine.isRecording())
+    // One-shot modal, once per distinct device rate, and never mid-take. Never
+    // a second one over the first: the banner already says it.
+    if (std::abs (deviceSampleRate - srMismatchWarned) < 1.0 || engine.isRecording()
+        || (sampleRateNotice != nullptr && sampleRateNotice->isCurrentlyModal (false)))
         return;
     srMismatchWarned = deviceSampleRate;
 
@@ -938,6 +939,7 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE-default navy
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     zynforge::closesForTake (aw);   // a take that starts behind it gets the banner instead
+    sampleRateNotice = aw;
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }), false);
 }

@@ -789,7 +789,7 @@ void MainComponent::enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot s
     juce::Component::SafePointer<MainComponent> self (this);
     metadataWriter.enqueue (std::move (snapshot), automatic,
         [self, dir, revision, savedUndoUnits, success, fullSave, expectedSettings, expectedMix,
-         expectedProject, stableProject, completion = std::move (completion)]
+         expectedProject, stableProject, completion = std::move (completion), deliveries = metadataDeliveries]
         (zynforge::SessionMetadataResult result)
     {
         auto deliver = [self, dir, revision, savedUndoUnits, success, fullSave, expectedSettings,
@@ -838,10 +838,25 @@ void MainComponent::enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot s
             self->releaseHeldRecordPress();
         };
         // Replaced layout requests retire synchronously during enqueue on the
-        // message thread; worker completions are marshalled back normally.
+        // message thread; worker completions are marshalled back normally,
+        // through the queue a RECORD that waited out this save runs itself.
         if (juce::MessageManager::getInstance()->isThisTheMessageThread()) deliver();
-        else juce::MessageManager::callAsync (std::move (deliver));
+        else
+        {
+            deliveries->push (std::move (deliver));
+            juce::MessageManager::callAsync ([deliveries] { deliveries->runAll(); });
+        }
     });
+}
+
+// Message thread. Waits, at most `timeoutMs`, for the saves in flight to be
+// written, then runs their completions now instead of a message later, so the
+// session is released for RECORD. False when a save is still writing.
+bool MainComponent::waitOutMetadataSaves (int timeoutMs)
+{
+    if (! metadataWriter.waitUntilIdle (timeoutMs)) return false;
+    metadataDeliveries->runAll();
+    return pendingMetadataSaves == 0;
 }
 
 void MainComponent::requestUILayoutSave()

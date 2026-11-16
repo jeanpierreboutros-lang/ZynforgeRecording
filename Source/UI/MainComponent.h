@@ -257,6 +257,14 @@ private:
     void saveCueChanges (const juce::String& success);
     zynforge::SessionMetadataWriter metadataWriter;
     int pendingMetadataSaves = 0;
+    // Completions of saves the writer has finished, waiting for the message thread.
+    std::shared_ptr<zynforge::MetadataDeliveries> metadataDeliveries { std::make_shared<zynforge::MetadataDeliveries>() };
+    // A desk, tablet or twin RECORD can't be held for later: its sender is told
+    // now whether a take started. It waits out a save in flight this long.
+    static constexpr int kRemoteRecordSaveWaitMs = 1500;
+    bool waitOutMetadataSaves (int timeoutMs);
+    // Why RECORD can't start while a stop, a save or a session job holds it.
+    juce::String recordBlockedReason (bool remote) const;
     juce::uint64 metadataRevision = 0;
     bool captureMetadataPending = false; // holds the entire media + metadata STOP operation
     // A rolling punch-out restarts playback once its files are final; STOP in
@@ -571,6 +579,12 @@ private:
     // 0 = no outstanding warning, so we warn once per distinct device rate.
     double srMismatchWarned  { 0.0 };
     void   checkDeviceSampleRate (double deviceSampleRate);
+    // The rate RECORD refuses a device on: the take's once there is one, else
+    // the rate the session was made at. Pre-flight and the warning use it too.
+    double recordGuardSampleRate();
+    // The one "Sample-Rate Mismatch" notice up, if any: refused presses from a
+    // desk or the twin must not stack one each on an unattended Mac.
+    juce::Component::SafePointer<juce::AlertWindow> sampleRateNotice;
     bool   chaseWasLive      { false };   // external-timecode chase: did we start playback?
     void   serviceTimecodeChase();
     void   serviceTrimFollowNotice();

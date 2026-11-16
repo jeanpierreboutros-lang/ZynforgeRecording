@@ -70,8 +70,12 @@ void MainComponent::updateMixerPlaceholder()
 
 void MainComponent::onRecordClicked()
 {
-    if (captureMetadataPending || engine.isCaptureFinalizing()
-        || (sessionIoBusy.load() && ! engine.isRecording()))
+    const auto blocked = [this]
+    {
+        return captureMetadataPending || engine.isCaptureFinalizing()
+            || (sessionIoBusy.load() && ! engine.isRecording());
+    };
+    if (blocked())
     {
         const bool settled = ! captureMetadataPending && ! engine.isCaptureFinalizing();
         // During a punch's tail this press ends the punch, and STOP comes here
@@ -83,18 +87,26 @@ void MainComponent::onRecordClicked()
         // Only a press made here is held. A held press runs later with nothing
         // to say where it came from, and a remote must never run as a local one.
         const bool pressedHere = ! remoteStartInFlight && ! twinStartInFlight;
-        if (settled && pressedHere && pendingMetadataSaves != 0 && ! metadataContinuationReserved)
+        const bool onlySaving = settled && pendingMetadataSaves != 0 && ! metadataContinuationReserved;
+        if (pressedHere && onlySaving)
         {
             recordPressHeldAtMs = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
             recordPressHeldRolling = engine.getPlayer().isPlaying();
             showStatus ("RECORD held -- starting as soon as this save finishes");
             return;
         }
-        const auto job = sessionJobs.runningJob();
-        showRecordRefusal (job.isNotEmpty()
-            ? "RECORD is waiting for the running " + job + " -- cancel it from the File menu"
-            : juce::String ("Wait for recording finalization / session saving to finish"));
-        return;
+        // A desk, tablet or twin press can't be held: its sender is told now
+        // whether a take started, and a twin follower refused here misses the
+        // leader's take for good. So it waits the save out here, for a moment,
+        // and runs the save's completion itself. A press already held on this
+        // Mac came first and keeps its turn: the remote one is refused.
+        const bool waited = ! pressedHere && onlySaving && recordPressHeldAtMs == 0
+                         && waitOutMetadataSaves (kRemoteRecordSaveWaitMs);
+        if (! waited || blocked())
+        {
+            showRecordRefusal (recordBlockedReason (! pressedHere));
+            return;
+        }
     }
     recordRefusal.clear();
     // RECORD is a sequence: a press during a take (or a refused daemon state)
@@ -228,6 +240,24 @@ void MainComponent::releaseHeldRecordPress()
     else onRecordClicked();
 }
 
+// Names what holds RECORD up, so the engineer (or the twin's operator, who
+// reads this on another Mac) knows whether to wait, cancel or check a drive.
+juce::String MainComponent::recordBlockedReason (bool remote) const
+{
+    const auto from = ! remote ? juce::String()
+                    : juce::String (twinStartInFlight ? "Twin" : "Remote") + " RECORD refused -- ";
+    if (captureMetadataPending || engine.isCaptureFinalizing())
+        return from + "the last take is still being finalized; RECORD again once it is saved";
+    if (const auto job = sessionJobs.runningJob(); job.isNotEmpty())
+        return from + "RECORD is waiting for the running " + job + " -- cancel it from the File menu";
+    if (pendingMetadataSaves != 0)
+        return remote ? from + "a session save did not finish within "
+                             + juce::String (kRemoteRecordSaveWaitMs / 1000.0, 1)
+                             + " s; check the session's drive, then RECORD again"
+                      : juce::String ("RECORD is waiting for a session save to finish -- press it again when it has");
+    return from + "a session file operation is still running; RECORD again when it ends";
+}
+
 void MainComponent::runRecordPlan (RecordStartPlan& plan)
 {
     const bool punch = recordPlanPunches (plan);
@@ -259,7 +289,27 @@ void MainComponent::runRecordPlan (RecordStartPlan& plan)
 void MainComponent::endPunchSession()
 {
     const bool wasRecording = engine.isRecording();
-    if (wasRecording) stopActiveCaptureAsync (false);
+    if (wasRecording)
+    {
+        // The callback admitted only [in, out), so what this press replaced
+        // runs from the punch-in to where the transport is now, and nothing
+        // when it is still in the pre-roll. Said once the files are final.
+        auto& player = engine.getPlayer();
+        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+        const auto at = juce::jlimit (punchInSample, juce::jmax (punchInSample, punchOutSample),
+                                      player.getPositionSamples());
+        const auto secs = [sr] (juce::int64 samples) { return juce::String ((double) samples / sr, 1) + " s"; };
+        const auto replaced = at <= punchInSample
+            ? juce::String ("Punch ended before the punch-in -- nothing was replaced")
+            : "Punch ended -- replaced from the punch-in at " + secs (punchInSample) + " to " + secs (at)
+                  + (at >= punchOutSample ? " (the whole selection)" : "");
+        juce::Component::SafePointer<MainComponent> self (this);
+        stopActiveCaptureAsync (false, [self, replaced] (bool saved)
+        {
+            if (self != nullptr && saved)
+                self->showStatus (replaced + (self->lastSavedUndoUnits < 0 ? "; newer changes remain unsaved" : ""));
+        });
+    }
     engine.stopPlayback();
     engine.setPunchModeOn (false);
     punchSessionActive = false;
@@ -270,7 +320,8 @@ bool MainComponent::handleRecordPressDuringTake()
 {
     if (punchSessionActive) { endPunchSession(); return true; }
 
-    if (manualPunchActive && engine.isRecording())
+    // A punch, by hand or by the PUNCH window, ends on one press.
+    if ((manualPunchActive || punchWindowTakeActive) && engine.isRecording())
     {
         stopArmedAtMs = 0;
         stopActiveCaptureAsync (false);
@@ -335,6 +386,12 @@ bool MainComponent::handleRecordPressDuringTake()
     return false;
 }
 
+double MainComponent::recordGuardSampleRate()
+{
+    auto& player = engine.getPlayer();
+    return player.isLoaded() && player.getSampleRate() > 0.0 ? player.getSampleRate() : pendingSampleRate;
+}
+
 bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
 {
     // Pre-flight: surface why recording wouldn't capture anything BEFORE
@@ -392,10 +449,7 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     // re-surface the warning dialog. This is the app's top data-integrity
     // protection; it cannot be bypassed from the record button.
     {
-        const double sessionSR = (engine.getPlayer().isLoaded()
-                                  && engine.getPlayer().getSampleRate() > 0.0)
-                                     ? engine.getPlayer().getSampleRate()
-                                     : pendingSampleRate;
+        const double sessionSR = recordGuardSampleRate();
         const double devSR = device->getCurrentSampleRate();
         if (devSR > 0.0 && std::abs (devSR - sessionSR) > 1.0)
         {
@@ -408,7 +462,9 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
             showRecordRefusal ("Recording blocked -- device " + khz (devSR)
                                + " != session " + khz (sessionSR)
                                + ". Match the clock first.");
-            srMismatchWarned = 0.0;          // re-arm so the dialog pops again
+            // Re-arm so the dialog pops again, unless it is still up: a desk or
+            // the twin pressing again and again stacked one per press.
+            if (sampleRateNotice == nullptr || ! sampleRateNotice->isCurrentlyModal (false)) srMismatchWarned = 0.0;
             checkDeviceSampleRate (devSR);   // show the explanatory warning
             return false;                    // <-- do NOT start recording
         }
@@ -858,8 +914,17 @@ void MainComponent::onStopClicked()
     if (captureMetadataPending)
     {
         // A punch-out that kept playing restarts playback when its files are
-        // final. STOP now means stop.
-        showStatus (std::exchange (punchResumePending, false)
+        // final, and a selection punch that reached its out point plays its
+        // post-roll then. STOP now means stop: neither starts.
+        const bool postRollCancelled = punchSessionActive;
+        if (postRollCancelled)
+        {
+            punchSessionActive = false;
+            engine.setPunchModeOn (false);
+            engine.stopPlayback();
+        }
+        const bool resumeCancelled = std::exchange (punchResumePending, false);
+        showStatus (resumeCancelled || postRollCancelled
                         ? "Recording stopped; finalization pending -- playback will not restart"
                         : "Recording stopped; finalization pending");
         return;
@@ -870,9 +935,9 @@ void MainComponent::onStopClicked()
         return;
     }
     // A normal live take gets a two-tap STOP guard against accidental cuts.
-    // A deliberate manual punch is different: one press punches out at the
-    // chosen point, preserving the rest of the original take.
-    if (engine.isRecording() && ! manualPunchActive)
+    // A deliberate punch is different, by hand or by the PUNCH window: one
+    // press punches out at that point, preserving the rest of the original take.
+    if (engine.isRecording() && ! manualPunchActive && ! punchWindowTakeActive)
     {
         const auto now = juce::Time::getMillisecondCounter();
         constexpr juce::uint32 kArmWindowMs = 2000;
@@ -1986,12 +2051,15 @@ void MainComponent::showPreflightChecklist()
     rows.push_back ({ chk (cpuPct < 50.0f, cpuPct < 80.0f), "CPU (audio callback)", juce::String (cpuPct, 1) + " %" });
 
     // Session SR vs device SR -- a mismatched virtual soundcheck plays
-    // at the wrong pitch/speed.
-    if (engine.getPlayer().isLoaded() && sr > 0.0)
+    // at the wrong pitch/speed, and RECORD refuses it. The rate RECORD checks,
+    // before the first take too: that one used to pass here, then be refused.
+    if (sr > 0.0)
     {
-        const double fileSr = engine.getPlayer().getSampleRate();
-        rows.push_back ({ chk (std::abs (fileSr - sr) < 1.0), "Session SR matches device",
-                          juce::String ((int) fileSr) + " Hz" });
+        const double sessionSr = recordGuardSampleRate();
+        const bool matches = std::abs (sessionSr - sr) < 1.0;
+        rows.push_back ({ chk (matches), "Session SR matches device",
+                          juce::String ((int) sessionSr) + " Hz"
+                              + (matches ? juce::String() : ", device at " + juce::String ((int) sr) + " Hz -- RECORD refuses") });
     }
 
     // Asked on the probe's own thread: a stalled driver costs this checklist
