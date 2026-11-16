@@ -37,8 +37,11 @@ namespace zynforge
     // own output stream and the index→output mapping is unchanged.
     // Legacy two-mono-file pairs load as two independent mono tracks and
     // keep working untouched.
+    class EngineFix20261116Tests;
+
     class SessionPlayer
     {
+        friend class EngineFix20261116Tests;   // holds tracksLock as a render would
     public:
         SessionPlayer();
         ~SessionPlayer();

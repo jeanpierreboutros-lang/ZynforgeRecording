@@ -472,8 +472,8 @@ namespace zynforge
         // strips don't dangle. Returns true on success.
         bool swapTracks (int a, int b);
         bool reorderTracks (const std::vector<int>& order);
-        // Why the last reorder was refused, when the engineer can do something
-        // about it. Empty for any other failure.
+        // Why the last reorder was refused or failed, for the engineer. Every
+        // refusal sets it.
         juce::String getReorderRefusal() const { return reorderRefusal; }
         std::function<void (const std::vector<int>&)> onTracksReordered;
 

@@ -864,6 +864,11 @@ namespace zynforge
         // half an hour: a report left pending by a crash would never change.
         static bool waitForReportHashes (const juce::File& sessionDir, const std::atomic<bool>& cancel,
                                          bool watchReportFile = false);
+        // Whether a hash pass is reading this session's take now, in this
+        // process or a capture helper's. It reads by the file names in
+        // session.report.json and writes the whole report back from them, so
+        // nothing may rename a take file under it (a strip move waits).
+        static bool reportHashesRunning (const juce::File& sessionDir);
 
         // Cancel obsolete report jobs and exclude their publication while a
         // caller removes an idle session. Caller must first guard active capture.

@@ -444,7 +444,10 @@ void MainComponent::deleteSelectedStrips()
     condemnAllStrips();
     const bool ok = engine.reorderTracks (order);
     selectedLogical.clear(); lastTrackCount = -1;
+    // The engine says why it refused; the disk is only one of the reasons.
+    const auto why = engine.getReorderRefusal();
     showStatus (ok ? "Strips removed; recorded audio retained in Removed Tracks"
+                : why.isNotEmpty() ? "Strips not removed -- " + why
                 : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
                 : "Could not remove strips; check disk permissions and Session File Backups");
 }
@@ -531,7 +534,9 @@ void MainComponent::removeStrip (int firstTrack, int width)
     condemnAllStrips();
     const bool ok = engine.reorderTracks (order);
     lastTrackCount = -1;
+    const auto why = engine.getReorderRefusal();
     showStatus (ok ? "Strip removed; audio retained in Removed Tracks"
+                : why.isNotEmpty() ? "Strip not removed -- " + why
                 : order.empty() ? "A saved session keeps at least one strip; nothing was removed"
                 : "Could not remove strip safely");
 }

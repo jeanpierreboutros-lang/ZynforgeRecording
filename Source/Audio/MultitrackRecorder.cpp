@@ -3952,6 +3952,12 @@ namespace zynforge
         return true;
     }
 
+    bool MultitrackRecorder::reportHashesRunning (const juce::File& sessionDir)
+    {
+        return sessionReportState (sessionDir)->runningScans.load (std::memory_order_acquire) > 0
+            || capture::identity::ScanClaim::isHeld (sessionDir);
+    }
+
     bool MultitrackRecorder::deleteSessionAfterCancellingReports (const juce::File& directory)
     {
         return removeSessionAfterCancellingReports (directory, [&directory] { return directory.deleteRecursively(); });

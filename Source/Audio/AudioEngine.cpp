@@ -9,6 +9,7 @@
 #include "MultiPartReader.h"
 #include "StereoMixWriter.h"
 
+#include <map>
 #include <vector>
 
 namespace zynforge
@@ -1886,6 +1887,77 @@ namespace zynforge
             player.setLoopEnabled (punchLoopWasEnabled);
     }
 
+    namespace
+    {
+        // session.report.json lists one entry per strip, in strip order, and
+        // names each strip's take files. A move renames those files, so each
+        // entry goes to its strip's new place with the new names, inside the
+        // move's transaction (its journal keeps a copy of the report, and a
+        // rollback puts it back). Without this the hash pass, Show Handoff and
+        // verify_take checked names that no longer existed, and the next
+        // continue added a strip's clip count to whatever strip took its place.
+        // Backup and mirror names stay: those files are renamed when the copy
+        // catches up, before it next joins a take (TrackOrderLog.h), and that
+        // take's report names them anew. A report that does not read is left.
+        bool moveReportEntries (const juce::File& session, const juce::File& audio,
+                                const std::vector<int>& destination, int count,
+                                const std::vector<TrackFileTransaction::Move>& moves)
+        {
+            const auto file = session.getChildFile ("session.report.json");
+            if (! file.existsAsFile() || ! juce::JSON::parse (file).isObject()) return true;
+            std::map<juce::String, juce::String> renamed;
+            for (const auto& m : moves)
+                if (m.first.getParentDirectory() == audio && m.second.getParentDirectory() == audio)
+                    renamed[m.first.getFileName()] = m.second.getFileName();
+            return MultitrackRecorder::editSessionReport (session, [&] (juce::DynamicObject& report)
+            {
+                auto* tracks = report.getProperty ("tracks").getArray();
+                if (tracks == nullptr) return;
+                // An entry past the strips there are now (a report older than
+                // a delete) keeps its place: no move touched its files.
+                std::vector<juce::var> placed ((size_t) juce::jmax (count, tracks->size()));
+                for (int old = 0; old < tracks->size(); ++old)
+                {
+                    const int dest = old < (int) destination.size() ? destination[(size_t) old] : old;
+                    if (dest < 0) continue;   // removed: its files went to Removed Tracks
+                    auto entry = tracks->getReference (old);
+                    if (auto* t = entry.getDynamicObject())
+                    {
+                        t->setProperty ("index", dest);
+                        if (auto* names = t->getProperty ("files").getArray())
+                            for (auto& name : *names)
+                                if (const auto it = renamed.find (name.toString()); it != renamed.end())
+                                    name = it->second;
+                    }
+                    placed[(size_t) dest] = entry;
+                }
+                // A strip added after the take has no entry. It gets an empty
+                // one, so every entry still stands at its strip's place.
+                int last = -1;
+                for (int i = 0; i < (int) placed.size(); ++i)
+                    if (! placed[(size_t) i].isVoid()) last = i;
+                juce::Array<juce::var> next;
+                for (int i = 0; i <= last; ++i)
+                {
+                    if (placed[(size_t) i].isVoid())
+                    {
+                        auto* empty = new juce::DynamicObject();
+                        empty->setProperty ("index", i);
+                        empty->setProperty ("name", juce::String());
+                        empty->setProperty ("clipCount", 0);
+                        empty->setProperty ("lastClipSample", -1);
+                        empty->setProperty ("files", juce::Array<juce::var>());
+                        empty->setProperty ("sha256", juce::Array<juce::var>());
+                        placed[(size_t) i] = juce::var (empty);
+                    }
+                    next.add (placed[(size_t) i]);
+                }
+                report.setProperty ("tracks", next);
+                report.setProperty ("numTracks", next.size());
+            });
+        }
+    }
+
     bool AudioEngine::swapTracks (int a, int b)
     {
         const int n = recorder.getNumTracks();
@@ -1898,21 +1970,53 @@ namespace zynforge
     bool AudioEngine::reorderTracks (const std::vector<int>& order)
     {
         reorderRefusal.clear();
-        if (isRecording() || isSessionTransitionActive()) return false;
+        // Every refusal says why: the strip menus show it, and "check disk
+        // permissions" sent the engineer after a disk that was fine.
+        const auto refuse = [this] (const juce::String& why)
+        {
+            reorderRefusal = why;
+            return false;
+        };
+        if (isRecording()) return refuse ("A take is recording; move or remove strips after STOP");
+        if (isSessionTransitionActive())
+            return refuse ("A take is still being finalized, or a session job is running; "
+                           "move or remove strips when it ends");
         // Refused before any take file is renamed: the indices below describe
         // the strips in memory, which only match this folder's takes if they
         // are its mixer, and emptying a saved mixer is not a save we allow.
-        if (activeSession.isDirectory()
-            && (! mixerBelongsTo (activeSession)
-                || (order.empty() && sessionmix::stripCountIn (activeSession) > 0)
-                || MultitrackRecorder::leadInsPending (activeSession.getChildFile ("Audio Files"))))
-            return false;
+        // A session pinned with its drive gone keeps its files in the old
+        // order: moving the strips in memory alone would bind every moved
+        // strip to another strip's take once the drive is back.
+        const auto pinned = activeSession != juce::File() ? activeSession : mixerSession;
+        if (pinned != juce::File() && ! pinned.isDirectory())
+            return refuse ("Session folder is missing: " + pinned.getFullPathName()
+                           + "; reconnect its drive before moving or removing strips");
+        if (activeSession == juce::File() && mixerSession != juce::File())
+            return refuse ("These strips are " + mixerSession.getFileName()
+                           + "'s mixer, which is not the open session; open it before moving or removing strips");
+        if (activeSession.isDirectory())
+        {
+            if (! mixerBelongsTo (activeSession))
+                return refuse ("These strips were not loaded from " + activeSession.getFileName()
+                               + "; open the session before moving or removing strips");
+            if (order.empty() && sessionmix::stripCountIn (activeSession) > 0)
+                return refuse ("A saved session keeps at least one strip; nothing was removed");
+            if (MultitrackRecorder::leadInsPending (activeSession.getChildFile ("Audio Files")))
+                return refuse ("A track's silent lead-in is still owed; strips can move once it is written");
+            // The hash pass reads the take by the names in session.report.json
+            // and then writes the whole report back from them: a move under it
+            // fails an intact take and puts the old names back.
+            if (MultitrackRecorder::reportHashesRunning (activeSession))
+                return refuse ("The last take's integrity hashes are still being written; strips can move "
+                               "when that ends (it ends on its own)");
+        }
         const int n = recorder.getNumTracks();
         std::vector<int> destination ((size_t) n, -1);
         for (int i = 0; i < (int) order.size(); ++i)
         {
             const int old = order[(size_t) i];
-            if (old < 0 || old >= n || destination[(size_t) old] >= 0) return false;
+            if (old < 0 || old >= n || destination[(size_t) old] >= 0)
+                return refuse ("The strip layout changed; nothing was moved");
             destination[(size_t) old] = i;
         }
         // The right half of one stereo file has no file of its own. Every
@@ -1982,7 +2086,11 @@ namespace zynforge
         TrackFileTransaction files;
         const bool disk = session.isDirectory();
         if (disk && (! trackorder::ensureLog (session) || ! files.begin (session, moves)))
-        { deviceManager.addAudioCallback (this); return false; }
+        {
+            deviceManager.addAudioCallback (this);
+            return refuse ("Could not move the take files; check disk permissions and Session File Backups "
+                           "before retrying");
+        }
 
         trackClips.clear(); trackPlaylists.clear();
         for (int i = 0; i < (int) order.size(); ++i)
@@ -2035,16 +2143,29 @@ namespace zynforge
                 if (auto* root = project.getDynamicObject())
                 {
                     root->setProperty ("playlists", playlistsToJson());
+                    // Each strip's media length goes with it, like its
+                    // playlists: left in the old order, a reopen before the
+                    // next save regrew trimmed tails on the moved strips.
+                    if (auto* lengths = root->getProperty ("mediaLengths").getArray())
+                    {
+                        juce::Array<juce::var> moved;
+                        for (const int old : order)
+                            moved.add (old < lengths->size() ? (*lengths)[old] : juce::var ((juce::int64) 0));
+                        root->setProperty ("mediaLengths", moved);
+                    }
                     saved = atomicfile::writeText (f, juce::JSON::toString (project)) && saved;
                 }
                 else saved = false;
             }
+            if (saved) saved = moveReportEntries (session, audio, destination, (int) order.size(), moves);
             // Backups and mirrors follow this log before they next join a take.
             if (saved) saved = trackorder::append (session, destination);
             if (saved) saved = files.commit();
         }
         if (! saved)
         {
+            reorderRefusal = "Could not save the session after moving the strips; nothing was moved. "
+                             "Check disk permissions and Session File Backups before retrying";
             TrackFileTransaction::recoverOne (files.folder);
             for (int i = 0; i < n; ++i) recorder.getTrack (i).copySettingsFrom (*states[(size_t) i]);
             trackClips = std::move (oldClips); trackPlaylists = std::move (oldPlaylists);
