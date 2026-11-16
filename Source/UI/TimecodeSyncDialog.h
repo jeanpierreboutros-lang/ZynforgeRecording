@@ -119,12 +119,11 @@ namespace zynforge
                                           "recorded, for chasing the same timecode it was recorded against.");
                 startFromTake.onClick = [this]
                 {
-                    if (engine.setChaseStartFromTake())
+                    juce::String why;
+                    if (engine.setChaseStartFromTake (&why))
                         startEditor.setText (engine.getChaseStartTimecode(), juce::dontSendNotification);
                     else
-                        parkStatus.setText (engine.isTakeOnDisk() ? "Wait until the take has stopped"
-                                                                  : "No take here carries a time stamp",
-                                            juce::dontSendNotification);
+                        parkStatus.setText (why, juce::dontSendNotification);
                 };
                 addAndMakeVisible (startFromTake);
 

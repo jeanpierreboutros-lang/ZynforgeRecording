@@ -1000,24 +1000,38 @@ namespace zynforge
         return true;
     }
 
-    bool AudioEngine::setChaseStartFromTake()
+    bool AudioEngine::setChaseStartFromTake (juce::String* whyNot)
     {
-        if (isTakeOnDisk()) return false;
+        const auto refuse = [whyNot] (const juce::String& why)
+        {
+            if (whyNot != nullptr) *whyNot = why;
+            return false;
+        };
+        if (isTakeOnDisk()) return refuse ("Wait until the take has stopped");
         const auto folder = getActiveSessionDir().getChildFile ("Audio Files");
         auto files = takenames::trackFiles (folder);
         const double rate = player.getSampleRate();
-        if (rate <= 0.0) return false;
+        if (rate <= 0.0) return refuse ("No take here carries a time stamp");
         for (const auto& file : files)
         {
             juce::uint64 stamp = 0;
             if (file.getFileName().contains (".punchbase") || mainTakeTrackNumber (file) <= 0
                 || bwf::readTimeReference (file, stamp) != bwf::StampResult::ok) continue;
+            // The stamp counts real seconds and the start is a label, which
+            // only the master's frame rate turns into seconds again. Converted
+            // at a guessed 30 fps, chase ran up to 0.24 s off at 24 or 25 fps
+            // and about 36 s off at 29.97 or 23.976 non-drop.
+            if (timecodeChase.getFps() <= 0.0f)
+                return refuse ("No timecode heard yet: start the timecode source so its frame rate is known, "
+                               "then Use Take Stamp");
             // The stamp counts real seconds, which a pulled-down rate's labels do not.
             const auto label = timecodeChase.labelAt ((double) stamp / rate);
-            return setChaseStartTimecode (juce::String::formatted ("%02d:%02d:%02d:%02d",
-                (int) (label >> 24), (int) ((label >> 16) & 0xFF), (int) ((label >> 8) & 0xFF), (int) (label & 0xFF)));
+            if (setChaseStartTimecode (juce::String::formatted ("%02d:%02d:%02d:%02d",
+                    (int) (label >> 24), (int) ((label >> 16) & 0xFF), (int) ((label >> 8) & 0xFF), (int) (label & 0xFF))))
+                return true;
+            return refuse ("The take's time stamp is not a time of day");
         }
-        return false;
+        return refuse ("No take here carries a time stamp");
     }
 
     // The player has no converter: what it plays, it plays at the device's rate.

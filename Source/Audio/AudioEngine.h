@@ -170,8 +170,11 @@ namespace zynforge
         juce::String getChaseStartTimecode() const;
         bool         setChaseStartTimecode (const juce::String& hhmmssff);   // false = not a timecode
         // Line the session's first sample up with the first take's BWF stamp,
-        // the time of day it was recorded. False when no take carries one.
-        bool         setChaseStartFromTake();
+        // the time of day it was recorded. False when no take carries one, or
+        // no timecode has been heard yet: the stamp is real time and the start
+        // is a label, so it needs the master's frame rate (30 fps was a guess,
+        // up to 36 s out at 29.97 non-drop). `whyNot` says which.
+        bool         setChaseStartFromTake (juce::String* whyNot = nullptr);
         // Empty while the timecode lands inside the session. Otherwise why
         // chase is holding off instead of throwing the playhead at the end.
         juce::String getChaseParkReason() const;
