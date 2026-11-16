@@ -40,16 +40,28 @@ namespace zynforge
         }
     }
 
+    TrackMediaIndex AudioEngine::takeMedia() const
+    {
+        // Audio Files, and the session folder for a session from before it
+        // (Track_NN names only): TrackMediaIndex reads both.
+        const auto session = getActiveSessionDir();
+        return session.isDirectory() ? TrackMediaIndex (session.getChildFile ("Audio Files")) : TrackMediaIndex();
+    }
+
     juce::File AudioEngine::getTrackAudioFile (int track, int* channel) const
     {
         if (channel != nullptr) *channel = 0;
         if (! getActiveSessionDir().isDirectory()) return {};
-        auto dir = getActiveSessionDir().getChildFile ("Audio Files");
-        if (! dir.isDirectory()) dir = getActiveSessionDir();
+        return getTrackAudioFile (takeMedia(), track, channel);
+    }
+
+    juce::File AudioEngine::getTrackAudioFile (const TrackMediaIndex& media, int track, int* channel) const
+    {
+        if (channel != nullptr) *channel = 0;
         juce::AudioFormatManager fm; fm.registerBasicFormats();
         for (int offset = 0; offset <= 1 && track - offset >= 0; ++offset)
         {
-            const auto f = findTrackMedia (dir, track - offset);
+            const auto f = media.find (track - offset);
             if (! f.existsAsFile()) continue;
             if (offset == 1)
             {
@@ -731,6 +743,8 @@ namespace zynforge
         {
             return "Punch refused -- " + recorder.getTrack (track).getNameThreadSafe() + ": " + why;
         };
+        // One listing for every armed strip, not one per strip.
+        const auto takes = takeMedia();
 
         for (int t = 0; t < strips; ++t)
         {
@@ -743,8 +757,11 @@ namespace zynforge
             static const std::vector<Clip> none;
             const auto& clips = t < (int) trackClips.size() ? trackClips[(size_t) t] : none;
             const auto media  = player.getTrackLengthSamples (t);
+            // Two takes on the strip's number: nothing picks one to splice.
+            if (const auto clash = takes.clash (t - (leftArmed ? 1 : 0)); clash.isNotEmpty())
+                return refused (t, "it has " + clash);
             int channel = 0;
-            const auto take = getTrackAudioFile (t, &channel);
+            const auto take = getTrackAudioFile (takes, t, &channel);
             const auto playsTake = [&] (const Clip& c)
             {
                 return (c.audioFile == juce::File() || c.audioFile == take)
@@ -867,7 +884,9 @@ namespace zynforge
 
         auto sessionDir = getActiveSessionDir();
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
-        const auto stem = sessionDir.isDirectory() ? takenames::existingStem (audioFiles, track) : juce::String();
+        // Never a clip on one of two takes that claim the strip (TakeNames.h).
+        const takenames::StemIndex onDisk (sessionDir.isDirectory() ? audioFiles : juce::File());
+        const auto stem = onDisk.clashes (track) ? juce::String() : onDisk.stem (track);
         const auto trackFile = stem.isNotEmpty() ? audioFiles.getChildFile (stem + ".wav") : juce::File();
         if (! trackFile.existsAsFile()) return false;
 
@@ -924,15 +943,19 @@ namespace zynforge
             // file), 0 = LEFT of an interleaved stereo file, 1 = RIGHT of one.
             int readChannel { -1 };
 
-            bool open (const juce::File& audioDir, int track, const std::vector<Clip>* engineClips)
+            // `media`: the session's takes, listed once for many strips;
+            // without it, this strip's lookup lists the folder itself.
+            bool open (const juce::File& audioDir, int track, const std::vector<Clip>* engineClips,
+                       const TrackMediaIndex* media = nullptr)
             {
+                const auto takeOf = [&] (int t) { return media != nullptr ? media->find (t) : findTrackMedia (audioDir, t); };
                 fm.registerBasicFormats();
                 if (engineClips != nullptr) clips = *engineClips;
 
                 // 1) The track's OWN file (Track_<track+1>). A 2-channel own
                 //    file means this index is the LEFT of an interleaved
                 //    stereo pair -> read channel 0; a mono file reads all.
-                srcFile = findTrackMedia (audioDir, track);
+                srcFile = takeOf (track);
 
                 if (srcFile.existsAsFile())
                 {
@@ -946,7 +969,7 @@ namespace zynforge
                     //    interleaved stereo pair, whose audio lives in the
                     //    LEFT slot's 2-ch file (named Track_<track>, since the
                     //    L partner is index track-1). Read channel 1 from it.
-                    srcFile = findTrackMedia (audioDir, track - 1);
+                    srcFile = takeOf (track - 1);
                     if (! srcFile.existsAsFile()) return true;
                     reader = ConcatReader::create (fm, findTakeParts (srcFile));
                     if (reader == nullptr || reader->numChannels < 2)
@@ -1106,8 +1129,9 @@ namespace zynforge
         ArrangementSource src;
         const std::vector<Clip>* engineClips = (track < (int) trackClips.size())
                                                  ? &trackClips[(size_t) track] : nullptr;
-        auto audioDir = sessionDir.getChildFile ("Audio Files");
-        if (! audioDir.isDirectory()) audioDir = sessionDir;
+        // Audio Files, or for a session from before it, its Track_NN files in
+        // the session folder (findTrackMedia reads both).
+        const auto audioDir = sessionDir.getChildFile ("Audio Files");
         if (! src.open (audioDir, track, engineClips)) return false;
 
         juce::AudioBuffer<float> window (1, kRenderWindowSamples), tmp (1, 0);
@@ -1235,12 +1259,13 @@ namespace zynforge
             }
         }
 
+        const TrackMediaIndex media (audioDir);   // one listing for every strip
         for (auto& cp : live)
             if (cp->audible)
             {
                 const auto* clips = cp->track < (int) trackClips.size()
                     ? &trackClips[(size_t) cp->track] : nullptr;
-                if (! cp->src.open (audioDir, cp->track, clips)) return false;
+                if (! cp->src.open (audioDir, cp->track, clips, &media)) return false;
             }
 
         // Master MUTE keeps playback out of the PA. It is a monitoring switch,
@@ -1387,14 +1412,17 @@ namespace zynforge
     {
         std::vector<songs::Voice> voices;
         const juce::ScopedLock structure (recorder.getStructureLock());
+        const auto media = takeMedia();   // one listing for every strip
         for (int t = 0; t < recorder.getNumTracks(); ++t)
         {
             if (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed)) continue;
             if (isTrackArrangementEmpty (t)) continue;
 
             songs::Voice voice;
+            const auto name = recorder.getTrack (t).getNameThreadSafe();
+            voice.strip = "strip " + juce::String (t + 1) + (name.isNotEmpty() ? " (" + name + ")" : juce::String());
             // The channel it plays: an unlinked right strip plays the left's file's second.
-            voice.ownFile = getTrackAudioFile (t, &voice.channel);
+            voice.ownFile = getTrackAudioFile (media, t, &voice.channel);
             if (recorder.getTrack (t).isStereo.load (std::memory_order_relaxed)) voice.channel = -1;
             if (const auto* clips = tryClipsFor (t)) voice.clips = *clips;
             else

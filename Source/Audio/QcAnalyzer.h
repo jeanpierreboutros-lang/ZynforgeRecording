@@ -47,22 +47,50 @@ namespace zynforge::qc
     constexpr int   kClipRunSamples       = 3;
     constexpr int   kMaxStoredClipEvents  = 200;
 
-    // Every take the session plays, one file per track. A session from before
-    // Audio Files existed keeps its takes in the root, and anything imported
-    // later goes in the folder: reading only the folder left the show out of
-    // the report and called the rest clean.
+    // One strip QC must account for: its take's main file, or why it has none
+    // to read (`problem`), which QC reports as COULD NOT BE READ.
+    struct SessionTake
+    {
+        int          trackIndex { 0 };   // 0-based
+        juce::File   file;
+        juce::String problem;
+    };
+
+    // Every strip with take audio in the session, by number, one entry each. A
+    // session from before Audio Files existed keeps its takes in the root
+    // ("Track_NN" names only), and anything imported later goes in the folder:
+    // reading only the folder left the show out of the report and called the
+    // rest clean. A strip whose take has parts and no main file, or that two
+    // takes claim, is in the list with its problem: left out, the report
+    // called the rest clean.
+    inline std::vector<SessionTake> sessionTakeEntries (const juce::File& sessionDir)
+    {
+        const TrackMediaIndex media (sessionDir.getChildFile ("Audio Files"));
+        std::set<int> tracks;
+        for (const auto* folder : { &media.audioFiles(), &media.sessionRoot() })
+            for (const int track : folder->tracksWithTakeAudio()) tracks.insert (track);
+
+        std::vector<SessionTake> takes;
+        for (const int track : tracks)
+        {
+            SessionTake take;
+            take.trackIndex = track;
+            take.file = media.find (track);
+            if (const auto clash = media.clash (track); clash.isNotEmpty())
+                take.problem = "it has " + clash;
+            else if (! take.file.existsAsFile())
+                take.problem = "take does not open (its silent lead-in is still owed)";
+            takes.push_back (take);
+        }
+        return takes;
+    }
+
+    // The main files of sessionTakeEntries that have one.
     inline juce::Array<juce::File> sessionTakes (const juce::File& sessionDir)
     {
-        const auto audioDir = sessionDir.getChildFile ("Audio Files");
-        std::set<int> tracks;
-        for (const auto& dir : { audioDir, sessionDir })
-            for (const auto& file : takenames::trackFiles (dir))
-                if (const int number = mainTakeTrackNumber (file); number > 0) tracks.insert (number);
-
         juce::Array<juce::File> takes;
-        for (const int number : tracks)
-            if (const auto take = findTrackMedia (audioDir, number - 1); take.existsAsFile())
-                takes.add (take);
+        for (const auto& take : sessionTakeEntries (sessionDir))
+            if (take.problem.isEmpty()) takes.add (take.file);
         return takes;
     }
 

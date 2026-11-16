@@ -46,8 +46,8 @@ namespace zynforge
         void prepare (double sampleRate, int blockSize);
         void release();
 
-        // Off-thread: scan dir for Track_*.wav, build readers. Stops
-        // playback first. Returns number of tracks loaded.
+        // Off-thread: scan dir for its takes (TakeNames.h), build readers.
+        // Stops playback first. Returns number of tracks loaded.
         int  loadSession (const juce::File& sessionDir);
         struct PreparedLoad;
         using Prepared = std::shared_ptr<PreparedLoad>;
@@ -76,6 +76,13 @@ namespace zynforge
         {
             const juce::ScopedLock sl (tracksLock);
             return std::find (unopenedTracks.begin(), unopenedTracks.end(), trackIdx) != unopenedTracks.end();
+        }
+        // Strips the last load left silent because two takes claim them, one
+        // line each naming the files ("Track 5 has two take files, ...").
+        juce::StringArray loadClashes() const
+        {
+            const juce::ScopedLock sl (tracksLock);
+            return clashText;
         }
         juce::int64 getPositionSamples()    const noexcept { return position   .load(); }
         double      getSampleRate()         const noexcept { return fileSampleRate; }
@@ -179,6 +186,7 @@ namespace zynforge
 
         std::vector<Track> tracks;
         std::vector<int>   unopenedTracks;   // see trackFailedToOpen; under tracksLock
+        juce::StringArray  clashText;        // see loadClashes; under tracksLock
         // Reader lifetime guard. The audio thread only try-locks (and emits
         // silence on contention), while load/unload take the lock before
         // replacing readers. This makes teardown safe even with a stopped

@@ -732,15 +732,30 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
             punchSessionActive = true;
             wasInsidePunch    = false;
             engine.startPlayback();
+            const auto notice = legacyTakeNamesNotice (plan.dir);
             statusLabel.setText ("Punch-in armed -- in " + juce::String (in / sr, 1)
                                  + "s, out " + juce::String (out / sr, 1)
-                                 + "s, pre-roll " + juce::String (preRollSec) + "s",
+                                 + "s, pre-roll " + juce::String (preRollSec) + "s"
+                                 + (notice.isNotEmpty() ? " -- " + notice : juce::String()),
                                  juce::dontSendNotification);
             return true;
         }
     }
 
     return false;
+}
+
+juce::String MainComponent::legacyTakeNamesNotice (const juce::File& session)
+{
+    const auto strips = engine.getRecorder().getStripsKeepingLegacyNames();
+    if (strips.empty() || session == legacyTakeNamesNoticeSession) return {};
+    legacyTakeNamesNoticeSession = session;
+    juce::StringArray numbers;
+    for (const int strip : strips) numbers.add (juce::String (strip + 1));
+    return strips.size() == 1
+        ? "Strip " + numbers[0] + " keeps its " + zynforge::takenames::legacyStem (strips[0])
+              + " file names: its take started before it was named"
+        : "Strips " + numbers.joinIntoString (", ") + " keep Track_NN file names: their takes started before they were named";
 }
 
 void MainComponent::startLocalTake (const RecordStartPlan& plan)
@@ -789,6 +804,8 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
         const int mins = engine.getEstimatedMinutesRemaining();
         if (mins > 0 && mins < 30)
             msg << " -- ! DISK " << recordTimeText (mins * 60.0) << " left";
+        if (const auto notice = legacyTakeNamesNotice (plan.dir); notice.isNotEmpty())
+            msg << " -- " << notice;
         statusLabel.setText (msg, juce::dontSendNotification);
     }
     else
@@ -1111,6 +1128,10 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
                 if (self == nullptr) return;
                 auto mediaError = localCaptureFinalizationError (self->engine);
                 mediaOk = mediaOk && mediaError.isEmpty();
+                // Two takes on one strip's number reopen as silence, and say which.
+                if (const auto clashes = self->engine.getPlayer().loadClashes();
+                    ! mediaOk && mediaError.isEmpty() && ! clashes.isEmpty())
+                    mediaError = "Recording stopped, but the session did not reopen whole: " + clashes.joinIntoString ("; ");
                 if (! mediaOk && mediaError.isEmpty())
                     mediaError = "Recording stopped, but media could not be finalized or reopened";
                 if (rewind)

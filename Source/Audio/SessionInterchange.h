@@ -185,14 +185,14 @@ namespace zynforge::interchange
         // own: the same resolution ArrangementSource::open makes for a render.
         struct OwnMedia { juce::File file; int channel { -1 }; };
 
-        inline OwnMedia ownMedia (const juce::File& audioDir, int strip, MediaCache& media)
+        inline OwnMedia ownMedia (const TrackMediaIndex& takes, int strip, MediaCache& media)
         {
-            const auto own = findTrackMedia (audioDir, strip);
+            const auto own = takes.find (strip);
             if (own.existsAsFile())
                 return { own, media.take (own).channels >= 2 ? 0 : -1 };
             if (strip > 0)
             {
-                const auto left = findTrackMedia (audioDir, strip - 1);
+                const auto left = takes.find (strip - 1);
                 if (left.existsAsFile() && media.take (left).channels >= 2)
                     return { left, 1 };
             }
@@ -221,15 +221,19 @@ namespace zynforge::interchange
 
         // Everything one strip plays, cut at part boundaries so each piece is
         // one file. Empty string on success, else why the export must stop.
-        inline juce::String stripItems (const SessionInput& in, int index, const juce::File& audioDir,
+        inline juce::String stripItems (const SessionInput& in, int index, const TrackMediaIndex& takes,
                                         MediaCache& media, std::vector<Item>& out, int& approximated)
         {
             const auto& strip = in.strips[(size_t) index];
-            const auto own = ownMedia (audioDir, index, media);
+            const auto own = ownMedia (takes, index, media);
+            // Two takes claim the strip: nothing picks one to export.
+            const auto clash = takes.clash (index);
 
             std::vector<Clip> clips;
             if (strip.clips.has_value())
                 clips = *strip.clips;
+            else if (clash.isNotEmpty())
+                return stripLabel (strip, index) + " has " + clash;
             else if (own.file.existsAsFile())
             {
                 const auto& take = media.take (own.file);
@@ -246,6 +250,8 @@ namespace zynforge::interchange
                 if (clip.fileLengthSamples <= 0) continue;
                 const bool fromOwn = clip.audioFile == juce::File() || clip.audioFile == own.file;
                 const auto file = fromOwn ? own.file : clip.audioFile;
+                if (fromOwn && ! file.existsAsFile() && clash.isNotEmpty())
+                    return stripLabel (strip, index) + " has " + clash;
                 if (! file.existsAsFile())
                     return stripLabel (strip, index) + ": clip \"" + clip.name + "\" has no media"
                          + (file == juce::File() ? juce::String() : " (" + file.getFileName() + " is missing)");
@@ -350,8 +356,9 @@ namespace zynforge::interchange
             if (marker.sample >= 0)
                 project.markers.push_back ({ marker.sample, cleanText (marker.name) });
 
-        auto audioDir = in.sessionDir.getChildFile ("Audio Files");
-        if (! audioDir.isDirectory()) audioDir = in.sessionDir;
+        // Audio Files, and a session from before it keeps Track_NN takes in
+        // its own folder; each listed once for every strip.
+        const TrackMediaIndex takes (in.sessionDir.getChildFile ("Audio Files"));
 
         MediaCache media;
         int approximatedFades = 0, splitPairs = 0;
@@ -365,7 +372,7 @@ namespace zynforge::interchange
             if (index > 0 && in.strips[(size_t) index - 1].stereoLeft) continue;
 
             std::vector<Item> left;
-            if (auto problem = stripItems (in, index, audioDir, media, left, approximatedFades);
+            if (auto problem = stripItems (in, index, takes, media, left, approximatedFades);
                 problem.isNotEmpty())
             { result.error = problem; return result; }
 
@@ -380,7 +387,7 @@ namespace zynforge::interchange
             const auto& rightStrip = in.strips[(size_t) index + 1];
             std::vector<Item> right;
             int rightFades = 0;
-            if (auto problem = stripItems (in, index + 1, audioDir, media, right, rightFades);
+            if (auto problem = stripItems (in, index + 1, takes, media, right, rightFades);
                 problem.isNotEmpty())
             { result.error = problem; return result; }
 

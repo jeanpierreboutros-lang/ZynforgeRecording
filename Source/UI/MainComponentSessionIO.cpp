@@ -270,6 +270,14 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (leadInsOwed)
         toast.show (zynforge::MultitrackRecorder::describeOwedLeadIns (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir),
                     Toast::Kind::Warning);
+    // Two takes on one strip's number: neither plays, and the engineer has to
+    // say which one by moving the other out (TakeNames.h).
+    if (const auto clashes = engine.getPlayer().loadClashes(); ! clashes.isEmpty())
+    {
+        const auto line = "! " + clashes.joinIntoString ("; ");
+        statusLabel.setText (line, juce::dontSendNotification);
+        toast.show (line, Toast::Kind::Warning);
+    }
     // The autosave interval counts from here, not from the last session: a
     // save landing seconds after the open would write behind the damaged-files
     // prompt, before the engineer can answer it.
@@ -288,12 +296,14 @@ int MainComponent::restoreUnsavedStrips (const juce::File& dir, int playerTracks
     const int saved = engine.getRecorder().getNumTracks();
     engine.setStripCount (playerTracks);
     const int now = engine.getRecorder().getNumTracks();
-    const auto audioDir = dir.getChildFile ("Audio Files");
+    // One listing for every strip (Audio Files, and Track_NN takes in the
+    // session folder of a session from before it).
+    const zynforge::TrackMediaIndex media (dir.getChildFile ("Audio Files"));
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     for (int i = saved; i + 1 < now; ++i)
     {
-        const auto take = zynforge::findTrackMedia (audioDir.isDirectory() ? audioDir : dir, i);
+        const auto take = media.find (i);
         if (! take.existsAsFile()) continue;
         std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (take));
         if (reader != nullptr && reader->numChannels >= 2)
@@ -1040,23 +1050,20 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     }
 
     // Imported/generated media can coexist with legacy root-level takes.
-    // Prefer the modern file for each track, then fall back to its legacy file.
+    // Prefer the modern file for each track, then fall back to its legacy file
+    // (Track_NN names only: a song kept in the session folder is no take).
+    // A track's main file, "Track_NN.<ext>" or "NN Label.<ext>" (TakeNames.h),
+    // from one listing of each folder. Parts, punch sidecars and renders are
+    // never a track's main file, and a track two takes claim has none: it is
+    // named as missing, never exported from whichever sorted first.
     const auto audioDir = sourceDir.getChildFile ("Audio Files");
-    // A track's main file, "Track_NN.<ext>" or "NN Label.<ext>" (TakeNames.h).
-    // Parts, punch sidecars and renders are never a track's main file.
-    auto allFiles = zynforge::takenames::trackFiles (audioDir);
-    allFiles.addArray (zynforge::takenames::trackFiles (sourceDir));
-
-    auto matchesIndex = [] (const juce::File& f, int index1Based) -> bool
-    {
-        return zynforge::takenames::mainNumber (f) == index1Based;
-    };
-
+    const zynforge::TrackMediaIndex media (audioDir);
+    juce::String clashNote;
     auto findTrackFile = [&] (int index1Based) -> juce::File
     {
-        for (auto& src : allFiles)
-            if (matchesIndex (src, index1Based)) return src;
-        return {};
+        if (const auto clash = media.clash (index1Based - 1); clash.isNotEmpty() && clashNote.isEmpty())
+            clashNote = "track " + juce::String (index1Based) + " has " + clash;
+        return media.find (index1Based - 1);
     };
 
     // ── Phase 1 (MESSAGE THREAD): resolve every job ────────────────────────
@@ -1143,7 +1150,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
             // After unlinking a native pair, the right strip's audio is the
             // second channel of the left's file, which this export writes.
             int fileChannel = 0;
-            const auto sharedFile = engine.getTrackAudioFile (i, &fileChannel);
+            const auto sharedFile = engine.getTrackAudioFile (media, i, &fileChannel);
             if (sharedFile.existsAsFile() && fileChannel == 1)
             {
                 // Ticked alone or with the left strip, it is that one channel.
@@ -1156,13 +1163,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
             // Empty, never-recorded strips are expected in Export All. A
             // selected strip, a previously loaded source, or a dangling
             // continuation part is missing media and makes the batch partial.
-            const auto hasPartIn = [i] (const juce::File& dir)
-            {
-                const auto stem = zynforge::takenames::existingStem (dir, i);
-                return stem.isNotEmpty()
-                    && ! dir.findChildFiles (juce::File::findFiles, false, stem + "_part*").isEmpty();
-            };
-            const bool hasPart = hasPartIn (audioDir) || hasPartIn (sourceDir);
+            const bool hasPart = media.audioFiles().holdsTakeAudio (i) || media.sessionRoot().holdsTakeAudio (i);
             const auto* clips = engine.tryClipsFor (i);
             const bool hasArrangement = clips != nullptr && ! clips->empty();
             if (channelIndices.size() != (size_t) rec.getNumTracks()
@@ -1176,6 +1177,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     {
         showStatus (missingSources > 0
             ? "Export failed: " + zynforge::counted (missingSources, "selected source file") + " missing"
+                  + (clashNote.isNotEmpty() ? " (" + clashNote + ")" : juce::String())
             : "Export failed: no matching take files");
         return;
     }
@@ -1192,7 +1194,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 
     juce::Component::SafePointer<MainComponent> self (this);
     const auto destName = destDir.getFileName();
-    sessionJobs.launch ([self, jobs, opts, destName, missingSources] (const std::atomic<bool>& cancel)
+    sessionJobs.launch ([self, jobs, opts, destName, missingSources, clashNote] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
         zynforge::TrackExporter exporter;
@@ -1215,7 +1217,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
         }
 
         const bool cancelled = cancel.load (std::memory_order_relaxed);
-        return [self, succeeded, attempted, firstError, destName, cancelled, missingSources,
+        return [self, succeeded, attempted, firstError, destName, cancelled, missingSources, clashNote,
                 clipped = exporter.getClippedFiles()]
         {
             if (self == nullptr) return;
@@ -1234,7 +1236,8 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
             else if (self->lastExportFailures > 0)
                 self->showStatus ("Export INCOMPLETE: " + juce::String (self->lastExportFailures)
                                   + " of " + juce::String (attempted + missingSources) + " failed or missing"
-                                  + (firstError.isNotEmpty() ? " (" + firstError + ")" : ""));
+                                  + (clashNote.isNotEmpty() ? " (" + clashNote + ")"
+                                     : firstError.isNotEmpty() ? " (" + firstError + ")" : ""));
             else
                 self->showStatus ("Exported " + zynforge::counted (succeeded, "track") + " -> " + destName
                                   + (clipped > 0 ? " -- WARNING: " + juce::String (clipped) + " went over full scale and CLIPPED"
@@ -2090,8 +2093,9 @@ juce::String MainComponent::buildTimelineCsv()
     juce::StringArray names;
     for (int i = 0; i < rec.getNumTracks(); ++i)
         names.add (rec.getTrack (i).name);
-    const auto tracks = tx::trackEntries (names, [this] (int track, int& channel)
-                                          { return engine.getTrackAudioFile (track, &channel); });
+    const auto media = engine.takeMedia();   // one listing for every strip
+    const auto tracks = tx::trackEntries (names, [this, &media] (int track, int& channel)
+                                          { return engine.getTrackAudioFile (media, track, &channel); });
 
     std::vector<tx::MarkEntry> markers;
     auto& mk = engine.getMarkers();

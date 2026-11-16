@@ -315,24 +315,22 @@ namespace zynforge
                 return;
             }
             // Pro Tools-style: tracks live under "Audio Files/". Legacy
-            // sessions kept them at the root, so fall back to the root
-            // when the subfolder is absent.
+            // sessions kept them at the root (Track_NN names only), read for a
+            // track with no take in the subfolder, as playback reads them.
             const auto audioFiles = sessionDir.getChildFile ("Audio Files");
             const auto base = audioFiles.isDirectory() ? audioFiles : sessionDir;
-            // Try .wav first, then .flac/.aif so backup-format sessions
-            // still draw thumbnails.
-            // One listing for every row: "Track_NN" or "NN Label" (TakeNames.h).
-            const zynforge::takenames::StemIndex stems (base);
+            // One listing of each folder for every row: "Track_NN" or
+            // "NN Label" (TakeNames.h), .wav first, then .flac/.aif so
+            // backup-format sessions still draw thumbnails. Resolving a row
+            // through engine.getTrackAudioFile (track) listed the folder again
+            // for every mono row.
+            const zynforge::TrackMediaIndex media (audioFiles);
             auto findTrackFile = [&] (int trackIdx) -> juce::File
             {
-                const auto stem = stems.stemOrLegacy (trackIdx);
-                const char* exts[] = { ".wav", ".flac", ".aif", ".aiff" };
-                for (auto* ext : exts)
-                {
-                    auto f = base.getChildFile (stem + ext);
-                    if (f.existsAsFile()) return f;
-                }
-                return base.getChildFile (stem + ".wav");
+                if (const auto f = media.find (trackIdx); f != juce::File()) return f;
+                // Two takes claim it: it plays nothing, so it draws nothing.
+                if (media.clash (trackIdx).isNotEmpty()) return {};
+                return base.getChildFile (media.audioFiles().stemOrLegacy (trackIdx) + ".wav");
             };
             const auto show = [noteOnly] (TrackRow& r, const juce::File& fL, const juce::File& fR, int channel)
             {
@@ -356,7 +354,7 @@ namespace zynforge
                 // Resolved the way playback resolves it: after an unlink, a
                 // mono row can be the right channel of the file on its left.
                 int channel = 0;
-                const auto file = engine.getTrackAudioFile (trackIdx, &channel);
+                const auto file = engine.getTrackAudioFile (media, trackIdx, &channel);
                 show (*r, file.existsAsFile() ? file : findTrackFile (trackIdx), {}, channel);
             }
         }

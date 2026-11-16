@@ -174,7 +174,10 @@ namespace zynforge::showhandoff
             totalBytes += size;
             const bool inAudioFolder = relative.startsWith ("Audio Files/");
             const auto name = inAudioFolder ? relative.substring (12) : relative;
-            if ((folderHasAudio ? inAudioFolder : ! inAudioFolder) && supportedTake (name))
+            // In the session folder itself only a take from before Audio Files,
+            // "Track_NN": a song kept there ("01 Intro.wav") is not one.
+            if ((folderHasAudio ? inAudioFolder : ! inAudioFolder) && supportedTake (name)
+                && (inAudioFolder || name.startsWith ("Track_")))
             {
                 audioHashes.emplace (name, originalSha);
                 ++audioCount;

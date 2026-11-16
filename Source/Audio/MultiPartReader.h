@@ -68,25 +68,71 @@ namespace zynforge
         return parts;
     }
 
-    // The main file of strip `track` (0-based). A slot in the modern directory
-    // wins over any legacy extension, matching SessionPlayer's per-track
-    // precedence; a session from before Audio Files existed reads its root.
+    // Where each strip's take is, from one listing of each folder. A session
+    // keeps its takes in `audioDir` ("<session>/Audio Files"); a session from
+    // before Audio Files existed keeps them in its own folder, read for a strip
+    // with no main file in Audio Files, under "Track_NN" names only (a song kept
+    // there, "01 Intro.wav", is not a take). A folder not named "Audio Files" is
+    // read on its own. Build one per operation and resolve every strip from it:
+    // findTrackMedia lists the folder each call.
+    class TrackMediaIndex
+    {
+    public:
+        TrackMediaIndex() = default;
+
+        explicit TrackMediaIndex (const juce::File& audioDir)
+            : modern (audioDir),
+              legacyRootRead (audioDir.getFileName() == "Audio Files")
+        {
+            if (legacyRootRead)
+                root = takenames::StemIndex (audioDir.getParentDirectory(), takenames::StemIndex::Names::legacyOnly);
+        }
+
+        // The main file of strip `track` (0-based). A slot in the modern
+        // directory wins over any legacy extension, matching SessionPlayer's
+        // per-track precedence. Empty when the strip has none, or when two
+        // takes claim it (clash): nothing here picks one.
+        juce::File find (int track) const
+        {
+            if (modern.clashes (track)) return {};
+            if (const auto f = modern.mainFile (track); f != juce::File()) return f;
+            return legacyRootRead ? root.mainFile (track) : juce::File();
+        }
+
+        // Why strip `track` has no take to read although files claim it, or
+        // empty: "two take files, A and B: move one of them out of ...".
+        juce::String clash (int track) const
+        {
+            if (modern.clashes (track)) return modern.clash (track);
+            if (modern.mainFile (track) == juce::File() && legacyRootRead) return root.clash (track);
+            return {};
+        }
+
+        const takenames::StemIndex& audioFiles() const noexcept { return modern; }
+        const takenames::StemIndex& sessionRoot() const noexcept { return root; }
+
+    private:
+        takenames::StemIndex modern, root;
+        bool legacyRootRead { false };
+    };
+
+    // The main file of strip `track` (0-based), as TrackMediaIndex::find.
+    inline juce::File findTrackMedia (const TrackMediaIndex& media, int track)
+    {
+        return media.find (track);
+    }
+
+    // One strip on its own: lists `audioDir`, and the session folder only when
+    // the strip has nothing in Audio Files. For many strips, build one
+    // TrackMediaIndex.
     inline juce::File findTrackMedia (const juce::File& audioDir, int track)
     {
-        const auto findIn = [track] (const juce::File& directory)
-        {
-            const auto stem = takenames::existingStem (directory, track);
-            if (stem.isEmpty()) return juce::File();
-            for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
-            {
-                const auto file = directory.getChildFile (stem + ext);
-                if (file.existsAsFile()) return file;
-            }
-            return juce::File();
-        };
-        const auto modern = findIn (audioDir);
-        return modern.existsAsFile() || audioDir.getFileName() != "Audio Files"
-            ? modern : findIn (audioDir.getParentDirectory());
+        const takenames::StemIndex modern (audioDir);
+        if (modern.clashes (track)) return {};
+        if (const auto f = modern.mainFile (track); f != juce::File()) return f;
+        if (audioDir.getFileName() != "Audio Files") return {};
+        return takenames::StemIndex (audioDir.getParentDirectory(), takenames::StemIndex::Names::legacyOnly)
+            .mainFile (track);
     }
 
     // ── Multi-part take reader ─────────────────────────────────────────────

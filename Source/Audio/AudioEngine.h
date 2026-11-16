@@ -18,6 +18,7 @@
 #include "SessionPlayer.h"
 #include "LoudnessMeter.h"
 #include "MixKernel.h"
+#include "MultiPartReader.h"
 #include "StripColours.h"
 #include "StripGains.h"
 #include "StripNames.h"
@@ -819,6 +820,12 @@ namespace zynforge
                         const juce::String& name, const juce::File& audioFile = {},
                         int sourceChannel = -1, int fadeCurve = 0);
         juce::File getTrackAudioFile (int track, int* channel = nullptr) const;
+        // The same for many strips: resolve each from one listing of the
+        // session's folders (takeMedia), not one listing per strip.
+        juce::File getTrackAudioFile (const TrackMediaIndex& media, int track, int* channel = nullptr) const;
+        // Where the active session's takes are, listed once (TrackMediaIndex).
+        // Empty with no session folder.
+        TrackMediaIndex takeMedia() const;
 
         // Mutate one clip's bounds and republish to the player. Three
         // edit modes the EDIT row's drag handles drive:
