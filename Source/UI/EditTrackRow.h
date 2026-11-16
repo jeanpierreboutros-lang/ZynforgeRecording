@@ -2809,6 +2809,16 @@ namespace zynforge
                             page->onStatus ("A peer of this clip is locked -- unlock it first");
                         return;
                     }
+                    // A copy replaces what lies where it lands: refuse before any
+                    // peer changes when that is a locked clip on one of them.
+                    if (chosen == 410)
+                        for (auto [p, pi] : targets)
+                            if (const auto refusal = self->engine.duplicateRefusal (p, pi); refusal.isNotEmpty())
+                            {
+                                if (auto* page = self->findParentComponentOfClass<EditPage>(); page != nullptr && page->onStatus)
+                                    page->onStatus (refusal);
+                                return;
+                            }
                     // Each peer's own index: a duplicate or delete on one track
                     // leaves the others' lists alone.
                     if (chosen == 410) withUndo ("Duplicate clip", [&]{ for (auto [p, pi] : targets) self->engine.duplicateClip (p, pi); });

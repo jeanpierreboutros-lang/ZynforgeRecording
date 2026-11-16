@@ -1050,11 +1050,44 @@ void MainComponent::editDuplicateSelectedClip()
     if (zynforge::clipedit::anyLocked (engine, sel))
     { showStatus ("Clip is locked -- unlock it before duplicating"); return; }
 
+    // A copy replaces what lies where it lands (AudioEngine::duplicateClip).
+    // Refuse before anything changes when that would cut a locked clip, or
+    // another clip of this selection, or the copy of one: duplicating two
+    // neighbouring clips of one strip would lay the first copy over the second.
+    for (const auto& clip : sel)
+        if (const auto refusal = engine.duplicateRefusal (clip.first, clip.second); refusal.isNotEmpty())
+        { showStatus (refusal); return; }
+    struct Copy { int track; Clip clip; };
+    std::vector<Copy> expected;
+    for (const auto& clip : sel)
+    {
+        auto copy = engine.clipsFor (clip.first)[(size_t) clip.second];
+        copy.timelineStartSamples += copy.fileLengthSamples;
+        copy.name += " (copy)";
+        expected.push_back ({ clip.first, copy });
+    }
+    const auto overlaps = [] (juce::int64 a0, juce::int64 a1, juce::int64 b0, juce::int64 b1) { return a0 < b1 && b0 < a1; };
+    for (size_t i = 0; i < sel.size(); ++i)
+        for (size_t j = 0; j < sel.size(); ++j)
+        {
+            if (i == j || sel[i].first != sel[j].first) continue;
+            const auto& other = engine.clipsFor (sel[j].first)[(size_t) sel[j].second];
+            const auto& copy = expected[i].clip;
+            const auto c0 = copy.timelineStartSamples, c1 = c0 + copy.fileLengthSamples;
+            const auto o0 = other.timelineStartSamples, o1 = o0 + other.fileLengthSamples;
+            const auto& otherCopy = expected[j].clip;
+            if (overlaps (c0, c1, o0, o1)
+                || overlaps (c0, c1, otherCopy.timelineStartSamples,
+                             otherCopy.timelineStartSamples + otherCopy.fileLengthSamples))
+            {
+                showStatus ("The copy of one selected clip would land on another selected clip -- duplicate them one at a time");
+                return;
+            }
+        }
+
     const EditPage::ClipRef source { editPage->getSelectedClipTrack(), editPage->getSelectedClipIndex() };
     const auto before = engine.playlistsToJson();
-    // Highest index first per track, so the lower ones stay valid. A copy lands
-    // right after its source, behind one slot for each copy made earlier in
-    // that track's list.
+    // Highest index first per track, so the lower ones stay valid.
     bool allCopied = true;
     for (auto it = sel.rbegin(); it != sel.rend(); ++it)
         allCopied = engine.duplicateClip (it->first, it->second) && allCopied;
@@ -1066,14 +1099,27 @@ void MainComponent::editDuplicateSelectedClip()
         return;
     }
 
-    // Follow the new copies, the primary included.
-    std::map<int, int> copiesBelow;
+    // Follow the new copies, the primary included. Found by what they are:
+    // a clip cut back around a copy can move the copy's index.
     std::vector<EditPage::ClipRef> copies;
     auto primary = source;
-    for (const auto& clip : sel)
+    for (size_t i = 0; i < sel.size(); ++i)
     {
-        copies.emplace_back (clip.first, clip.second + 1 + copiesBelow[clip.first]++);
-        if (clip == source) primary = copies.back();
+        const auto& want = expected[i].clip;
+        const auto& list = engine.clipsFor (expected[i].track);
+        for (int k = 0; k < (int) list.size(); ++k)
+        {
+            const auto& c = list[(size_t) k];
+            const EditPage::ClipRef ref { expected[i].track, k };
+            if (c.timelineStartSamples == want.timelineStartSamples && c.fileStartSamples == want.fileStartSamples
+                && c.fileLengthSamples == want.fileLengthSamples && c.audioFile == want.audioFile
+                && c.name == want.name && std::find (copies.begin(), copies.end(), ref) == copies.end())
+            {
+                copies.push_back (ref);
+                if (sel[i] == source) primary = ref;
+                break;
+            }
+        }
     }
     editPage->setSelectedClips (copies, primary);
     editPage->repaint();
