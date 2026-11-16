@@ -12,6 +12,8 @@
 
 #include "../UI/MainComponent.h"
 #include "../UI/PreflightDialog.h"
+#include "../UI/EditPage.h"
+#include "../UI/EditToolsBar.h"
 #include "../Audio/SessionBackup.h"
 #include "SilentAudioDevice.h"
 
@@ -280,6 +282,50 @@ namespace zynforge
                 expect (! m.lockButton.getWantsKeyboardFocus(), "LOCK can still hold keyboard focus");
             }
 
+            // Lead, after the merge: the same root as MAIN-01 on the strip's
+            // R / I / M / S, the master strip and the EDIT tools. A focused
+            // ToggleButton takes Return; a focused tool takes Return and Space,
+            // so Space after clicking a tool picked the tool, not the transport.
+            beginTest ("No click leaves keyboard focus on a strip's R/I/M/S, the master strip or an EDIT tool");
+            {
+                Window w (2);
+                w.main.rebuildStrips();
+                auto& m = w.main;
+                for (auto& strip : m.strips)
+                {
+                    if (strip == nullptr) continue;
+                    std::vector<juce::Button*> buttons;
+                    collect (*strip, buttons);
+                    expect (buttons.size() >= 4, "setup: no R/I/M/S on the strip");
+                    for (auto* b : buttons)
+                        expect (! b->getMouseClickGrabsKeyboardFocus(), "strip " + b->getButtonText() + " takes focus on a click");
+                }
+                expect (m.masterStrip != nullptr, "setup: no master strip");
+                if (m.masterStrip != nullptr)
+                {
+                    std::vector<juce::Button*> buttons;
+                    collect (*m.masterStrip, buttons);
+                    expect (buttons.size() >= 2, "setup: no master buttons");
+                    for (auto* b : buttons)
+                        expect (! b->getMouseClickGrabsKeyboardFocus(), "master " + b->getButtonText() + " takes focus on a click");
+                }
+                auto* tools = m.editPage != nullptr ? m.editPage->getEditToolsBar() : nullptr;
+                expect (tools != nullptr, "setup: no EDIT tools");
+                if (tools != nullptr)
+                {
+                    std::vector<juce::Component*> all;
+                    collect (*tools, all);
+                    int focusable = 0;
+                    for (auto* c : all)
+                        if (c->getWantsKeyboardFocus())
+                        {
+                            ++focusable;
+                            expect (! c->getMouseClickGrabsKeyboardFocus(), "EDIT tool " + c->getTitle() + " takes focus on a click");
+                        }
+                    expect (focusable >= 4, "setup: no keyboard-reachable EDIT tools");
+                }
+            }
+
             beginTest ("Return never turns LOCK off");
             {
                 Window w;
@@ -420,6 +466,44 @@ namespace zynforge
                 pumpUntil ([] { return false; }, 200);
                 expect (! w.engine().isPlaying(), "the post-roll started by itself after STOP");
                 expect (! w.main.punchSessionActive, "the punch outlived STOP");
+            }
+
+            // Lead, after the merge: a surface or desk STOP reached
+            // handleRemoteTransport's "finalization pending" answer before the
+            // post-roll was cancelled, so it rolled on by itself.
+            for (const auto action : { zynforge::AudioEngine::RemoteTransportAction::StopPlay,
+                                       zynforge::AudioEngine::RemoteTransportAction::StopAll })
+            {
+                beginTest (juce::String ("A remote ")
+                           + (action == zynforge::AudioEngine::RemoteTransportAction::StopPlay ? "StopPlay" : "StopAll")
+                           + " while a selection punch finalizes cancels its post-roll");
+                Window w;
+                reachTheOutPoint (w);
+                juce::String error;
+                w.engine().performRemoteTransport (action, error);
+                expect (w.stopped());
+                pumpUntil ([] { return false; }, 200);
+                expect (! w.engine().isPlaying(), "the post-roll started by itself after a remote stop");
+                expect (! w.main.punchSessionActive, "the punch outlived a remote stop");
+            }
+
+            // Lead, after the merge: a surface or desk STOP reached
+            // handleRemoteTransport's "finalization pending" answer before the
+            // post-roll was cancelled, so it rolled on by itself.
+            for (const auto action : { zynforge::AudioEngine::RemoteTransportAction::StopPlay,
+                                       zynforge::AudioEngine::RemoteTransportAction::StopAll })
+            {
+                beginTest (juce::String ("A remote ")
+                           + (action == zynforge::AudioEngine::RemoteTransportAction::StopPlay ? "StopPlay" : "StopAll")
+                           + " while a selection punch finalizes cancels its post-roll");
+                Window w;
+                reachTheOutPoint (w);
+                juce::String error;
+                w.engine().performRemoteTransport (action, error);
+                expect (w.stopped());
+                pumpUntil ([] { return false; }, 200);
+                expect (! w.engine().isPlaying(), "the post-roll started by itself after a remote stop");
+                expect (! w.main.punchSessionActive, "the punch outlived a remote stop");
             }
 
             beginTest ("Space while a selection punch finalizes cancels its post-roll");

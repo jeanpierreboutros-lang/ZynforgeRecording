@@ -119,6 +119,10 @@ namespace zynforge
             engine.setMasterMuted (muteButton.getToggleState());
         };
         addAndMakeVisible (muteButton);
+        // A click leaves keyboard focus where it was: a focused button takes the
+        // next Return, which re-pressed MUTE or the mode switch.
+        modeButton.setMouseClickGrabsKeyboardFocus (false);
+        muteButton.setMouseClickGrabsKeyboardFocus (false);
 
         fader.setSliderStyle (juce::Slider::LinearVertical);
         // FineFader ignores the wheel and passes it on, so a stray trackpad

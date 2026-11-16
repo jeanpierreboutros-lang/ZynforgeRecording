@@ -1230,7 +1230,16 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     if (action == A::TogglePlay || action == A::StartPlay || action == A::StopPlay)
     {
         if (captureMetadataPending || pendingMetadataSaves != 0)
-        { error = "session finalization or saving is pending"; return false; }
+        {
+            // A stop while a punch's files close still means "don't roll on":
+            // it cancels the post-roll or the punch-out's playback restart, as
+            // STOP on the Mac does (onStopClicked), and the answer stays true
+            // about the take: it is still being finalized.
+            if (captureMetadataPending && action == A::StopPlay && (punchSessionActive || punchResumePending))
+                onStopClicked();
+            error = "session finalization or saving is pending";
+            return false;
+        }
         // A punch ends with STOP, which splices what it caught and stops the
         // transport. Stopping playback under it (a tablet's PLAY release, a
         // surface STOP or PLAY) cut a selection punch short and rolled on by
@@ -1264,7 +1273,12 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         {
             recordPressHeldAtMs = 0;
             if (captureMetadataPending)
-            { error = "recording stopped; finalization pending"; return false; }
+            {
+                // As above: no post-roll or playback restart after a remote STOP.
+                if (punchSessionActive || punchResumePending) onStopClicked();
+                error = "recording stopped; finalization pending";
+                return false;
+            }
             // A failed take stays reported, but it never holds up stopping
             // the playback that is rolling now.
             if (action == A::StopAll) onStopClicked();

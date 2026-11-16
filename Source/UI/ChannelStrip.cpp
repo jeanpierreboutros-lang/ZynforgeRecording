@@ -640,6 +640,11 @@ namespace zynforge
         // the next arrow key as a new patch, in the middle of a show.
         inputCombo .setMouseClickGrabsKeyboardFocus (false);
         outputCombo.setMouseClickGrabsKeyboardFocus (false);
+        // The same for R / I / M / S: a focused button takes the next Return,
+        // so a stray Return re-pressed the last MUTE or ARM clicked.
+        for (juce::Button* b : { (juce::Button*) &armButton, (juce::Button*) &monButton,
+                                 (juce::Button*) &muteButton, (juce::Button*) &soloButton })
+            b->setMouseClickGrabsKeyboardFocus (false);
 
         armButton.setToggleState (s.armed.load(), juce::dontSendNotification);
         armButton.onClick = [this]

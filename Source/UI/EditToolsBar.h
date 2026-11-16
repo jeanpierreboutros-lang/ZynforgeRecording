@@ -120,6 +120,10 @@ namespace zynforge
                 setDescription (richTip);
                 setTooltip (richTip);
                 setWantsKeyboardFocus (true);
+                // Reachable by Tab, never focused by a click: a clicked tool
+                // kept focus and took the next Space and Return, so Space picked
+                // the tool again instead of reaching the transport.
+                setMouseClickGrabsKeyboardFocus (false);
             }
 
             bool active { false };
