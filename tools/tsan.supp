@@ -1,0 +1,16 @@
+# ThreadSanitizer suppressions for the ZynforgeRecordingTests app.
+# Pass with: open --env TSAN_OPTIONS=halt_on_error=1:suppressions=<copy>:log_path=...
+# TSan splits its options on spaces, and this repo's path has spaces: copy the
+# file to a path without any (e.g. /private/tmp/zf-tsan.supp) and pass that.
+# Keep every entry narrow, explained and outside our own code.
+
+# JUCE 8.0.17 CoreMIDI input: the Receiver and its TimeConverter are built when
+# the input opens (main thread) and only read on CoreMIDI's thread after
+# MIDIPortConnectSource. CoreMIDI orders the two, but it is not instrumented,
+# so TSan reports a race. Seen since "Net fixes 2026-11-16 / NET-10" sends real
+# MIDI through a JUCE input (2026-11-17).
+# race_top matches only the frame that made the access, so a race in our own
+# MIDI handler (called from inside pushUmp) is still reported.
+race_top:juce::CoreMidiHelpers::TimeConverter::convertToMillis
+race_top:juce::CoreMidiHelpers::Receiver
+race_top:juce::CoreAudioTimeConversions::hostTimeToNanos

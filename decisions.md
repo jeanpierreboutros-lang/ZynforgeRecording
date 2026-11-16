@@ -2,6 +2,30 @@
 
 
 
+## 2026-11-16 review fix round: the choices the fixes made — 2026-11-16
+
+**Status:** Made during the fixes; each is open to the owner's review.
+
+**Context.** A whole-codebase review on 2026-11-16 (`801536c`) made 72 findings (1 critical, 4 high, 18 medium, 49 low), ten of them tied to the take-file names landed the same day. The owner said "Fix all". Seven fixers worked on branches (names, engine, play, session, net, capture, mixer), merged on `integrate/fix-2026-11-16`. Where a fix had a choice, it took the conservative side: refuse and say why rather than guess.
+
+**Decision:**
+- *Punches.* A remote or surface stop of playback is refused during any punch, manual as well as selection ("STOP on the Mac ends it"); a remote STOP still ends the punch, and while the punch's files close it cancels the post-roll. In PUNCH mode with a range armed and the transport rolling, every remote locate (Scene Follow, `/zynforge/scene`, desk macro jumps, the jog wheel) that lands before or inside the range is refused; one past it, or any while stopped, is allowed. A PUNCH-window take ends on one press.
+- *Take names.* Two files claiming one strip is never resolved by picking one: the strip is silent and RECORD, punch and strip moves on it are refused, naming both files. Nothing is renamed. Only `Track_NN` names are takes in the session folder itself. Older builds can't be changed: the same build goes on every Mac that opens a session.
+- *Strip moves* are refused while the last take's hashes are being written (up to about 2 h after a long show take; the message says it ends on its own) and while the session's drive is unplugged. Rewriting the report in the move's transaction was preferred to leaving it stale.
+- *New sessions* never fall back to ~/Music when a chosen folder exists: an unplugged drive is reported and Create waits; a folder that can't be made fails as such. With no session open, the sessions folder itself is refused as a backup or mirror (a folder inside it is allowed, as it is with a session open).
+- *Remote and twin RECORD during a save* waits up to 1.5 s on the message thread (audio unaffected) rather than being refused or held; past that it is refused naming the save.
+- *Device restart in place* waits 500 ms for JUCE's own restart before falling back to input-only capture, while the output is still listed: up to 0.5 s more silence in the take if the restart never comes, to keep monitoring when it does.
+- *Use Take Stamp* is refused until timecode has been heard, rather than converted at a guessed rate.
+- *The capture helper* files stay in /tmp (every build agrees where they are) and are refreshed about hourly rather than moved. An idle helper of another build is replaced at attach, never one with a take rolling.
+- *Duplicate* overwrites what lies where the copy lands (Pro Tools style), refused over a locked clip. Detect Songs run again replaces its earlier song markers, renamed ones included (Cmd+Z brings them back).
+- *Cues* bind by strip uid; the old rebind-by-position runs only when session_mix.json was actually read. A cue none of whose strips exist recalls no mix and says so.
+- *OSC* channel colour and Generic mute/arm address the strip listening to desk channel N, as names do. A blank desk name is ignored. Apply with an unchanged port keeps the tablet's token.
+- *No click takes keyboard focus* on header, setlist, strip, master or EDIT-tool controls; they stay reachable by Tab, except LOCK, which never holds focus.
+
+**Consequences.** More presses refuse with a reason instead of acting: strip moves after a take or with the drive gone, remote locates in PUNCH mode, surface stops during a punch, Use Take Stamp before timecode, a strip with two take files. The audio callback now takes no lock; take start, stop and pre-roll swaps can wait up to one callback period for the audio thread.
+
+**Alternatives considered:** Moving the helper's files out of /tmp (old and new builds would disagree during an upgrade). Hashing the helper executable for its build id (over 5 s on a TSan build, so the helper missed its listen deadline). Letting a strip move run during the hash pass and re-hashing afterwards (the pass would read files mid-rename). Picking the "real" file of a clash by date or name (a guess that can play the wrong take at a show).
+
 ## Take files are named for their strips — 2026-11-16
 
 **Status:** Accepted (owner asked for it after the 2026-11-14 show: "the audio files on the hard drive have not the exact names of the tracks in the app").

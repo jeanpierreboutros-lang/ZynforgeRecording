@@ -8,6 +8,26 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ---
 
+## 2026-11-16 fix round — not yet performed
+
+The fixes from the 2026-11-16 review. Disposable sessions; the steps that pull hardware need a recovery plan.
+
+- [ ] 🟥 **Mackie STOP during a punch.** Play a take, press RECORD on the Mac to punch, then press STOP and PLAY on the Mackie (and toggle a tablet PLAY off). Each is refused with "STOP on the Mac ends it", playback keeps rolling, the punch records; STOP on the Mac ends it in one press and only the punched span is replaced.
+- [ ] 🟥 **Scene recall in PUNCH mode.** PUNCH mode on, a range armed, playback rolling after it, Scene Follow on: recall a desk scene whose marker is before the range. Refused with a status line; nothing is punched.
+- [ ] 🟥 **Strip move with the drive gone.** Open a session on the external SSD, eject it, move and delete a strip: both refused ("Session folder is missing… reconnect its drive"). Reconnect: every strip still plays its own audio.
+- [ ] 🟧 **Dante / DVS reconfigure mid-take.** Change something in Dante Controller or DVS that restarts the device at the same rate during a take: monitoring and the outputs come back (no "MONITOR OUTPUT LOST"), and the take continues.
+- [ ] 🟧 **New Session with the sessions drive unplugged.** Local Storage on the SSD, SSD not mounted: File ▸ New Session shows that folder with "Drive not connected" and creates nothing; after mounting it, Create works there. Nothing appears in ~/Music.
+- [ ] 🟧 **Two files for one strip.** In a test session, duplicate `01 KiCK.wav` in Finder: on reopen strip 1 is silent and named in the status line; RECORD on strip 1 and moving it are refused naming both files. Remove the copy: all normal.
+- [ ] 🟧 **Helper reattach during a long STOP.** Helper mode, a long multitrack take with a backup: during STOP, force-quit the window and reopen it. The window stays responsive (no 5 s freezes) and adopts the finished take.
+- [ ] 🟧 **Helper from an older build.** With a helper from the previous build left running idle, launch this build: it says the other build's helper was replaced and RECORD runs. Quit the app: no `zynforge-capture` left in Activity Monitor.
+- [ ] 🟧 **Twin link loss on STOP.** Two Macs linked, both recording: pull the leader's network cable and STOP the leader within 3 s. The leader says FOLLOWER NOT STOPPED; stop the follower by hand.
+- [ ] 🟨 **Desk names.** A DiGiCo or Yamaha desk with an unnamed channel: Request ALL channel names does not erase the name typed on that strip. Desk colours land on the strip that hears that channel.
+- [ ] 🟨 **Stray Return.** Click LOCK, a setlist cue button, a strip MUTE and an EDIT tool, then press Return and Space: nothing re-presses; Space drives the transport.
+- [ ] 🟨 **Welcome with DVS not running.** Launch before DVS is up, change only the Output in the Welcome and create: DEVICE still asks for Dante Virtual Soundcard as the input once DVS starts.
+- [ ] 🟨 **Use Take Stamp.** Before any timecode runs, Transport Sync ▸ Use Take Stamp is refused with the reason; with 25 fps LTC running it sets the right start.
+- [ ] 🟨 **X32 scene moves the routing.** Recall an X32 scene that moves inputs to card returns: pre-flight's desk patch row stops reading "stage inputs" and the app reads the desk again.
+- [ ] ⬜ **Look:** EDIT after a RECORD during the post-STOP rescan shows the earlier take dim, not cut short; E and Cmd+1..9 during a continue land on the right place.
+
 ## Take file names (2026-11-16) — not yet performed
 
 Takes are named for their strips: `01 KiCK.wav` (see the 2026-11-16 ADR in [decisions.md](decisions.md)). Use a disposable session.

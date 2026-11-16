@@ -17,6 +17,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+Everything from here down to the "take files are named for their strips" section came from a whole-codebase review on 2026-11-16 (72 findings: 1 critical, 4 high, 18 medium, 49 low), all fixed. The choices are in the top ADR of [decisions.md](decisions.md).
+
+### Changed — what to know, 2026-11-16 review
+
+- **A surface or tablet can't stop playback under a punch.** During any punch (RECORD on the Mac while playing, a cursor punch, a selection punch), Mackie STOP/PLAY, a tablet PLAY release and any remote stop of playback are refused: "STOP on the Mac ends it". A remote STOP still ends the punch. Before, a Mackie STOP during a manual punch stopped playback while the punch kept recording over the original take.
+- **PUNCH mode and remote locates.** With a range armed and playback rolling, Scene Follow, `/zynforge/scene`, desk macro jumps and the jog wheel can't land before or inside the range.
+- **Strip moves and deletes** wait until the last take's integrity hashes are written (up to about 2 h after a long take; the message says it ends on its own), are refused while the session's drive is unplugged, and now carry Consolidate renders, CLIP warnings and the LTC strip with the strip. session.report.json follows the move.
+- **New Session never falls back to ~/Music** when you chose a sessions folder: with its drive unplugged it says "Drive not connected" and waits.
+- **Two files for one strip** (a Finder duplicate, a "Keep Both" copy, or a `Track_05.wav` an older build wrote beside `05 KiCK.wav`): that strip stays silent and RECORD, punch and strip moves on it are refused, naming both files. Files in the session folder itself count as takes only when named `Track_NN`. Install the same build on every Mac before sessions cross between them.
+- **Duplicate overwrites** what lies where the copy lands (undoable); refused over a locked clip. **Detect Songs** run again replaces its earlier song markers (Cmd+Z brings them back). **QC** shows timeline times.
+- **Use Take Stamp** needs the timecode running first. The **LTC strip** belongs to the session.
+- **A remote or twin RECORD during an autosave** waits up to 1.5 s and starts, instead of being refused.
+- **Capture helper:** an idle helper you only attached to quits with the app; one from another build is replaced when idle; the window no longer freezes when it reattaches during a long helper STOP; macOS's three-day /tmp cleaner can no longer lock you out of a running helper.
+- **Twin:** FOLLOWER NOT STOPPED / NOT STARTED when the link drops before the follower confirms; a slow re-link is retried.
+- **OSC:** a blank desk name never erases a strip's name; desk colour and Generic mute/arm go to the strip hearing desk channel N; `/zynforge/scene "Verse"` recalls Verse; a wrong token says so; Apply with the same port keeps the token.
+- **Keyboard:** no click leaves focus on a header, setlist, strip, master or EDIT-tool control, so a stray Return or Space can't turn LOCK off, recall a cue, re-press MUTE or pick a tool.
+- **Welcome** saves only the device side you picked. **Session Settings** and **Import** do nothing to a session opened behind them. **Opening a session's own Audio Files folder** is refused.
+
+### Fixed — 2026-11-16 review
+
+- Capture: the audio callback no longer takes any lock; the report names strips as they were at RECORD; a continue start, EDIT refresh and STOP list the take folder once instead of once per strip (61 listings to 2 for a 60-strip EDIT refresh); a render or peak file left under a number no longer names the next take there.
+- Engine: a CoreAudio restart in place during a take keeps its outputs; a fader move during a cue recall no longer leaves pans part-way; a .zfproj save no longer contends with playback; a remote PLAY starts from the EDIT cursor; a refused marker says why.
+- Playback and EDIT: a slow first read after STOP no longer reports the take unreadable; loop playback keeps a clip that starts just before the loop end; a strip whose take won't open still counts; a lost mixer file no longer rebinds cues to other strips; RECORD during the post-STOP rescan keeps the earlier take drawn; E and Cmd+1..9 scroll right during a continue; an unchanged WaveCache.wfm is no longer rewritten at every open; a helper status gap no longer wipes the live waveform.
+- Sessions: import into a new session uses the session's rate; a failed Recover at launch keeps its reason on screen; a refused launch document falls back to the Welcome.
+- Main window: a PUNCH-window take ends on one press; STOP during a punch's finalization cancels its post-roll; a punch's end says what was replaced; pre-flight checks the rate RECORD checks; one rate notice at a time; Move selected up/down greys during a take; tooltips match.
+- Console: X32 routing pushed by the desk refreshes the patch; a timed-out head-amp capture keeps the earlier set; new Mackie ports apply on Save; CONSOLE LINK LOST clears on a deliberate disconnect.
+- Mixer: Backup & Mirror and pre-flight say "drive not connected" for an unplugged copy; clearing a stereo strip's name keeps both halves unnamed (`Track_NN`).
+
+---
+
 ### Changed — take files are named for their strips, 2026-11-16
 
 - **A take file carries its strip's name**: `01 KiCK.wav`, `02 SNARE.wav`, `65 MIX LR.wav`, instead of `Track_01.wav`. The number keeps desk order in Finder and keeps two strips with the same name apart. The name is the strip's name when RECORD started; renaming a strip later does not rename its files, and a continue, a punch and every auto-split part keep the take's name (`01 KiCK_part02.wav`). Moving a strip renumbers its files and keeps the name.

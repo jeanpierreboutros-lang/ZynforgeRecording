@@ -1,5 +1,24 @@
 # Project Tasks
 
+## Bug audit, 2026-11-16
+
+A whole-codebase review at `801536c` made 72 findings (1 critical, 4 high, 18 medium, 49 low). All are fixed on seven branches merged on `main` (see testing.md and the top ADR of decisions.md).
+
+- [ ] Owner: run *2026-11-16 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig (the Mackie-during-a-punch, scene-in-PUNCH-mode, drive-gone strip move and DVS-restart steps above all).
+- [ ] Owner: review the top ADR of [decisions.md](decisions.md), above all: strip moves wait up to ~2 h for the last take's hashes; a strip with two take files is silent and refused; the device restart waits 500 ms before input-only capture; remote/twin RECORD may pause the UI up to 1.5 s during an autosave; Duplicate overwrites; Detect Songs replaces its markers.
+- [ ] Owner: install the same build on both Macs before a session moves between them (older builds don't see named take files).
+- [ ] Not installed on either Mac.
+
+Left on purpose or partly:
+- [ ] The capture helper sends no status during a long STOP (a status built outside `commandLock` could report "recording" after STOP's reply). The window no longer freezes; RECORD meanwhile says the helper "has not said which audio device it holds".
+- [ ] A handshake within about a second of the /tmp cleaner deleting the helper's key at midnight still fails once, before the helper writes it back. Helpers from before this build still lose their key after three days (they are replaced when idle).
+- [ ] A helper of another build kept because a take was rolling is replaced only at the next attach, not when that take ends. Quitting an idle helper interrupts a post-STOP hash pass (it resumes on the next open).
+- [ ] Per-strip pattern globs (`findTakeParts`, `nextContinuationPart`, `orphanedContinuation`, `takeIsMultiPart`, the stem and stereo-pair bounces) still run once per strip; they stat only matching files. `qcTimeline` calls `getTrackAudioFile` per strip.
+- [ ] A tablet `/zynforge/stop` during a punch sends StopPlay (refused, a toast flashes) before StopRecord (ends the punch). An existing test pins that order.
+- [ ] Backup and mirror file names in session.report.json keep their old names after a strip move until that copy catches up at its next take.
+- [ ] OSC `/zynforge/marker` still refuses silently when a marker can't be placed (scene and desk macro now say why).
+- [ ] EDIT-02's dim drawing and EDIT-03's scrolling are tested headless only; look at them in the running app.
+
 ## Take file names, 2026-11-16
 
 Takes are named for their strips (`01 KiCK.wav`); see the ADR at the top of [decisions.md](decisions.md).
@@ -32,7 +51,7 @@ Found during the fixes, not fixed:
 - [ ] The live EDIT waveform shows no ride-through gap until STOP. Cosmetic: the files and the report have it.
 - [ ] DEVICE's output combo shows the first device when no output is open.
 - [ ] An abandoned copy is always described as "stopped responding", even when it reached the 60 s drain limit while still progressing.
-- [ ] `CaptureDaemon` calls `updateDiskHealth (0)`, so the helper never reports DISK STRUGGLING.
+- [ ] The helper does report DISK STRUGGLING: `buildStatus` passes `estimateBytesPerSecondForArmedTracks()` at most once a second while recording (since `fe5280d`; the old note here was out of date). At 1 Hz it takes about 3 s of low keep-up to show (the recorder's comment assumes 2 Hz), and no test drives a struggling disk through the helper.
 - [ ] The key handler ignores modifiers on some bindings: Cmd+M (marker), Cmd+A (solo with nothing focused), Ctrl+Cmd+Z (undo), Cmd+numpad minus (nudge), Option+Shift+R (arm) and Option+digits (cues). The shortcut sheet lists what they do today.
 - [ ] Space during a rolling punch-out's finalization still says "Wait…". STOP there now keeps playback stopped.
 - [ ] A suite earlier in the run leaves a "Welcome" dialog open. The UI fix tests now close it and log it; find which suite.
