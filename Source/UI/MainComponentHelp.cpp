@@ -435,6 +435,18 @@ void MainComponent::showStartupWelcome()
     // but the *content* wasn't loaded -- so the engineer came back to a blank
     // window with every Edit / Track / Export menu greyed out. If that folder
     // is still a real session on disk, load it fully and skip the dialog.
+    //
+    // Not after a Recover at launch: what it did is what the engineer reads
+    // now. The recovered session is open, or the list said why not, and the
+    // last session reopening here put "Loaded N tracks" over either.
+    if (std::exchange (launchRecoverAttempted, false))
+    {
+        const auto open = engine.getActiveSessionDir();
+        if (open.isDirectory() && engine.mixerBelongsTo (open)) return;
+        // A pin left unloaded would refuse every save of whatever is built here.
+        if (open.isDirectory()) engine.setActiveSessionDir ({});
+    }
+    else
     {
         const auto last = engine.getActiveSessionDir();
         const bool isRealSession = last.isDirectory()
@@ -445,8 +457,10 @@ void MainComponent::showStartupWelcome()
             // Zero tracks is a session that opened empty, not a failure.
             if (openSessionFolder (last) >= 0)
                 return;   // reopened -- no welcome dialog
-            // A backup an earlier build opened as a session is never pinned again.
-            if (zynforge::sessionrepair::isInsideBackups (last) && ! engine.mixerBelongsTo (last))
+            // A backup or a take folder an earlier build opened as a session is
+            // never pinned again.
+            if ((zynforge::sessionrepair::isInsideBackups (last) || zynforge::sessionrepair::isSessionAudioFolder (last))
+                && ! engine.mixerBelongsTo (last))
                 engine.setActiveSessionDir ({});
         }
         // A pinned folder with nothing to open stays unloaded for good, and
@@ -655,16 +669,21 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
     // welcome dialog or while they were already mid-click on
     // something else.
     juce::Component::SafePointer<MainComponent> self (this);
+    // A Recover tried from this list, whatever came of it: the launch that
+    // follows then leaves its result in view (showStartupWelcome).
+    auto recoverTried = std::make_shared<bool> (false);
     // Closed by a take starting behind it, the list is offered again after STOP.
-    auto closed = [self, next = std::move (onClosed)]
+    auto closed = [self, recoverTried, next = std::move (onClosed)]
     {
         if (self != nullptr && self->engine.isRecording()) self->recoveryOfferHeld = true;
+        if (self != nullptr && next) self->launchRecoverAttempted = *recoverTried;
         if (next) next();
     };
     auto* window = SessionRecoveryDialog::launch (incomplete,
-        [self] (const juce::File& dir)
+        [self, recoverTried] (const juce::File& dir) -> juce::String
         {
-            if (self == nullptr) return;
+            if (self == nullptr) return "The app is closing.";
+            *recoverTried = true;
             // Route through the CANONICAL session-open funnel, not bare
             // engine.loadSession: openSessionFolder pins the active dir and
             // restores the mixer / setlist / UI for the RECOVERED session.
@@ -673,19 +692,28 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
             // session's files -- corrupting exactly what we recovered.
             // Clear the crash marker only once the session really opened: a
             // failed open (interrupted punch, incomplete move) keeps it listed
-            // so the engineer can try again, and keeps its own error status.
-            if (self->openSessionFolder (dir, true) < 0) return;
+            // so the engineer can try again. The list stays up and says why:
+            // openSessionFolder put the reason on the status line.
+            self->statusLabel.setText ({}, juce::dontSendNotification);
+            if (self->openSessionFolder (dir, true) < 0)
+            {
+                const auto why = self->statusLabel.getText();
+                return why.isNotEmpty() ? why : juce::String ("it could not be opened");
+            }
             // The marker is what told an older project to rebuild its clips,
             // so they are saved before it goes.
             if (! self->saveSessionStateTo (dir))
             {
                 self->showStatus ("Recovered " + dir.getFileName()
                                   + ", but it could not be saved; it stays on the recovery list");
-                return;
+                return "it opened, but could not be saved, so it stays on this list"
+                       + (self->lastMetadataSaveError.isNotEmpty() ? " (" + self->lastMetadataSaveError + ")"
+                                                                   : juce::String());
             }
             dir.getChildFile ("recording.session").deleteFile();
             self->showStatus ("Recovered: " + dir.getFileName());
             self->updateTransportLabels();
+            return {};
         },
         [self] (const juce::File& dir)
         {

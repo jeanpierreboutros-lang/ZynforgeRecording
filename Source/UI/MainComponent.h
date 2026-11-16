@@ -40,6 +40,7 @@
 
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
 namespace zynforge { class MixerFixTests; class UiFixTests; }
+namespace zynforge { class SessionFix20261116Tests; class MainWindowFix20261116Tests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -153,6 +154,8 @@ private:
     void completeBounceStems (juce::File, const std::vector<int>& tracks);
     void completeBounceStereoMix (juce::File);
     void completeAudioImport (const juce::Array<juce::File>&);
+    // The Import panel's answer counts only for the session it was opened over.
+    bool importAnswerInScope (const juce::Array<juce::File>& picks, const QuestionScope& scope);
     void exportShowHandoff();
     void exportDawProject (zynforge::projectexport::Format);
     void exportSongs();
@@ -376,6 +379,9 @@ private:
     bool crashScanHeld { false };
     juce::Array<juce::File> heldCrashReports;
     bool recoveryOfferHeld { false };
+    // A Recover was tried from the launch's recovery list: the launch then
+    // leaves its result in view instead of reopening the last session.
+    bool launchRecoverAttempted { false };
     bool configureCaptureDaemon();
     juce::var captureDaemonSettings();   // what the daemon takes from this window, the device aside
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
@@ -710,6 +716,8 @@ private:
     friend class zynforge::PunchRuleTests;
     friend class zynforge::EditDetailTests;
     friend class zynforge::EditRowFixTests;
+    friend class zynforge::SessionFix20261116Tests;
+    friend class zynforge::MainWindowFix20261116Tests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.

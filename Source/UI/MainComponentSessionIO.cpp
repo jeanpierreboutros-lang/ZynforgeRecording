@@ -185,6 +185,9 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     // recent session) comes here: a backup is never made the live session.
     if (zynforge::sessionrepair::isInsideBackups (dir))
     { showStatus (zynforge::sessionrepair::backupFolderRefusal (dir)); return -1; }
+    // Nor is a session's own take folder, which a save would fill with session files.
+    if (zynforge::sessionrepair::isSessionAudioFolder (dir))
+    { showStatus (zynforge::sessionrepair::audioFolderRefusal (dir)); return -1; }
     // Everything below repairs and rewrites: nothing here may run under a helper
     // that is writing this folder, adopted or not.
     if (helperHoldsSession (dir))
@@ -508,9 +511,12 @@ bool MainComponent::openSessionDocument (const juce::File& document, bool confir
         });
         return true;
     }
-    explicitDocumentOpened = true;
     const int n = openSessionFolder (dir);
     if (n < 0) return false;
+    // Only an open that worked takes the launch's place. A refused one (a
+    // backup's document, say) left no session, and the launch still reopens
+    // the last one or shows the Welcome.
+    explicitDocumentOpened = true;
     showStatus (n > 0 ? "Loaded: " + dir.getFileName()
                       : "Opened empty session: " + dir.getFileName());
     return true;
@@ -1506,11 +1512,19 @@ void MainComponent::onImportAudioFiles()
     chooser->launchAsync (juce::FileBrowserComponent::openMode
                           | juce::FileBrowserComponent::canSelectFiles
                           | juce::FileBrowserComponent::canSelectMultipleItems,
-        [self, this] (const juce::FileChooser& fc)
+        [self, this, scope = questionScope()] (const juce::FileChooser& fc)
     {
-        if (self == nullptr) return;
+        if (self == nullptr || ! importAnswerInScope (fc.getResults(), scope)) return;
         completeAudioImport (fc.getResults());
     });
+}
+
+// The panel reserved nothing while it was up, and the menu bar and Finder stay
+// live behind it: the files would land in whichever session was open by then,
+// and that session is saved. An answer for a session that left does nothing.
+bool MainComponent::importAnswerInScope (const juce::Array<juce::File>& picks, const QuestionScope& scope)
+{
+    return ! picks.isEmpty() && stillInScope (scope);
 }
 
 void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
@@ -1582,10 +1596,16 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     // LAST loaded file's rate as the session rate, so importing a 44.1 k
     // file into a 48 k session played it (or everything else) at the wrong
     // speed with no warning. Convert on the way in instead.
-    const double targetSr = [this]
+    const double targetSr = [this, newSession]
     {
         if (engine.getPlayer().isLoaded() && engine.getPlayer().getSampleRate() > 0.0)
             return engine.getPlayer().getSampleRate();
+        // A session with no audio yet is at the rate it was made at, whatever
+        // the device runs at now: a clock still held at 44.1 must not turn a
+        // 48 k session's first files into 44.1 k ones, which PLAY and chase
+        // would then refuse and the next save would make the session's rate.
+        // Only an import that makes its own session follows the device.
+        if (! newSession && pendingSampleRate > 0.0) return pendingSampleRate;
         if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
             if (d->getCurrentSampleRate() > 0.0) return d->getCurrentSampleRate();
         return pendingSampleRate > 0.0 ? pendingSampleRate : 48000.0;

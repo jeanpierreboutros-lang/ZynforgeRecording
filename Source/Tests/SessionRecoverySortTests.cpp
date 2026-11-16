@@ -43,7 +43,7 @@ namespace zynforge
                 int opened = 0;
                 // Constructor runs sortIndicesBy(3, false) (descending by size).
                 // Pre-fix: aborts under hardened std::sort. Post-fix: returns.
-                SessionRecoveryDialog dlg (orphans, [&] (const juce::File&) { ++opened; });
+                SessionRecoveryDialog dlg (orphans, [&] (const juce::File&) { ++opened; return juce::String(); });
                 expect (true, "constructed + descending-sorted equal keys without aborting");
                 expectEquals (opened, 0, "no open callback should fire on construction");
 

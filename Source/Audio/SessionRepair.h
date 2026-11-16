@@ -117,6 +117,29 @@ namespace zynforge::sessionrepair
              + " and copy this folder's files into " + session.getFullPathName();
     }
 
+    // A session's own Audio Files folder. Opened as a session, every save would
+    // write a session's files into it, and a new strip's take would land in
+    // Audio Files/Audio Files. Only when the folder above holds a file only a
+    // session has: a loose folder that happens to bear the name still opens.
+    inline bool isSessionAudioFolder (const juce::File& dir)
+    {
+        if (! dir.getFileName().equalsIgnoreCase ("Audio Files")) return false;
+        const auto session = dir.getParentDirectory();
+        return findSessionProj (session).existsAsFile()
+            || session.getChildFile (sessionmix::kFileName).existsAsFile()
+            || session.getChildFile ("session_settings.json").existsAsFile()
+            || session.getChildFile ("markers.json").existsAsFile()
+            || session.getChildFile ("Session File Backups").isDirectory();
+    }
+
+    // The refusal, with the folder to open instead.
+    inline juce::String audioFolderRefusal (const juce::File& dir)
+    {
+        const auto session = dir.getParentDirectory();
+        return dir.getFileName() + " is the take folder of the session " + session.getFileName()
+             + ", not a session; nothing was opened. Open " + session.getFullPathName() + " instead";
+    }
+
     // A file name holds at most 255 bytes of UTF-8 (APFS, HFS+). A save derives
     // longer names than the session's own: the project's staging file and the
     // backup snapshot folder. New sessions and Save As copies stay under

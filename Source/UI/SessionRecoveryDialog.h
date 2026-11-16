@@ -35,7 +35,8 @@ namespace zynforge
             int          trackCount { 0 };
         };
 
-        using OpenCallback = std::function<void (const juce::File&)>;
+        // Opens the session, or says why it did not.
+        using OpenCallback = std::function<juce::String (const juce::File&)>;
         // Removes the session, or says why it did not.
         using RemoveCallback = std::function<juce::String (const juce::File&)>;
 
@@ -119,6 +120,12 @@ namespace zynforge
             help.setJustificationType (juce::Justification::topLeft);
             addAndMakeVisible (help);
 
+            // Why the last Recover did not open its session. Hidden until one fails.
+            problem.setFont (brand::type::caption());
+            problem.setColour (juce::Label::textColourId, brand::textDanger);
+            problem.setJustificationType (juce::Justification::topLeft);
+            addChildComponent (problem);
+
             setSize (640, 440);
         }
 
@@ -133,6 +140,11 @@ namespace zynforge
             help.setBounds (body.removeFromTop (44));
             body.removeFromTop (6);
             auto footer = body.removeFromBottom (34);
+            if (problem.isVisible())
+            {
+                body.removeFromBottom (6);
+                problem.setBounds (body.removeFromBottom (36));
+            }
             table.setBounds (body);
             dismissButton.setBounds (footer.removeFromRight (90));
             footer.removeFromRight (8);
@@ -197,7 +209,19 @@ namespace zynforge
             const auto* r = selectedRow();
             if (r == nullptr) return;
             const auto dir = r->dir;   // openCb clears the crash marker once the open succeeds
-            if (openCb) openCb (dir);
+            juce::Component::SafePointer<SessionRecoveryDialog> self (this);
+            const auto refusal = openCb ? openCb (dir) : juce::String();
+            if (self == nullptr) return;
+            // A failed Recover keeps the list up, saying why. Closed, the reason
+            // was one line on the status bar, under whatever the launch did next.
+            if (refusal.isNotEmpty())
+            {
+                problem.setText ("Could not recover " + dir.getFileName() + ": " + refusal,
+                                 juce::dontSendNotification);
+                problem.setVisible (true);
+                resized();
+                return;
+            }
             if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
                 dw->exitModalState (1);
         }
@@ -328,6 +352,7 @@ namespace zynforge
         juce::TextButton      deleteButton;
         juce::TextButton      dismissButton;
         juce::Label           help;
+        juce::Label           problem;
         OpenCallback          openCb;
         RemoveCallback        removeCb;
         // Fires from the destructor when the window closes by ANY path

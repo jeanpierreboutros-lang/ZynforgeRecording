@@ -282,6 +282,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/SeptemberRegressionTests.cpp
     Source/Tests/SessionBackupTests.cpp
     Source/Tests/SessionFixTests.cpp
+    Source/Tests/SessionFix20261116Tests.cpp
     Source/Tests/SessionJobsTests.cpp
     Source/Tests/SessionRecoverySortTests.cpp
     Source/Tests/SessionSafetyTests.cpp
