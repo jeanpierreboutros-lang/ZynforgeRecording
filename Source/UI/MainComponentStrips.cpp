@@ -19,6 +19,7 @@
 #include "FloatingLaunch.h"
 #include "NewSessionDialog.h"
 #include "Meterbridge.h"
+#include "RecordPosition.h"
 #include "../Audio/ChannelCsv.h"
 #include "../Audio/TrackOrder.h"
 
@@ -758,6 +759,9 @@ void MainComponent::createSessionFromCsv()
     if (refuseWhileSessionPickerOpen()) return;
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
+    // Said before a file is picked: the session could not be made anyway.
+    if (const auto refusal = newSessionDriveRefusal (newSessionsRoot (engine)); refusal.isNotEmpty())
+    { showStatus (refusal); return; }
 
     chooser = std::make_unique<juce::FileChooser> (
         "New session from CSV", getSessionsRoot(), "*.csv;*.txt");
@@ -787,7 +791,7 @@ void MainComponent::completeSessionFromCsv (const juce::File& f)
 
     zynforge::NewSessionDialog::Result r;
     r.name          = f.getFileNameWithoutExtension();
-    r.location      = getSessionsRoot();
+    r.location      = newSessionsRoot (engine);   // never ~/Music in place of an unplugged drive
     r.captureFormat = engine.getRecorder().getCaptureFormat();
     r.sampleRate    = pendingSampleRate;
     const auto dir  = createSessionFolderStructure (r);
@@ -846,6 +850,9 @@ void MainComponent::createSessionFromConsole()
 {
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
+    // Said before the desk is asked: the session could not be made anyway.
+    if (const auto refusal = newSessionDriveRefusal (newSessionsRoot (engine)); refusal.isNotEmpty())
+    { showStatus (refusal); return; }
 
     // A connected console link is the one place an X32 can answer from, and
     // the only path that hears stereo links. The OSC listener path below is
@@ -955,7 +962,7 @@ void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& 
 
     zynforge::NewSessionDialog::Result r;
     r.name          = namePrefix + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M");
-    r.location      = getSessionsRoot();
+    r.location      = newSessionsRoot (engine);   // never ~/Music in place of an unplugged drive
     r.captureFormat = engine.getRecorder().getCaptureFormat();
     r.sampleRate    = pendingSampleRate;
     const auto dir  = createSessionFolderStructure (r);

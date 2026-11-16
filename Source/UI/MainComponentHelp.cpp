@@ -460,8 +460,7 @@ void MainComponent::showStartupWelcome()
     // -- no native OS chrome inside the dialog body. The folder the engineer
     // chose, even with its drive unplugged, so the Welcome says the drive is
     // missing instead of offering ~/Music as if it were that drive.
-    const auto chosenRoot  = configuredSessionsRoot();
-    const auto defaultRoot = zynforge::folderDriveMissing (chosenRoot) ? chosenRoot : getSessionsRoot();
+    const auto defaultRoot = zynforge::newSessionsRoot (engine);
     const auto curFormat   = engine.getRecorder().getCaptureFormat();
     const double curSr     = pendingSampleRate;
 
@@ -501,7 +500,10 @@ void MainComponent::showStartupWelcome()
 void MainComponent::launchNewSessionDialog (juce::File templateFile)
 {
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
-    const auto defaultRoot = getSessionsRoot();
+    // The folder the engineer chose, as the Welcome shows it: with its drive
+    // unplugged the dialog says so and will not create, where getSessionsRoot
+    // offered ~/Music and Create then saved ~/Music as the chosen folder.
+    const auto defaultRoot = zynforge::newSessionsRoot (engine);
     const auto curFormat   = engine.getRecorder().getCaptureFormat();
     const double curSr     = pendingSampleRate;
 

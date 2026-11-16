@@ -30,6 +30,28 @@ namespace zynforge
         return f == juce::File ("/Volumes");
     }
 
+    // Where a new session is made: the sessions folder the engineer chose, even
+    // with its drive unplugged or when it cannot be made (the create then
+    // refuses and says why). The engine's getSessionsRoot puts ~/Music in place
+    // of such a folder, which is how a show landed on the boot disk and the
+    // choice was then saved over; ~/Music only when nothing was chosen.
+    inline juce::File newSessionsRoot (const AudioEngine& engine)
+    {
+        if (auto* props = engine.getAppProps())
+            if (const auto chosen = props->getValue ("sessionsRoot"); chosen.isNotEmpty() && juce::File::isAbsolutePath (chosen))
+                return juce::File (chosen);
+        return engine.getSessionsRoot();
+    }
+
+    // Every New Session path says this, and makes nothing, for a folder whose
+    // drive is not plugged in. Empty when the drive is there.
+    inline juce::String newSessionDriveRefusal (const juce::File& folder)
+    {
+        return folderDriveMissing (folder) ? "The drive for " + folder.getFullPathName()
+                                                 + " is not connected -- connect it or choose another folder"
+                                           : juce::String();
+    }
+
     // FLAC counts at its uncompressed size, which is conservative.
     inline int captureBytesPerSample (CaptureFormat format) noexcept
     {
