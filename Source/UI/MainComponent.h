@@ -39,7 +39,7 @@
 #include <vector>
 
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
-namespace zynforge { class MixerFixTests; class UiFixTests; }
+namespace zynforge { class MixerFixTests; class UiFixTests; class NetFix20261116Tests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -699,6 +699,7 @@ private:
     friend class zynforge::ReviewUiFormatRepairTests;
     friend class zynforge::ConsoleVscTests;
     friend class zynforge::NetworkStateTests;
+    friend class zynforge::NetFix20261116Tests;
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
     friend class zynforge::SessionSafetyTests;

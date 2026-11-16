@@ -202,6 +202,7 @@ namespace zynforge
         bool stateLoadPending { false };
         friend class NetworkFixTests;
         friend class NetworkStateTests;
+        friend class NetFix20261116Tests;
         void handleMessage (const ConsoleMessage&);
         // ONE repeating heartbeat; it runs while the link is up.
         //

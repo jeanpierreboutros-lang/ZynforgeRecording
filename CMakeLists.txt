@@ -257,6 +257,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/McuProtocolTests.cpp
     Source/Tests/MenuDispatchTests.cpp
     Source/Tests/MultiPartPlaybackTests.cpp
+    Source/Tests/NetFix20261116Tests.cpp
     Source/Tests/NetworkAuditTests.cpp
     Source/Tests/NetworkFixTests.cpp
     Source/Tests/NetworkStateTests.cpp
