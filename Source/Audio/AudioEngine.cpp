@@ -2615,7 +2615,8 @@ namespace zynforge
                     applyDeviceConfiguration (sr, blockSize, device->getWorkgroup());
                     return;
                 }
-                beginRideThrough (juce::Time::getMillisecondCounter());
+                // A device starting is no restart still to come.
+                beginRideThrough (juce::Time::getMillisecondCounter(), false);
             }
             if (rideThroughAccepts (*device)) resumeRideThrough();
             else ride.standIn = DeferredDeviceConfiguration { sr, blockSize, device->getWorkgroup() };
@@ -3112,11 +3113,22 @@ namespace zynforge
         return type != nullptr && type->getDeviceNames (true).contains (takeDevice.setup.inputDeviceName);
     }
 
+    // Message thread. Whether the take's output device is still there: a
+    // device that stopped with it listed is restarting, not lost.
+    bool AudioEngine::takeOutputListed()
+    {
+        auto* type = deviceManager.getCurrentDeviceTypeObject();
+        return type != nullptr && takeDevice.setup.outputDeviceName.isNotEmpty()
+            && type->getDeviceNames (false).contains (takeDevice.setup.outputDeviceName);
+    }
+
     // deviceLifecycleLock held. Capture holds, every output goes silent.
-    void AudioEngine::beginRideThrough (juce::uint32 nowMs)
+    void AudioEngine::beginRideThrough (juce::uint32 nowMs, bool restartMayFollow)
     {
         ride = {};
         ride.active = true;
+        // A take with no output has nothing a restart would bring back.
+        ride.headStart = restartMayFollow && takeDevice.setup.outputDeviceName.isNotEmpty();
         ride.startedMs = nowMs;
         ride.nextAttemptMs = nowMs;
         rideOutcome.store ((int) RideOutcome::waiting, std::memory_order_relaxed);
@@ -3237,7 +3249,7 @@ namespace zynforge
                 if ((juce::int32) (nowMs - watchProgressMs) < (juce::int32) kSilentStopMs) return;
                 // A punch keeps today's behaviour: the stall alarm, take open.
                 if (! mayRideThrough()) return;
-                beginRideThrough (nowMs);
+                beginRideThrough (nowMs, false);   // stopped by an error: JUCE restarts nothing
             }
             // The input itself gone, or not back in time: a device loss.
             if (! takeInputListed() || (juce::int32) (nowMs - ride.startedMs) >= (juce::int32) kRideThroughGraceMs)
@@ -3256,6 +3268,12 @@ namespace zynforge
                 resumeRideThrough();
                 return;
             }
+            // A restart in place: JUCE is about to start this device again,
+            // outputs included, and closing it now would end that restart.
+            // Its output gone instead is a real loss, and waits for nothing.
+            if (ride.headStart && (juce::int32) (nowMs - ride.startedMs) < (juce::int32) kRestartHeadStartMs
+                && takeOutputListed())
+                return;
             if ((juce::int32) (nowMs - ride.nextAttemptMs) < 0) return;
             ride.nextAttemptMs = nowMs + kRideThroughRetryMs;
             reopen = true;
@@ -3304,7 +3322,7 @@ namespace zynforge
             // take is held open for it. Otherwise a device loss, as always.
             if (mayRideThrough())
             {
-                beginRideThrough (juce::Time::getMillisecondCounter());
+                beginRideThrough (juce::Time::getMillisecondCounter(), true);
                 return;
             }
             if (finalizeDeviceLoss()) return;

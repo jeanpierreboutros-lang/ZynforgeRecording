@@ -980,6 +980,14 @@ namespace zynforge
         // manager passes no error on. A device that says it is not playing,
         // with no block for this long during a take, has stopped.
         static constexpr juce::uint32 kSilentStopMs = 500;
+        // A restart CoreAudio runs in place (DVS or Dante reconfigured, a clock
+        // re-lock) stops the device, and JUCE starts it again, outputs and all,
+        // from its own 100 ms timer. Reopening the input alone before that
+        // destroys the device holding the restart and leaves the take with no
+        // outputs until STOP. While the take's output is still listed, the
+        // watch gives that restart this long first. An output that is gone is
+        // a real loss, and the input alone opens at once as it always did.
+        static constexpr juce::uint32 kRestartHeadStartMs = 500;
         // Runs from the 100 ms watch timer while a take rolls; tests call it
         // with their own clock. Message thread.
         void serviceDeviceWatch (juce::uint32 nowMs);
@@ -1050,6 +1058,7 @@ namespace zynforge
         struct RideThrough
         {
             bool active { false };
+            bool headStart { false };   // see kRestartHeadStartMs
             juce::uint32 startedMs { 0 }, nextAttemptMs { 0 };
             // A device JUCE opened meanwhile. Never prepared for: it runs
             // silent, and takes over once the take is over.
@@ -1077,7 +1086,10 @@ namespace zynforge
         void startDeviceWatch();
         bool mayRideThrough();
         bool takeInputListed();
-        void beginRideThrough (juce::uint32 nowMs);
+        bool takeOutputListed();
+        // restartMayFollow: the device told us it stopped, so JUCE may be
+        // restarting it (kRestartHeadStartMs). Not when the watch found it silent.
+        void beginRideThrough (juce::uint32 nowMs, bool restartMayFollow);
         bool rideThroughAccepts (juce::AudioIODevice&);
         void resumeRideThrough();
         bool finalizeDeviceLoss();
