@@ -566,14 +566,16 @@ namespace zynforge
                 s.splitBoth (0, 1, 24000);
                 s.page().setSelectedClip (0, 0);
                 s.main.editDuplicateSelectedClip();
-                expectEquals ((int) s.clips (0).size(), 3);
+                // The copy takes the second half's place (it no longer plays
+                // summed with it): first half + copy.
+                expectEquals ((int) s.clips (0).size(), 2);
                 expectEquals (spans (s.clips (1)), spans (s.clips (0)), "the copy played on L only");
                 const std::set<Ref> copies { { 0, 1 }, { 1, 1 } };
                 expect (s.page().getSelectedClips() == copies, "the selection must follow both copies");
 
                 s.main.editDeleteSelectedClip();
-                expectEquals ((int) s.clips (0).size(), 2);
-                expectEquals ((int) s.clips (1).size(), 2, "Delete on the copy left R behind");
+                expectEquals ((int) s.clips (0).size(), 1);
+                expectEquals ((int) s.clips (1).size(), 1, "Delete on the copy left R behind");
             }
 
             beginTest ("Duplicate of a multi-selection keeps every copy's index right");
@@ -583,10 +585,11 @@ namespace zynforge
                 s.engine.splitTrackAtSample (0, 32000);
                 s.page().setSelectedClips ({ { 0, 0 }, { 0, 2 } }, { 0, 2 });
                 s.main.editDuplicateSelectedClip();
-                expectEquals ((int) s.clips (0).size(), 5);
-                const std::set<Ref> copies { { 0, 1 }, { 0, 4 } };
+                // The first copy takes the middle clip's place: A, A', C, C'.
+                expectEquals ((int) s.clips (0).size(), 4);
+                const std::set<Ref> copies { { 0, 1 }, { 0, 3 } };
                 expect (s.page().getSelectedClips() == copies);
-                expectEquals (s.page().getSelectedClipIndex(), 4, "the primary follows its own copy");
+                expectEquals (s.page().getSelectedClipIndex(), 3, "the primary follows its own copy");
             }
 
             beginTest ("Shift+click takes the R half and edit-group peers in and out together");
