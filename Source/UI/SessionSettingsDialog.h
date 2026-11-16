@@ -10,10 +10,13 @@ namespace zynforge
     // Session ▸ Session Settings dialog. `onRelocate` runs after the dialog
     // closes when the engineer picks Change... for the recording path;
     // `onApplySampleRate` receives the chosen session rate on Apply.
+    // `stillInScope` is asked before either: false when the session it was
+    // opened over is no longer the one open, and then nothing is changed.
     struct SessionSettingsDialog
     {
         static void launch (AudioEngine& engine,
                             std::function<void()> onRelocate,
-                            std::function<void (double)> onApplySampleRate);
+                            std::function<void (double)> onApplySampleRate,
+                            std::function<bool()> stillInScope = {});
     };
 }
