@@ -1262,6 +1262,120 @@ namespace zynforge
                 expect (pair.followerHost.status.recording);
             }
 
+            beginTest ("A STOP the follower never answered before the link died says FOLLOWER NOT STOPPED");
+            {
+                Pair pair;
+                Relay relay;
+                juce::String error;
+                expect (pair.follower->start (fastConfig (Role::Follower, 0), error), error);
+                expect (settle (pair.both, [&] { return pair.follower->getBoundPort() > 0; }));
+                const int port = relay.start (pair.follower->getBoundPort());
+                expect (pair.leader->start (fastConfig (Role::Leader, port), error), error);
+                expect (settle (pair.both, [&] { return pair.linked(); }));
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.followerHost.status.recording; }));
+                expect (settle (pair.both, [&] { return pair.leader->snapshot().lastEvent == "Follower is recording"; }));
+
+                // The cable is out, and the leader has not noticed yet.
+                relay.pullCable();
+                expect (settle ({ pair.follower.get() },
+                                [&] { return pair.follower->snapshot().state == LinkState::Lost; }));
+                juce::Thread::sleep (200);
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (! pair.leaderHost.noticed ("FOLLOWER NOT STOPPED"), "STOP was called lost before the link was");
+                expect (settle ({ pair.leader.get() }, [&] { return pair.leaderHost.noticed ("FOLLOWER NOT STOPPED"); }),
+                        "the leader never said its STOP may not have reached the follower");
+                expect (pair.leader->snapshot().lastEvent.containsIgnoreCase ("FOLLOWER NOT STOPPED"),
+                        "the last event still reads: " + pair.leader->snapshot().lastEvent);
+                expectEquals (pair.followerHost.stopCalls, 0);
+            }
+
+            beginTest ("A RECORD the follower never answered before the link died says FOLLOWER NOT STARTED");
+            {
+                Pair pair;
+                Relay relay;
+                juce::String error;
+                expect (pair.follower->start (fastConfig (Role::Follower, 0), error), error);
+                expect (settle (pair.both, [&] { return pair.follower->getBoundPort() > 0; }));
+                const int port = relay.start (pair.follower->getBoundPort());
+                expect (pair.leader->start (fastConfig (Role::Leader, port), error), error);
+                expect (settle (pair.both, [&] { return pair.linked(); }));
+
+                relay.pullCable();
+                expect (settle ({ pair.follower.get() },
+                                [&] { return pair.follower->snapshot().state == LinkState::Lost; }));
+                juce::Thread::sleep (200);
+                startLeaderTake (pair);
+                expect (! pair.leaderHost.noticed ("FOLLOWER NOT STARTED"), "RECORD was called lost before the link was");
+                expect (settle ({ pair.leader.get() }, [&] { return pair.leaderHost.noticed ("FOLLOWER NOT STARTED"); }),
+                        "the leader never said its RECORD may not have reached the follower");
+                expect (pair.leaderHost.status.recording, "the leader's own take was touched");
+                expectEquals (pair.followerHost.startCalls, 0);
+            }
+
+            beginTest ("A STOP the follower answered is not called lost when the link drops later");
+            {
+                Pair pair;
+                Relay relay;
+                juce::String error;
+                expect (pair.follower->start (fastConfig (Role::Follower, 0), error), error);
+                expect (settle (pair.both, [&] { return pair.follower->getBoundPort() > 0; }));
+                const int port = relay.start (pair.follower->getBoundPort());
+                expect (pair.leader->start (fastConfig (Role::Leader, port), error), error);
+                expect (settle (pair.both, [&] { return pair.linked(); }));
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.leader->snapshot().lastEvent == "Follower is recording"; }));
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (settle (pair.both, [&] { return pair.leader->snapshot().lastEvent == "Follower stopped"; }));
+                relay.pullCable();
+                expect (settle (pair.both, [&] { return pair.leader->snapshot().state == LinkState::Lost; }));
+                expect (! pair.leaderHost.noticed ("FOLLOWER NOT STOPPED"), "an answered STOP was called lost");
+                expect (! pair.leaderHost.noticed ("FOLLOWER NOT STARTED"), "an answered RECORD was called lost");
+            }
+
+            beginTest ("A follower whose handshake timed out is tried again, not blamed on the pairing code");
+            {
+                // The follower's side of a slow re-link: twin.auth arrived after
+                // its deadline, so it answers "protocol", not "code".
+                FakeHost host;
+                TwinLink leader (host);
+                juce::StreamingSocket listener;
+                expect (listener.createListener (0, "127.0.0.1"));
+                const int port = listener.getBoundPort();
+                std::atomic<int> connections { 0 };
+                std::atomic<bool> quit { false };
+                std::thread follower ([&]
+                {
+                    while (! quit.load())
+                    {
+                        if (listener.waitUntilReady (true, 50) <= 0) continue;
+                        std::unique_ptr<juce::StreamingSocket> socket (listener.waitForNextConnection());
+                        if (socket == nullptr) continue;
+                        connections.fetch_add (1);
+                        RawPeer peer;
+                        peer.socket = std::move (socket);
+                        peer.sendJson (RawPeer::object ({ { "type", "twin.hello" }, { "version", 1 },
+                                                          { "role", "follower" }, { "nonce", securetoken::generate() } }));
+                        peer.read (1000);
+                        peer.sendJson (RawPeer::object ({ { "type", "twin.refused" }, { "reason", "protocol" } }));
+                        juce::Thread::sleep (50);
+                    }
+                });
+                juce::String error;
+                expect (leader.start (fastConfig (Role::Leader, port), error), error);
+                const bool retried = settle ({ &leader }, [&] { return connections.load() >= 2; }, 5000);
+                expect (retried, "the leader gave up for good after a handshake timeout");
+                expect (leader.snapshot().state != LinkState::Refused, "a timeout read as a refused pairing code");
+                expect (! leader.snapshot().detail.containsIgnoreCase ("pairing code"),
+                        "the leader blamed the pairing code: " + leader.snapshot().detail);
+                leader.stop();
+                quit = true;
+                listener.close();
+                follower.join();
+            }
+
             beginTest ("Quit with a take rolling: bounded, and the take is left alone");
             {
                 Pair pair;
