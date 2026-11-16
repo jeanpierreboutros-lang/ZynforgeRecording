@@ -25,7 +25,8 @@ namespace zynforge
 
     bool ConsoleLink::connect (const juce::String& targetHost, int port)
     {
-        disconnect();
+        // Not disconnect(): a retry that fails leaves a lost link reported.
+        closeLink();
         const int usePort = port > 0 ? port : profile.defaultPort;
 
         // Only a numeric address. A name is looked up on every UDP send, on this
@@ -92,7 +93,16 @@ namespace zynforge
         return true;
     }
 
+    // Closing the link on purpose ends the report of one that was lost: it is
+    // the engineer's answer to it (the Console menu's connect prompt offers it
+    // when a link was lost, as a lost link has nothing left to close).
     void ConsoleLink::disconnect()
+    {
+        closeLink();
+        lostHost.clear();
+    }
+
+    void ConsoleLink::closeLink()
     {
         if (! connected) return;
         if (transport != nullptr)
@@ -120,12 +130,21 @@ namespace zynforge
         gainCheckPending = false;
         gainReadBack.clear();
         gainDeadlineMs = 0;
-        if (expectedGainReplies > 0)
-        {
-            expectedGainReplies = 0;
-            gains.clear();
-            gainCaptureComplete = false;
-        }
+        if (expectedGainReplies > 0) abandonGainCapture();
+    }
+
+    // A capture that did not finish never stands in for the set it was to
+    // replace: that set comes back (complete, or none), so Restore still has
+    // the show's gains. It used to leave the partial map, which Restore
+    // refuses, and a session's saved gains stayed hidden behind it.
+    void ConsoleLink::abandonGainCapture()
+    {
+        lastCaptureReplies = (int) gains.size();
+        expectedGainReplies = 0;
+        gainDeadlineMs = 0;
+        gains = std::move (gainsBeforeCapture);
+        gainsBeforeCapture.clear();
+        gainCaptureComplete = ! gains.empty();
     }
 
     void ConsoleLink::sendMessage (const ConsoleMessage& m)
@@ -386,6 +405,29 @@ namespace zynforge
         if (onStatus) onStatus ("The desk has card returns on " + blocks + ".");
     }
 
+    // STAGE: a block moved to its card return, away from a show patch that may
+    // use the card on purpose (finishPatchCheck's rule). SOUNDCHECK: a block
+    // left its card return. Anything else agrees with what is shown.
+    bool ConsoleLink::pushContradictsPatch (int block, int value) const
+    {
+        if (! profile.canRepatch) return false;
+        const bool cardReturn = value == profile.cardBlockFirst + block;
+        if (patch == Patch::Soundcheck) return ! cardReturn;
+        if (patch != Patch::Stage) return false;
+        const auto saved = stagePatch.find (block);
+        return cardReturn && (saved == stagePatch.end() || saved->second != value);
+    }
+
+    // Writes nothing to the desk. STAGE (the green tick) is not shown until the
+    // desk has answered again; SOUNDCHECK, a warning, stands until then.
+    void ConsoleLink::readMovedPatch()
+    {
+        if (patch == Patch::Stage) patch = Patch::Unknown;
+        deskAsked = true;
+        startPatchRead (PatchRead::Check);
+        if (onStatus) onStatus ("The desk's input patch changed on the desk -- reading it again...");
+    }
+
     juce::String ConsoleLink::deskPatchText() const
     {
         if (! profile.canRepatch)
@@ -408,6 +450,10 @@ namespace zynforge
         // a half-understood reply format would poison the stash. Gate it too.
         if (! guardWrite ("head-amp capture")) return;
 
+        // What Restore can still use if this capture does not finish. A capture
+        // started over one still running keeps the set from before that one.
+        if (expectedGainReplies == 0)
+            gainsBeforeCapture = gainCaptureComplete ? gains : std::map<int, float>();
         gains.clear();
         gainCaptureComplete = false;
         gainCheckPending = false;
@@ -502,7 +548,6 @@ namespace zynforge
             // ── WRITE-TIER REPLIES ───────────────────────────────────────
             case ConsoleEvent::Type::InputBlockRouting:
             {
-                if (patchRead == PatchRead::None) return;
                 // Range-check the off-wire index, exactly like HeadAmpGain below.
                 // Without it a junk index became a stagePatch key, and
                 // exitSoundcheck later wrote that garbage back to the desk --
@@ -510,6 +555,14 @@ namespace zynforge
                 // A value out of range is refused here rather than at the next
                 // load: the desk must not move on a way back that won't reload.
                 if (ev.index < 0 || ev.index >= profile.numInBlocks || ! isRoutingValue (ev.intValue)) return;
+                // Not an answer: the desk pushed a change (a scene recall moved
+                // its inputs). Dropped, it left "stage inputs" and the
+                // SOUNDCHECK pill describing a patch the desk no longer had.
+                if (patchRead == PatchRead::None)
+                {
+                    if (pushContradictsPatch (ev.index, ev.intValue)) readMovedPatch();
+                    return;
+                }
                 deskRead[ev.index] = ev.intValue;
                 // Completion is "every DISTINCT block is stashed", not "N replies
                 // arrived". We subscribe to pushed updates on connect, so an
@@ -547,6 +600,8 @@ namespace zynforge
                     gainDeadlineMs = 0;
                     expectedGainReplies = 0;
                     gainCaptureComplete = true;
+                    gainsBeforeCapture.clear();
+                    lastCaptureReplies = (int) gains.size();
                     if (onStatus) onStatus (juce::String ((int) gains.size())
                                             + " head-amp gains captured.");
                     if (onGainCaptureFinished) onGainCaptureFinished (true);
@@ -621,7 +676,7 @@ namespace zynforge
         if (transport != nullptr && ! transport->isConnected())
         {
             const auto dropped = host;
-            disconnect();
+            closeLink();
             lostHost = dropped;
             if (onStatus)
                 onStatus (profile.displayName + " link to " + dropped
@@ -669,11 +724,13 @@ namespace zynforge
             }
             else if (expectedGainReplies > 0)
             {
-                const int got = (int) gains.size();
-                expectedGainReplies = 0;
-                gainCaptureComplete = false;   // partial -- must NOT be persisted as the show's gains
-                if (onStatus) onStatus ("Head-amp capture timed out (" + juce::String (got)
-                                        + " of expected received) -- try again.");
+                const int expected = expectedGainReplies;
+                // Partial -- never persisted as the show's gains. The last
+                // complete set, if there was one, is what Restore uses.
+                abandonGainCapture();
+                if (onStatus) onStatus ("Head-amp capture timed out (" + juce::String (lastCaptureReplies)
+                                        + " of " + juce::String (expected) + " received) -- try again."
+                                        + (gainCaptureComplete ? " The last complete capture is kept." : ""));
                 if (onGainCaptureFinished) onGainCaptureFinished (false);
             }
         }
@@ -833,6 +890,7 @@ namespace zynforge
         // card returns is different: it is still there whatever session is open,
         // and this stash is what brings it back.
         gains.clear();
+        gainsBeforeCapture.clear();
         gainCaptureComplete = false;
         expectedGainReplies = 0;
         gainCheckPending = false;
