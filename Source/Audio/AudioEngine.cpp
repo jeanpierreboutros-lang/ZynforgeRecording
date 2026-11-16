@@ -166,7 +166,8 @@ namespace zynforge
             t.liveInputGainDb.store (0); t.captureInputGainDb.store (0);
             t.liveInputGainKnown.store (false); t.captureInputGainKnown.store (false);
             t.referenceMedia.store (false); t.inputPeak.store (0);
-            t.rampSamplesRemaining.store (0);
+            t.rampTargetPan.store (0.0f);
+            t.rampSamplesRemaining.store (0); t.rampPanSamplesRemaining.store (0);
         }
         // Reload AFTER the Strip* writes above so our whole-file save doesn't
         // undo them, THEN apply the appProps-owned stereo flags and save once.
@@ -2865,8 +2866,9 @@ namespace zynforge
         dB = juce::jlimit (-60.0f, 12.0f, dB);
         auto& t = recorder.getTrack (channelIndex);
         t.gainDb.store (dB, std::memory_order_relaxed);
-        // Direct set cancels any in-flight ramp so the engineer's slow
-        // physical fader move doesn't fight a finishing cue ramp.
+        // Direct set cancels the in-flight gain ramp so the engineer's slow
+        // physical fader move doesn't fight a finishing cue ramp. A cue's pan
+        // ramp has its own countdown and finishes.
         t.rampTargetGainDb.store (dB, std::memory_order_relaxed);
         t.rampSamplesRemaining.store (0, std::memory_order_relaxed);
         stripGains.setGainDb (channelIndex, dB);
@@ -2898,10 +2900,10 @@ namespace zynforge
             ? (juce::int64) (sr * juce::jmax (0.0, seconds))
             : 0;
         t.rampTargetPan       .store (pan,     std::memory_order_relaxed);
-        // Reuse rampSamplesRemaining for pan -- gain + pan ramp together
-        // during a cue recall, same duration, so one counter is enough.
-        // (Pan ramp uses the same countdown as the gain ramp.)
-        t.rampSamplesRemaining.store (samples, std::memory_order_relaxed);
+        // Its own countdown. Sharing the gain ramp's let a fader move within
+        // the ramp leave the pan part-way, and a cue's gain ramp on a strip
+        // the cue had no pan for swing that pan to a stale target.
+        t.rampPanSamplesRemaining.store (samples, std::memory_order_relaxed);
         if (samples == 0)
             t.pan.store (pan, std::memory_order_relaxed);
         // Persisted target, like the gain ramp: applyPersistedStripState
@@ -2958,38 +2960,30 @@ namespace zynforge
     {
         if (numSamples <= 0) return;
 
+        // One step of one ramp: `value` toward `target`, `remaining` samples
+        // to go. Gain and pan each run their own (see TrackState).
+        const auto step = [numSamples] (std::atomic<float>& value, const std::atomic<float>& target,
+                                        std::atomic<juce::int64>& countdown)
+        {
+            const juce::int64 remaining = countdown.load (std::memory_order_relaxed);
+            if (remaining <= 0) return;
+            const float cur = value .load (std::memory_order_relaxed);
+            const float tgt = target.load (std::memory_order_relaxed);
+            // Defensive: clamp denominator so a stale remaining can't
+            // produce NaN/inf values.
+            const juce::int64 denom = juce::jmax ((juce::int64) numSamples, remaining);
+            const float frac = (float) numSamples / (float) denom;
+            const juce::int64 next = remaining - (juce::int64) numSamples;
+            value.store (next <= 0 ? tgt : cur + (tgt - cur) * frac, std::memory_order_relaxed);
+            countdown.store (juce::jmax ((juce::int64) 0, next), std::memory_order_relaxed);
+        };
+
         const int n = recorder.getNumTracks();
         for (int i = 0; i < n; ++i)
         {
             auto& t = recorder.getTrack (i);
-            const juce::int64 remaining = t.rampSamplesRemaining.load (std::memory_order_relaxed);
-            if (remaining <= 0) continue;
-
-            const float curG = t.gainDb.load (std::memory_order_relaxed);
-            const float tgtG = t.rampTargetGainDb.load (std::memory_order_relaxed);
-            const float curP = t.pan   .load (std::memory_order_relaxed);
-            const float tgtP = t.rampTargetPan   .load (std::memory_order_relaxed);
-
-            // Defensive: clamp denominator so a stale remaining can't
-            // produce NaN/inf gain values.
-            const juce::int64 denom = juce::jmax ((juce::int64) numSamples, remaining);
-            const float frac = (float) numSamples / (float) denom;
-            const float newG = curG + (tgtG - curG) * frac;
-            const float newP = curP + (tgtP - curP) * frac;
-
-            const juce::int64 next = remaining - (juce::int64) numSamples;
-            if (next <= 0)
-            {
-                t.gainDb.store (tgtG, std::memory_order_relaxed);
-                t.pan   .store (tgtP, std::memory_order_relaxed);
-                t.rampSamplesRemaining.store (0, std::memory_order_relaxed);
-            }
-            else
-            {
-                t.gainDb.store (newG, std::memory_order_relaxed);
-                t.pan   .store (newP, std::memory_order_relaxed);
-                t.rampSamplesRemaining.store (next, std::memory_order_relaxed);
-            }
+            step (t.gainDb, t.rampTargetGainDb, t.rampSamplesRemaining);
+            step (t.pan,    t.rampTargetPan,    t.rampPanSamplesRemaining);
         }
     }
 
@@ -2997,7 +2991,12 @@ namespace zynforge
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         pan = juce::jlimit (-1.0f, 1.0f, pan);
-        recorder.getTrack (channelIndex).pan.store (pan, std::memory_order_relaxed);
+        auto& t = recorder.getTrack (channelIndex);
+        // A pan set by hand ends a cue's pan ramp, and only that: the gain
+        // ramp beside it runs on, like the fader's own direct set.
+        t.rampTargetPan.store (pan, std::memory_order_relaxed);
+        t.rampPanSamplesRemaining.store (0, std::memory_order_relaxed);
+        t.pan.store (pan, std::memory_order_relaxed);
         stripGains.setPan (channelIndex, pan);
     }
 

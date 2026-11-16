@@ -23,8 +23,10 @@ namespace zynforge
     {
         static constexpr int kFftSize = 1024;
 
-        // Copy identity/settings, never live meter/FIFO scratch. Call with the
-        // device callback detached; existing UI references remain valid.
+        // Copy identity/settings and the clip evidence the engineer clears by
+        // hand (CLIP xN goes with its strip when strips move), never live
+        // meter/FIFO scratch. Call with the device callback detached; existing
+        // UI references remain valid.
         void copySettingsFrom (const TrackState& other)
         {
             setNameThreadSafe (other.getNameThreadSafe()); stripId = other.stripId;
@@ -36,8 +38,10 @@ namespace zynforge
             ZF_COPY_FIELD(inputRouting) ZF_COPY_FIELD(outputRouting) ZF_COPY_FIELD(outputBeforeVsc) ZF_COPY_FIELD(streamSend)
             ZF_COPY_FIELD(isStereo) ZF_COPY_FIELD(colourARGB)
             ZF_COPY_FIELD(referenceMedia)
+            ZF_COPY_FIELD(clipped) ZF_COPY_FIELD(clipCount) ZF_COPY_FIELD(lastClipSample)
             #undef ZF_COPY_FIELD
-            rampTargetGainDb.store (gainDb.load()); rampTargetPan.store (pan.load()); rampSamplesRemaining.store (0);
+            rampTargetGainDb.store (gainDb.load()); rampTargetPan.store (pan.load());
+            rampSamplesRemaining.store (0); rampPanSamplesRemaining.store (0);
         }
 
         std::atomic<float> peak    { 0.0f };
@@ -72,13 +76,15 @@ namespace zynforge
         std::atomic<bool>  captureInputGainKnown { false };
 
         // Soft-takeover targets used during cue recall -- the audio thread
-        // ramps gainDb / pan from their current value to these targets
-        // over rampSamplesRemaining samples so a cue change doesn't
-        // produce an audible step / click. When the ramp is inactive,
-        // these mirror gainDb / pan.
+        // ramps gainDb / pan from their current value to these targets so a
+        // cue change doesn't produce an audible step / click. When a ramp is
+        // inactive, its target mirrors gainDb / pan. Each has its own
+        // countdown: a fader move ends only the gain ramp and a pan set by
+        // hand only the pan ramp, and a gain ramp never moves the pan.
         std::atomic<float>       rampTargetGainDb     { 0.0f };
         std::atomic<float>       rampTargetPan        { 0.0f };
-        std::atomic<juce::int64> rampSamplesRemaining { 0 };
+        std::atomic<juce::int64> rampSamplesRemaining { 0 };      // the gain ramp's
+        std::atomic<juce::int64> rampPanSamplesRemaining { 0 };   // the pan ramp's
         // Output muting -- independent of `muted` (which gates BOTH the
         // monitor bus AND the per-channel output). outputMuted gates the
         // physical output only; muted continues to gate the monitor sum.
