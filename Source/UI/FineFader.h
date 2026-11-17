@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "../Audio/DisplayText.h"
+
 #include <cmath>
 
 namespace zynforge
@@ -41,6 +43,14 @@ namespace zynforge
             const auto number = typed.initialSectionContainingOnly ("0123456789.,-");
             if (! number.containsAnyOf ("0123456789")) return getValue();
             return number.getDoubleValue();
+        }
+
+        // The bottom of the range is OFF (mix::stripDb, the master's gain law),
+        // so it reads as minus infinity, in the form the meter readout uses.
+        juce::String getTextFromValue (double value) override
+        {
+            if (value <= getMinimum()) return minusInfinity() + getTextValueSuffix();
+            return juce::Slider::getTextFromValue (value);
         }
 
         // The level readout opens on a double-click, and a click elsewhere

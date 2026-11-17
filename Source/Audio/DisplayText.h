@@ -29,6 +29,18 @@ namespace zynforge
     inline double bytesToGB (juce::int64 bytes) noexcept { return (double) bytes / 1.0e9; }
     inline double bytesToMB (double bytes) noexcept      { return bytes / 1.0e6; }
 
+    // Minus infinity, in the one form every strip readout shows it: a silent
+    // strip's peak, a fader at its OFF floor, the master's level. JetBrains
+    // Mono and the UI sans both draw the glyph cleanly at 10 and 11 pt.
+    inline juce::String minusInfinity() { return juce::String::fromUTF8 ("-\xe2\x88\x9e"); }
+
+    // A level readout: "-12.3 dB", or minusInfinity() + " dB" at or below the
+    // floor. Without the unit (a readout too narrow for it) "-12.3".
+    inline juce::String levelText (float dB, float floorDb, bool withUnit = true)
+    {
+        return (dB <= floorDb ? minusInfinity() : juce::String (dB, 1)) + (withUnit ? " dB" : "");
+    }
+
     // Record time left, in the one form every screen shows it.
     inline juce::String recordTimeText (double seconds)
     {

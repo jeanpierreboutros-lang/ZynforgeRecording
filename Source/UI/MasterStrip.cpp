@@ -1,4 +1,5 @@
 #include "MasterStrip.h"
+#include "../Audio/DisplayText.h"
 #include "../Audio/MixKernel.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -146,6 +147,7 @@ namespace zynforge
         addAndMakeVisible (fader);
 
         meter.setTooltip ("Master bus peak + RMS after the master fader and MUTE -- click to clear clip.");
+        meter.setScaleFont (brand::type::caption());   // the strips' M/L rung
         if (engine.getMasterStereo())
             meter.setStereoPartner (&engine.getMasterStateR());
         addAndMakeVisible (meter);
@@ -240,7 +242,7 @@ namespace zynforge
         const float dB = engine.getMasterGainDb();
         if (std::abs ((float) fader.getValue() - dB) > 0.05f)
             fader.setValue (dB, juce::dontSendNotification);
-        gainLabel.setText (juce::String (dB, 1) + " dB", juce::dontSendNotification);
+        gainLabel.setText (levelText (dB, mix::kFaderFloorDb), juce::dontSendNotification);
         if (muteButton.getToggleState() != engine.getMasterMuted())
             muteButton.setToggleState (engine.getMasterMuted(), juce::dontSendNotification);
 
@@ -324,8 +326,9 @@ namespace zynforge
         // value text box doesn't collide with it. Keep in sync with paint().
         r.removeFromBottom (kMarkBandH + brand::space::xs);
 
-        // Meter shrinks in mono since only one bar is needed.
-        const int meterW = stereo ? 40 : 26;
+        // Meter shrinks in mono since only one bar is needed. Its signed dBFS
+        // scale has a column of its own in both modes (2 px insets each side).
+        const int meterW = 4 + LedMeter::scaleColumnWidth (brand::type::caption()) + (stereo ? 22 : 12);
         auto meterArea = r.removeFromRight (meterW);
         meter.setBounds (meterArea);
         r.removeFromRight (brand::space::xs);

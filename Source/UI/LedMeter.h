@@ -24,6 +24,19 @@ namespace zynforge
         // labels and a bar -- they want a pure-bar meter.
         void setShowDbLabels (bool s) noexcept { showLabels = s; repaint(); }
 
+        // The dBFS scale is the strip's one labelled scale: signed marks
+        // (0, -6, -12, -18, -30, -60) in a column left of the bar. The host
+        // picks the type rung (brand::type::label() by default, caption() on
+        // M and L strips); with no room for it the scale falls back to
+        // label(), then to ticks on the bar.
+        void setScaleFont (const juce::Font& f);
+        // Width the scale column takes in that font, gap to the bar included.
+        static int scaleColumnWidth (const juce::Font& f);
+        // A scale mark as drawn: "0", "-6" ... "-60".
+        static juce::String scaleLabel (float dB);
+        // The marks, top to bottom.
+        static constexpr float kScaleMarksDb[] = { 0.0f, -6.0f, -12.0f, -18.0f, -30.0f, -60.0f };
+
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
 
@@ -45,6 +58,8 @@ namespace zynforge
         const std::shared_ptr<TrackState> keepAlive;
         TrackState* stereoR     { nullptr };
         bool        showLabels  { true };
+        juce::Font  scaleFont;            // set in the constructor (brand::type::label())
+        int         scaleColW   { 0 };    // scaleColumnWidth (scaleFont)
         float displayPeak       { 0.0f };
         float displayRms        { 0.0f };
         float displayPeakR      { 0.0f };
