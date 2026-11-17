@@ -85,6 +85,7 @@ namespace zynforge
         }
 
         static constexpr int kResizeZoneH = 6;   // bottom-edge grab zone
+        static constexpr int kRowButtonH  = 26;  // I / R / S / M row, at the default row height
         static constexpr int kMinRowH     = 20;
         static constexpr int kMaxRowH     = 800;
 
@@ -1893,9 +1894,11 @@ namespace zynforge
             nameLabel.setBounds (leftBlock.removeFromTop (18).withTrimmedLeft (26));
             leftBlock.removeFromTop (3);
 
-            const int btnH = 22;
             // Four buttons across one row, in the MIXER's order, so the hand
-            // finds R in the same place in both views: [ I ][ R ][ S ][ M ]
+            // finds R in the same place in both views: [ I ][ R ][ S ][ M ].
+            // Big enough for a trackpad in a dark venue where the row has the
+            // height (the default row does); a short row keeps what fits.
+            const int btnH = juce::jmin (kRowButtonH, leftBlock.getHeight());
             auto row = leftBlock.removeFromTop (btnH);
             const int quarter = row.getWidth() / 4;
             monButton .setBounds (row.removeFromLeft (quarter).reduced (1));

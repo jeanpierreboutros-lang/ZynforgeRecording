@@ -192,16 +192,24 @@ namespace zynforge
             // DRAWS changed (seek, marker add/move, loop edits, session
             // length): the unconditional 4 Hz repaint re-shaped the ruler's
             // text labels forever at idle.
-            if (active) { repaint(); return; }
+            // Only the time scale moves: the header column holds two fixed
+            // labels and, over them, EDIT's zoom buttons, which need no
+            // repaint at 30 Hz.
+            if (active) { repaintTimeScale(); return; }
             const auto sig = idleSignature();
             if (sig != lastIdleSig)
             {
                 lastIdleSig = sig;
-                repaint();
+                repaintTimeScale();
             }
         }
 
         juce::int64 lastIdleSig { -1 };
+
+        void repaintTimeScale()
+        {
+            repaint (headerW, 0, juce::jmax (0, getWidth() - headerW), getHeight());
+        }
 
         static constexpr int idleHz = 4;
         static constexpr int playHz = 30;

@@ -36,42 +36,42 @@ namespace
             addAndMakeVisible (viewport);
             viewport.setViewedComponent (&content, false);
             viewport.setScrollBarsShown (true, false);
-            content.setSize (640, computeContentHeight());
+            content.setSize (640, shortcuts::table::contentHeight (640));
         }
 
         void resized() override
         {
             viewport.setBounds (getLocalBounds());
-            content.setSize (juce::jmax (640, viewport.getWidth()
-                                                - viewport.getScrollBarThickness()),
-                             computeContentHeight());
+            // Rows wrap to the width, so the height follows it.
+            const int w = juce::jmax (640, viewport.getWidth() - viewport.getScrollBarThickness());
+            content.setSize (w, shortcuts::table::contentHeight (w));
         }
 
     private:
-        // The rows live in ShortcutSheet.h, held to the key handler by a test.
-        static const std::vector<shortcuts::Section>& sections() { return shortcuts::sheet(); }
-
-        static constexpr int kHeaderH  = 26;
-        static constexpr int kRowH     = 24;
-        static constexpr int kColSplit = 200;   // left column width (shortcut)
-        static constexpr int kHPad     = 14;
-
-        static int computeContentHeight()
-        {
-            int h = 8;   // top pad
-            for (const auto& s : sections())
-                h += kHeaderH + (int) s.rows.size() * kRowH + 6;
-            return h + 8;
-        }
-
+        // The rows live in ShortcutSheet.h, held to the key handler by a test;
+        // so do the column widths and the wrap that sizes each row.
         class Content final : public juce::Component
         {
         public:
+            // Lays every row out once per width, not on each scroll repaint.
+            void resized() override
+            {
+                using namespace shortcuts::table;
+                rows.clear();
+                for (const auto& s : shortcuts::sheet())
+                    for (const auto& r : s.rows)
+                        rows.push_back ({ layOut (r.keys, keysFont(), brand::textPrimary, keysWidth()),
+                                          layOut (r.description, descriptionFont(), brand::textSecondary,
+                                                  descriptionWidth (getWidth())) });
+            }
+
             void paint (juce::Graphics& g) override
             {
-                int y = 8;
+                using namespace shortcuts::table;
+                int y = kTopPad;
                 bool zebra = false;
-                for (const auto& s : sections())
+                size_t next = 0;
+                for (const auto& s : shortcuts::sheet())
                 {
                     // Section header -- light grey on slightly lifted
                     // panel, muted ember stripe so groups read distinctly
@@ -88,9 +88,16 @@ namespace
                                 juce::Justification::centredLeft, false);
                     y += kHeaderH;
 
-                    for (const auto& r : s.rows)
+                    for (size_t i = 0; i < s.rows.size() && next < rows.size(); ++i)
                     {
-                        juce::Rectangle<int> row (0, y, getWidth(), kRowH);
+                        // Left column -- shortcut, mono, light grey. Right
+                        // column -- description, sans, mid grey. Each wraps;
+                        // the row is as tall as its longer column.
+                        const auto& keys = rows[next].keys;
+                        const auto& desc = rows[next].description;
+                        ++next;
+                        const int rowH = rowHeight (keys, desc);
+                        juce::Rectangle<int> row (0, y, getWidth(), rowH);
                         // Zebra: even rows get a slight tint over bgPanel
                         // so the eye can track across the row.
                         if (zebra)
@@ -100,26 +107,24 @@ namespace
                         }
                         zebra = ! zebra;
 
-                        // Left column -- shortcut, mono, light grey.
-                        g.setColour (brand::textPrimary);
-                        g.setFont (brand::type::mono (brand::type::h_caption, true));
-                        g.drawText (r.keys,
-                                    row.withTrimmedLeft (kHPad).withWidth (kColSplit - kHPad),
-                                    juce::Justification::centredLeft, false);
-
-                        // Right column -- description, sans, mid grey.
-                        g.setColour (brand::textSecondary);
-                        g.setFont (brand::type::uiBody());
-                        g.drawText (r.description,
-                                    row.withTrimmedLeft (kColSplit)
-                                       .withTrimmedRight (kHPad),
-                                    juce::Justification::centredLeft, true);
-                        y += kRowH;
+                        // Both columns start on one baseline; a one-line row
+                        // sits centred in its 24 px.
+                        const float textH = juce::jmax (keys.getHeight(), desc.getHeight());
+                        const float top = (float) y + ((float) rowH - textH) * 0.5f;
+                        const float keysDrop = keys.getNumLines() > 0 && desc.getNumLines() > 0
+                                                   ? desc.getLine (0).ascent - keys.getLine (0).ascent : 0.0f;
+                        keys.draw (g, { (float) kHPad, top + keysDrop, keysWidth(), keys.getHeight() });
+                        desc.draw (g, { (float) kColSplit, top, descriptionWidth (getWidth()), desc.getHeight() });
+                        y += rowH;
                     }
-                    y += 6;
+                    y += kSectionGap;
                     zebra = false;   // reset zebra at each section
                 }
             }
+
+        private:
+            struct Laid { juce::TextLayout keys, description; };
+            std::vector<Laid> rows;
         };
 
         juce::Viewport viewport;
@@ -241,7 +246,9 @@ void MainComponent::showKeyboardShortcuts()
     opts.dialogTitle             = "Keyboard shortcuts";
     opts.dialogBackgroundColour  = brand::bgPanel;
     opts.escapeKeyTriggersCloseButton = true;
-    opts.useNativeTitleBar       = false;
+    // The system title bar, as every other dialog: JUCE's own drew a second,
+    // blue-grey title above the FORGE header.
+    opts.useNativeTitleBar       = true;
     opts.resizable               = false;
     opts.content.setOwned (content.release());
     zynforge::launchClosesForTake (opts);

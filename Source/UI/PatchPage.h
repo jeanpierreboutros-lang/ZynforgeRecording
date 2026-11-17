@@ -45,5 +45,13 @@ namespace zynforge
         static std::vector<std::pair<int, int>> dragTargets (const std::vector<bool>& stripIsStereo,
                                                              int startCol, int startRow,
                                                              int rowsDragged, int numRows);
+
+        // A strip's name as its column header draws it in `width` px: one line
+        // when it fits, two split at a word when both fit, and otherwise cut
+        // with an ellipsis. Never cut short without one: "SNARE TO" read like
+        // a wrong word.
+        static juce::StringArray headerNameLines (const juce::String& name, const juce::Font& font, float width);
+        // The corner label over the hardware column, with the app's arrow glyph.
+        static juce::String cornerChannelLabel() { return juce::String::fromUTF8 ("CH \xe2\x86\x92"); }
     };
 }

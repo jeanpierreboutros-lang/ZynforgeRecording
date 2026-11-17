@@ -69,6 +69,11 @@ namespace zynforge
         if (armedReady != ready) { armedReady = ready; repaint(); }
     }
 
+    void BigClockPanel::setEditLocked (bool locked)
+    {
+        if (editLocked != locked) { editLocked = locked; repaint(); }
+    }
+
     // Breathe animation tick rate. 15 Hz is plenty for a 1 Hz sine (still
     // visually smooth) and halves the idle repaint cost while a track is armed
     // — the pulse timer runs the whole time the rig sits armed-and-waiting.
@@ -105,6 +110,177 @@ namespace zynforge
         repaint();
     }
 
+    // ── Plate layout ─────────────────────────────────────────────────────
+    // The plate is short, so it is laid out for reading from the mix position:
+    // state, time and the time left are large; the small groups give way first.
+    static constexpr float kLabelH    = 14.0f;    // a group's label line
+    static constexpr float kLockLineH = 14.0f;    // EDIT LOCKED under the state
+    static const char* const kEditLockedText = "EDIT LOCKED";
+
+    static juce::Font timerFont (float innerH)
+    {
+        return brand::type::mono (juce::jmin (innerH * 0.95f, brand::type::h_hero), true);
+    }
+
+    static juce::Font valueFont (BigClockPanel::Group g, bool tall)
+    {
+        if (g == BigClockPanel::Group::TimeLeft)
+            return brand::type::mono (tall ? brand::type::h_subhead : brand::type::h_headline, true);
+        return brand::type::mono (brand::type::h_body, true);
+    }
+
+    static float valueH (BigClockPanel::Group g, bool tall)
+    {
+        if (g == BigClockPanel::Group::TimeLeft) return tall ? 26.0f : 21.0f;
+        return 16.0f;
+    }
+
+    // The widest each value usually reads, so a ticking digit doesn't push the
+    // groups along. A longer value still gets its room.
+    static const char* valueTemplate (BigClockPanel::Group g)
+    {
+        switch (g)
+        {
+            case BigClockPanel::Group::Missed:    return "000";
+            case BigClockPanel::Group::LastWrite: return "000 ms";
+            case BigClockPanel::Group::Markers:   return "000";
+            case BigClockPanel::Group::Free:      return "000.0 GB";
+            case BigClockPanel::Group::TimeLeft:  return "00h00m";
+        }
+        return "";
+    }
+
+    float BigClockPanel::groupsWidth (const GroupWidths& widths, const GroupMask& shown, float gap) noexcept
+    {
+        float w = 0.0f;
+        int n = 0;
+        for (int i = 0; i < kNumGroups; ++i)
+            if (shown[(size_t) i] && widths[(size_t) i] > 0.0f) { w += widths[(size_t) i]; ++n; }
+        return w + gap * (float) juce::jmax (0, n - 1);
+    }
+
+    BigClockPanel::GroupMask BigClockPanel::fitGroups (const GroupWidths& widths, float room, float gap) noexcept
+    {
+        GroupMask shown {};
+        for (int i = 0; i < kNumGroups; ++i) shown[(size_t) i] = widths[(size_t) i] > 0.0f;
+        for (auto g : giveWayOrder())
+        {
+            if (groupsWidth (widths, shown, gap) <= room) break;
+            shown[(size_t) g] = false;
+        }
+        return shown;
+    }
+
+    juce::String BigClockPanel::missedValueText (juce::int64 missedSamples)
+    {
+        return missedSamples > 0 ? juce::String (missedSamples) + "!" : juce::String ("0");
+    }
+
+    // With a copy's drive not answering the time left is the primary's alone,
+    // so the label says that instead of implying the whole rig.
+    juce::String BigClockPanel::timeLeftLabelText (bool freeIsBigSlot, bool copyStale)
+    {
+        return freeIsBigSlot ? "DISK FREE" : copyStale ? "PRIMARY TIME LEFT" : "TIME LEFT";
+    }
+
+    // With no estimate yet (nothing rolling) the large slot holds what is
+    // known, free space, rather than a dash.
+    bool BigClockPanel::freeIsBig() const noexcept
+    {
+        return remainingSeconds <= 0.0 || std::isinf (remainingSeconds);
+    }
+
+    juce::String BigClockPanel::freeText() const
+    {
+        return diskReading == DiskReading::PrimaryStale ? juce::String ("STALE")
+             : diskReading == DiskReading::DriveMissing ? juce::String ("NO DRIVE")
+             : freeGB < 0.0                             ? juce::String ("--")
+                                                        : juce::String::formatted ("%.1f GB", freeGB);
+    }
+
+    const BigClockPanel::Layout& BigClockPanel::computeLayout() const
+    {
+        Layout L;
+        // What each group reads.
+        const bool bigFree = freeIsBig();
+        const auto free = freeText();
+        L.labels = { "MISSED", "LAST WRITE", "MARKERS", "FREE",
+                     timeLeftLabelText (bigFree, diskReading == DiskReading::CopyStale) };
+        L.values = { missedValueText (missed),
+                     juce::String (lastWriteMs) + " ms",
+                     juce::String (markerCount),
+                     free,
+                     bigFree ? free
+                             : diskReading == DiskReading::PrimaryStale ? juce::String ("STALE")
+                                                                        : recordTimeText (remainingSeconds) };
+
+        // The rolling plate repaints at the pulse rate; measuring text is the
+        // costly part, so the geometry is reused while nothing it measured changed.
+        auto key = juce::String (getWidth()) + "x" + juce::String (getHeight()) + "|" + elapsedText;
+        for (int i = 0; i < kNumGroups; ++i) key << "|" << L.labels[(size_t) i] << "|" << L.values[(size_t) i];
+        if (key == layoutKey) return cachedLayout;
+
+        auto r = getLocalBounds().toFloat();
+        auto inner = r.reduced ((float) brand::space::lg, 2.0f + (float) brand::space::xs);
+        L.tall = inner.getHeight() >= 48.0f;
+        L.left = inner.removeFromLeft (L.tall ? 128.0f : 112.0f);
+
+        GroupWidths widths {};
+        for (int i = 0; i < kNumGroups; ++i)
+        {
+            const auto g = (Group) i;
+            if (g == Group::Free && bigFree) continue;   // already the large figure
+            const auto vf = valueFont (g, L.tall);
+            const float w = juce::jmax (juce::GlyphArrangement::getStringWidth (brand::type::caption(), L.labels[(size_t) i]),
+                                        juce::GlyphArrangement::getStringWidth (vf, L.values[(size_t) i]),
+                                        juce::GlyphArrangement::getStringWidth (vf, valueTemplate (g)));
+            widths[(size_t) i] = std::ceil (w);
+        }
+
+        // The timer keeps its room, with a group's gap clear on each side so it
+        // never reads as one of them; the groups have what is left of the row.
+        const auto tf = timerFont (inner.getHeight());
+        const float timerW = juce::GlyphArrangement::getStringWidth (tf, elapsedText) + 2.0f * (float) brand::space::xl;
+        const float room = juce::jmax (0.0f, inner.getWidth() - timerW);
+        const float gap = (float) brand::space::xl;
+        const auto shown = fitGroups (widths, room, gap);
+        const float used = juce::jmin (groupsWidth (widths, shown, gap), juce::jmax (0.0f, inner.getWidth()));
+        auto right = inner.removeFromRight (used);
+        L.timer = inner;
+        L.inner = getLocalBounds().toFloat().reduced ((float) brand::space::lg, 2.0f + (float) brand::space::xs);
+
+        // One label line across the groups, each value under its label.
+        const float stackH = kLabelH + valueH (Group::TimeLeft, L.tall);
+        const float top = right.getY() + juce::jmax (0.0f, (right.getHeight() - stackH) * 0.5f);
+        float x = right.getX();
+        for (int i = 0; i < kNumGroups; ++i)
+        {
+            if (! shown[(size_t) i]) continue;
+            const float w = juce::jmin (widths[(size_t) i], right.getRight() - x);
+            L.groups[(size_t) i] = { x, top, juce::jmax (0.0f, w), stackH };
+            x += widths[(size_t) i] + gap;
+        }
+        layoutKey = key;
+        cachedLayout = L;
+        return cachedLayout;
+    }
+
+    std::array<juce::Rectangle<float>, BigClockPanel::kNumGroups> BigClockPanel::getGroupBounds() const
+    {
+        return computeLayout().groups;
+    }
+
+    juce::String BigClockPanel::getGroupLabel (Group g) const { return computeLayout().labels[(size_t) g]; }
+    juce::String BigClockPanel::getGroupValue (Group g) const { return computeLayout().values[(size_t) g]; }
+
+    juce::String BigClockPanel::getTooltip()
+    {
+        if (! editLocked) return {};
+        const auto p = getMouseXYRelative().toFloat();
+        if (! computeLayout().left.contains (p)) return {};
+        return "Timeline and marker edits are locked while recording; zoom, scroll and FOLLOW remain available";
+    }
+
     void BigClockPanel::paint (juce::Graphics& g)
     {
         // Opaque base: cover every pixel with the body background (the 2px
@@ -132,14 +308,10 @@ namespace zynforge
         g.drawRoundedRectangle (bgRect, brand::radius::lg, rolling ? 2.0f : 1.0f);
 
         const auto labelCol = rolling ? brand::textPrimary : brand::textSecondary;
+        const auto& L = computeLayout();
+        const bool tall = L.tall;
 
-        // This row is short, so it is laid out for reading from the mix position:
-        // state, time and record time left are large; the rest gives way first.
-        auto inner = r.reduced ((float) brand::space::lg, 2.0f + (float) brand::space::xs);
-        const bool tall = inner.getHeight() >= 48.0f;
-
-        // Left: state + lamp
-        auto left = inner.removeFromLeft (tall ? 128.0f : 112.0f);
+        // Left: state + lamp, and under it EDIT LOCKED while EDIT shows a take.
         {
             // Armed and waiting is a lamp, not a frame: bright is for the take.
             juce::Colour lamp = armedReady ? brand::signalArmedReady() : brand::textMuted;
@@ -147,81 +319,61 @@ namespace zynforge
             if (rolling)                    { lamp = brand::textPrimary; label = "REC"; }
             else if (mode == Mode::Playing) { lamp = brand::accentPlay;  label = "PLAY"; }
 
+            auto left = L.left;
+            auto lockLine = editLocked ? left.removeFromBottom (kLockLineH) : juce::Rectangle<float>();
             const float lampSize = 14.0f;
             g.setColour (lamp);
             g.fillEllipse (left.withWidth (lampSize).withSizeKeepingCentre (lampSize, lampSize));
 
+            const auto textX = lampSize + (float) brand::space::md;
             g.setColour (brand::textPrimary);
             g.setFont (brand::type::ui (rolling && tall ? brand::type::h_display : brand::type::h_subhead, true));
-            g.drawText (label, left.withTrimmedLeft (lampSize + (float) brand::space::md),
-                        juce::Justification::centredLeft, false);
+            g.drawText (label, left.withTrimmedLeft (textX), juce::Justification::centredLeft, false);
+
+            if (editLocked)
+            {
+                g.setColour (labelCol);
+                g.setFont (brand::type::captionBold());
+                g.drawText (kEditLockedText, lockLine.withTrimmedLeft (textX), juce::Justification::centredLeft, false);
+            }
+        }
+
+        // Right: the health groups, each a small label over its value. The
+        // large one (TIME LEFT, or DISK FREE before a take) sits at the right
+        // edge; the small ones give way first on a narrow plate.
+        {
+            const bool primaryStale = diskReading == DiskReading::PrimaryStale;
+            const bool copyStale    = diskReading == DiskReading::CopyStale;
+            const bool driveMissing = diskReading == DiskReading::DriveMissing;
+            const auto valueCol     = primaryStale || driveMissing ? brand::alertAmber : brand::textPrimary;
+            // On the record plate a miss has to be white to read at all.
+            const auto missCol      = rolling ? brand::textPrimary : brand::accentRecord;
+
+            for (int i = 0; i < kNumGroups; ++i)
+            {
+                const auto box = L.groups[(size_t) i];
+                if (box.isEmpty()) continue;
+                const auto grp = (Group) i;
+                juce::Colour lc = labelCol, vc = brand::textPrimary;
+                if (grp == Group::TimeLeft) { lc = copyStale ? brand::alertAmber : labelCol; vc = valueCol; }
+                if (grp == Group::Free)     vc = valueCol;
+                if (grp == Group::Missed && missed > 0) lc = vc = missCol;
+
+                auto col = box;
+                g.setColour (lc);
+                g.setFont (brand::type::caption());
+                g.drawText (L.labels[(size_t) i], col.removeFromTop (kLabelH), juce::Justification::centredLeft, false);
+                g.setColour (vc);
+                g.setFont (valueFont (grp, tall));
+                g.drawText (L.values[(size_t) i], col.removeFromTop (valueH (grp, tall)), juce::Justification::centredLeft, false);
+            }
         }
 
         // Centre: the timer. Tabular numerals -- the string can't shift width
-        // as seconds tick. It keeps its room; the health column gives way.
-        const float timerPt = juce::jmin (inner.getHeight() * 0.95f, brand::type::h_hero);
-        const auto  timerFont = brand::type::mono (timerPt, true);
-        const float timerW = juce::GlyphArrangement::getStringWidth (timerFont, elapsedText) + (float) brand::space::xl;
-
-        // Right: record time left, then the disk-health rows if there is room.
-        const float spare = inner.getWidth() - timerW;
-        auto right = inner.removeFromRight (juce::jlimit (0.0f, 300.0f, spare));
-        const bool primaryStale = diskReading == DiskReading::PrimaryStale;
-        const bool copyStale    = diskReading == DiskReading::CopyStale;
-        const bool driveMissing = diskReading == DiskReading::DriveMissing;
-        const auto valueCol     = primaryStale || driveMissing ? brand::alertAmber : brand::textPrimary;
-        const auto freeText     = primaryStale ? juce::String ("STALE")
-                                : driveMissing ? juce::String ("NO DRIVE")
-                                : freeGB < 0.0 ? juce::String ("--")
-                                               : juce::String::formatted ("%.1f GB", freeGB);
-        // With no estimate yet (nothing rolling) the large slot holds what is
-        // known, free space, rather than a dash.
-        const bool  freeIsBig   = remainingSeconds <= 0.0 || std::isinf (remainingSeconds);
-        {
-            // With a copy's drive not answering the time left is the primary's
-            // alone, so the label says that instead of implying the whole rig.
-            auto block = right.removeFromLeft (juce::jmin (tall ? 124.0f : 112.0f, right.getWidth()));
-            g.setColour (copyStale ? brand::alertAmber : labelCol);
-            g.setFont (brand::type::caption());
-            g.drawText (freeIsBig ? "DISK FREE" : copyStale ? "PRIMARY TIME LEFT" : "RECORD TIME LEFT",
-                        block.removeFromTop (14.0f), juce::Justification::centredLeft, false);
-            g.setColour (valueCol);
-            g.setFont (brand::type::mono (tall ? brand::type::h_subhead : brand::type::h_headline, true));
-            g.drawText (freeIsBig ? freeText : primaryStale ? juce::String ("STALE") : recordTimeText (remainingSeconds),
-                        block, juce::Justification::centredLeft, false);
-        }
-
-        // Each row is [label left, value right]. Label uses the UI font; value
-        // uses tabular mono so the digits don't dance. These rows are the proof
-        // the take is safe, so they are body size, not fine print. A row that
-        // doesn't fit isn't drawn: the order below is the order they give way.
-        const float rowH = 16.0f;
-        auto drawRow = [&] (const char* label, const juce::String& value,
-                            juce::Colour rowLabelCol, juce::Colour rowValueCol = brand::textPrimary)
-        {
-            if (right.getHeight() < rowH || right.getWidth() < 136.0f) return;
-            auto line = right.removeFromTop (rowH);
-            g.setColour (rowLabelCol);
-            g.setFont (brand::type::channelName());
-            g.drawText (label, line, juce::Justification::centredLeft, false);
-            g.setColour (rowValueCol);
-            g.setFont (brand::type::mono (brand::type::h_body, true));
-            g.drawText (value, line, juce::Justification::centredRight, false);
-        };
-
-        if (! freeIsBig) drawRow ("FREE", freeText, labelCol, valueCol);
-        // On the record plate a miss has to be white to read at all.
-        const auto missCol = rolling ? brand::textPrimary : brand::accentRecord;
-        drawRow (missed > 0 ? "MISSED SAMPLES" : "NO MISSED WRITES",
-                 missed > 0 ? juce::String (missed) : juce::String(),
-                 missed > 0 ? missCol : labelCol,
-                 missed > 0 ? missCol : brand::textPrimary);
-        drawRow ("LAST WRITE", juce::String (lastWriteMs) + " ms", labelCol);
-        drawRow ("MARKERS", juce::String (markerCount), labelCol);
-
-        g.setFont (timerFont);
+        // as seconds tick. It keeps its room; the health groups give way.
+        g.setFont (timerFont (L.inner.getHeight()));
         g.setColour (rolling ? brand::textPrimary
                              : mode == Mode::Playing ? brand::accentPlay : brand::textSecondary);
-        g.drawText (elapsedText, inner, juce::Justification::centred, false);
+        g.drawText (elapsedText, L.timer, juce::Justification::centred, false);
     }
 }

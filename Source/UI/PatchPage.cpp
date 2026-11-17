@@ -5,6 +5,8 @@
 #include "../Theme/BrandTokens.h"
 #include "FloatingLaunch.h"
 
+#include <limits>
+
 namespace zynforge
 {
     namespace
@@ -124,14 +126,14 @@ namespace zynforge
                                               : engine.getCurrentDeviceOutputCount();
                 const auto L = computeLayout();
 
-                // ─── Top-left label (HW IN / CH ->)
+                // ─── Top-left label (HW IN / CH and an arrow)
                 g.setColour (brand::textSecondary);
                 g.setFont (brand::type::channelName());
                 g.drawText (isInput ? "HW IN" : "HW OUT",
                             juce::Rectangle<int> (0, 14, L.rowHeaderW, 18),
                             juce::Justification::centred, false);
                 g.setFont (brand::type::caption());
-                g.drawText ("CH ->",
+                g.drawText (PatchPage::cornerChannelLabel(),
                             juce::Rectangle<int> (0, 34, L.rowHeaderW, 18),
                             juce::Justification::centred, false);
 
@@ -173,16 +175,22 @@ namespace zynforge
                         // The strip's own number, as MIXER and EDIT show it. A column
                         // count drifts from it after the first stereo pair.
                         g.drawText (juce::String (ls.trackIndex + 1).paddedLeft ('0', 2),
-                                    juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
+                                    juce::Rectangle<int> (inner.getX(), inner.getY() + 2, inner.getWidth(), 24),
                                     juce::Justification::centred, false);
 
+                        // The name on two lines when one is too narrow, cut
+                        // with an ellipsis only when two are too.
                         g.setFont (brand::type::uiLabel());
                         const auto displayName = t.name.isNotEmpty() ? t.name
                                                                       : juce::String ("In ") + juce::String (ls.trackIndex + 1);
-                        g.drawText (displayName,
-                                    juce::Rectangle<int> (inner.getX() + 2, inner.getY() + 32,
-                                                          inner.getWidth() - 4, 18),
-                                    juce::Justification::centred, false);
+                        constexpr int kNameLineH = 13;
+                        const juce::Rectangle<int> nameArea (inner.getX() + 2, inner.getY() + 26,
+                                                             inner.getWidth() - 4, 2 * kNameLineH);
+                        const auto lines = PatchPage::headerNameLines (displayName, brand::type::uiLabel(),
+                                                                       (float) nameArea.getWidth());
+                        auto lineBox = nameArea.withSizeKeepingCentre (nameArea.getWidth(), lines.size() * kNameLineH);
+                        for (const auto& line : lines)
+                            g.drawText (line, lineBox.removeFromTop (kNameLineH), juce::Justification::centred, false);
 
                         juce::Rectangle<int> pillCell (colX, L.colorBandH, L.colW, L.muteBandH);
                         auto pill = pillCell.reduced (10, 4);
@@ -584,6 +592,50 @@ namespace zynforge
         private:
             juce::TabbedComponent tabs;
         };
+    }
+
+    juce::StringArray PatchPage::headerNameLines (const juce::String& name, const juce::Font& font, float width)
+    {
+        const auto widthOf = [&font] (const juce::String& t) { return juce::GlyphArrangement::getStringWidth (font, t); };
+        const auto fits = [&] (const juce::String& t) { return widthOf (t) <= width; };
+        // The longest start of `t` that fits with an ellipsis after it.
+        const auto cut = [&] (juce::String t)
+        {
+            const auto ellipsis = juce::String::charToString ((juce::juce_wchar) 0x2026);
+            t = t.trimEnd();
+            while (t.isNotEmpty() && ! fits (t.trimEnd() + ellipsis))
+                t = t.dropLastCharacters (1);
+            return t.trimEnd() + ellipsis;
+        };
+
+        const auto text = name.trim();
+        if (fits (text)) return { text };
+
+        juce::StringArray words;
+        words.addTokens (text, " ", "");
+        words.removeEmptyStrings();
+        const auto join = [&words] (int from, int to) { return words.joinIntoString (" ", from, to - from); };
+
+        // Two lines that both fit, as even as they come.
+        int best = -1;
+        float bestW = std::numeric_limits<float>::max();
+        for (int k = 1; k < words.size(); ++k)
+        {
+            const auto a = join (0, k), b = join (k, words.size());
+            if (fits (a) && fits (b) && juce::jmax (widthOf (a), widthOf (b)) < bestW)
+            {
+                bestW = juce::jmax (widthOf (a), widthOf (b));
+                best = k;
+            }
+        }
+        if (best > 0) return { join (0, best), join (best, words.size()) };
+
+        // Too long for two: whole words on the first line, the rest cut. A first
+        // word too long by itself is cut on one line.
+        int k = 0;
+        while (k < words.size() - 1 && fits (join (0, k + 1))) ++k;
+        if (k == 0) return { cut (text) };
+        return { join (0, k), cut (join (k, words.size())) };
     }
 
     std::vector<std::pair<int, int>> PatchPage::dragTargets (const std::vector<bool>& stripIsStereo,

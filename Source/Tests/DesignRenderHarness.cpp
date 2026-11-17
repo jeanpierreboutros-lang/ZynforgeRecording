@@ -320,6 +320,10 @@ namespace zynforge
             main.resized();
             tick (main, 3);
             save (main, "07-mixer-recording-narrow");
+            main.switchView (MainComponent::View::Edit);      // EDIT's plate is the narrowest
+            tick (main, 3);
+            save (main, "07b-edit-recording-narrow");
+            main.switchView (MainComponent::View::Mix);
             main.setSize (1600, 1000);
             main.resized();
 

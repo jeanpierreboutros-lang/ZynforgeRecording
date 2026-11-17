@@ -1397,18 +1397,34 @@ namespace zynforge
                             "the R row drew nothing though its clip plays");
             }
 
-            beginTest ("The REC label follows a take, not every timeline lock");
+            // The notice moved from over the ruler (where it hid a time label)
+            // to the clock plate, under REC (design pass 2026-11-17).
+            beginTest ("The plate's EDIT LOCKED follows a take in EDIT, not every timeline lock");
             {
-                Show s (1, { 48000 });
-                juce::Label* label = nullptr;
+                Show s (2, { 0, 48000 });
                 for (auto* child : s.page().getChildren())
-                    if (auto* l = dynamic_cast<juce::Label*> (child); l != nullptr && l->getText().contains ("EDIT LOCKED"))
-                        label = l;
-                expect (label != nullptr, "setup: the label");
+                    if (auto* l = dynamic_cast<juce::Label*> (child))
+                        expect (! l->getText().contains ("EDIT LOCKED"), "a lock notice still sits over the ruler");
                 s.page().setReadOnlyWhileRecording (true);    // a metadata save holds the lock
                 pumpUntil ([] { return false; }, 120);
-                if (label != nullptr) expect (! label->isVisible(), "REC showed with no take running");
+                s.main.updateClockAndDiskCadence (48000.0);
+                expect (! s.main.bigClock.isEditLockShown(), "EDIT LOCKED showed with no take running");
                 s.page().setReadOnlyWhileRecording (false);
+
+                s.engine.setTrackArmed (0, true);
+                expect (s.engine.startRecording (s.dir), "setup: the take rolls: " + s.engine.getRecorder().getStartError());
+                s.main.updateClockAndDiskCadence (48000.0);
+                expect (s.main.bigClock.isEditLockShown(), "a take in EDIT did not say EDIT LOCKED on the plate");
+                s.main.currentView = MainComponent::View::Mix;
+                s.main.updateClockAndDiskCadence (48000.0);
+                expect (! s.main.bigClock.isEditLockShown(), "EDIT LOCKED showed in MIXER");
+                s.main.currentView = MainComponent::View::Edit;
+                s.engine.stopRecording();
+                expect (pumpUntil ([&s]
+                        {
+                            s.main.updateClockAndDiskCadence (48000.0);
+                            return ! s.main.bigClock.isEditLockShown();
+                        }, 3000), "EDIT LOCKED outlived the take");
             }
 
             beginTest ("Solo, Arm and strip paste are one undo step each");

@@ -722,9 +722,8 @@ namespace zynforge
             viewport.setViewPosition (juce::jlimit (0, maxX, x), viewport.getViewPositionY());
         };
 
-        // DAW-style edge zoom clusters, overlaid on top of the viewport.
-        // V (amplitude) stacked at the right edge; H (timeline) at the
-        // bottom-right. Step a fixed ratio per click.
+        // DAW-style zoom buttons, in the ruler's header column (resized()).
+        // V = amplitude, H = timeline. Step a fixed ratio per click.
         for (auto* b : { &zoomVIn, &zoomVOut, &zoomHIn, &zoomHOut })
         {
             b->setColour (juce::TextButton::buttonColourId, brand::controlBg);
@@ -771,13 +770,8 @@ namespace zynforge
         // its own timer (4 Hz idle, 30 Hz while the transport moves).
         ruler = std::make_unique<EditTimeRuler> (engine);
         addAndMakeVisible (*ruler);
-        recordingEditLabel.setFont (brand::type::ui (11.0f, true));
-        recordingEditLabel.setJustificationType (juce::Justification::centred);
-        recordingEditLabel.setColour (juce::Label::textColourId, brand::accentRecord);
-        recordingEditLabel.setColour (juce::Label::backgroundColourId, brand::bgDeep);
-        recordingEditLabel.setTooltip ("Timeline and marker edits are locked while recording; zoom, scroll and FOLLOW remain available");
-        recordingEditLabel.setInterceptsMouseClicks (false, false);
-        addChildComponent (recordingEditLabel);
+        // A take's edit lock is said on the clock plate, under REC
+        // (BigClockPanel::setEditLocked), so nothing covers the ruler's labels.
 
         // Reusable loading/empty/error surface, overlaid on the wave area.
         // It manages its own visibility -- shown when no session is loaded,
@@ -1334,9 +1328,6 @@ namespace zynforge
         // cleared. Writing `rec` alone here at 24 Hz fought the host's 10 Hz
         // write, so the lock flickered and mouse edits got through.
         applyReadOnly (hostReadOnly || rec);
-        // The lock is wider than a take (a metadata save holds it too); this
-        // red label says a take is rolling, so it follows the take alone.
-        recordingEditLabel.setVisible (rec || finalizing);
         const bool transportActive = rec || engine.getPlayer().isPlaying();
         const bool wasFollowing = followState.isFollowing();
         const bool wasTransportActive = followState.isTransportActive();
@@ -1539,11 +1530,10 @@ namespace zynforge
         const int rulerH = 46;
         if (ruler != nullptr)
             ruler->setBounds (bounds.removeFromTop (rulerH));
-        recordingEditLabel.setBounds (juce::jmax (0, getWidth() - 177), 5, 170, 20);
 
         // Overview navigator strip along the bottom -- only when zoomed in
-        // (content wider than the view), leaving room for the H/V zoom
-        // clusters at the bottom-right.
+        // (content wider than the view). It spans the full width: the zoom
+        // controls sit in the ruler's header column, not over the lanes.
         const bool rec = engine.isRecording();
         const auto& player = engine.getPlayer();
         const double liveRate = engine.getDeviceSampleRate() > 0.0
@@ -1559,7 +1549,6 @@ namespace zynforge
         if (showMinimap)
         {
             auto mmRow = bounds.removeFromBottom (18);
-            mmRow.removeFromRight (185);  // clear FOLLOW + wider zoom controls
             minimap.setBounds (mmRow.reduced (4, 1));
             minimap.setVisible (true);
         }
@@ -1590,21 +1579,28 @@ namespace zynforge
             ruler->setScrollOffsetX (viewport.getViewPositionX());
         }
 
-        // Edge zoom clusters, overlaid in the bottom-right corner:
-        //   V+        (vertical / amplitude, stacked)
-        //   V-
-        //   H- H+     (horizontal / timeline, side by side)
-        // The default JUCE button font needs this much room for "V+"/"H+";
-        // narrower buttons draw those labels as "..." on macOS.
-        const int zoomW = 44, zoomH = 26, followW = 72, gap = 4, pad = 8;
-        const int rightX = bounds.getRight()  - zoomW - pad;
-        const int botY   = bounds.getBottom() - zoomH - pad;
-        zoomVIn .setBounds (rightX,                 botY - 2 * (zoomH + gap), zoomW, zoomH);
-        zoomVOut.setBounds (rightX,                 botY -     (zoomH + gap), zoomW, zoomH);
-        zoomHOut.setBounds (rightX - zoomW - gap,  botY,                      zoomW, zoomH);
-        zoomHIn .setBounds (rightX,                 botY,                      zoomW, zoomH);
-        followButton.setBounds (rightX - zoomW - 2 * gap - followW,
-                                botY, followW, zoomH);
+        // Zoom controls live in the ruler's header column, above the track
+        // headers, so they never cover audio (they used to float over the last
+        // row's waveform). One row, right-aligned against the time scale:
+        //   [FOLLOW]  [H-][H+]  [V-][V+]
+        // FOLLOW only shows while the transport moves; its slot stays so the
+        // zoom buttons don't jump. The default JUCE button font needs this
+        // much room for "V+"/"H+"; narrower buttons draw "..." on macOS.
+        const int zoomW = 44, zoomH = 26, followW = 72, gap = 4, groupGap = brand::space::md;
+        const int headerRight = brand::space::editHeaderW - brand::space::md;
+        const int zoomY = juce::jmax (0, (rulerH - zoomH) / 2);
+        int x = headerRight;
+        auto place = [&] (juce::Component& b, int w, int after)
+        {
+            x -= w;
+            b.setBounds (x, zoomY, w, zoomH);
+            x -= after;
+        };
+        place (zoomVIn,      zoomW,   gap);
+        place (zoomVOut,     zoomW,   groupGap);
+        place (zoomHIn,      zoomW,   gap);
+        place (zoomHOut,     zoomW,   groupGap);
+        place (followButton, followW, 0);
         for (auto* b : { &zoomVIn, &zoomVOut, &zoomHIn, &zoomHOut })
             b->toFront (false);
         followButton.toFront (false);

@@ -1182,20 +1182,16 @@ void MainComponent::showSessionInfo()
         return;
     }
 
-    // Convert the persisted captureFormat int back to a readable label.
+    // The file type is the container alone: the bit depth has its own field
+    // beside it, and "WAV 24-bit" next to "24-bit" said it twice.
     auto formatLabel = [] (int code) -> juce::String
     {
         using F = CaptureFormat;
         switch ((F) code)
         {
-            case F::Wav16:        return "WAV 16-bit";
-            case F::Wav24:        return "WAV 24-bit";
-            case F::Wav32Float:   return "WAV 32-bit float";
-            case F::Aiff16:       return "AIFF 16-bit";
-            case F::Aiff24:       return "AIFF 24-bit";
-            case F::Aiff32Float:  return "AIFF 32-bit float";
-            case F::Flac16:       return "FLAC 16-bit";
-            case F::Flac24:       return "FLAC 24-bit";
+            case F::Wav16: case F::Wav24: case F::Wav32Float:    return "WAV";
+            case F::Aiff16: case F::Aiff24: case F::Aiff32Float: return "AIFF";
+            case F::Flac16: case F::Flac24:                      return "FLAC";
         }
         return "--";
     };
