@@ -2,6 +2,9 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "../Theme/BrandTokens.h"
+
+#include <cmath>
 #include <vector>
 
 // What Help > Keyboard Shortcuts lists. MainComponent::keyPressed
@@ -107,5 +110,61 @@ namespace zynforge::shortcuts
             }},
         };
         return table;
+    }
+}
+
+// How the Keyboard Shortcuts dialog lays the sheet out. Every row wraps to as
+// many lines as its text needs and the row grows to fit: a description cut
+// with an ellipsis once hid how Space stops a take.
+namespace zynforge::shortcuts::table
+{
+    inline constexpr int kTopPad     = 8;
+    inline constexpr int kHeaderH    = 26;
+    inline constexpr int kRowH       = 24;    // a one-line row
+    inline constexpr int kRowVPad    = 4;     // above and below a row's text
+    inline constexpr int kSectionGap = 6;
+    inline constexpr int kColSplit   = 200;   // left column width (shortcut)
+    inline constexpr int kHPad       = 14;
+
+    inline juce::Font keysFont()        { return brand::type::mono (brand::type::h_caption, true); }
+    inline juce::Font descriptionFont() { return brand::type::uiBody(); }
+
+    inline float keysWidth() { return (float) (kColSplit - kHPad); }
+    inline float descriptionWidth (int contentW) { return (float) juce::jmax (1, contentW - kColSplit - kHPad); }
+
+    // The text as the dialog draws it, wrapped by word to `width`.
+    inline juce::TextLayout layOut (const juce::String& text, const juce::Font& font,
+                                    juce::Colour colour, float width)
+    {
+        juce::AttributedString as;
+        as.setWordWrap (juce::AttributedString::byWord);
+        as.setJustification (juce::Justification::topLeft);
+        as.append (text, font, colour);
+        juce::TextLayout layout;
+        layout.createLayout (as, width);
+        return layout;
+    }
+
+    inline int rowHeight (const juce::TextLayout& keys, const juce::TextLayout& description)
+    {
+        const float text = juce::jmax (keys.getHeight(), description.getHeight());
+        return juce::jmax (kRowH, (int) std::ceil (text) + 2 * kRowVPad);
+    }
+
+    inline int rowHeight (const Row& row, int contentW)
+    {
+        return rowHeight (layOut (row.keys, keysFont(), {}, keysWidth()),
+                          layOut (row.description, descriptionFont(), {}, descriptionWidth (contentW)));
+    }
+
+    inline int contentHeight (int contentW)
+    {
+        int h = kTopPad;
+        for (const auto& s : sheet())
+        {
+            h += kHeaderH + kSectionGap;
+            for (const auto& r : s.rows) h += rowHeight (r, contentW);
+        }
+        return h + kTopPad;
     }
 }

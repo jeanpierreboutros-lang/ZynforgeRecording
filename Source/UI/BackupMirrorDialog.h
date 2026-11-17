@@ -93,6 +93,7 @@ namespace zynforge
 
     class DialogAuditTests;
     class MixerFixTests;
+    class Design20261117PanelsTests;
     class MixerFix20261116Tests;
 
     namespace backupdlg
@@ -309,10 +310,19 @@ namespace zynforge
                 rowView.setScrollBarsShown (true, false);
                 addAndMakeVisible (rowView);
 
+                // Secondary: Apply is the one primary action on this dialog.
                 addBtn.setButtonText ("+ Add mirror drive...");
-                dialog::stylePrimary (addBtn);
+                dialog::styleSecondary (addBtn);
                 addBtn.onClick = [this] { addBlankRow(); };
                 addAndMakeVisible (addBtn);
+
+                // An empty list says what a mirror is, rather than nothing.
+                emptyHint.setText (kNoMirrorsHint, juce::dontSendNotification);
+                emptyHint.setFont (brand::type::caption());
+                emptyHint.setColour (juce::Label::textColourId, brand::textTertiary);
+                emptyHint.setJustificationType (juce::Justification::centred);
+                emptyHint.setInterceptsMouseClicks (false, false);
+                addChildComponent (emptyHint);
 
                 status.setFont (brand::type::caption());
                 status.setColour (juce::Label::textColourId, brand::textDanger);
@@ -362,6 +372,7 @@ namespace zynforge
                                       .withSizeKeepingCentre (220, brand::space::btnH));
                 body.removeFromBottom (brand::space::sm);
                 rowView.setBounds (body);
+                emptyHint.setBounds (body.withHeight (juce::jmin (body.getHeight(), 3 * kRowH)));
                 layoutRows();
 
                 auto footer = dialog::footerBounds (*this);
@@ -374,10 +385,20 @@ namespace zynforge
                 status.setBounds (footer);
             }
 
+            static constexpr const char* kNoMirrorsHint =
+                "No mirror drives. A mirror writes another full copy of every armed track to its own drive.";
+            bool isEmptyHintShown() const noexcept { return emptyHint.isVisible(); }
+            bool addButtonIsPrimary() const
+            {
+                return addBtn.findColour (juce::TextButton::buttonColourId)
+                    == applyBtn.findColour (juce::TextButton::buttonColourId);
+            }
+
         private:
             friend class zynforge::DialogAuditTests;
             friend class zynforge::MixerFixTests;
             friend class zynforge::MixerFix20261116Tests;
+            friend class zynforge::Design20261117PanelsTests;
             static constexpr int kRowH = 36;
 
             void timerCallback() override
@@ -541,6 +562,7 @@ namespace zynforge
                     rowHolder.addAndMakeVisible (*row);
                     rows.push_back (std::move (row));
                 }
+                emptyHint.setVisible (rows.empty());
                 layoutRows();
             }
 
@@ -656,6 +678,7 @@ namespace zynforge
             juce::Viewport                                   rowView;
             juce::Component                                  rowHolder;
             juce::Label                                      titleHint, backupCaption, mirrorCaption;
+            juce::Label                                      emptyHint;
             juce::Label                                      status;
             juce::TextButton                                 addBtn;
             juce::TextButton                                 applyBtn;
@@ -673,7 +696,9 @@ namespace zynforge
         opts.dialogTitle             = "Backup & Mirror Drives";
         opts.dialogBackgroundColour  = brand::bgPanel;
         opts.escapeKeyTriggersCloseButton = true;
-        opts.useNativeTitleBar       = false;
+        // The system title bar, as every other dialog: JUCE's own drew a second,
+        // blue-grey title above the FORGE header.
+        opts.useNativeTitleBar       = true;
         opts.resizable               = false;
         opts.content.setOwned (content.release());
         return launchClosesForTake (opts);   // as Cancel: the recorder refuses these under a take
