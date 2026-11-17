@@ -34,7 +34,7 @@ Geometry the target uses (per strip, top→bottom):
 | Region | Spec |
 |---|---|
 | Card | gap 8px between strips (paint `reduced(4)`), radius **xl (8)**, wash `linear-gradient(180, colour@0x33, colour@0x14 42%, #000@0x33)` over `bgStrip` |
-| Spine | **5px** brandOrange down the left edge; glow `0 0 8px`; full-bright + ember bloom when armed |
+| Spine | **5px** brandOrange down the left edge; glow `0 0 8px`; since 2026-11-17 it keeps the channel colour armed or recording (no bloom, no motion) |
 | Header plate | **30px** tall, `#0b0b0e→#000`, 1px gloss top, **2px brandOrange under-seam**, 1px black divider |
 | Number | far-left, **JetBrains Mono Bold 24px**, colour `#b4b7bf` (raised steel), box `{12,3,34,24}` |
 | Name | Native sans **Bold 13px** (`channelName()`), left-aligned, starts at x≈44, right-reserved 20px (caret) +18px (chip) |

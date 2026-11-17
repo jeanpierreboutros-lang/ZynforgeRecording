@@ -17,6 +17,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed — design pass, 2026-11-17
+
+From a design critique of the real window and dialogs, rendered headless; the owner said "fix everything, and remove this amber".
+
+- **Removed: the moving amber light on MIXER strips during a take.** An armed strip's left edge no longer lights or pulses; it keeps its channel colour, and the armed R shows the take. (EDIT's still 3 px edge on a recording track is unchanged.)
+- **A dead channel marks its own strip** in MIXER, EDIT and the meterbridge: red outline, red header band and INPUT LOST; a channel with no signal yet gets an amber NO SIGNAL tag. Clicking a channel alarm in the banner scrolls to the strip.
+- **The alarm banner shows one alarm per line** with a warning mark (filled = danger, outlined = notice), "+N more" when they don't all fit, and a click lists them all. No more 3-second turns.
+- **The BACKUP button shows its state** with a dot: BACKUP OFF (amber) when no backup is set, steel idle, green while writing, red when a write failed.
+- **Meter colours follow recording levels:** green up to -12 dBFS, ember to -6, orange to -2, white-hot above. Before, ember started at -18.
+- **One labelled scale per strip:** the meter's signed dBFS scale (0, -6 ... -60); the fader shows ticks with only 0 labelled. The infinity mark no longer sits on top of -60, and minus infinity reads "-∞ dB" everywhere.
+- **The clock plate reads as labels over values:** MISSED (red "N!" on a miss), LAST WRITE, MARKERS, FREE and a large TIME LEFT. In EDIT during a take the plate says EDIT LOCKED; nothing covers the ruler.
+- **EDIT:** FOLLOW / H- / H+ / V- / V+ moved into the ruler row, off the waveforms; I/R/S/M buttons on a row are bigger.
+- **Readability:** strip numbers, scales and the performance panel are at least 11 pt; a narrow window's routing boxes show "Mst" / "9-10" instead of "-> ..."; meterbridge numbers no longer run into the names.
+- **Dialogs:** Backup & Mirror Drives and Keyboard shortcuts lost their extra blue-grey title bar; shortcut rows wrap so nothing is cut; "+ Add mirror drive..." is a grey secondary button with a hint when there are none; Session Info's File type no longer repeats the bit depth; PATCH header names use two lines or an ellipsis, and the corner arrow matches the app's.
+
 Everything from here down to the "take files are named for their strips" section came from a whole-codebase review on 2026-11-16 (72 findings: 1 critical, 4 high, 18 medium, 49 low), all fixed. The choices are in the top ADR of [decisions.md](decisions.md).
 
 ### Changed — what to know, 2026-11-16 review

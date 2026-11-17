@@ -88,7 +88,7 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 | ☐ F.2 | Trigger **Delete channel?** (select strip → Track ▸ Delete, or strip menu). | Dialog shows the **ZynForge forge-mark** badge (not a red warning triangle); grey chrome. | Warning triangle / blue chrome. |
 | ☐ F.3 | Dock / Finder **app icon**. | New forge-mark + "RECORDING" icon (may need a Dock relaunch for cache). | Old forged-Z. |
 | ☐ F.4 | Launch **splash**. | New forge-mark glyph (not the old Z). | Old Z. |
-| ☐ F.5 | **Design re-tone:** look at a strip at rest vs **record-armed**. | At rest the orange spine/seam are subdued ember; when **armed** the spine goes bright + glows. A hot meter reads as the brightest orange. | Resting chrome as bright as a hot meter (can't tell armed from idle at a glance). |
+| ☐ F.5 | **Design re-tone:** look at a strip at rest vs **record-armed**. | At rest the orange seams are subdued ember. Since 2026-11-17 the spine keeps the channel colour armed or recording, with no glow and no motion; an armed strip shows on its R. A hot meter reads as the brightest orange. | Resting chrome as bright as a hot meter (can't tell armed from idle at a glance). |
 | ☐ F.6 | Every other **prompt** (Session menu items, errors). | First-party grey chrome; no JUCE default blue/triangle. | Stock JUCE alert. |
 
 ---

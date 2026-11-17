@@ -8,6 +8,16 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ---
 
+## 2026-11-17 design pass — not yet performed
+
+The look changes from the 2026-11-17 design critique. A disposable session on the real interface.
+
+- [ ] 🟥 **Dead channel on the strip.** Record a disposable take with signal on every armed input, then pull one input (or mute its direct out) for 5 s: its strip shows a red outline, red header and INPUT LOST in MIXER, EDIT and the meterbridge; clicking the banner's CHANNEL FAULT line scrolls to it. Restore the input: the marks clear.
+- [ ] 🟧 **No moving light.** During a take no MIXER strip edge lights or pulses; armed strips show the take on their R.
+- [ ] 🟧 **Meter colours at real levels.** A vocal peaking around -12 dBFS stays green; around -6 shows ember, -2 orange.
+- [ ] 🟧 **BACKUP dot.** No backup set: BACKUP OFF with an amber dot. Set one: steel dot; during a take green.
+- [ ] 🟨 **Plate and EDIT.** The plate reads MISSED / LAST WRITE / MARKERS / FREE / TIME LEFT; in EDIT during a take it says EDIT LOCKED and the zoom buttons sit in the ruler row, not over a waveform.
+
 ## 2026-11-16 fix round — not yet performed
 
 The fixes from the 2026-11-16 review. Disposable sessions; the steps that pull hardware need a recovery plan.

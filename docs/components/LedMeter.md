@@ -42,11 +42,11 @@ Segment count is `round(height / 4)` clamped to 8–20. With labels off and the 
 
 ## Critical layout rule
 
-`paint()` computes the 14 px dB-label gutter and **drops the labels entirely when the meter is narrower than 30 px** (`roomForLabels = showLabels && bounds.getWidth() >= 26`, where `bounds` is the widget inset 2 px each side). This is not just cosmetic: without it, the compact mixer/EDIT widths produce a *negative* bar area, which asserts and crashes `paintBar` (the 2026-06-14 SIGABRT). Any change to the meter's width math must preserve the "labels auto-drop below 30 px → bar gets full width, never negative" guarantee.
+`paint()` computes the dB-label gutter (since 2026-11-17 measured from the scale font, `scaleColumnWidth`, with signed labels 0, -6 ... -60) and **drops the labels entirely when the meter is narrower than 30 px** (`roomForLabels = showLabels && bounds.getWidth() >= 26`, where `bounds` is the widget inset 2 px each side). This is not just cosmetic: without it, the compact mixer/EDIT widths produce a *negative* bar area, which asserts and crashes `paintBar` (the 2026-06-14 SIGABRT). Any change to the meter's width math must preserve the "labels auto-drop below 30 px → bar gets full width, never negative" guarantee.
 
 ## Tokens used
 
-- **Colours**: `brand::meterGreen` / `meterEmber` / `meterHot` / `meterWhiteHot` (the forge-heat ramp, via `brand::meterHeatAt(frac)`: ember above 70 %, hot above 85 %, white-hot above 95 %), `brand::meterIdle` (unlit), `brand::bgDeep` (bar back), `brand::textPrimary` / `textTertiary` (labels / gutter ticks), `brand::textSecondary` (on-bar ticks without labels), `brand::shadow::elev3()` (dims the peak band in the solid small-meter path)
+- **Colours**: `brand::meterGreen` / `meterEmber` / `meterHot` / `meterWhiteHot` (the forge-heat ramp, via `brand::meterHeatAt(frac)` / `meterHeatAtDb(dBFS)`: since 2026-11-17 green up to -12 dBFS, ember -12..-6, hot -6..-2, white-hot above -2, a Recording-local `brand::meterHeat` until tokens.json follows), `brand::meterIdle` (unlit), `brand::bgDeep` (bar back), `brand::textPrimary` / `textTertiary` (labels / gutter ticks), `brand::textSecondary` (on-bar ticks without labels), `brand::shadow::elev3()` (dims the peak band in the solid small-meter path)
 - **Alpha**: `brand::alpha::scrim` (peak-only segments)
 - **Typography**: `brand::type::label()` (dB gutter)
 - **Radius**: `brand::radius::sm` (bar), `1.5f` micro (segments)

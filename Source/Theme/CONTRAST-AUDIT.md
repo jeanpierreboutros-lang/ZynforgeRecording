@@ -38,7 +38,7 @@ daylight. Alert states (missed samples, hot true-peak) keep `accentRecord`.
   intended "inactive" signal; not primary info.
 - Hammered-steel texture, brushed grain, 1px `edge` dividers — decorative; meant
   to sit below the content threshold.
-- Spine/seam glow alphas — decoration around the solid bright bar (which passes).
+- Seam glow alphas — decoration around the solid bright bar (which passes). The spine's record glow was removed on 2026-11-17.
 
 ## High-contrast mode status
 No separate high-contrast mode is implemented. The listed colour pairs cleared
