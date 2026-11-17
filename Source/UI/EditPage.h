@@ -298,7 +298,6 @@ namespace zynforge
         bool                               programmaticViewportChange { false };
         bool                               readOnlyWhileRecording { false };
         bool                               hostReadOnly { false };   // last setReadOnlyWhileRecording
-        juce::Label                        recordingEditLabel { {}, "REC  EDIT LOCKED" };
         int                                lastViewportX { 0 };
         std::unique_ptr<TrackList>         list;
         PlaceholderView                    placeholder;

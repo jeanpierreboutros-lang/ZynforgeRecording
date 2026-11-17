@@ -462,6 +462,10 @@ void MainComponent::updateClockAndDiskCadence (double deviceSR)
         }
     }
     bigClock.setArmedReady (anyArmed && ! engine.isRecording() && ! engine.isPlaying());
+    // EDIT's timeline locks for a take, so the plate says it under REC. It
+    // follows the take, not every lock: a metadata save holds the lock too.
+    bigClock.setEditLocked (currentView == View::Edit
+                            && (engine.isRecording() || engine.isCaptureFinalizing()));
 }
 
 void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing)
