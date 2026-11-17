@@ -61,10 +61,14 @@ namespace zynforge
     }
 
     static constexpr float kPanelInsetX = 12.0f;    // 4 px margin + 8 px padding, each side
-    static constexpr float kFormatW = 60.0f;        // the widest format line, "192.0 kHz"
+    static constexpr float kFormatW = 60.0f;        // the widest format line, "192.0 kHz", at caption size
     static constexpr float kFormatGap = 8.0f;
 
+    // Nothing on the panel is below caption size (11): it is read from the
+    // desk. The loudness line is body size; the format column and the AUDIO /
+    // DISK / BUF labels are caption, the load figures body.
     static juce::Font loudnessFont() { return brand::type::mono (brand::type::h_body, true); }
+    static juce::Font smallFont()    { return brand::type::mono (brand::type::h_caption, true); }
 
     static float loudnessWidth (const juce::String& text)
     {
@@ -130,7 +134,8 @@ namespace zynforge
         g.setColour (recording ? brand::accentRecord : brand::edge);
         g.drawRoundedRectangle (r, brand::radius::md, recording ? 1.5f : 1.0f);
 
-        auto inner = r.reduced (8.0f, 5.0f);
+        // 4 px top and bottom, so EDIT's short row still holds body-size figures.
+        auto inner = r.reduced (8.0f, 4.0f);
 
         // One thin bar: how hard the disk is being pushed, full at 50 MB/s,
         // the same scale as the colour on the DISK figure above it.
@@ -149,7 +154,7 @@ namespace zynforge
             inner.removeFromLeft (kFormatGap);
             const auto known = sampleRate > 0.0 && blockSize > 0;
             g.setColour (brand::textSecondary);
-            g.setFont (brand::type::ledLabel());
+            g.setFont (smallFont());
             g.drawText (known ? juce::String (sampleRate / 1000.0, 1) + " kHz" : juce::String ("-- kHz"),
                         format.removeFromTop (format.getHeight() * 0.5f), juce::Justification::centredLeft, false);
             g.drawText (known ? juce::String (blockSize) + " smp" : juce::String ("-- smp"),
@@ -178,14 +183,16 @@ namespace zynforge
 
         // Value widths in em for the longest each can read, so the three sit
         // evenly and a changing digit can't push its neighbour along.
-        const float valuePt = recording && inner.getHeight() >= 16.0f ? brand::type::h_body : brand::type::h_caption;
+        // Body size in both views (caption only if a row is ever shorter than
+        // EDIT's); the same rolling or not, so RECORD moves nothing.
+        const float valuePt = inner.getHeight() >= 12.0f ? brand::type::h_body : brand::type::h_caption;
         const float pctW = valuePt * 2.5f, diskW = valuePt * 6.2f;
-        const float labelsW = 34.0f + 28.0f + 22.0f;
+        const float labelsW = 34.0f + 28.0f + 22.0f;   // AUDIO / DISK / BUF at caption size
         const float gap = juce::jmax (4.0f, (inner.getWidth() - labelsW - 2.0f * pctW - diskW) / 2.0f);
         auto cell = [&] (const char* label, float labelW, const juce::String& value, float valueW, juce::Colour colour)
         {
             g.setColour (brand::textTertiary);
-            g.setFont (brand::type::ledLabel());
+            g.setFont (smallFont());
             g.drawText (label, inner.removeFromLeft (labelW), juce::Justification::centredLeft, false);
             g.setColour (colour);
             g.setFont (brand::type::mono (valuePt, true));

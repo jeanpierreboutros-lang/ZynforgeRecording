@@ -31,8 +31,8 @@ namespace zynforge
         // Master loudness, BS.1770: integrated + momentary LUFS, true-peak dBTP.
         void setLoudness (float integratedLufs, float momentaryLufs, float truePeakDb);
 
-        // When recording, the dashboard draws larger type + a red-emphasis
-        // border so the engineer can read load / buffer / disk at a glance.
+        // When recording, the dashboard draws a red-emphasis border so the
+        // engineer can read load / buffer / disk at a glance.
         void setRecording (bool isRecording);
 
         // The loudness line as drawn; a figure below the gate reads "--".
