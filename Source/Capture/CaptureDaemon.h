@@ -84,6 +84,8 @@ namespace zynforge::capture
         // paths run with nothing reaching CoreAudio. Call before start().
         void useDeviceTypeForTests (std::unique_ptr<juce::AudioIODeviceType> type);
         std::atomic<int> configuresForTests { 0 };
+        std::atomic<int> filesKeptForTests { 0 };   // status-loop passes that kept the /tmp files
+        juce::String identityRefreshNoteForTests() const { return server.identityRefreshNoteForTests(); }
         std::function<void()> beforeStartForTests;
         std::function<void()> beforeStopReplyForTests;
         // Runs after STOP's own status has gone out and before its reply.

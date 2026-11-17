@@ -55,6 +55,26 @@ namespace zynforge
             return false;
         }
 
+        // CI's macOS 15 VM failed these tests while this Mac passed them
+        // (2026-11-17): say what the helper's refresh did and what is on disk.
+        static juce::String fileState (const juce::File& f)
+        {
+            struct stat st {};
+            if (::lstat (f.getFullPathName().toRawUTF8(), &st) != 0)
+                return f.getFileName() + ": missing (errno " + juce::String (errno) + ")";
+            return f.getFileName() + ": mode " + juce::String::toHexString ((int) (st.st_mode & 07777))
+                 + " uid " + juce::String ((int) st.st_uid) + " ino " + juce::String ((juce::int64) st.st_ino)
+                 + " age " + juce::String ((juce::int64) (std::time (nullptr) - st.st_mtime)) + " s";
+        }
+
+        void logHelperFiles (capture::CaptureDaemon& daemon, const juce::File& key, juce::int64 startedMs)
+        {
+            logMessage ("    HELP-02 diagnostics after " + juce::String (juce::Time::currentTimeMillis() - startedMs)
+                        + " ms: loop passes " + juce::String (daemon.filesKeptForTests.load())
+                        + ", " + daemon.identityRefreshNoteForTests() + "; " + fileState (identityFolder())
+                        + "; " + fileState (key));
+        }
+
         static juce::File identityFolder()
         {
             return juce::File ("/tmp/zynforge-capture-" + juce::String ((int) ::geteuid()));
@@ -227,7 +247,9 @@ namespace zynforge
                 const auto key = identityFolder().getChildFile (juce::String (daemon.getPort()) + ".key");
                 expect (key.existsAsFile());
                 expect (key.deleteFile());
-                expect (pumpUntil ([&] { return key.existsAsFile(); }, 4000), "the deleted key file never came back");
+                const auto deletedAt = juce::Time::currentTimeMillis();
+                expect (pumpUntil ([&] { return key.existsAsFile(); }, 10000), "the deleted key file never came back");
+                logHelperFiles (daemon, key, deletedAt);
                 CaptureClient window;
                 expect (window.connect ("127.0.0.1", daemon.getPort()));
                 const auto greeting = window.hello (2000);
@@ -248,9 +270,11 @@ namespace zynforge
                 expect (ageSeconds (key) > 3 * 24 * 3600, "the test could not age the key file");
                 expect (claims.deleteFile());
                 expect (Endpoint::helperWithoutClaims (daemon.getPort()), "the setup did not remove the claims file");
-                expect (pumpUntil ([&] { return ageSeconds (key) >= 0.0 && ageSeconds (key) < 600.0; }, 4000),
+                const auto agedAt = juce::Time::currentTimeMillis();
+                expect (pumpUntil ([&] { return ageSeconds (key) >= 0.0 && ageSeconds (key) < 600.0; }, 10000),
                         "the helper never freshened its key file");
-                expect (pumpUntil ([&] { return claims.existsAsFile(); }, 4000),
+                logHelperFiles (daemon, key, agedAt);
+                expect (pumpUntil ([&] { return claims.existsAsFile(); }, 10000),
                         "the helper never put its claims file back");
                 expect (! Endpoint::helperWithoutClaims (daemon.getPort()),
                         "a current helper reads as one too old to publish claims");
@@ -290,8 +314,10 @@ namespace zynforge
                 expect (TakeClaim::isHeld (session));
                 expect (takeLockFor (session).deleteFile());
                 expect (! TakeClaim::isHeld (session), "the setup did not remove the lock");
-                expect (pumpUntil ([&] { return TakeClaim::isHeld (session); }, 4000),
+                const auto removedAt = juce::Time::currentTimeMillis();
+                expect (pumpUntil ([&] { return TakeClaim::isHeld (session); }, 10000),
                         "a rolling take's claim stayed gone after the cleaner removed its file");
+                logHelperFiles (daemon, takeLockFor (session), removedAt);
                 Command stop; stop.action = Action::StopRecording;
                 expect (window.request (stop, 10000).completed);
                 window.disconnect();

@@ -3,6 +3,8 @@
 #include "SecureToken.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <array>
+#include <atomic>
+#include <cerrno>
 #include <ctime>
 #include <filesystem>
 #include <mutex>
@@ -104,11 +106,12 @@ namespace zynforge::capture::identity
         void refresh()
         {
             const std::lock_guard<std::mutex> guard (fileLock);
+            refreshesForTests.fetch_add (1, std::memory_order_relaxed);
            #if JUCE_MAC || JUCE_LINUX
-            if (! ownsFile || descriptor < 0 || ! validNonce (key)) return;
+            if (! ownsFile || descriptor < 0 || ! validNonce (key)) { noteRefresh (1, 0); return; }
             // An emptied folder goes too: hold the one that is on disk now.
             const int folder = openDirectory (true);
-            if (folder < 0) return;
+            if (folder < 0) { noteRefresh (2, errno); return; }
             struct stat held {}, current {};
             if (directory >= 0 && ::fstat (directory, &held) == 0 && ::fstat (folder, &current) == 0
                 && held.st_dev == current.st_dev && held.st_ino == current.st_ino)
@@ -121,11 +124,17 @@ namespace zynforge::capture::identity
             struct stat opened {}, named {};
             const bool nameExists = ::fstatat (directory, filename.toRawUTF8(), &named, AT_SYMLINK_NOFOLLOW) == 0;
             const bool nameGone = ! nameExists && errno == ENOENT;
+            const int statErrno = nameExists ? 0 : errno;
             if (::fstat (descriptor, &opened) == 0 && nameExists
                 && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino)
+            {
                 freshen (descriptor, opened);
+                noteRefresh (3, 0);
+            }
             else if (nameGone)
                 rewriteKey();
+            else
+                noteRefresh (nameExists ? 6 : 7, statErrno);
             const int claims = ::openat (directory, claimsName.toRawUTF8(),
                                          O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
             if (claims >= 0)
@@ -286,17 +295,20 @@ namespace zynforge::capture::identity
             ::unlinkat (directory, temporary.toRawUTF8(), 0);
             const int fresh = ::openat (directory, temporary.toRawUTF8(),
                                         O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0600);
-            if (fresh < 0) return;
+            if (fresh < 0) { noteRefresh (50, errno); return; }
             struct stat status {};
-            if (::fstat (fresh, &status) == 0 && validFile (status)
-                && ::flock (fresh, LOCK_EX | LOCK_NB) == 0
-                && ::pwrite (fresh, key.toRawUTF8(), 64, 0) == 64
-                && ::renameat (directory, temporary.toRawUTF8(), directory, filename.toRawUTF8()) == 0)
+            int step = 51;
+            if (::fstat (fresh, &status) == 0 && (++step, validFile (status))
+                && (++step, ::flock (fresh, LOCK_EX | LOCK_NB) == 0)
+                && (++step, ::pwrite (fresh, key.toRawUTF8(), 64, 0) == 64)
+                && (++step, ::renameat (directory, temporary.toRawUTF8(), directory, filename.toRawUTF8()) == 0))
             {
                 ::close (descriptor);   // the nameless one the cleaner took
                 descriptor = fresh;
+                noteRefresh (4, 0);
                 return;
             }
+            noteRefresh (step, errno);
             ::close (fresh);
             ::unlinkat (directory, temporary.toRawUTF8(), 0);
         }
@@ -314,6 +326,23 @@ namespace zynforge::capture::identity
             return -1;
         }
        #endif
+        // What refresh last did, for the tests: 1 nothing held, 2 no folder,
+        // 3 key current (freshened if old), 4 key written back, 6 the name is
+        // another file, 7 the name could not be read, 50-55 writing the key
+        // back failed at a step (open, stat, valid, lock, write, rename).
+        void noteRefresh (int code, int error) noexcept
+        {
+            lastRefreshForTests.store (code, std::memory_order_relaxed);
+            refreshErrnoForTests.store (error, std::memory_order_relaxed);
+        }
+    public:
+        juce::String refreshNoteForTests() const
+        {
+            return "refreshes=" + juce::String (refreshesForTests.load()) + " last=" + juce::String (lastRefreshForTests.load())
+                 + " errno=" + juce::String (refreshErrnoForTests.load());
+        }
+    private:
+        std::atomic<int> refreshesForTests { 0 }, lastRefreshForTests { 0 }, refreshErrnoForTests { 0 };
         std::mutex fileLock;   // create, reset and refresh: the files and descriptors below
         int directory { -1 }, descriptor { -1 };
         bool ownsFile { false };

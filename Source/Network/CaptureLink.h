@@ -53,6 +53,7 @@ namespace zynforge::capture
         // Keeps this endpoint's files in the shared /tmp folder from the
         // system's /tmp cleaner (identity::Endpoint::refresh). Any thread.
         void keepIdentityFiles() { endpointIdentity.refresh(); }
+        juce::String identityRefreshNoteForTests() const { return endpointIdentity.refreshNoteForTests(); }
 
         // Push to the connected GUI. Thread-safe; no-op if no client. Returns
         // false if the write failed (peer gone). A reply sent from inside a

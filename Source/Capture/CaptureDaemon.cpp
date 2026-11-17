@@ -616,6 +616,7 @@ namespace zynforge::capture
             if (++sinceFilesKept >= 10)
             {
                 sinceFilesKept = 0;
+                filesKeptForTests.fetch_add (1, std::memory_order_relaxed);
                 server.keepIdentityFiles();
                 const std::lock_guard<std::mutex> g (commandLock);
                 takeClaim.refresh();
