@@ -13,6 +13,7 @@
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AddTracksDialog.h"
 #include "AlarmBanner.h"
+#include "BackupChip.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
 #include "ChannelStrip.h"
@@ -632,6 +633,8 @@ private:
     bool deviceLossForgotten { false };   // that loss belonged to a session that has gone
     std::unique_ptr<zynforge::VolumeProbe> backupProbe;
     juce::File backupProbeFolder;
+    zynforge::backupchip::State backupChipState { zynforge::backupchip::State::Off };
+    bool backupChipShown { false };   // the chip has been set at least once
     // The loud row: every standing alarm, and a refused RECORD until it times out.
     void refreshAlarmBanner();
     void collectTwinAlarms (const zynforge::twin::Snapshot&, std::vector<zynforge::AlarmBanner::Alarm>&);

@@ -1264,32 +1264,37 @@ namespace zynforge
                 expect (backup.createDirectory().wasOk());
                 expect (w.engine().setBackupDirectory (backup));
 
-                const auto textOf = [&w] (const EngineStatus& status, const juce::String& wanted)
+                using backupchip::State;
+                const auto stateOf = [&w] (const EngineStatus& status, State wanted)
                 {
-                    pumpUntil ([&] { w.main.updateBackupButton (status); return w.main.backupButton.getButtonText() == wanted; }, 8000);
-                    return w.main.backupButton.getButtonText();
+                    pumpUntil ([&] { w.main.updateBackupButton (status); return w.main.backupChipState == wanted; }, 8000);
+                    return w.main.backupChipState;
                 };
-                expectEquals (textOf ({}, "BACKUP OK"), juce::String ("BACKUP OK"));
+                expect (stateOf ({}, State::Idle) == State::Idle);
+                expectEquals (w.main.backupButton.getButtonText(), juce::String ("BACKUP"));
 
                 EngineStatus rolling;
                 rolling.recording = true;
                 rolling.backupActive = true;
-                expectEquals (textOf (rolling, "BACKUP OK"), juce::String ("BACKUP OK"));
+                expect (stateOf (rolling, State::Writing) == State::Writing);
                 rolling.backupFailed = true;
-                expectEquals (textOf (rolling, "BACKUP !"), juce::String ("BACKUP !"), "OK stood beside BACKUP WRITE FAILED");
+                expect (stateOf (rolling, State::Failed) == State::Failed, "a good dot stood beside BACKUP WRITE FAILED");
+                expectEquals (w.main.backupButton.getButtonText(), juce::String ("BACKUP !"));
                 rolling.backupFailed = false;
                 rolling.backupActive = false;
-                expectEquals (textOf (rolling, "BACKUP !"), juce::String ("BACKUP !"), "a take with no backup writing said OK");
+                expect (stateOf (rolling, State::Trouble) == State::Trouble, "a take with no backup writing read as fine");
 
                 EngineStatus failed;
                 failed.backupFailed = true;
-                expectEquals (textOf (failed, "BACKUP !"), juce::String ("BACKUP !"), "a failed take's backup reads OK after STOP");
+                expect (stateOf (failed, State::Failed) == State::Failed, "a failed take's backup reads fine after STOP");
 
                 expect (backup.deleteRecursively());
-                expectEquals (textOf ({}, "BACKUP !"), juce::String ("BACKUP !"), "a folder that went still read OK");
+                expect (stateOf ({}, State::Trouble) == State::Trouble, "a folder that went still read as fine");
+                expectEquals (w.main.backupButton.getButtonText(), juce::String ("BACKUP !"));
 
                 w.engine().setBackupDirectory ({});
-                expectEquals (textOf ({}, "BACKUP"), juce::String ("BACKUP"));
+                expect (stateOf ({}, State::Off) == State::Off);
+                expectEquals (w.main.backupButton.getButtonText(), juce::String ("BACKUP OFF"));
                 w.engine().setBackupDirectory (before);
             }
         }

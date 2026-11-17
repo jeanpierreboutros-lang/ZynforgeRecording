@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <optional>
 #include "../Theme/Icons.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -30,6 +31,17 @@ namespace zynforge
         {
             return keyboardClicks && juce::TextButton::keyPressed (key);
         }
+
+        // A small state dot at the right end, like a status LED. The chip stays
+        // neutral; only the dot carries colour. Empty = no dot.
+        void setStatusDot (std::optional<juce::Colour> colour)
+        {
+            if (colour == statusDot) return;
+            statusDot = colour;
+            repaint();
+        }
+        std::optional<juce::Colour> getStatusDot() const noexcept { return statusDot; }
+        static constexpr float kDotSize = 7.0f;
 
         void paintButton (juce::Graphics& g,
                           bool over,
@@ -61,6 +73,12 @@ namespace zynforge
             // Label centred in the bounds *minus* the icon column so
             // they don't overlap.
             auto textArea = bounds.withTrimmedLeft (iconSize + 10.0f).reduced (2.0f, 0.0f);
+            if (statusDot.has_value())
+            {
+                auto dotColumn = textArea.removeFromRight (kDotSize + (float) brand::space::xs);
+                g.setColour (*statusDot);
+                g.fillEllipse (dotColumn.withSizeKeepingCentre (kDotSize, kDotSize));
+            }
             g.setColour (colour);
             g.setFont (brand::type::uiLabel());
             g.drawText (getButtonText(), textArea,
@@ -70,6 +88,7 @@ namespace zynforge
     private:
         zynforge::icons::Glyph glyph;
         bool keyboardClicks = true;
+        std::optional<juce::Colour> statusDot;
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IconButton)
     };
 }

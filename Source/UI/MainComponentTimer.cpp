@@ -592,7 +592,7 @@ juce::File MainComponent::configuredSessionsRoot() const
 // What the header says about the backup is read fresh, never remembered from
 // the dialog that picked the folder. A take's writers know how it is going.
 // Between takes a probe thread watches the folder, so a dead mount never reaches
-// this tick.
+// this tick. The chip shows it as a state dot (backupchip), set only on a change.
 void MainComponent::updateBackupButton (const zynforge::EngineStatus& status)
 {
     constexpr int kProbePeriodMs = 2000, kProbeStaleMs = 6000;
@@ -604,16 +604,25 @@ void MainComponent::updateBackupButton (const zynforge::EngineStatus& status)
         backupProbe.reset (configured ? new VolumeProbe (folder, VolumeProbe::readFolder, kProbePeriodMs) : nullptr);
     }
 
-    bool ok = false;
-    if (status.recording) ok = status.backupActive;
-    else if (backupProbe != nullptr)
+    backupchip::Facts facts;
+    facts.configured   = configured;
+    facts.recording    = status.recording;
+    facts.backupActive = status.backupActive;
+    facts.backupFailed = status.backupFailed;
+    if (configured && ! status.recording && ! status.backupFailed && backupProbe != nullptr)
     {
         const auto reading = backupProbe->latest();
         if (reading.atMs <= 0.0) return;   // no answer yet, so nothing new to say
-        ok = reading.totalBytes > 0 && juce::Time::getMillisecondCounterHiRes() - reading.atMs < kProbeStaleMs;
+        facts.driveAnswering = reading.totalBytes > 0
+                            && juce::Time::getMillisecondCounterHiRes() - reading.atMs < kProbeStaleMs;
     }
-    const juce::String text (! configured ? "BACKUP" : ok && ! status.backupFailed ? "BACKUP OK" : "BACKUP !");
-    if (backupButton.getButtonText() != text) backupButton.setButtonText (text);
+    const auto state = backupchip::stateFor (facts);
+    if (backupChipShown && state == backupChipState) return;
+    backupChipShown = true;
+    backupChipState = state;
+    backupButton.setButtonText (backupchip::labelFor (state));
+    backupButton.setStatusDot (backupchip::dotFor (state));
+    backupButton.setDescription (backupchip::describe (state));
 }
 
 void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
