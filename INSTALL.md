@@ -2,7 +2,11 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `7ba286b`, `main` on 2026-11-17: every fix of the 2026-11-16 review and the 2026-11-17 design pass. The Mac mini still has `281c6c0`; no DMG holds `7ba286b`, and it has not run on real hardware.
+The development Mac now has `d1a9f86`, `main` on 2026-11-17: every fix of the 2026-11-16 review and the 2026-11-17 design pass, with EDIT's zoom bar at the right of the transport row. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware.
+
+## Development Mac update — 2026-11-17 afternoon, EDIT's zoom bar on the right
+
+`d1a9f86` = `7ba286b` plus one owner's look request: FOLLOW / H- / H+ / V- / V+ moved from the ruler's header column to the right of the transport row, beside MIXER / EDIT / PATCH (the slot MIXER uses for GRID and strip width). GUI SHA-256 `7f7312aaa841a9df8278c6f2208c5c8e688d88cbbb207f94a57edad550951d1f`; the capture helper is unchanged (`9db1e6fb…cf9b`). Universal, Xcode generator with the stat-cache xcconfig. Tests: Release 2037 groups; the first full run had 4 failures in two groups: an EDIT test that looked for H+ on the page (fixed: it now looks in the hosted bar) and *Capture repairs / A backup unplugged while its files are hashed*, which starved for CPU while the universal app built beside it and passes alone (35 / 0), as it did in both full runs of `7ba286b`. Rollback: `/Applications/Zynforge Recording.app.backup-20261117-141344-before-d1a9f86` (`7ba286b`); the older `backup-20261117-132555-before-7ba286b` holds `08fccd7`. The app was opened for the owner.
 
 ## Development Mac update — 2026-11-17, the 2026-11-16 review's fixes and the design pass
 
