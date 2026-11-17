@@ -531,6 +531,25 @@ namespace zynforge
 
         int rowCount() const { return (int) rows.size(); }
 
+        void setInputAlarms (const std::vector<stripalarm::Level>& perTrack)
+        {
+            for (auto& r : rows)
+                if (r != nullptr)
+                {
+                    const int t = r->getTrackIndex();
+                    r->setInputAlarm (t >= 0 && t < (int) perTrack.size() ? perTrack[(std::size_t) t]
+                                                                           : stripalarm::Level::None);
+                }
+        }
+
+        TrackRow* rowForTrack (int track) const
+        {
+            for (auto& r : rows)
+                if (r != nullptr && (r->getTrackIndex() == track || (r->isStereoPair() && r->getTrackIndex() + 1 == track)))
+                    return r.get();
+            return nullptr;
+        }
+
         // True when the rows were built for exactly this logical layout, strip
         // for strip. A count check alone misses a block move that keeps both the
         // track and row counts ([mono, stereo] -> [stereo, mono]) and would leave
@@ -1595,6 +1614,41 @@ namespace zynforge
     {
         if (list == nullptr) return;
         list->setRowsVisibility (visibleRows);
+    }
+
+    void EditPage::setInputAlarms (const std::vector<stripalarm::Level>& perTrack)
+    {
+        if (list != nullptr) list->setInputAlarms (perTrack);
+    }
+
+    bool EditPage::revealTrack (int track)
+    {
+        auto* row = list != nullptr ? list->rowForTrack (track) : nullptr;
+        if (row == nullptr) return false;
+        if (! row->isVisible()) list->setRowsVisibility ({});
+        const auto b = row->getBounds();
+        auto y = viewport.getViewPositionY();
+        const int h = viewport.getMaximumVisibleHeight();
+        if (b.getY() < y || b.getHeight() > h)   y = b.getY();   // its header first
+        else if (b.getBottom() > y + h)          y = b.getBottom() - h;
+        // Only up or down: the timeline stays where the engineer had it.
+        juce::ScopedValueSetter<bool> scrolling (programmaticViewportChange, true);
+        viewport.setViewPosition (viewport.getViewPositionX(), y);
+        return true;
+    }
+
+    stripalarm::Level EditPage::inputAlarmForTests (int track) const
+    {
+        const auto* row = list != nullptr ? list->rowForTrack (track) : nullptr;
+        return row != nullptr ? row->getInputAlarm() : stripalarm::Level::None;
+    }
+
+    bool EditPage::rowFullyInViewForTests (int track) const
+    {
+        const auto* row = list != nullptr ? list->rowForTrack (track) : nullptr;
+        if (row == nullptr || ! row->isVisible()) return false;
+        const auto view = viewport.getViewArea();
+        return row->getY() >= view.getY() && row->getBottom() <= view.getBottom();
     }
 
     // The span the lanes and the ruler map across the content width: the live

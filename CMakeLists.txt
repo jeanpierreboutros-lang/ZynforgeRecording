@@ -307,6 +307,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TakeNameTests.cpp
     Source/Tests/DesignRenderHarness.cpp
     Source/Tests/Design20261117StripTests.cpp
+    Source/Tests/Design20261117AlarmsTests.cpp
     Source/Tests/TakeNamesFix20261116Tests.cpp
     Source/Tests/TrackReorderTests.cpp
     Source/Tests/TwinLinkTests.cpp

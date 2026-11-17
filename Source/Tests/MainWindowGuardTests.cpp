@@ -787,9 +787,8 @@ namespace zynforge
                 expect (w.main.alarmBanner.getLevel() == AlarmBanner::Level::Danger);
                 expect (w.main.alarmBanner.getHeight() >= 36, "the banner is too small to read from a distance");
                 expect (w.main.alarmBanner.getBottom() <= w.main.bigClock.getY(), "the banner covers the clock");
-                bool childClicks = true, selfClicks = true;
-                w.main.alarmBanner.getInterceptsMouseClicks (selfClicks, childClicks);
-                expect (! selfClicks && ! childClicks, "the banner can take a click meant for STOP");
+                // The banner takes a click (its list, a strip to reveal), so it
+                // must never lie where STOP is.
                 expect (w.main.alarmBanner.getBottom() <= w.main.transportBar->getY(), "the banner covers the transport");
 
                 status.primaryFailed = true;

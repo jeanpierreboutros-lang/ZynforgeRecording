@@ -411,7 +411,7 @@ namespace zynforge
                 w.main.setSize (1120, 700);
                 w.main.resized();
                 w.main.updateCaptureWarnings (status);
-                expect (w.main.alarmBanner.getPageCount() > 1, "this list should not fit on one page");
+                expect (w.main.alarmBanner.getOverflowCount() > 0, "this list should not fit on the banner");
                 w.arm ({});
                 w.main.onRecordClicked();
                 expect (w.main.alarmBanner.getShownText().containsIgnoreCase ("arm"), w.main.alarmBanner.getShownText());
@@ -421,22 +421,10 @@ namespace zynforge
             }
         }
 
+        // The banner holds one alarm per line and stays put (2026-11-17: it
+        // took turns every 3 s before; Design20261117AlarmsTests has the rest).
         void bannerTakesTurns()
         {
-            const auto paged = [] (AlarmBanner& banner, std::vector<AlarmBanner::Alarm> list)
-            {
-                juce::uint32 now = 1000;
-                banner.show (list, now);
-                juce::StringArray seen;
-                for (int i = 0; i < banner.getPageCount(); ++i)
-                {
-                    seen.add (banner.getShownText());
-                    now += AlarmBanner::kPageMs;
-                    banner.show (list, now);
-                }
-                return seen;
-            };
-
             beginTest ("Danger sorts ahead of a notice, whatever order it arrives in");
             {
                 AlarmBanner banner;
@@ -444,13 +432,13 @@ namespace zynforge
                 banner.show (alarms ({ { "No signal yet this take: A, B", Level::Notice },
                                        { "! BACKUP WRITE FAILED", Level::Danger },
                                        { "A refused press", Level::Notice },
-                                       { "! MIRROR WRITE FAILED", Level::Danger } }), 1000);
+                                       { "! MIRROR WRITE FAILED", Level::Danger } }));
                 expect (banner.getText().startsWith ("! BACKUP WRITE FAILED  ! MIRROR WRITE FAILED"), banner.getText());
                 expect (banner.getText().endsWith ("A refused press"), banner.getText());
                 expect (banner.getLevel() == Level::Danger);
             }
 
-            beginTest ("When everything does not fit, every alarm gets a turn");
+            beginTest ("When everything does not fit, the worst stay on screen and the rest are counted");
             {
                 AlarmBanner banner;
                 banner.setSize (446, 36);
@@ -461,15 +449,15 @@ namespace zynforge
                                                  "! 2 MIRRORS NOT WRITING -- drive missing or folder unusable",
                                                  "! DISK STRUGGLING -- missed samples imminent" })
                     list.push_back ({ text, Level::Danger });
-                const auto pages = paged (banner, list);
-                expect (pages.size() > 1);
-                expectEquals (pages[0].substring (0, 2), juce::String ("!!"), "the worst goes first");
-                const auto joined = pages.joinIntoString ("  ");
+                banner.show (list);
+                expectEquals (banner.getVisibleLineCount(), 2);
+                expectEquals (banner.getOverflowCount(), 3);
+                expect (banner.getShownText().startsWith ("!!"), "the worst goes first");
                 for (const auto& alarm : list)
-                    expect (joined.contains (alarm.text), "never reached the screen: " + alarm.text);
+                    expect (banner.getText().contains (alarm.text), "dropped from the list: " + alarm.text);
             }
 
-            beginTest ("One alarm too long for a page runs on; none of it is cut off");
+            beginTest ("One alarm too long for the banner ends in an ellipsis; the list has it whole");
             {
                 AlarmBanner banner;
                 banner.setSize (446, 36);
@@ -478,55 +466,25 @@ namespace zynforge
                                             "mirror audio write failed, configured mirror did not open, recovery "
                                             "marker failed, integrity report could not be saved, optional stereo "
                                             "mix is incomplete");
-                const auto pages = paged (banner, { { failure, Level::Danger } });
-                expect (pages.size() > 1);
-                expectEquals (pages.joinIntoString (" "), failure, "words went missing between pages");
+                banner.show ({ { failure, Level::Danger } });
+                expectEquals (banner.getVisibleLineCount(), 1);
+                expectEquals (banner.getOverflowCount(), 0);
+                expect (! banner.isFullyShown (failure), "this cannot fit one line");
+                expectEquals (banner.getText(), failure, "words went missing from the list");
             }
 
-            beginTest ("A page always fits the banner, with nothing lost to an ellipsis");
-            {
-                for (int width : { 400, 446, 640, 900 })
-                {
-                    const auto text = (float) (width - 2 * brand::space::lg);
-                    const auto pages = AlarmBanner::paginate (
-                        { "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify",
-                          "! CHANNEL FAULT -- input lost, digital zero: Kick In, Kick Out, Snare Top, Snare Bottom, Hat, Ride, OH L, OH R +12 more",
-                          "! COPY /Volumes/Backup Drive 2/Sessions/2026 Tour/Night 3 fell a whole ring behind and lost audio",
-                          "Recording stopped, but finalization failed: primary audio write failed, capture audio device "
-                          "stopped during take, backup audio write failed, mirror audio write failed" },
-                        text - 60.0f);
-                    for (const auto& page : pages)
-                    {
-                        juce::GlyphArrangement glyphs;
-                        const auto shown = typeset (page);
-                        glyphs.addFittedText (brand::type::headline(), shown, 0.0f, 0.0f, text - 60.0f, 36.0f,
-                                              juce::Justification::centredLeft, 2, 0.75f);
-                        int drawn = 0, written = 0;
-                        for (int i = 0; i < glyphs.getNumGlyphs(); ++i)
-                            if (! glyphs.getGlyph (i).isWhitespace()) ++drawn;
-                        for (int i = 0; i < shown.length(); ++i)
-                            if (! juce::CharacterFunctions::isWhitespace (shown[i])) ++written;
-                        // "fi" draws as one glyph, so only a shortfall past those is lost text.
-                        for (auto ligature : { "fi", "fl", "ff" })
-                            for (int at = shown.indexOf (ligature); at >= 0; at = shown.indexOf (at + 2, ligature))
-                                --written;
-                        expect (drawn >= written, "cut off at width " + juce::String (width) + ": " + page);
-                    }
-                }
-            }
-
-            beginTest ("One short alarm stays put and shows no count");
+            beginTest ("One short alarm stays put on one line");
             {
                 AlarmBanner banner;
                 banner.setSize (446, 36);
                 const auto list = alarms ({ { "! BACKUP WRITE FAILED -- primary recording continues", Level::Danger } });
-                banner.show (list, 1000);
-                banner.show (list, 90000);
-                expectEquals (banner.getPageCount(), 1);
-                expectEquals (banner.getPageIndex(), 0);
+                banner.show (list);
+                banner.show (list);
+                expectEquals (banner.getVisibleLineCount(), 1);
+                expect (banner.isFullyShown ("BACKUP WRITE FAILED"));
             }
 
-            beginTest ("A new alarm starts the turns again; turns survive a changing count");
+            beginTest ("A changing count keeps the lines where they are");
             {
                 AlarmBanner banner;
                 banner.setSize (446, 36);
@@ -536,14 +494,14 @@ namespace zynforge
                         { "! " + juce::String (missed) + " SAMPLES MISSED -- the take has gaps in it, check the drive", Level::Danger },
                         { "! BACKUP WRITE FAILED -- primary recording continues on its own", Level::Danger } };
                 };
-                banner.show (line (1), 1000);
-                expectEquals (banner.getPageCount(), 2);
-                banner.show (line (2), 1000 + AlarmBanner::kPageMs);
-                expectEquals (banner.getPageIndex(), 1, "a counter going up must not stop the turns");
+                banner.show (line (1));
+                expectEquals (banner.getVisibleLineCount(), 2);
+                banner.show (line (2));
+                expect (banner.getShownText().startsWith ("! 2 SAMPLES"), banner.getShownText());
                 auto more = line (3);
                 more.push_back ({ "! PRIMARY WRITE FAILED -- recording on backup/mirror", Level::Danger });
-                banner.show (more, 1100 + AlarmBanner::kPageMs);
-                expectEquals (banner.getPageIndex(), 0);
+                banner.show (more);
+                expectEquals (banner.getOverflowCount(), 1);
             }
 
             beginTest ("Alarm text splits where updateCaptureWarnings joined it");
@@ -555,7 +513,7 @@ namespace zynforge
                 expect (AlarmBanner::splitAlarms ({}).isEmpty());
             }
 
-            beginTest ("Turning pages moves nothing and takes no click");
+            beginTest ("Raising the banner moves nothing, and it only covers the header text");
             {
                 Window w;
                 const auto strips = w.main.stripsViewport.getBounds();
@@ -569,9 +527,9 @@ namespace zynforge
                 w.main.resized();
                 expect (w.main.stripsViewport.getBounds() == strips);
                 expect (w.main.alarmBanner.getBounds() == bannerBounds);
-                bool self = true, children = true;
-                w.main.alarmBanner.getInterceptsMouseClicks (self, children);
-                expect (! self && ! children);
+                // It takes a click now (the list, a strip to reveal), so it must
+                // never lie over the transport.
+                expect (! w.main.alarmBanner.getBounds().intersects (w.main.transportBar->getBounds()));
             }
         }
 
@@ -1264,32 +1222,37 @@ namespace zynforge
                 expect (backup.createDirectory().wasOk());
                 expect (w.engine().setBackupDirectory (backup));
 
-                const auto textOf = [&w] (const EngineStatus& status, const juce::String& wanted)
+                using backupchip::State;
+                const auto stateOf = [&w] (const EngineStatus& status, State wanted)
                 {
-                    pumpUntil ([&] { w.main.updateBackupButton (status); return w.main.backupButton.getButtonText() == wanted; }, 8000);
-                    return w.main.backupButton.getButtonText();
+                    pumpUntil ([&] { w.main.updateBackupButton (status); return w.main.backupChipState == wanted; }, 8000);
+                    return w.main.backupChipState;
                 };
-                expectEquals (textOf ({}, "BACKUP OK"), juce::String ("BACKUP OK"));
+                expect (stateOf ({}, State::Idle) == State::Idle);
+                expectEquals (w.main.backupButton.getButtonText(), juce::String ("BACKUP"));
 
                 EngineStatus rolling;
                 rolling.recording = true;
                 rolling.backupActive = true;
-                expectEquals (textOf (rolling, "BACKUP OK"), juce::String ("BACKUP OK"));
+                expect (stateOf (rolling, State::Writing) == State::Writing);
                 rolling.backupFailed = true;
-                expectEquals (textOf (rolling, "BACKUP !"), juce::String ("BACKUP !"), "OK stood beside BACKUP WRITE FAILED");
+                expect (stateOf (rolling, State::Failed) == State::Failed, "a good dot stood beside BACKUP WRITE FAILED");
+                expectEquals (w.main.backupButton.getButtonText(), juce::String ("BACKUP !"));
                 rolling.backupFailed = false;
                 rolling.backupActive = false;
-                expectEquals (textOf (rolling, "BACKUP !"), juce::String ("BACKUP !"), "a take with no backup writing said OK");
+                expect (stateOf (rolling, State::Trouble) == State::Trouble, "a take with no backup writing read as fine");
 
                 EngineStatus failed;
                 failed.backupFailed = true;
-                expectEquals (textOf (failed, "BACKUP !"), juce::String ("BACKUP !"), "a failed take's backup reads OK after STOP");
+                expect (stateOf (failed, State::Failed) == State::Failed, "a failed take's backup reads fine after STOP");
 
                 expect (backup.deleteRecursively());
-                expectEquals (textOf ({}, "BACKUP !"), juce::String ("BACKUP !"), "a folder that went still read OK");
+                expect (stateOf ({}, State::Trouble) == State::Trouble, "a folder that went still read as fine");
+                expectEquals (w.main.backupButton.getButtonText(), juce::String ("BACKUP !"));
 
                 w.engine().setBackupDirectory ({});
-                expectEquals (textOf ({}, "BACKUP"), juce::String ("BACKUP"));
+                expect (stateOf ({}, State::Off) == State::Off);
+                expectEquals (w.main.backupButton.getButtonText(), juce::String ("BACKUP OFF"));
                 w.engine().setBackupDirectory (before);
             }
         }

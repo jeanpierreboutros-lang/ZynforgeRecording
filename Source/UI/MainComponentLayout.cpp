@@ -159,7 +159,7 @@ void MainComponent::resized()
     }
     lockButton   .setBounds (row1.removeFromRight (76).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
-    backupButton .setBounds (row1.removeFromRight (96).reduced (0, 2));
+    backupButton .setBounds (row1.removeFromRight (116).reduced (0, 2));   // room for BACKUP OFF and its dot
     row1.removeFromRight (brand::space::sm);
     metersButton .setBounds (row1.removeFromRight (92).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);

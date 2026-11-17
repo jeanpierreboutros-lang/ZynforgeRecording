@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Audio/AudioEngine.h"
+#include "StripAlarm.h"
 
 namespace zynforge
 {
@@ -33,5 +34,9 @@ namespace zynforge
         static constexpr int kNameRowH   = 18;
         static constexpr int kHeaderH    = kNumberRowH + kNameRowH + 2;   // the stamped band
         static Column columnAt (juce::Rectangle<int> inner, int columns, int index);
+        // The dead-channel alarm, one Level per track, to every open bridge: a
+        // lost input's column gets a red outline, a red name band and INPUT
+        // LOST; no signal yet an amber tag. A column repaints only on a change.
+        static void setInputAlarms (const std::vector<stripalarm::Level>& perTrack);
     };
 }

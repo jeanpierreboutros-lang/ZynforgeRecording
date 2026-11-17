@@ -1824,6 +1824,11 @@ namespace zynforge
 
             g.setColour (headerBg);
             g.fillRect (header);
+            if (inputAlarm == stripalarm::Level::Lost)   // the red header band, as on the MIXER strip
+            {
+                g.setColour (stripalarm::lostFill());
+                g.fillRect (header.withHeight (juce::jmin (header.getHeight(), kAlarmBandH)));
+            }
 
             // Bright ember marks a take rolling on this track, as on the strip.
             if (liveRecording)
@@ -2727,6 +2732,39 @@ namespace zynforge
             closesForTake (&juce::CallOutBox::launchAsynchronously (std::move (picker), screenArea, nullptr));
         }
 
+        // The dead-channel alarm on this strip, as the MIXER strip shows it: Lost
+        // is a red outline, a red band behind the name and INPUT LOST at the
+        // lane's left; NoSignal an amber NO SIGNAL tag only. Repaints on a change.
+        void setInputAlarm (stripalarm::Level level)
+        {
+            if (level == inputAlarm) return;
+            inputAlarm = level;
+            repaint();
+        }
+        stripalarm::Level getInputAlarm() const noexcept { return inputAlarm; }
+
+        void paintOverChildren (juce::Graphics& g) override
+        {
+            if (inputAlarm == stripalarm::Level::None) return;
+            const int hx = headerOriginX();
+            const auto shown = juce::Rectangle<int> (hx, 0, juce::jmax (headerW, visibleRightX() - hx), getHeight());
+            if (inputAlarm == stripalarm::Level::Lost)
+            {
+                g.setColour (brand::accentRecord);
+                g.drawRect (shown, 2);
+            }
+            const auto font = brand::type::captionBold();
+            const auto words = stripalarm::tagText (inputAlarm, false);
+            const int w = (int) std::ceil (juce::GlyphArrangement::getStringWidth (font, words)) + 2 * brand::space::sm;
+            const auto tag = juce::Rectangle<int> (waveLeftX() + brand::space::sm, brand::space::xs, w, 16);
+            const auto fill = stripalarm::tagFill (inputAlarm);
+            g.setColour (fill);
+            g.fillRoundedRectangle (tag.toFloat(), brand::radius::sm);
+            g.setColour (brand::onSignal (fill));
+            g.setFont (font);
+            g.drawText (words, tag, juce::Justification::centred, false);
+        }
+
         int  getHeaderWidth() const noexcept { return headerW; }
         int  getTrackIndex()  const noexcept { return index; }
         bool isStereoPair()   const noexcept { return stereo; }
@@ -3302,6 +3340,8 @@ namespace zynforge
         //  - middle column: a/b/c/d send dots (~80 px)
         //  - right column: input/output pills + vol/pan readout + plus (~140 px)
         static constexpr int headerW = brand::space::editHeaderW;
+        static constexpr int kAlarmBandH = 24;   // the name row of the header
+        stripalarm::Level inputAlarm { stripalarm::Level::None };
         static constexpr int swatchW = 14;
         static constexpr int meterW  = 12;
 
