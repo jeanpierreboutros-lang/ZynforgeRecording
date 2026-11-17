@@ -96,6 +96,7 @@ namespace zynforge
                         continue;
 
                     auto m = std::make_unique<LedMeter> (t);
+                    m->setScaleFont (brand::type::caption());   // falls back to label() when narrow
                     if (t.isStereo.load (std::memory_order_relaxed) && i + 1 < n)
                         m->setStereoPartner (&engine.getRecorder().getTrack (i + 1));
                     addAndMakeVisible (*m);
@@ -106,6 +107,8 @@ namespace zynforge
                     label->setColour (juce::Label::textColourId, brand::textPrimary);
                     label->setJustificationType (juce::Justification::centred);
                     label->setFont (brand::type::uiLabel());
+                    label->setBorderSize ({});
+                    label->setMinimumHorizontalScale (0.75f);   // squeeze a little, then ellipsis
                     addAndMakeVisible (*label);
                     names.push_back (std::move (label));
                     nameTracks.push_back (i);
@@ -115,15 +118,13 @@ namespace zynforge
 
             void resized() override
             {
-                auto r = getLocalBounds().reduced (12);
                 if (meters.empty()) return;
-                const int colW = juce::jmax (28, r.getWidth() / (int) meters.size());
-
+                const auto inner = getLocalBounds().reduced (12);
                 for (std::size_t i = 0; i < meters.size(); ++i)
                 {
-                    auto col = r.removeFromLeft (colW);
-                    names[i] ->setBounds (col.removeFromTop (18));
-                    meters[i]->setBounds (col.reduced (3, 4));
+                    const auto col = Meterbridge::columnAt (inner, (int) meters.size(), (int) i);
+                    names[i] ->setBounds (col.name);
+                    meters[i]->setBounds (col.meter);
                 }
             }
 
@@ -133,12 +134,12 @@ namespace zynforge
                 g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.08f, 0.12f));
                 g.fillRect (r);
 
-                // Near-black header band behind the track-name row, plus a
-                // stamped column number per meter.
+                // Near-black header band behind the number + name rows, with a
+                // stamped column number above each name.
                 if (! meters.empty())
                 {
                     auto inner = getLocalBounds().reduced (12);
-                    auto band  = juce::Rectangle<int> (inner.getX(), inner.getY(), inner.getWidth(), 20);
+                    auto band  = juce::Rectangle<int> (inner.getX(), inner.getY(), inner.getWidth(), Meterbridge::kHeaderH);
                     g.setColour (brand::steelHeaderHi);   // FLAT: solid header band (no gradient)
                     g.fillRect (band);
                     g.setColour (brand::borderSubtle);
@@ -147,16 +148,14 @@ namespace zynforge
                     // Stamped column numbers, aligned to the resized() columns. A
                     // column is numbered by its strip, as MIXER, EDIT and PATCH
                     // number it, so after a stereo pair they skip its R half.
-                    const int colW = juce::jmax (28, inner.getWidth() / (int) meters.size());
                     g.setFont (zynforge::brand::type::monoStamp());
                     for (std::size_t i = 0; i < meters.size(); ++i)
                     {
-                        auto numBox = juce::Rectangle<int> (inner.getX() + (int) i * colW + 3,
-                                                            inner.getY() + 2, 22, 14);
+                        const auto col = Meterbridge::columnAt (inner, (int) meters.size(), (int) i);
                         g.setColour (brand::debossFace.withAlpha (zynforge::brand::alpha::prominent));
                         const int strip = i < nameTracks.size() ? nameTracks[i] : (int) i;
                         g.drawText (juce::String (strip + 1).paddedLeft ('0', 2),
-                                    numBox, juce::Justification::centredLeft, false);
+                                    col.number, juce::Justification::centred, false);
                     }
                 }
             }
@@ -169,6 +168,18 @@ namespace zynforge
             std::vector<std::unique_ptr<juce::Label>> names;
             std::vector<int>                          nameTracks;
         };
+    }
+
+    Meterbridge::Column Meterbridge::columnAt (juce::Rectangle<int> inner, int columns, int index)
+    {
+        const int colW = juce::jmax (28, inner.getWidth() / juce::jmax (1, columns));
+        auto col = juce::Rectangle<int> (inner.getX() + index * colW, inner.getY(), colW, inner.getHeight());
+        Column c;
+        c.number = col.removeFromTop (kNumberRowH).reduced (2, 0);
+        c.name   = col.removeFromTop (kNameRowH).reduced (2, 0);
+        col.removeFromTop (kHeaderH - kNumberRowH - kNameRowH);
+        c.meter  = col.reduced (3, 4);
+        return c;
     }
 
     void Meterbridge::condemnAllMeters()
