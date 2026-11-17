@@ -136,6 +136,44 @@ namespace zynforge
             pump (100);
         }
 
+        // Popup windows (an open PopupMenu) are on the desktop but are no TopLevelWindow.
+        void savePopups (const juce::String& prefix)
+        {
+            auto& desktop = juce::Desktop::getInstance();
+            for (int i = 0; i < desktop.getNumComponents(); ++i)
+                if (auto* c = desktop.getComponent (i))
+                    if (c->isVisible() && dynamic_cast<juce::TopLevelWindow*> (c) == nullptr)
+                        save (*c, prefix + "-" + juce::String (i));
+        }
+
+        // Opt-in ($ZF_RENDER_ALARMS): the dead-channel marks in EDIT and the
+        // meterbridge, several alarms at once (a lost stream, a fault, a notice),
+        // the banner's list, and the BACKUP chip's states.
+        static bool alarmRenders() { return juce::SystemStats::getEnvironmentVariable ("ZF_RENDER_ALARMS", {}).isNotEmpty(); }
+
+        static EngineStatus manyAlarms()
+        {
+            EngineStatus status;
+            status.recording = true;
+            status.backupFailed = true;
+            status.diskStruggling = true;
+            channelalarm::Alarm stream;
+            stream.kind = channelalarm::kStream;
+            stream.channels = 8;
+            stream.name = "BASS DI, BASS MIC, GTR JP, GTR 2 +3 more";
+            stream.strips = { 10, 11, 12, 13, 14, 16, 17 };
+            channelalarm::Alarm fault;
+            fault.kind = channelalarm::kChannel;
+            fault.strip = 0;
+            fault.name = "KICK IN";
+            channelalarm::Alarm quiet;
+            quiet.kind = channelalarm::kNoSignal;
+            quiet.strip = 5;
+            quiet.name = "TOM 1";
+            status.channelAlarms = { stream, fault, quiet };
+            return status;
+        }
+
         void tick (MainComponent& main, int n)
         {
             for (int i = 0; i < n; ++i) { main.timerCallback(); pump (30); }
@@ -239,6 +277,44 @@ namespace zynforge
             tick (main, 4);
             save (main, "06-mixer-dead-channel-alarm");
 
+            if (alarmRenders())
+            {
+                main.switchView (MainComponent::View::Edit);
+                feed (main, (int) (kRate * 1 / kBlock), true, pos);
+                tick (main, 3);
+                save (main, "06b-edit-dead-channel-alarm");
+                main.switchView (MainComponent::View::Mix);
+                main.openMetersWindow();
+                pump (300);
+                feed (main, (int) (kRate * 1 / kBlock), true, pos);
+                tick (main, 3);
+                pump (300);
+                saveTopLevels ("06c-meters-dead-channel");
+                closeTopLevels();
+
+                // Synthetic: no tick between the status and the render.
+                const auto many = manyAlarms();
+                main.updateCaptureWarnings (many);
+                save (main, "06d-mixer-many-alarms");
+                main.alarmBanner.showList();
+                pump (400);
+                savePopups ("06f-alarm-list");
+                juce::PopupMenu::dismissAllActiveMenus();
+                pump (300);
+                main.switchView (MainComponent::View::Edit);
+                main.updateCaptureWarnings (many);
+                save (main, "06g-edit-many-alarms");
+                main.switchView (MainComponent::View::Mix);
+                main.setSize (1210, 760);
+                main.resized();
+                main.updateCaptureWarnings (many);
+                save (main, "06e-mixer-many-alarms-narrow");
+                main.setSize (1600, 1000);
+                main.resized();
+                feed (main, (int) (kRate * 1 / kBlock), true, pos);
+                tick (main, 3);
+            }
+
             // 5. Narrow window during the take
             main.setSize (1210, 760);
             main.resized();
@@ -253,6 +329,31 @@ namespace zynforge
             for (int i = 0; i < 40 && main.engine.isRecording(); ++i) pump (100);
             for (int i = 0; i < 30; ++i) { tick (main, 1); pump (100); }
             save (main, "08-mixer-after-stop");
+
+            if (alarmRenders())
+            {
+                const auto backup = session.getParentDirectory().getChildFile ("Backup");
+                backup.createDirectory();
+                const auto before = main.engine.getRecorder().getBackupDirectory();
+                main.engine.setBackupDirectory (backup);
+                for (int i = 0; i < 40 && main.backupChipState != backupchip::State::Idle; ++i)
+                {
+                    main.updateBackupButton (EngineStatus());
+                    pump (100);
+                }
+                save (main, "08b-backup-idle");
+                EngineStatus rolling;
+                rolling.recording = true;
+                rolling.backupActive = true;
+                main.updateBackupButton (rolling);
+                save (main, "08c-backup-writing");
+                rolling.backupFailed = true;
+                main.updateBackupButton (rolling);
+                save (main, "08d-backup-failed");
+                main.engine.setBackupDirectory (before);
+                main.updateBackupButton (EngineStatus());
+                save (main, "08e-backup-off");
+            }
 
             // 6. Dialogs
             closeTopLevels();
