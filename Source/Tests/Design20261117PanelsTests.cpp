@@ -367,6 +367,9 @@ namespace zynforge
 
             beginTest ("Backup and Keyboard shortcuts use the system title bar and still close for a take");
             {
+                // A modal another suite left open would be closed with ours.
+                closeModalsForTake();
+                pumpUntil ([] { return false; }, 100);
                 for (auto launch : { std::pair<juce::String, std::function<void()>> { "Keyboard shortcuts", [&f] { f.main.showKeyboardShortcuts(); } },
                                      { "Backup & Mirror Drives", [&f] { BackupMirrorDialog::launch (f.engine, {}); } } })
                 {
@@ -376,7 +379,7 @@ namespace zynforge
                     if (d == nullptr) continue;
                     expect (d->isUsingNativeTitleBar(), launch.first + " draws its own title bar over the FORGE header");
                     expect ((bool) d->getProperties()[kClosesForTake], launch.first + " no longer closes for a take");
-                    expectEquals (closeModalsForTake(), 1);
+                    expect (closeModalsForTake() >= 1, launch.first + " was not among the modals a take closes");
                     pumpUntil ([&d] { return d == nullptr || ! d->isCurrentlyModal(); }, 2000);
                     expect (d == nullptr || ! d->isCurrentlyModal(), launch.first + " stayed open over a take");
                     pumpUntil ([] { return false; }, 50);

@@ -198,14 +198,9 @@ namespace zynforge
                                                         : juce::String::formatted ("%.1f GB", freeGB);
     }
 
-    BigClockPanel::Layout BigClockPanel::computeLayout() const
+    const BigClockPanel::Layout& BigClockPanel::computeLayout() const
     {
         Layout L;
-        auto r = getLocalBounds().toFloat();
-        auto inner = r.reduced ((float) brand::space::lg, 2.0f + (float) brand::space::xs);
-        L.tall = inner.getHeight() >= 48.0f;
-        L.left = inner.removeFromLeft (L.tall ? 128.0f : 112.0f);
-
         // What each group reads.
         const bool bigFree = freeIsBig();
         const auto free = freeText();
@@ -218,6 +213,17 @@ namespace zynforge
                      bigFree ? free
                              : diskReading == DiskReading::PrimaryStale ? juce::String ("STALE")
                                                                         : recordTimeText (remainingSeconds) };
+
+        // The rolling plate repaints at the pulse rate; measuring text is the
+        // costly part, so the geometry is reused while nothing it measured changed.
+        auto key = juce::String (getWidth()) + "x" + juce::String (getHeight()) + "|" + elapsedText;
+        for (int i = 0; i < kNumGroups; ++i) key << "|" << L.labels[(size_t) i] << "|" << L.values[(size_t) i];
+        if (key == layoutKey) return cachedLayout;
+
+        auto r = getLocalBounds().toFloat();
+        auto inner = r.reduced ((float) brand::space::lg, 2.0f + (float) brand::space::xs);
+        L.tall = inner.getHeight() >= 48.0f;
+        L.left = inner.removeFromLeft (L.tall ? 128.0f : 112.0f);
 
         GroupWidths widths {};
         for (int i = 0; i < kNumGroups; ++i)
@@ -254,7 +260,9 @@ namespace zynforge
             L.groups[(size_t) i] = { x, top, juce::jmax (0.0f, w), stackH };
             x += widths[(size_t) i] + gap;
         }
-        return L;
+        layoutKey = key;
+        cachedLayout = L;
+        return cachedLayout;
     }
 
     std::array<juce::Rectangle<float>, BigClockPanel::kNumGroups> BigClockPanel::getGroupBounds() const
@@ -300,7 +308,7 @@ namespace zynforge
         g.drawRoundedRectangle (bgRect, brand::radius::lg, rolling ? 2.0f : 1.0f);
 
         const auto labelCol = rolling ? brand::textPrimary : brand::textSecondary;
-        const auto L = computeLayout();
+        const auto& L = computeLayout();
         const bool tall = L.tall;
 
         // Left: state + lamp, and under it EDIT LOCKED while EDIT shows a take.

@@ -87,7 +87,9 @@ namespace zynforge
             std::array<juce::String, kNumGroups> labels, values;
             bool tall { false };
         };
-        Layout computeLayout() const;
+        const Layout& computeLayout() const;
+        mutable Layout       cachedLayout;   // the geometry last measured...
+        mutable juce::String layoutKey;      // ...for this size and text
         bool   freeIsBig() const noexcept;
         juce::String freeText() const;
 
