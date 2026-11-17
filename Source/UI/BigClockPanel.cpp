@@ -231,9 +231,10 @@ namespace zynforge
             widths[(size_t) i] = std::ceil (w);
         }
 
-        // The timer keeps its room; the groups have what is left of the row.
+        // The timer keeps its room, with a group's gap clear on each side so it
+        // never reads as one of them; the groups have what is left of the row.
         const auto tf = timerFont (inner.getHeight());
-        const float timerW = juce::GlyphArrangement::getStringWidth (tf, elapsedText) + (float) brand::space::xl;
+        const float timerW = juce::GlyphArrangement::getStringWidth (tf, elapsedText) + 2.0f * (float) brand::space::xl;
         const float room = juce::jmax (0.0f, inner.getWidth() - timerW);
         const float gap = (float) brand::space::xl;
         const auto shown = fitGroups (widths, room, gap);

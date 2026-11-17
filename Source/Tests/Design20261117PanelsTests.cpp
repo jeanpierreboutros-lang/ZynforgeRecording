@@ -210,7 +210,7 @@ namespace zynforge
                     const auto b = plate.getGroupBounds();
                     for (int i = 0; i < BigClockPanel::kNumGroups; ++i)
                         if (! b[(size_t) i].isEmpty() && i != (int) G::TimeLeft)
-                            expect (b[(size_t) i].getX() >= 10.0f + 112.0f + timerW,
+                            expect (b[(size_t) i].getX() >= 10.0f + 112.0f + timerW + 2.0f * (float) brand::space::xl,
                                     "a small group ran into the timer at " + juce::String (w));
                 }
                 plate.setSize (516, 48);    // EDIT at the minimum window
