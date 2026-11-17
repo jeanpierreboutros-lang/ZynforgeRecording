@@ -11,9 +11,10 @@ The report shows no missed samples, no stall and no lost device, and there is no
 
 Two things happened on the network side, and the dead-channel alarm recorded both:
 - **All inputs silent for 20 s.** 33 minutes in, every Dante input went to exact digital zero for 19.8 s. Dante Virtual Soundcard's logs show its network port, a plug-in Ethernet adapter, losing its address at that moment ("ADDRNOTAVAIL"). macOS's Network settings had been opened seconds before. The owner confirmed on 2026-11-17 that it was their own doing at the Mac, not a cable or adapter fault. The files stay time-aligned, because DVS kept clocking and the recorder wrote the zeros.
-- **Stereo mix late.** The stereo mix pair was silent from the start until the link came back at that same moment.
+- **Stereo mix late.** The stereo mix pair's feed was silent from the start, and the app flagged it as no signal. The owner changed the network at 33 minutes to bring it in. That change caused the 20 s drop above, and the mix pair played from the moment the link came back.
 
 On show day:
+- before doors, clear every NO SIGNAL alarm, the stereo mix pair included, so no feed needs fixing once the take rolls;
 - leave Network settings alone during a take: a change there takes Dante Virtual Soundcard's port away, and every input with it;
 - make sure the Dante adapter and its cable are secure;
 - after the show, read `channelAlarms` in session.report.json, then the DVS logs (`/Library/Logs/Audinate/DanteVirtualSoundcard/`) at the alarm times.
