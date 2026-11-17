@@ -28,7 +28,7 @@ From a design critique of the real window and dialogs, rendered headless; the ow
 - **Meter colours follow recording levels:** green up to -12 dBFS, ember to -6, orange to -2, white-hot above. Before, ember started at -18.
 - **One labelled scale per strip:** the meter's signed dBFS scale (0, -6 ... -60); the fader shows ticks with only 0 labelled. The infinity mark no longer sits on top of -60, and minus infinity reads "-∞ dB" everywhere.
 - **The clock plate reads as labels over values:** MISSED (red "N!" on a miss), LAST WRITE, MARKERS, FREE and a large TIME LEFT. In EDIT during a take the plate says EDIT LOCKED; nothing covers the ruler.
-- **EDIT:** FOLLOW / H- / H+ / V- / V+ moved into the ruler row, off the waveforms; I/R/S/M buttons on a row are bigger.
+- **EDIT:** FOLLOW / H- / H+ / V- / V+ moved off the waveforms to the right of the transport row, beside the view tabs (where MIXER shows GRID and strip width); I/R/S/M buttons on a row are bigger.
 - **Readability:** strip numbers, scales and the performance panel are at least 11 pt; a narrow window's routing boxes show "Mst" / "9-10" instead of "-> ..."; meterbridge numbers no longer run into the names.
 - **Dialogs:** Backup & Mirror Drives and Keyboard shortcuts lost their extra blue-grey title bar; shortcut rows wrap so nothing is cut; "+ Add mirror drive..." is a grey secondary button with a hint when there are none; Session Info's File type no longer repeats the bit depth; PATCH header names use two lines or an ellipsis, and the corner arrow matches the app's.
 

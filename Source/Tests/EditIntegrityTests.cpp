@@ -1175,7 +1175,7 @@ namespace zynforge
                 s.page().refresh();
                 s.page().setZoom (8.0f);
                 juce::Button* follow = nullptr;
-                for (auto* child : s.page().getChildren())
+                for (auto* child : s.page().getZoomBar().getChildren())
                     if (auto* b = dynamic_cast<juce::Button*> (child); b != nullptr && b->getButtonText() == "FOLLOW")
                         follow = b;
                 expect (follow != nullptr, "setup: FOLLOW button");

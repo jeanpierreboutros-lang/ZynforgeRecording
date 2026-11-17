@@ -366,6 +366,10 @@ MainComponent::MainComponent()
 
     editPage = std::make_unique<zynforge::EditPage> (engine);
     addChildComponent (*editPage);          // hidden by default; switchView toggles
+    // EDIT's zoom bar lives in the header's transport row (resized() shows it
+    // in EDIT only); the page still owns it.
+    editPage->getZoomBar().setVisible (false);
+    addChildComponent (editPage->getZoomBar());
 
     transportBar = std::make_unique<zynforge::TransportBar> (engine);
     transportBar->onRequestPlay   = [this] { onPlayClicked();   };

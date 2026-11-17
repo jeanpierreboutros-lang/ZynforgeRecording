@@ -1,6 +1,6 @@
 // Design pass 2026-11-17, panels: the clock plate's label-over-value groups and
-// the order they give way, EDIT LOCKED on the plate, EDIT's zoom buttons in the
-// ruler's header column, the perf panel's type floor, the EDIT row buttons, the
+// the order they give way, EDIT LOCKED on the plate, EDIT's zoom bar at the right
+// of the transport row, the perf panel's type floor, the EDIT row buttons, the
 // shortcuts sheet's wrapping rows, the two dialogs that drew a second title bar,
 // Backup's secondary Add button and empty hint, Session Info's file type, and
 // PATCH's column-header names.
@@ -403,30 +403,38 @@ namespace zynforge
                 }
             }
 
-            beginTest ("EDIT's zoom buttons sit in the ruler's header column, never over the lanes");
+            beginTest ("EDIT's zoom bar sits at the right of the transport row, left of the view tabs, never over the lanes");
             {
-                auto& page = *f.main.editPage;
-                page.setBounds (0, 0, 1400, 600);
-                page.refresh();
-                page.resized();
-                juce::Rectangle<int> lanes;
-                for (auto* child : page.getChildren())
-                    if (auto* v = dynamic_cast<juce::Viewport*> (child)) lanes = v->getBounds();
-                expect (! lanes.isEmpty(), "setup: the lanes");
-                int found = 0;
-                for (auto* child : page.getChildren())
-                    if (auto* b = dynamic_cast<juce::TextButton*> (child))
-                    {
-                        const auto t = b->getButtonText();
-                        if (t != "V+" && t != "V-" && t != "H+" && t != "H-" && t != "FOLLOW") continue;
-                        ++found;
-                        expect (! b->getBounds().intersects (lanes), t + " covers the lanes");
-                        expect (b->getBottom() <= lanes.getY(), t + " is below the ruler");
-                        expect (b->getRight() <= brand::space::editHeaderW, t + " is over the time scale");
-                        expect (b->getX() >= 80, t + " covers the ruler's labels");
-                        expect (b->getWidth() >= 44 && b->getHeight() >= 26, t + " shrank");
-                    }
-                expectEquals (found, 5, "the five zoom controls");
+                auto& main = f.main;
+                auto& bar  = main.editPage->getZoomBar();
+                expect (bar.getParentComponent() == &main, "the window hosts the zoom bar");
+                for (auto size : { juce::Point<int> (1600, 1000), juce::Point<int> (1210, 760) })
+                {
+                    const auto where = juce::String (size.x) + " px: ";
+                    main.setSize (size.x, size.y);
+                    main.switchView (MainComponent::View::Edit);
+                    expect (bar.isVisible(), where + "shown in EDIT");
+                    expect (bar.getRight() <= main.mixViewButton.getX(), where + "left of the view tabs");
+                    expect (bar.getY() < main.mixViewButton.getBottom() && bar.getBottom() > main.mixViewButton.getY(),
+                            where + "on the transport row");
+                    expect (main.transportBar != nullptr && bar.getX() >= main.transportBar->getRight(),
+                            where + "clear of the transport");
+                    expect (! bar.getBounds().intersects (main.editPage->getBounds()), where + "over the EDIT page");
+                    int found = 0;
+                    for (auto* child : bar.getChildren())
+                        if (auto* b = dynamic_cast<juce::TextButton*> (child))
+                        {
+                            const auto t = b->getButtonText();
+                            if (t != "V+" && t != "V-" && t != "H+" && t != "H-" && t != "FOLLOW") continue;
+                            ++found;
+                            expect (bar.getLocalBounds().contains (b->getBounds()), where + t + " spills out of its bar");
+                            expect (b->getWidth() >= 44 && b->getHeight() >= 26, where + t + " shrank");
+                        }
+                    expectEquals (found, 5, where + "the five zoom controls");
+                    main.switchView (MainComponent::View::Mix);
+                    expect (! bar.isVisible(), where + "hidden in MIXER");
+                }
+                main.switchView (MainComponent::View::Mix);
             }
 
             beginTest ("EDIT row I / R / S / M buttons reach 26 x 18 at the default row and keep clear of the meter and combos");

@@ -722,13 +722,16 @@ namespace zynforge
             viewport.setViewPosition (juce::jlimit (0, maxX, x), viewport.getViewPositionY());
         };
 
-        // DAW-style zoom buttons, in the ruler's header column (resized()).
-        // V = amplitude, H = timeline. Step a fixed ratio per click.
+        // DAW-style zoom buttons in one bar (getZoomBar()): the host puts it in
+        // the header's transport row; a page on its own keeps it in the ruler's
+        // header column. V = amplitude, H = timeline. Step a fixed ratio per click.
+        zoomBar.layout = [this] { layoutZoomBar(); };
+        addAndMakeVisible (zoomBar);
         for (auto* b : { &zoomVIn, &zoomVOut, &zoomHIn, &zoomHOut })
         {
             b->setColour (juce::TextButton::buttonColourId, brand::controlBg);
             b->setColour (juce::TextButton::textColourOffId, brand::textPrimary);
-            addAndMakeVisible (*b);
+            zoomBar.addAndMakeVisible (*b);
         }
         zoomVIn .setTooltip ("Taller waveforms (vertical zoom in)");
         zoomVOut.setTooltip ("Shorter waveforms (vertical zoom out)");
@@ -759,7 +762,7 @@ namespace zynforge
             followState.setFollowing (followButton.getToggleState());
             syncFollowButton();
         };
-        addAndMakeVisible (followButton);
+        zoomBar.addAndMakeVisible (followButton);
         syncFollowButton();
 
         zoomHIn .onClick = [this] { stepZoom (true); };
@@ -1579,31 +1582,36 @@ namespace zynforge
             ruler->setScrollOffsetX (viewport.getViewPositionX());
         }
 
-        // Zoom controls live in the ruler's header column, above the track
-        // headers, so they never cover audio (they used to float over the last
-        // row's waveform). One row, right-aligned against the time scale:
-        //   [FOLLOW]  [H-][H+]  [V-][V+]
-        // FOLLOW only shows while the transport moves; its slot stays so the
-        // zoom buttons don't jump. The default JUCE button font needs this
-        // much room for "V+"/"H+"; narrower buttons draw "..." on macOS.
-        const int zoomW = 44, zoomH = 26, followW = 72, gap = 4, groupGap = brand::space::md;
-        const int headerRight = brand::space::editHeaderW - brand::space::md;
-        const int zoomY = juce::jmax (0, (rulerH - zoomH) / 2);
-        int x = headerRight;
+        // A page on its own keeps its zoom bar in the ruler's header column,
+        // right-aligned against the time scale. Hosted, MainComponent places it.
+        if (zoomBar.getParentComponent() == this)
+        {
+            const int zoomH = 26;
+            const int headerRight = brand::space::editHeaderW - brand::space::md;
+            zoomBar.setBounds (headerRight - kZoomBarW, juce::jmax (0, (rulerH - zoomH) / 2), kZoomBarW, zoomH);
+            zoomBar.toFront (false);
+        }
+    }
+
+    // One row, right-aligned: [FOLLOW]  [H-][H+]  [V-][V+]. FOLLOW only shows
+    // while the transport moves; its slot stays so the zoom buttons don't
+    // jump. The default JUCE button font needs this much room for "V+"/"H+";
+    // narrower buttons draw "..." on macOS.
+    void EditPage::layoutZoomBar()
+    {
+        const int h = zoomBar.getHeight();
+        int x = zoomBar.getWidth();
         auto place = [&] (juce::Component& b, int w, int after)
         {
             x -= w;
-            b.setBounds (x, zoomY, w, zoomH);
+            b.setBounds (x, 0, w, h);
             x -= after;
         };
-        place (zoomVIn,      zoomW,   gap);
-        place (zoomVOut,     zoomW,   groupGap);
-        place (zoomHIn,      zoomW,   gap);
-        place (zoomHOut,     zoomW,   groupGap);
-        place (followButton, followW, 0);
-        for (auto* b : { &zoomVIn, &zoomVOut, &zoomHIn, &zoomHOut })
-            b->toFront (false);
-        followButton.toFront (false);
+        place (zoomVIn,      kZoomButtonW, kZoomGap);
+        place (zoomVOut,     kZoomButtonW, brand::space::md);
+        place (zoomHIn,      kZoomButtonW, kZoomGap);
+        place (zoomHOut,     kZoomButtonW, brand::space::md);
+        place (followButton, kFollowW,     0);
     }
 
     void EditPage::setLogicalRowsVisible (const std::vector<int>& visibleRows)

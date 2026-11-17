@@ -210,6 +210,20 @@ void MainComponent::resized()
         row2.removeFromRight (brand::space::lg);
     }
 
+    // EDIT's zoom bar (FOLLOW, H-/H+, V-/V+) takes the same slot in EDIT: each
+    // view's own controls sit just left of the view tabs, never over a lane.
+    if (editPage != nullptr && editPage->getZoomBar().getParentComponent() == this)
+    {
+        auto& zoomBar = editPage->getZoomBar();
+        const bool editOnly = currentView == View::Edit;
+        zoomBar.setVisible (editOnly);
+        if (editOnly)
+        {
+            zoomBar.setBounds (row2.removeFromRight (zynforge::EditPage::kZoomBarW).reduced (0, 2));
+            row2.removeFromRight (brand::space::lg);
+        }
+    }
+
     stripXsButton.setToggleState (stripWidthPreset == StripWidth::XS, juce::dontSendNotification);
     stripSButton .setToggleState (stripWidthPreset == StripWidth::S,  juce::dontSendNotification);
     stripMButton .setToggleState (stripWidthPreset == StripWidth::M,  juce::dontSendNotification);

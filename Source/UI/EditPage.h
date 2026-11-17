@@ -9,6 +9,7 @@
 #include "EditTimeline.h"
 #include "PlaceholderView.h"
 #include "StripAlarm.h"
+#include "../Theme/BrandTokens.h"
 #include "TimelineMinimap.h"
 
 #include <atomic>
@@ -61,6 +62,12 @@ namespace zynforge
         // TrackRow when it draws its thumbnail.
         void  setVerticalZoom (float z);
         float getVerticalZoom() const noexcept { return vZoom; }
+
+        // FOLLOW, H-/H+, V-/V+ in one bar, for the host to place. Width at the
+        // header row's height; the buttons fill its height.
+        juce::Component& getZoomBar() noexcept { return zoomBar; }
+        static constexpr int kZoomButtonW = 44, kFollowW = 72, kZoomGap = 4;
+        static constexpr int kZoomBarW = kFollowW + 4 * kZoomButtonW + 2 * kZoomGap + 2 * brand::space::md;
 
         // Lock timeline and track mutations during capture without disabling
         // the viewport, zoom controls, minimap, or FOLLOW navigation. The
@@ -351,9 +358,21 @@ namespace zynforge
         // Labelled by axis so it's obvious which is amplitude (V) vs
         // timeline (H): the engineer asked for the zoom to "define what it
         // does". V↑/V↓ change waveform height; H+/H− change time scale.
+        // The five controls live in one bar the page owns. MainComponent shows
+        // it in the header's transport row, at the right, in the slot MIXER
+        // gives GRID and strip width (the owner's call, 2026-11-17); a page on
+        // its own (tests) keeps it in the ruler's header column. Declared
+        // before the buttons, so they leave it before it goes.
+        struct ZoomBar final : public juce::Component
+        {
+            std::function<void()> layout;
+            void resized() override { if (layout) layout(); }
+        };
+        ZoomBar zoomBar;
         juce::TextButton zoomVIn  { "V+" }, zoomVOut { "V-" };
         juce::TextButton zoomHIn  { "H+" }, zoomHOut { "H-" };
         juce::TextButton followButton { "FOLLOW" };
+        void layoutZoomBar();
 
         // The scan threads read nothing while a take is on disk (rolling, or an
         // async STOP finalizing): it is the take's drive.
