@@ -7,7 +7,7 @@
 - 48 kHz / 24-bit, buffer 512, to an APFS SSD;
 - 1 h 44 min.
 
-The report shows no missed samples, no stall and no lost device, and there is no crash report. `tools/verify_take.sh` passes except for the integrity hashes. They were still pending when the app quit and still were on 2026-11-17. Open the session, leave it open until the hash pass ends, then run the check again.
+The report shows no missed samples, no stall and no lost device, and there is no crash report. The integrity hashes were still pending when the app quit. On 2026-11-17 `d1a9f86` opened the session and finished them in 60 minutes, and `tools/verify_take.sh` then passed every check: 65 files (64 mono and one stereo file for the mix pair), each re-hashed against the report, with frame counts that match it. Its one note is the dead-channel alarms described below.
 
 Two things happened on the network side, and the dead-channel alarm recorded both:
 - **All inputs silent for 20 s.** 33 minutes in, every Dante input went to exact digital zero for 19.8 s. Dante Virtual Soundcard's logs show its network port, a plug-in Ethernet adapter, losing its address at that moment ("ADDRNOTAVAIL"). macOS's Network settings had been opened seconds before. The owner confirmed on 2026-11-17 that it was their own doing at the Mac, not a cable or adapter fault. The files stay time-aligned, because DVS kept clocking and the recorder wrote the zeros.

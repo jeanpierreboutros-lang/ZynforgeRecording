@@ -17,7 +17,7 @@ This came from a design critique of the real window (rendered headless). The own
 
 - [x] `08fccd7` recorded 66 strips for 1 h 44 min through Dante Virtual Soundcard, with no missed samples, no stall and no crash (see *Decision as of 2026-11-17* in [SHOW-READINESS.md](SHOW-READINESS.md)).
 - [x] Owner asked for take files named after the strips: done in `801536c` (*Take file names, 2026-11-16*).
-- [ ] Finish the take's integrity hashes (still pending on 2026-11-17): open the session, leave it open until the hash pass ends, and run `tools/verify_take.sh` again.
+- [x] The take's integrity hashes finished on 2026-11-17: `d1a9f86` opened the session and completed them in 60 minutes, and `tools/verify_take.sh` then passed every check (65 files, each re-hashed against the report).
 - [x] The 20 s Dante drop at 33 min was the owner changing the network to bring in the stereo mix feed, silent until then (confirmed 2026-11-17). It was not a fault in the app, the cable or the adapter.
 
 ## Bug audit, 2026-11-16
