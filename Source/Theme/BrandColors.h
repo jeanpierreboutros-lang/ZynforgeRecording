@@ -102,14 +102,47 @@ namespace zynforge::brand
     inline const auto meterHot = juce::Colour (forge::meterHot);  // bright forge orange
     inline const auto meterWhiteHot = juce::Colour (forge::meterWhiteHot);  // white-hot (clip-adjacent)
 
-    // Meter colour for a height fraction (0 = floor, 1 = top). Centralises the
-    // ramp so the gradient + segmented paths agree.
+    // Where the ramp changes colour, in dBFS (2026-11-17, the owner's call):
+    // green up to -12, ember above -12, hot orange above -6, white-hot above
+    // -2. Recording-local: the family token file still says heat_emberAbove
+    // 0.7 / heat_hotAbove 0.85 / heat_whiteHotAbove 0.95 (-18 / -9 / -3 dBFS
+    // on the -60..0 meter). tokens.json should follow with 0.8 / 0.9 / 0.9667
+    // (or carry these dB values), then this block can read forge:: again.
+    namespace meterHeat
+    {
+        inline constexpr float floorDb         = -60.0f;   // bottom of every meter
+        inline constexpr float emberAboveDb    = -12.0f;
+        inline constexpr float hotAboveDb      =  -6.0f;
+        inline constexpr float whiteHotAboveDb =  -2.0f;
+
+        // The same thresholds as fractions of the -60..0 meter. Each is one
+        // correctly rounded division, as a segment's own i / n is, so a
+        // segment whose top sits exactly on -12 stays green.
+        constexpr float fractionOf (float dB) noexcept { return (dB - floorDb) / (0.0f - floorDb); }
+        inline constexpr float emberAbove    = fractionOf (emberAboveDb);
+        inline constexpr float hotAbove      = fractionOf (hotAboveDb);
+        inline constexpr float whiteHotAbove = fractionOf (whiteHotAboveDb);
+    }
+
+    // Meter colour for a level in dBFS. Every meter (MIXER strips, master,
+    // EDIT rows, meterbridge, the device dialog's input bar) goes through this
+    // or meterHeatAt below, so they all change colour at the same levels.
+    inline juce::Colour meterHeatAtDb (float dBFS) noexcept
+    {
+        if (dBFS > meterHeat::whiteHotAboveDb) return meterWhiteHot;   // white-hot tip
+        if (dBFS > meterHeat::hotAboveDb)      return meterHot;        // bright forge orange
+        if (dBFS > meterHeat::emberAboveDb)    return meterEmber;      // ember
+        return meterGreen;                                              // safe zone
+    }
+
+    // Meter colour for a height fraction of the -60..0 dBFS meter (0 = floor,
+    // 1 = top). Centralises the ramp so the gradient + segmented paths agree.
     inline juce::Colour meterHeatAt (float frac) noexcept
     {
-        if (frac > forge::heat_whiteHotAbove) return meterWhiteHot;   // white-hot tip
-        if (frac > forge::heat_hotAbove)      return meterHot;        // bright forge orange
-        if (frac > forge::heat_emberAbove)    return meterEmber;      // ember
-        return meterGreen;                         // safe zone
+        if (frac > meterHeat::whiteHotAbove) return meterWhiteHot;   // white-hot tip
+        if (frac > meterHeat::hotAbove)      return meterHot;        // bright forge orange
+        if (frac > meterHeat::emberAbove)    return meterEmber;      // ember
+        return meterGreen;                                            // safe zone
     }
 
     // ── Transport / control-button chrome (3 hover states) ────────────────
@@ -352,7 +385,7 @@ namespace zynforge::brand
 
     // ── Reduced-motion flag ───────────────────────────────────────────────
     // Global accessibility switch. When true, decorative animations (the
-    // record-arm spine pulse + the big-clock breathe/ignite) hold a static
+    // big-clock breathe/ignite) hold a static
     // end-state instead of animating. Defaults OFF. Wire the setter to the
     // host's reduced-motion source once per launch, e.g. on macOS:
     //   brand::setReduceMotion ([[NSWorkspace sharedWorkspace]
