@@ -6,19 +6,42 @@
 
 namespace zynforge
 {
-    // Spec: 20 discrete segments, 70 / 15 / 15 split (green / amber / red).
+    // Up to 20 discrete segments over -60..0 dBFS; each takes its colour from
+    // brand::meterHeatAt (green to -12, ember to -6, hot to -2, white-hot).
     static constexpr int   kNumSegments    = 20;
-    static constexpr float kMinDb          = -60.0f;
+    static constexpr float kMinDb          = brand::meterHeat::floorDb;
     static constexpr float kMaxDb          =   0.0f;
-    static constexpr int   kRedSegments    = 3;   // top 15%
-    static constexpr int   kAmberSegments  = 3;   // next 15%
+    static constexpr float kMinBarW        = 10.0f;   // a scale never squeezes the bar below this
+    static constexpr int   kScaleGap       = 2;       // between the scale column and the bar
 
     LedMeter::LedMeter (TrackState& s) : state (s), keepAlive (s.weak_from_this().lock())
     {
         setTooltip ("Peak + RMS LED meter. Click to clear the clip indicator.");
+        setScaleFont (brand::type::label());
         startTimerHz (30);
     }
     LedMeter::~LedMeter() = default;
+
+    juce::String LedMeter::scaleLabel (float dB)
+    {
+        return juce::String (juce::roundToInt (dB));
+    }
+
+    int LedMeter::scaleColumnWidth (const juce::Font& f)
+    {
+        float widest = 0.0f;
+        for (float dB : kScaleMarksDb)
+            widest = juce::jmax (widest, juce::GlyphArrangement::getStringWidth (f, scaleLabel (dB)));
+        return (int) std::ceil (widest) + 1 + kScaleGap;
+    }
+
+    void LedMeter::setScaleFont (const juce::Font& f)
+    {
+        if (scaleColW > 0 && f == scaleFont) return;   // a strip re-sets it on every resize
+        scaleFont = f;
+        scaleColW = scaleColumnWidth (f);
+        repaint();
+    }
 
     void LedMeter::timerCallback()
     {
@@ -193,13 +216,21 @@ namespace zynforge
         // Reserve a dedicated left-hand gutter for the dB labels so they
         // never overlap the meter segments. The bar(s) get the right side.
         // When the host turned labels off (narrow meter -- EDIT view), OR the
-        // meter is simply too narrow to fit the 14px label column without
-        // starving the bar (the compact mixer strips), drop the labels and
-        // give the bar the full width. This also prevents a NEGATIVE-width
-        // barArea, which asserted/crashed in paintBar.
-        const bool  roomForLabels = showLabels && bounds.getWidth() >= 26.0f;
-        const float labelW = roomForLabels ? 14.0f : 0.0f;
-        const float gap    = roomForLabels ? 2.0f  : 0.0f;
+        // meter is simply too narrow to fit the label column without starving
+        // the bar (the compact mixer strips), drop the labels and give the bar
+        // the full width. This also prevents a NEGATIVE-width barArea, which
+        // asserted/crashed in paintBar. The host's rung first, then label().
+        static const int smallColW = scaleColumnWidth (brand::type::label());
+        juce::Font font = scaleFont;
+        int colW = scaleColW;
+        if (bounds.getWidth() < (float) colW + kMinBarW)
+        {
+            font = brand::type::label();
+            colW = smallColW;
+        }
+        const bool  roomForLabels = showLabels && bounds.getWidth() >= (float) colW + kMinBarW;
+        const float labelW = roomForLabels ? (float) (colW - kScaleGap) : 0.0f;
+        const float gap    = roomForLabels ? (float) kScaleGap : 0.0f;
         auto labelCol = bounds.withWidth (labelW);
         auto barArea  = bounds.withTrimmedLeft (labelW + gap);
 
@@ -220,16 +251,16 @@ namespace zynforge
         // These are full-scale marks, not the fader's: the top of the meter is
         // clipping. With no room for numbers the same marks stay as ticks on
         // the bar, unless the meter is too short for them to mean anything.
-        const float dBLabels[] = { 0.0f, -6.0f, -12.0f, -18.0f, -30.0f, -60.0f };
         if (! roomForLabels && bounds.getHeight() >= 160.0f)
         {
             g.setColour (brand::textSecondary);
-            for (float dB : dBLabels)
+            for (float dB : kScaleMarksDb)
                 g.drawHorizontalLine ((int) (bounds.getBottom() - bounds.getHeight() * (dB - kMinDb) / (kMaxDb - kMinDb)),
                                       barArea.getX(), barArea.getX() + 3.0f);
         }
-        g.setFont (brand::type::label());
-        if (roomForLabels) for (float dB : dBLabels)
+        g.setFont (font);
+        const float boxH = std::ceil (font.getHeight()) + 1.0f;
+        if (roomForLabels) for (float dB : kScaleMarksDb)
         {
             const float frac = (dB - kMinDb) / (kMaxDb - kMinDb);
             const float y    = bounds.getBottom() - bounds.getHeight() * frac;
@@ -238,15 +269,15 @@ namespace zynforge
             g.setColour (brand::textTertiary);
             g.drawHorizontalLine ((int) y, labelCol.getRight() - 2.0f, labelCol.getRight() + 1.0f);
 
-            // Label -- right-aligned inside the dedicated label column.
+            // Label -- signed, right-aligned inside the dedicated label column.
             // Clamp the label box to the widget bounds so the extreme labels
             // (0 dB at top, floor at bottom) don't get clipped off-screen.
             const float labelY = juce::jlimit (0.0f,
-                                               (float) getHeight() - 10.0f,
-                                               y - 5.0f);
+                                               (float) getHeight() - boxH,
+                                               y - boxH * 0.5f);
             g.setColour (brand::textPrimary);
-            g.drawText (juce::String (std::abs ((int) dB)),
-                        labelCol.withY (labelY).withHeight (10.0f).toNearestInt(),
+            g.drawText (scaleLabel (dB),
+                        labelCol.withY (labelY).withHeight (boxH).toNearestInt(),
                         juce::Justification::centredRight, false);
         }
 

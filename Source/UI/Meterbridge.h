@@ -24,5 +24,14 @@ namespace zynforge
         // it self-registers rather than being reached through an owner.
         // Safe to call with no bridge open. Message thread only.
         static void condemnAllMeters();
+
+        // One column of the bridge: the strip number on a line of its own, the
+        // name under it, then the meter. paint() and resized() both place from
+        // here, so a number and a name can't overlap at any window width.
+        struct Column { juce::Rectangle<int> number, name, meter; };
+        static constexpr int kNumberRowH = 14;
+        static constexpr int kNameRowH   = 18;
+        static constexpr int kHeaderH    = kNumberRowH + kNameRowH + 2;   // the stamped band
+        static Column columnAt (juce::Rectangle<int> inner, int columns, int index);
     };
 }

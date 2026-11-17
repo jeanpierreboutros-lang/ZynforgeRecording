@@ -66,7 +66,8 @@ namespace zynforge
 
                 const float lit = juce::jlimit (0.0f, 1.0f, AudioDeviceDialog::inputMeterLevel (engine));
                 auto bar = r.withWidth (r.getWidth() * lit);
-                g.setColour (lit > 0.85f ? brand::meterRed : brand::meterGreen);   // FLAT: solid, coloured by level
+                // FLAT: one solid colour, picked by level as every meter picks it.
+                g.setColour (brand::meterHeatAtDb (juce::Decibels::gainToDecibels (lit, brand::meterHeat::floorDb)));
                 g.fillRoundedRectangle (bar, brand::radius::sm);
 
                 g.setColour (brand::edge);

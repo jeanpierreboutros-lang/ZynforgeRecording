@@ -266,6 +266,35 @@ namespace zynforge
             main.openMetersWindow();              pump (400); saveTopLevels ("17-meters");        closeTopLevels();
             main.showStartupWelcome();            pump (600); saveTopLevels ("18-welcome");       closeTopLevels();
 
+            // 7. Every strip size, full and narrow, then a narrow meterbridge.
+            // The preset is set on the field: setStripWidthPreset saves it.
+            main.switchView (MainComponent::View::Mix);
+            const std::pair<MainComponent::StripWidth, const char*> sizes[] = {
+                { MainComponent::StripWidth::XS, "20-mixer-xs" }, { MainComponent::StripWidth::S, "21-mixer-s" },
+                { MainComponent::StripWidth::M,  "22-mixer-m" },  { MainComponent::StripWidth::L, "23-mixer-l" } };
+            for (const auto& [width, name] : sizes)
+            {
+                main.stripWidthPreset = width;
+                main.resized();
+                feed (main, (int) (kRate * 2 / kBlock), false, pos);
+                tick (main, 3);
+                save (main, name);
+                main.setSize (1210, 760);
+                main.resized();
+                tick (main, 3);
+                save (main, juce::String (name) + "-narrow");
+                main.setSize (1600, 1000);
+                main.resized();
+            }
+            main.stripWidthPreset = MainComponent::StripWidth::M;
+            main.resized();
+            main.openMetersWindow();
+            feed (main, (int) (kRate * 2 / kBlock), false, pos);
+            if (auto* w = main.metersDialog.getComponent()) w->setSize (720, 380);
+            pump (400);
+            saveTopLevels ("24-meters-narrow");
+            closeTopLevels();
+
             session.getParentDirectory().deleteRecursively();
         }
     };
