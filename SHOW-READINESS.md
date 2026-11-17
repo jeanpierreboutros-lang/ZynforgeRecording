@@ -10,11 +10,11 @@
 The report shows no missed samples, no stall and no lost device, and there is no crash report. `tools/verify_take.sh` passes except for the integrity hashes. They were still pending when the app quit and still were on 2026-11-17. Open the session, leave it open until the hash pass ends, then run the check again.
 
 Two things happened on the network side, and the dead-channel alarm recorded both:
-- **All inputs silent for 20 s.** 33 minutes in, every Dante input went to exact digital zero for 19.8 s. Dante Virtual Soundcard's logs show its network port, a plug-in Ethernet adapter, losing its address at that moment ("ADDRNOTAVAIL"). macOS's Network settings had been opened seconds before. It isn't proven whether a setting change or the cable or adapter caused it. The files stay time-aligned, because DVS kept clocking and the recorder wrote the zeros.
+- **All inputs silent for 20 s.** 33 minutes in, every Dante input went to exact digital zero for 19.8 s. Dante Virtual Soundcard's logs show its network port, a plug-in Ethernet adapter, losing its address at that moment ("ADDRNOTAVAIL"). macOS's Network settings had been opened seconds before. The owner confirmed on 2026-11-17 that it was their own doing at the Mac, not a cable or adapter fault. The files stay time-aligned, because DVS kept clocking and the recorder wrote the zeros.
 - **Stereo mix late.** The stereo mix pair was silent from the start until the link came back at that same moment.
 
 On show day:
-- leave Network settings closed during a take;
+- leave Network settings alone during a take: a change there takes Dante Virtual Soundcard's port away, and every input with it;
 - make sure the Dante adapter and its cable are secure;
 - after the show, read `channelAlarms` in session.report.json, then the DVS logs (`/Library/Logs/Audinate/DanteVirtualSoundcard/`) at the alarm times.
 
