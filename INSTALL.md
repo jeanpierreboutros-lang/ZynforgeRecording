@@ -2,7 +2,22 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `08fccd7`, `main` on 2026-11-12 with every fix of the 2026-11-11 review. The Mac mini still has `281c6c0`; no DMG holds `08fccd7`, and it has not run on real hardware.
+The development Mac now has `7ba286b`, `main` on 2026-11-17: every fix of the 2026-11-16 review and the 2026-11-17 design pass. The Mac mini still has `281c6c0`; no DMG holds `7ba286b`, and it has not run on real hardware.
+
+## Development Mac update — 2026-11-17, the 2026-11-16 review's fixes and the design pass
+
+The development Mac (MacBook Pro) now has `7ba286b`: `08fccd7`'s successors through the 2026-11-16 review (72 fixes, take files named for their strips) and the 2026-11-17 design pass (the moving amber light on MIXER strips removed, a dead channel marks its own strip, one alarm per line, BACKUP state dot, meter colours, one scale per strip, the plate as labels over values, dialog fixes; top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). The owner asked for the look change, which authorises the install. The Mac mini still has `281c6c0`, and no DMG was made for this build.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `21bdac5d4483b0a29ebb57f486d0905278d2a3e63a1ff172f0c9b2ea74bc6d8f` |
+| Capture helper | `9db1e6fb8c81ce0be5428f00ffbc3e0e78fc757291af18062a82f0db0e15cf9b` |
+
+- **Built with:** the Xcode generator under Xcode 27.2 with `XCODE_XCCONFIG_FILE` holding `SDK_STAT_CACHE_ENABLE = NO`. Release, universal (x86_64, arm64).
+- **Tests before install:** Release 2037 test groups / 0 failures; ASan/UBSan 2037 / 0 with no sanitizer reports; the opt-in design-render harness also ran under ASan/UBSan with no reports. TSan was not re-run for this pass (UI and message-thread changes; the last TSan run, on the 2026-11-16 fixes, was 1990 / 0). CI on `7ba286b` was running at install.
+- **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Copied with `ditto --norsrc --noextattr --noqtn`.
+- **Rollback:** `/Applications/Zynforge Recording.app.backup-20261117-132555-before-7ba286b` (`08fccd7`).
+- **After install:** the app was opened for the owner to judge the look; no take has been recorded on it. The checks are under *2026-11-17 design pass* and *2026-11-16 fix round* in [FIELD-TEST.md](FIELD-TEST.md). A new ad-hoc build asks for microphone access again.
 
 ## Development Mac update — 2026-11-12, the 2026-11-11 review's fixes
 
