@@ -5,6 +5,7 @@
 // time, Duplicate never plays two clips summed, a cue never lands on the wrong
 // strips, and the EDIT lanes keep what they were showing.
 
+#include <atomic>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -560,7 +561,7 @@ namespace zynforge
                 const auto size = cacheFile.getSize();
                 juce::Thread::sleep (20);
 
-                int saves = 0;
+                std::atomic<int> saves { 0 };   // bumped on the save worker thread
                 {
                     EditPage page (engine);
                     page.beforeWaveCacheSaveForTests = [&saves] { ++saves; };
@@ -574,7 +575,7 @@ namespace zynforge
                                                                  [] (auto* r) { return r->waveformsLoaded(); }); }, 10000),
                             "setup: the lanes never drew");
                     pumpFor (400);
-                    expectEquals (saves, 0, "a clean load queued a rewrite of the whole WaveCache.wfm");
+                    expectEquals (saves.load(), 0, "a clean load queued a rewrite of the whole WaveCache.wfm");
                 }
                 expect (cacheFile.getLastModificationTime() == written && cacheFile.getSize() == size,
                         "closing the page rewrote the WaveCache.wfm it had loaded unchanged");
@@ -602,7 +603,7 @@ namespace zynforge
                 f.track (2).setCreationTime (past);
                 openSession (engine, f.dir, 2);
 
-                int saves = 0;
+                std::atomic<int> saves { 0 };   // bumped on the save worker thread
                 EditPage page (engine);
                 page.beforeWaveCacheSaveForTests = [&saves] { ++saves; };
                 page.setBounds (0, 0, 1400, 300);

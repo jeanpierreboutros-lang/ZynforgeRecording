@@ -1,5 +1,43 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-16 fix round
+
+The review's 72 findings were fixed on seven branches (names, engine, play, session, net, capture, mixer) and merged on `integrate/fix-2026-11-16`, then `main`. Each fix has a regression test that was run on the unfixed code first and seen failing (the test-only seams each fixer added to make the old code testable are named in the fixer's commit), except where a headless test can't reach the path: JUCE's real keyboard-focus path (the flags on the real components are tested instead, and a Return delivered to LOCK), a real unmounted volume (paths under `/Volumes/ZF Not Plugged In <uuid>` stand in), the window text of a helper's configure refusal, and the X32's actual routing push.
+
+### New test files
+
+| File | Suite | Groups | Red on the old code |
+|---|---|---|---|
+| `TakeNamesFix20261116Tests.cpp` | Take names fixes 2026-11-16 | 23 | 61 failures in 20 groups (3 guards pass both ways) |
+| `EngineFix20261116Tests.cpp` | Engine fixes 2026-11-16 | 15 | 44 failures |
+| `PlayFix20261116Tests.cpp` | Play fixes 2026-11-16 | 23 | 28 failures in 18 groups (+2 with the old Edit-menu Duplicate) |
+| `SessionFix20261116Tests.cpp` | Session fixes 2026-11-16 | 9 | 15 failures |
+| `MainWindowFix20261116Tests.cpp` | Main window fixes 2026-11-16 | 22 | 51 failures in 17 groups; the lead's 3 groups added at merge: 8 (remote STOP during a punch's finalization) and 15 (click focus on strip, master and EDIT-tool controls) |
+| `NetFix20261116Tests.cpp` | Net fixes 2026-11-16 | 17 | 51 failures |
+| `CaptureFix20261116Tests.cpp` | Capture fixes 2026-11-16 | 14 | 18 failures |
+| `MixerFix20261116Tests.cpp` | Mixer fixes 2026-11-16 | 13 | 41 failures in 12 groups (+2 for the import case) |
+
+New groups in existing files: *Engine device fixes 2026-11-11* (ENG-02, 2 groups, 3 failures red), *Twin recorder link* (HELP-04/05, 6 failures red), *Main daemon transport regressions* (HELP-07, 1 failure red), *Capture supervisor* and *Capture protocol* (HELP-01/02/03).
+
+### Changed tests
+- Tests that record and then move strips, or open a strip-move transaction, now wait for the take's hash pass (`MultitrackRecorder::waitForReportHashes`): `CapturePathTests` (`CopyRig::moveStrips` and "A first strip move that never committed leaves nothing behind", which failed once in a full merged run under load and passed alone), `EngineFixTests`, `RecordingIntegrityTests`, `MainWindowGuardTests`.
+- `EditIntegrityTests` (two Duplicate tests: the copy now replaces the clip under it), `MultiPartPlaybackTests` ("missing middle part": the load now counts the strip and asserts it does not open), `CaptureSupervisorTests` (an attached idle helper now quits at shutdown), `ReviewCaptureRepairTests` (counts gap descriptors from the ring), `EngineMixSafetyTests` (take stamp feeds a 25 fps MTC frame first), `SessionRecoverySortTests`, `SessionFixTests`.
+
+### TSan and real MIDI
+*Net fixes 2026-11-16 / NET-10* is the first test to send real MIDI through CoreMIDI into a JUCE input (two virtual sources). Under TSan its delivery step is skipped (`ZF_NETFIX_UNDER_TSAN`, logged): JUCE 8.0.17 builds the input's objects (`Receiver`, `TimeConverter`, `ConnectionToSrc` and its listener lock) on the main thread and reads them on CoreMIDI's thread after `MIDIPortConnectSource`; CoreMIDI orders the two, but it is not instrumented, so TSan reported each field in turn as a race. A suppression list would have had to name `juce::SpinLock`, which our own code uses. The step still runs in Release and ASan.
+
+### Results on the merged tree
+- **Release (arm64): 1990 test groups, 0 failures**, launched through `open` under the shared lock. The six-branch merge before the capture branch ran 1971 groups with the one failure above.
+- **ASan/UBSan/float-cast-overflow (Debug, arm64): 1990 test groups, 0 failures, no sanitizer reports.**
+- **TSan (Debug, arm64): 1990 test groups, 0 failures, no sanitizer reports**, after two test-side changes the first TSan runs called for: *NET-10* skips its real-MIDI delivery step under TSan (above), and *Play fixes* counted cache saves in a plain `int` written on the save worker and read on the main thread (now atomic). After those changes Release ran again (1990 / 0) and *Play fixes* again under ASan (23 / 0, no reports).
+- The built Release app launched with `--isolated-settings --smoke-quit-after=30`, stayed near 87 MiB and 0% CPU, quit by itself after 182 s (most of it the microphone prompt of an unsigned build) and left no crash report or helper behind.
+- Each branch alone passed its full Release suite (1860 to 1873 groups, 0 failures); the capture branch also passed its capture, twin and transport suites under TSan.
+- `tools/invariants_audit.sh` and `tools/design_audit.sh` are clean on every commit; `tools/test_verify_tools.py` passes.
+- Builds: fresh Unix Makefiles folders in the session scratchpad (the checkout's `build*` folders point at the drive's old path), arm64, JUCE from `build/_deps/juce-src`.
+
+### Not covered headless
+Everything in *2026-11-16 fix round* of [FIELD-TEST.md](FIELD-TEST.md): a Mackie and a tablet during a punch, a real desk's scene recall in PUNCH mode, an ejected drive, a DVS restart in place, a real older-build helper, two Macs losing the twin link, an X32 routing push, and the look of EDIT during a continue.
+
 ## Take file names (2026-11-16)
 
 Takes are named for their strips (`Source/Audio/TakeNames.h`, ADR *Take files are named for their strips*). New file `Source/Tests/TakeNameTests.cpp`, *Take file names*, 13 groups: the label rules (wildcard and suffix characters, quotes, 64-byte cut on a character boundary, digits-only names), `parse` against both forms and against near misses (`1 intro.wav`, `001 X.wav`, `07 Vox, lead.wav`, `._07 KiCK.wav`, export names), `StemIndex` with a sidecar-only track, and through the real recorder: named and unnamed strips, playback of named takes on their strips, a continue after a rename (no second file), a fresh take refused on a named strip whatever its name now, a punch after a rename, a pre-names session continuing as `Track_NN`, strip-move renames, a named lead-in finished after a crash, and an import named for its source. The tests need the new header, so they were not run on the old code; the recording ones fail by construction there (`01 KiCK.wav` is never written).
