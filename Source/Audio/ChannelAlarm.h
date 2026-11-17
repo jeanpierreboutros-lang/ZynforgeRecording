@@ -33,6 +33,7 @@ namespace zynforge::channelalarm
         juce::String name;              // logical strip; a stream names the strips it hit
         int          strip { -1 };      // the strip's first track, -1 for a stream
         int          channels { 1 };    // physical channels a stream took out
+        std::vector<int> strips;        // a stream: every strip it hit, by first track, in order
         juce::int64  startSample { 0 }; // on the take's timeline
         juce::int64  endSample { -1 };  // -1 while live
         bool         recovered { false };
@@ -47,6 +48,12 @@ namespace zynforge::channelalarm
             o->setProperty ("startSample", startSample);
             o->setProperty ("endSample", endSample);
             o->setProperty ("recovered", recovered);
+            if (! strips.empty())
+            {
+                juce::Array<juce::var> hit;
+                for (int s : strips) hit.add (s);
+                o->setProperty ("strips", hit);
+            }
             return juce::var (o);
         }
 
@@ -60,6 +67,8 @@ namespace zynforge::channelalarm
             a.startSample = (juce::int64) v.getProperty ("startSample", 0);
             a.endSample   = (juce::int64) v.getProperty ("endSample", -1);
             a.recovered   = (bool) v.getProperty ("recovered", false);
+            if (const auto* hit = v.getProperty ("strips", {}).getArray())
+                for (const auto& s : *hit) a.strips.push_back ((int) s);
             return a;
         }
     };
@@ -240,12 +249,14 @@ namespace zynforge::channelalarm
             int members = 0;
             juce::int64 earliest = now;
             juce::StringArray names;
+            std::vector<int> strips;
             for (const auto& fault : faults)
                 if (inStream[fault.input] != 0)
                 {
                     ++members;
                     earliest = juce::jmin (earliest, fault.start);
                     names.addIfNotAlreadyThere (inputs[fault.input].name);
+                    strips.push_back (inputs[fault.input].strip);
                 }
 
             if (members >= kStreamChannels)
@@ -261,6 +272,10 @@ namespace zynforge::channelalarm
                 auto& stream = alarms[(std::size_t) openStream];
                 stream.channels = juce::jmax (stream.channels, members);
                 stream.name = joinNames (names);
+                // The strips themselves, so each can show it lost its input.
+                std::sort (strips.begin(), strips.end());
+                strips.erase (std::unique (strips.begin(), strips.end()), strips.end());
+                stream.strips = std::move (strips);
             }
             else if (openStream >= 0)
             {

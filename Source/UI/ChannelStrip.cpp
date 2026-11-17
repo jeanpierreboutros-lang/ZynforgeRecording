@@ -962,7 +962,7 @@ namespace zynforge
             g.reduceClipRegion (bodyClip);
             g.setColour (body);
             g.fillRect (r);
-            g.setColour (brand::stripHeaderFill (stripColour));
+            g.setColour (inputAlarm == stripalarm::Level::Lost ? stripalarm::lostFill() : brand::stripHeaderFill (stripColour));
             g.fillRect (r.withHeight ((float) kHeaderH));
 
             // The spine breathes at ~1 Hz while a take rolls here. Phase from
@@ -1009,6 +1009,38 @@ namespace zynforge
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
+    }
+
+    void ChannelStrip::setInputAlarm (stripalarm::Level level)
+    {
+        if (level == inputAlarm) return;
+        inputAlarm = level;
+        repaint();
+    }
+
+    // Over the children, so the tag can sit on the output row: "In 1" stays
+    // readable above it, and where a lost input goes doesn't matter while it's lost.
+    void ChannelStrip::paintOverChildren (juce::Graphics& g)
+    {
+        if (inputAlarm == stripalarm::Level::None || ! stripValid) return;
+        const bool lost = inputAlarm == stripalarm::Level::Lost;
+        if (lost)
+        {
+            g.setColour (brand::accentRecord);
+            // On the selection outline's line: the body's 2 px inset plus half the stroke.
+            constexpr float kOutlineInset = 3.0f;
+            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (kOutlineInset), brand::radius::lg, 2.0f);
+        }
+        auto tag = outputCombo.getBounds().toFloat();
+        const auto font = brand::type::captionBold();
+        const bool shortForm = juce::GlyphArrangement::getStringWidth (font, stripalarm::tagText (inputAlarm, false))
+                                   > tag.getWidth() - 2.0f * (float) brand::space::xs;
+        const auto fill = stripalarm::tagFill (inputAlarm);
+        g.setColour (fill);
+        g.fillRoundedRectangle (tag, brand::radius::sm);
+        g.setColour (brand::onSignal (fill));
+        g.setFont (font);
+        g.drawText (stripalarm::tagText (inputAlarm, shortForm), tag.toNearestInt(), juce::Justification::centred, false);
     }
 
     void ChannelStrip::mouseEnter (const juce::MouseEvent&)

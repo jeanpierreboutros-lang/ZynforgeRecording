@@ -8,6 +8,7 @@
 #include "../Audio/AudioEngine.h"
 #include "EditTimeline.h"
 #include "PlaceholderView.h"
+#include "StripAlarm.h"
 #include "TimelineMinimap.h"
 
 #include <atomic>
@@ -146,6 +147,16 @@ namespace zynforge
         void  condemnAllRows();
 
         void  setLogicalRowsVisible (const std::vector<int>& rows);
+        // The dead-channel alarm, one Level per track (MainComponent's tick).
+        // A row repaints only when its own level changes.
+        void  setInputAlarms (const std::vector<stripalarm::Level>& perTrack);
+        // Scroll the row list so the strip whose first track is `track` is in
+        // view, showing it first if a Memory Location hid it. False if no row.
+        bool  revealTrack (int track);
+        // What the row for `track` shows, None when there is no such row.
+        stripalarm::Level inputAlarmForTests (int track) const;
+        // True when that row is wholly inside the viewport's view.
+        bool rowFullyInViewForTests (int track) const;
         void  scrollToSample (juce::int64 sample);
         // Zoom + scroll so the sample range [a, b) fills the viewport (Pro
         // Tools "Zoom to Selection"). No-op until a session is loaded.

@@ -103,6 +103,8 @@ MainComponent::MainComponent()
     addChildComponent (twinStatusLabel);
 
     addChildComponent (alarmBanner);
+    // A click on a channel line brings its strip into view.
+    alarmBanner.onReveal = [this] (int track) { revealStrip (track); };
 
     punchPill.setJustificationType (juce::Justification::centred);
     punchPill.setFont (brand::type::channelName());

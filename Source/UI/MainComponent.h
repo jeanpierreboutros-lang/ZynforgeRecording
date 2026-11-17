@@ -14,6 +14,7 @@
 #include "AddTracksDialog.h"
 #include "AlarmBanner.h"
 #include "BackupChip.h"
+#include "StripAlarm.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
 #include "ChannelStrip.h"
@@ -43,6 +44,7 @@ namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemo
 namespace zynforge { class MixerFixTests; class UiFixTests; class NetFix20261116Tests; }
 namespace zynforge { class SessionFix20261116Tests; class MainWindowFix20261116Tests; class MixerFix20261116Tests; }
 namespace zynforge { class EngineFix20261116Tests; class PlayFix20261116Tests; class DesignRenderHarness; }
+namespace zynforge { class Design20261117AlarmsTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -635,6 +637,12 @@ private:
     juce::File backupProbeFolder;
     zynforge::backupchip::State backupChipState { zynforge::backupchip::State::Off };
     bool backupChipShown { false };   // the chip has been set at least once
+    // The dead-channel alarm marked on the strips themselves (MIXER, EDIT, meterbridge).
+    void applyStripAlarms (const std::vector<zynforge::channelalarm::Alarm>& live);
+    std::vector<zynforge::stripalarm::Level> stripAlarmLevels;   // one per track, reused every tick
+    zynforge::stripalarm::RevealTargets stripAlarmTargets;
+    // Scroll MIXER (or EDIT, when it shows) so the strip whose first track is `track` is in view.
+    void revealStrip (int track);
     // The loud row: every standing alarm, and a refused RECORD until it times out.
     void refreshAlarmBanner();
     void collectTwinAlarms (const zynforge::twin::Snapshot&, std::vector<zynforge::AlarmBanner::Alarm>&);
@@ -750,6 +758,7 @@ private:
     friend struct zynforge::ConcurrencyAuditAccess;
     friend class zynforge::MixerFix20261116Tests;
     friend class zynforge::PlayFix20261116Tests;
+    friend class zynforge::Design20261117AlarmsTests;
 
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of

@@ -8,6 +8,7 @@
 #include "FloatingLaunch.h"
 #include "../Audio/VirtualSoundcheck.h"
 #include "RecordPosition.h"
+#include "Meterbridge.h"
 
 using namespace zynforge;
 
@@ -638,7 +639,8 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
     // timer cadence. Both flags clear automatically when the condition
     // recovers (e.g. swap drives + the new primary write succeeds, or
     // disk catches back up). Status bar is the engineer's first read.
-    if (rec || deviceLost || (useCaptureDaemon && engine.isRecording()))
+    const bool warningsLive = rec || deviceLost || (useCaptureDaemon && engine.isRecording());
+    if (warningsLive)
     {
         const bool primFail   = status.primaryFailed;
         const bool backupFail = status.backupFailed;
@@ -721,7 +723,57 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             statusLabel.setText ("Idle", juce::dontSendNotification);
         activeCaptureWarning.clear();
     }
+    // The faulted strips say so themselves, for as long as the banner names them.
+    static const std::vector<channelalarm::Alarm> noAlarms;
+    applyStripAlarms (warningsLive ? status.channelAlarms : noAlarms);
     refreshAlarmBanner();
+}
+
+// Each view ignores a level it already shows, so a steady tick allocates and
+// repaints nothing. A strip, row or meterbridge column built since the last
+// tick picks its level up here.
+void MainComponent::applyStripAlarms (const std::vector<channelalarm::Alarm>& live)
+{
+    auto& recorder = engine.getRecorder();
+    const int n = recorder.getNumTracks();
+    stripalarm::mapTracks (live, n,
+                           [&recorder, n] (int t)
+                           { return t + 1 < n && recorder.getTrack (t).isStereo.load (std::memory_order_relaxed); },
+                           stripAlarmLevels);
+    stripAlarmTargets = stripalarm::revealTargets (live);
+    for (auto& strip : strips)
+        if (strip != nullptr)
+        {
+            const int t = strip->getStripIndex();
+            strip->setInputAlarm (t >= 0 && t < n ? stripAlarmLevels[(std::size_t) t] : stripalarm::Level::None);
+        }
+    if (editPage != nullptr) editPage->setInputAlarms (stripAlarmLevels);
+    Meterbridge::setInputAlarms (stripAlarmLevels);
+}
+
+// A click on a channel line in the banner: the strip comes into view where the
+// engineer is looking, MIXER or EDIT. Nothing else moves.
+void MainComponent::revealStrip (int track)
+{
+    if (track < 0) return;
+    if (currentView == View::Edit && editPage != nullptr) { editPage->revealTrack (track); return; }
+    for (auto& strip : strips)
+    {
+        if (strip == nullptr) continue;
+        const int first = strip->getStripIndex();
+        if (track != first && ! (strip->isStereo() && track == first + 1)) continue;
+        const auto b = strip->getBounds();
+        auto pos = stripsViewport.getViewPosition();
+        const int w = stripsViewport.getMaximumVisibleWidth(), h = stripsViewport.getMaximumVisibleHeight();
+        // Its header first: a strip taller than the view (a scrollbar's worth)
+        // keeps its name in sight.
+        if (b.getX() < pos.x || b.getWidth() > w)       pos.x = b.getX();
+        else if (b.getRight() > pos.x + w)              pos.x = b.getRight() - w;
+        if (b.getY() < pos.y || b.getHeight() > h)      pos.y = b.getY();
+        else if (b.getBottom() > pos.y + h)             pos.y = b.getBottom() - h;
+        stripsViewport.setViewPosition (pos);
+        return;
+    }
 }
 
 void MainComponent::refreshAlarmBanner()
@@ -740,8 +792,10 @@ void MainComponent::refreshAlarmBanner()
     using Alarm = AlarmBanner::Alarm;
     using Level = AlarmBanner::Level;
     std::vector<Alarm> alarms;
+    // A channel line also says which strip a click brings into view.
     for (const auto& alarm : AlarmBanner::splitAlarms (activeCaptureWarning))
-        alarms.push_back ({ alarm, alarm.startsWithChar ('!') ? Level::Danger : Level::Notice });
+        alarms.push_back ({ alarm, alarm.startsWithChar ('!') ? Level::Danger : Level::Notice,
+                            stripalarm::revealTrackFor (alarm, stripAlarmTargets) });
     if (lastCaptureFinalizationError.isNotEmpty())
         alarms.push_back ({ lastCaptureFinalizationError, Level::Danger });
     // Nothing can roll at the wrong rate from idle: RECORD refuses. A take that
@@ -757,7 +811,7 @@ void MainComponent::refreshAlarmBanner()
                                 + " stopped answering; names and scene markers have stopped. Reconnect from the Console menu",
                             Level::Notice });
     if (recordRefusal.isNotEmpty()) alarms.push_back ({ recordRefusal, Level::Notice });
-    alarmBanner.show (std::move (alarms), juce::Time::getMillisecondCounter());
+    alarmBanner.show (std::move (alarms));
 }
 
 // While a take rolls on either Mac, a link in trouble means the second copy may
@@ -797,10 +851,10 @@ void MainComponent::showRecordRefusal (const juce::String& reason)
     recordRefusal = reason;
     recordRefusalShownMs = juce::Time::getMillisecondCounter();
     refreshAlarmBanner();
-    alarmBanner.showPageHolding (reason, recordRefusalShownMs);
-    // The banner is the one place for this. Only a reason too long for one page
+    alarmBanner.bringIntoView (reason);
+    // The banner is the one place for this. Only a reason the banner cuts short
     // also goes to the status line: a press never goes unanswered.
-    if (! alarmBanner.getShownText().contains (reason)) showStatus (reason);
+    if (! alarmBanner.isFullyShown (reason)) showStatus (reason);
 }
 
 // Query SMART health for the session + backup volumes on a BACKGROUND thread.

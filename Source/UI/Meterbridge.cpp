@@ -143,6 +143,7 @@ namespace zynforge
                     g.fillRect (band);
                     g.setColour (brand::borderSubtle);
                     g.fillRect (band.getX(), band.getBottom(), band.getWidth(), 1);
+                    paintAlarmBands (g);
 
                     // Stamped column numbers, aligned to the resized() columns. A
                     // column is numbered by its strip, as MIXER, EDIT and PATCH
@@ -161,7 +162,74 @@ namespace zynforge
                 }
             }
 
+            // One level per column, by its strip's first track. Repaints only
+            // what changed.
+            void setInputAlarms (const std::vector<stripalarm::Level>& perTrack)
+            {
+                columnAlarms.resize (nameTracks.size(), stripalarm::Level::None);
+                for (std::size_t i = 0; i < nameTracks.size(); ++i)
+                {
+                    const int t = nameTracks[i];
+                    const auto level = t >= 0 && t < (int) perTrack.size() ? perTrack[(std::size_t) t]
+                                                                           : stripalarm::Level::None;
+                    if (columnAlarms[i] == level) continue;
+                    columnAlarms[i] = level;
+                    repaint (columnBounds (i).expanded (2));
+                }
+            }
+
+            juce::Rectangle<int> columnBounds (std::size_t i) const
+            {
+                constexpr int kMargin = 12;   // as resized() and paint() lay the columns out
+                auto inner = getLocalBounds().reduced (kMargin);
+                if (meters.empty()) return {};
+                const int colW = juce::jmax (28, inner.getWidth() / (int) meters.size());
+                return { inner.getX() + (int) i * colW, inner.getY(), colW, inner.getHeight() };
+            }
+
+            // The name band goes red under the name label, the outline and the
+            // tag over the meter.
+            void paintAlarmBands (juce::Graphics& g)
+            {
+                for (std::size_t i = 0; i < columnAlarms.size() && i < meters.size(); ++i)
+                    if (columnAlarms[i] == stripalarm::Level::Lost)
+                    {
+                        g.setColour (stripalarm::lostFill());
+                        g.fillRect (columnBounds (i).withHeight (20));
+                    }
+            }
+
+            void paintOverChildren (juce::Graphics& g) override
+            {
+                for (std::size_t i = 0; i < columnAlarms.size() && i < meters.size(); ++i)
+                {
+                    const auto level = columnAlarms[i];
+                    if (level == stripalarm::Level::None) continue;
+                    const auto col = columnBounds (i);
+                    if (level == stripalarm::Level::Lost)
+                    {
+                        g.setColour (brand::accentRecord);
+                        g.drawRect (col, 2);
+                    }
+                    // Two short lines when the column is too narrow for one.
+                    const auto font = brand::type::captionBold();
+                    const auto words = stripalarm::tagText (level, false);
+                    auto tag = col.reduced (brand::space::xs, 0).withY (col.getY() + 24);
+                    const bool oneLine = juce::GlyphArrangement::getStringWidth (font, words)
+                                             <= (float) (tag.getWidth() - 2 * brand::space::xs);
+                    tag.setHeight (oneLine ? 16 : 30);
+                    const auto fill = stripalarm::tagFill (level);
+                    g.setColour (fill);
+                    g.fillRoundedRectangle (tag.toFloat(), brand::radius::sm);
+                    g.setColour (brand::onSignal (fill));
+                    g.setFont (font);
+                    g.drawFittedText (oneLine ? words : words.replaceCharacter (' ', '\n'), tag,
+                                      juce::Justification::centred, oneLine ? 1 : 2, 0.8f);
+                }
+            }
+
         private:
+            std::vector<stripalarm::Level> columnAlarms;   // by column
             AudioEngine& engine;
             int          lastGen { 0 };
             bool         condemned { false };
@@ -175,6 +243,12 @@ namespace zynforge
     {
         for (auto* b : MeterbridgeContent::liveBridges())
             if (b != nullptr) b->condemn();
+    }
+
+    void Meterbridge::setInputAlarms (const std::vector<stripalarm::Level>& perTrack)
+    {
+        for (auto* b : MeterbridgeContent::liveBridges())
+            if (b != nullptr) b->setInputAlarms (perTrack);
     }
 
     juce::DialogWindow* Meterbridge::launch (AudioEngine& engine)

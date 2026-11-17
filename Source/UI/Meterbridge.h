@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Audio/AudioEngine.h"
+#include "StripAlarm.h"
 
 namespace zynforge
 {
@@ -24,5 +25,10 @@ namespace zynforge
         // it self-registers rather than being reached through an owner.
         // Safe to call with no bridge open. Message thread only.
         static void condemnAllMeters();
+
+        // The dead-channel alarm, one Level per track, to every open bridge: a
+        // lost input's column gets a red outline, a red name band and INPUT
+        // LOST; no signal yet an amber tag. A column repaints only on a change.
+        static void setInputAlarms (const std::vector<stripalarm::Level>& perTrack);
     };
 }

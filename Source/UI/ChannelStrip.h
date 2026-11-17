@@ -6,6 +6,7 @@
 #include "FineFader.h"
 #include "LedMeter.h"
 #include "RenameLabel.h"
+#include "StripAlarm.h"
 
 #include <functional>
 #include <memory>
@@ -54,6 +55,13 @@ namespace zynforge
 
         // A take is on disk: armed strips light their spine for its length.
         void setTakeRolling (bool rolling);
+
+        // The dead-channel alarm on this strip, from MainComponent's 10 Hz tick.
+        // Lost: a red outline, a red header band and INPUT LOST under the input.
+        // NoSignal: an amber NO SIGNAL tag only. Static; repaints only on a change.
+        void setInputAlarm (stripalarm::Level level);
+        stripalarm::Level getInputAlarm() const noexcept { return inputAlarm; }
+        void paintOverChildren (juce::Graphics&) override;
 
         // Re-reads name + colour from TrackState so changes made in the
         // EDIT view (rename, colour swatch) propagate back to the mixer.
@@ -207,6 +215,7 @@ namespace zynforge
 
         bool selected { false };
         bool takeRolling { false };
+        stripalarm::Level inputAlarm { stripalarm::Level::None };
         // False once invalidate() has run (the backing TrackState is being
         // destroyed). Guards StripTimer::timerCallback against a dangling ref.
         bool stripValid { true };
