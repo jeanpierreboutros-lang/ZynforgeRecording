@@ -223,6 +223,28 @@ The host intercepts all remote RECORD and STOP actions in `MainComponent::handle
 ### MIDI control surfaces (`Source/Audio/McuProtocol.h` + `MidiControlSurface.{h,cpp}`)
 `McuProtocol.h` is a header-only, hardware-free set of Mackie Control Universal encode/decode helpers (fader law, button notes, V-pot relative encoders + ring, channel-pressure meters, scribble-strip SysEx, **master fader on MIDI ch 9, jog wheel on CC 0x3C, and the 10-digit time display**) — fully unit-tested in `Source/Tests/McuProtocolTests.cpp`. `MidiControlSurface` opens a paired MIDI in/out, runs a 15 Hz echo timer, and is bidirectional: inbound faders/V-pots/buttons/jog drive channel + transport state (channel writes use guarded engine setters with stereo-pair semantics; transport is marshalled to the message thread), and the timer pushes faders, LEDs, meters, names, the master fader and the playhead time display back to the surface. Banked 8 strips at a time. Wired from the Control Surfaces dialog (`enableControlSurface`/`disableControlSurface` on the engine).
 
+### Design-pass components (2026-11-17)
+
+- `Source/UI/StripAlarm.h` turns the recorder's live channel alarms into strip marks:
+  - `mapTracks` maps alarms to strips: a stereo pair counts as one strip, and a lost stream marks every strip it took out.
+  - `revealTargets` gives the strip a banner line shows.
+  - `lostFill`, `tagFill` and `tagText` give the look.
+  - `ChannelStrip::setInputAlarm`, `EditPage::setInputAlarms` / `revealTrack` and the meterbridge read it. `MainComponent::applyStripAlarms` / `revealStrip` feed them from the 10 Hz timer and repaint only on a change.
+- `Source/UI/AlarmBanner.h`: one alarm per line, most serious first, then "+N more". A click shows a channel alarm's strip or lists every alarm. `channelalarm::Alarm::strips` (`ChannelAlarm.h`) carries the strips an alarm names.
+- `Source/UI/BackupChip.h` and `IconButton::setStatusDot`: the BACKUP button's state (BACKUP OFF, idle, writing, failed); `MainComponent::updateBackupButton`.
+- `Source/UI/RoutingCombo.h`: `shortRoutingLabel`, the short routing text a narrow strip draws ("Mst", "9-10").
+- Meters:
+  - `brand::meterHeat` and `meterHeatAtDb` (`BrandColors.h`) give the meter colour by dBFS.
+  - `LedMeter::setScaleFont` / `scaleColumnWidth` handle the signed scale.
+  - `DisplayText.h` `minusInfinity()` / `levelText()` handle "-∞ dB".
+- `BigClockPanel::fitGroups` / `giveWayOrder` / `setEditLocked`: the plate's label-over-value groups and EDIT LOCKED.
+- EDIT's zoom bar:
+  - `EditPage::getZoomBar()` is a component the page owns and lays out (`layoutZoomBar`).
+  - `MainComponent` hosts it (`MainComponentInit.cpp`) and places it at the right of the transport row in EDIT (`MainComponentLayout.cpp`).
+  - A page left unhosted, as in tests, places it in its own ruler header.
+- `Source/Tests/DesignRenderHarness.cpp` is opt-in. With `ZF_RENDER_DIR` set, the *Design render* suite renders the real window and dialogs from a synthetic 22-strip show to PNG; without it, it renders nothing.
+- Tests: `Design20261117StripTests.cpp`, `Design20261117AlarmsTests.cpp`, `Design20261117PanelsTests.cpp` (see [testing.md](testing.md)).
+
 ### Fix-round components (2026-11-11)
 
 - **Device ride-through** (`AudioEngine`): `serviceDeviceWatch`, run by a 100 ms watch timer on the message thread while a take rolls, with `deviceRideThrough`, `kRideThroughGraceMs` (5 s) and `kSilentStopMs` (500 ms). When a plain take's device stops and its input is still listed, `audioDeviceStopped` holds the take open, the callback keeps capture silent and the outputs at zero, and the watch reopens the take's input alone at its rate and buffer. The first block after the return writes the gap as silence through `MultitrackRecorder::addCaptureGap` and `StereoMixWriter::addGap`, and `deviceNotice` puts it on the banner. JUCE's device manager never passes `audioDeviceError` on, so the watch also catches a pair that stopped silently. `startRecording` holds `deviceLifecycleLock`, so RECORD and a device stop decide atomically.

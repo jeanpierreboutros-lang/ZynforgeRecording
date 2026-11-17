@@ -4,7 +4,7 @@
 
 ## Description
 
-A `juce::Component` that paints a state lamp and label (`IDLE` / `ARMED` / `REC` / `PLAY`), an `HH:MM:SS` timer in bold tabular mono, a large record-time-left slot, and up to four disk-health rows (`FREE`, missed samples, `LAST WRITE`, `MARKERS`). The breathe animation runs only while recording (gated via `syncPulseTimer()`).
+A `juce::Component` that paints a state lamp and label (`IDLE` / `ARMED` / `REC` / `PLAY`), an `HH:MM:SS` timer in bold tabular mono, a large `TIME LEFT` group, and up to four small groups. Since 2026-11-17 each group is a label over its value: `MISSED`, `LAST WRITE`, `MARKERS` and `FREE`. In EDIT during a take the plate reads `EDIT LOCKED` under the state (`setEditLocked`). The breathe animation runs only while recording (gated via `syncPulseTimer()`).
 
 The clock row is 72 px tall in MIXER and 56 px in EDIT. The status panel (`PerfDashboard`, 332 px) sits to its right, and in EDIT the edit tools bar sits between them. Master loudness and true peak live on that status panel, not on the clock.
 
@@ -34,6 +34,7 @@ No params — state is entirely push-driven via setters.
 | `setDiskInfo(double freeGB, int lastWriteMs, juce::int64 missedSamples, double remainingSeconds, DiskReading reading)` | Time-left slot and disk-health rows. `DiskReading`: `Fresh`, `CopyStale`, `PrimaryStale`, `DriveMissing` |
 | `getFreeGB()` / `getRemainingSeconds()` / `getDiskReading()` / `getMissedSamples()` | What the panel was last given, for tests |
 | `setArmedReady(bool)` | Lights the lamp amber and reads `ARMED`. No border, no pulse. |
+| `setEditLocked(bool)` | Shows `EDIT LOCKED` under the state while set (EDIT, during a take) |
 
 ## States
 
@@ -46,16 +47,16 @@ No params — state is entirely push-driven via setters.
 
 Disk readings:
 
-- With no estimate (`remainingSeconds` ≤ 0 or infinite) the large slot reads `DISK FREE` with free GB, and the `FREE` row is dropped. Otherwise it reads `RECORD TIME LEFT` as `NhMMm`.
+- With no estimate (`remainingSeconds` ≤ 0 or infinite) the large slot reads `DISK FREE` with free GB, and the `FREE` row is dropped. Otherwise it reads `TIME LEFT` as `NhMMm`.
 - `CopyStale`: the caption turns `alertAmber` and reads `PRIMARY TIME LEFT`, since a backup drive isn't answering.
 - `PrimaryStale`: free space and time left read `STALE` in `alertAmber`.
 - `DriveMissing`: free space reads `NO DRIVE` in `alertAmber`. The host passes it between takes when no session folder is open and the chosen sessions folder is on a drive that is not mounted (`folderDriveMissing`): a free-space read there walks up to `/Volumes` and would show the boot disk. RECORD refuses in that state too.
 - A negative `freeGB` reads `--`.
 
 What the host passes between takes: `remainingSeconds` is pre-flight's estimate, and only while what it was worked out for still matches (`MainComponent::idleEstimateKey`: session, arm count, capture format, backup and mirror folders and formats). A take clears it, so after STOP the large slot reads `DISK FREE` until pre-flight runs again. During a take the engine's live estimate is passed as before.
-- Missed samples > 0 read `MISSED SAMPLES` with the count in `accentRecord` (white on the take plate); otherwise the row reads `NO MISSED WRITES`. The host passes the take's count while it rolls and, after STOP, only while that take's session is open (`MainComponent::missedSamplesSession`); any other session gets 0. A device ride-through's silent stretch counts here.
+- `MISSED` reads `0`. Once a sample is missed it reads the count with `!` (`N!`) in `accentRecord`, white on the take plate. The host passes the take's count while it rolls and, after STOP, only while that take's session is open (`MainComponent::missedSamplesSession`); any other session gets 0. A device ride-through's silent stretch counts here.
 
-The timer keeps its width. The right-hand column takes what is left, up to 300 px. A row that doesn't fit (under 16 px tall or 136 px wide) isn't drawn; rows give way in the order `MARKERS`, `LAST WRITE`, missed samples, `FREE`.
+The timer keeps its width; the groups take what is left. When they don't all fit, the small groups give way in `giveWayOrder()`: `MARKERS`, `LAST WRITE`, `FREE`, `MISSED` (`fitGroups`). `TIME LEFT` never gives way.
 
 ## Pulse animation
 

@@ -1,5 +1,25 @@
 # Project Tasks
 
+## Design pass, 2026-11-17
+
+This came from a design critique of the real window (rendered headless). The owner said "fix everything from the audit, and remove this amber", then asked for EDIT's zoom buttons on the right. It is on `main` and installed on the development Mac as `d1a9f86`, and the owner judged it on screen: "everything is good now".
+
+- [x] Remove the moving amber light on MIXER strips during a take (the `ChannelStrip` spine glow).
+- [x] A dead channel marks its own strip in MIXER, EDIT and the meterbridge. The banner shows one alarm per line, and a click shows the strip.
+- [x] BACKUP state dot. Meter colours at -12 / -6 / -2 dBFS. One labelled scale per strip. "-∞ dB". The plate as labels over values, with EDIT LOCKED in EDIT during a take.
+- [x] Dialog fixes: no extra title bars, wrapped shortcut rows, PATCH header names, Session Info file type.
+- [x] Move EDIT's FOLLOW / H- / H+ / V- / V+ to the right of the transport row, beside MIXER / EDIT / PATCH.
+- [ ] Owner: run *2026-11-17 design pass* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig.
+- [ ] Family tokens: Recording draws meter heat by dBFS (`brand::meterHeatAtDb`). The family `tokens.json` heat fractions should become 0.8 / 0.9 / 0.9667 so the generated `ForgeTokens.h` agrees.
+- [ ] The Mac mini still has `281c6c0`.
+
+## First real show, 2026-11-14
+
+- [x] `08fccd7` recorded 66 strips for 1 h 44 min through Dante Virtual Soundcard, with no missed samples, no stall and no crash (see *Decision as of 2026-11-17* in [SHOW-READINESS.md](SHOW-READINESS.md)).
+- [x] Owner asked for take files named after the strips: done in `801536c` (*Take file names, 2026-11-16*).
+- [ ] Finish the take's integrity hashes (still pending on 2026-11-17): open the session, leave it open until the hash pass ends, and run `tools/verify_take.sh` again.
+- [ ] Owner: say whether the 20 s Dante drop at 33 min followed a Network settings change or came from a loose adapter or cable.
+
 ## Bug audit, 2026-11-16
 
 A whole-codebase review at `801536c` made 72 findings (1 critical, 4 high, 18 medium, 49 low). All are fixed on seven branches merged on `main` (see testing.md and the top ADR of decisions.md).
@@ -7,7 +27,7 @@ A whole-codebase review at `801536c` made 72 findings (1 critical, 4 high, 18 me
 - [ ] Owner: run *2026-11-16 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the real rig (the Mackie-during-a-punch, scene-in-PUNCH-mode, drive-gone strip move and DVS-restart steps above all).
 - [ ] Owner: review the top ADR of [decisions.md](decisions.md), above all: strip moves wait up to ~2 h for the last take's hashes; a strip with two take files is silent and refused; the device restart waits 500 ms before input-only capture; remote/twin RECORD may pause the UI up to 1.5 s during an autosave; Duplicate overwrites; Detect Songs replaces its markers.
 - [ ] Owner: install the same build on both Macs before a session moves between them (older builds don't see named take files).
-- [ ] Not installed on either Mac.
+- [ ] On the development Mac since `d1a9f86` (2026-11-17); not on the Mac mini.
 
 Left on purpose or partly:
 - [ ] The capture helper sends no status during a long STOP (a status built outside `commandLock` could report "recording" after STOP's reply). The window no longer freezes; RECORD meanwhile says the helper "has not said which audio device it holds".
@@ -24,7 +44,7 @@ Left on purpose or partly:
 Takes are named for their strips (`01 KiCK.wav`); see the ADR at the top of [decisions.md](decisions.md).
 
 - [ ] Owner: run *Take file names (2026-11-16)* in [FIELD-TEST.md](FIELD-TEST.md): names in Finder and in a DAW import, a continue and a punch after a rename, a strip move, an old session.
-- [ ] Not installed on either Mac.
+- [ ] On the development Mac since `d1a9f86` (2026-11-17); not on the Mac mini.
 
 ## Bug audit, 2026-11-11
 

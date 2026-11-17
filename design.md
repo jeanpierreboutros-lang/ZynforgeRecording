@@ -195,7 +195,10 @@ components:
     # gaps between them — reads like physical SSL/Yamaha hardware, not
     # a smooth gradient. Click clears clip.
     segments:          20
-    green-pct:         70       # ForgeTokens heat thresholds by height fraction
+    green-pct:         70       # ForgeTokens heat thresholds by height fraction (family)
+    # Since 2026-11-17 Recording draws by dBFS instead (brand::meterHeatAtDb):
+    # green to -12, ember -12..-6, hot -6..-2, white-hot above -2. On the
+    # -60..0 scale that is 0.8 / 0.9 / 0.9667; the family tokens should follow.
     ember-pct:         15
     hot-pct:           10
     white-hot-pct:     5
@@ -224,7 +227,13 @@ this document alone does not recolour the app.
 
 These describe `main`, ahead of both installed builds, and none of them has been judged on a real display.
 
-The alarm banner holds every alarm at once. Danger goes first. What fits stays on screen, and the rest takes turns every 3 s with "1 of 3". The fill keeps the worst alarm's colour through all the turns, because a banner flashing between red and amber would say the trouble came and went. A refused press jumps to its own page. The banner still takes no clicks, moves nothing and has no row of its own. The sample-rate warning has no label of its own: it goes to the banner, amber at idle and red over a take.
+Since 2026-11-17 the alarm banner shows every alarm at once, one per line, most serious first; before, alarms took turns every 3 s. Each line has its own colour and mark: filled for danger, outlined for a notice. What doesn't fit is counted as "+N more", and a refused press takes the last line. The banner moves nothing and has no row of its own. A click on a channel alarm brings its strip into view; a click elsewhere lists every alarm. The sample-rate warning has no label of its own: it goes to the banner, amber at idle and red over a take.
+
+A dead channel also marks its own strip, the same way in MIXER, EDIT and the meterbridge (`StripAlarm.h`):
+- a lost input gets a red outline, a red header band and INPUT LOST;
+- an armed input with no signal yet gets an amber NO SIGNAL tag.
+
+The marks don't move, and they clear when the alarm recovers or the take ends.
 
 The input device a take records from reads `In: name` under the transport clock. A wrong device reads `! In: name` in amber, marked as well as coloured. It stays off the banner while idle, because a laptop in prep would have its status line covered for hours. RECORD asks instead, and Return cancels.
 
@@ -442,16 +451,20 @@ universal across ZynForge apps:
   colour switches between `meter-green` (alive), `alert-amber` (warn),
   `bg-elevated` (idle).
 - **`fader`** — vertical linear slider for level. Custom paint draws
-  dB ticks at -inf, -60, -30, -10, 0, +6. Thumb is rounded
+  ticks with only 0 labelled (since 2026-11-17 the meter's dBFS scale is the
+  strip's one labelled scale). Thumb is rounded
   (`thumb-radius: lg`).
 - **`meter`** — vertical LED-segment bar with 20 discrete painted
   segments (NOT a gradient). Black gaps between segments make it read as
   physical hardware. Click clears clip. **Forge-heat ramp (brand
-  signature):** the safe zone (bottom ~70%) stays green (live-sound
-  convention), but the hot zone climbs like heated metal — **ember**
-  (`meter-ember`) → **forge-orange** (`meter-hot`) → **white-hot**
-  (`meter-white-hot`) at clip. Loud literally glows like steel in a forge.
-  One ramp helper, `brand::meterHeatAt(frac)`, drives every segment; tiny
+  signature):** the safe zone stays green up to -12 dBFS (recording
+  practice), then the meter climbs like heated metal — **ember** (`meter-ember`) to
+  -6 → **forge-orange** (`meter-hot`) to -2 → **white-hot**
+  (`meter-white-hot`) above. Loud literally glows like steel in a forge.
+  Since 2026-11-17 the colour goes by dBFS (`brand::meterHeatAtDb`; before,
+  ember began at -18), and `brand::meterHeatAt(frac)` maps a segment's height
+  onto it. The meter carries the strip's one labelled scale, signed dBFS
+  (0, -6 … -60). One ramp drives every segment; tiny
   meters (EDIT rows) fall back to a single SOLID heat colour by level (flat,
   not a gradient). The clip pip is white-hot.
 
@@ -472,9 +485,10 @@ Depth comes from `brand::lift`/`sink` solids + 1 px edges. Bright
 permanent chrome — enforced by `tools/design_audit.sh`. The signature
 surfaces:
 - **Forge-heat meters** (above) — the most-looked-at element.
-- **Armed strips stay calm** — an armed strip shows its lit R button, and the
-  forge-orange rim appears only while a take rolls (`ChannelStrip::paint`). Bright
-  ember means a take is live, not that one could be.
+- **Armed strips stay calm** — an armed strip shows its R in `armFill`, and
+  while a take rolls that R lifts to `armRollFill` (`ChannelStrip::setTakeRolling`).
+  Nothing else on a MIXER strip lights or moves during a take: the spine keeps the
+  channel colour (2026-11-17, owner's call; the old orange rim and moving glow are gone).
 - **Milled-steel fader cap** — the fader thumb has a single HOT forge groove
   (`meter-hot`) milled down its centre + a gloss top sheen
   (`ZynForgeLookAndFeel::drawLinearSlider`). The channel colour shows in the
@@ -589,15 +603,15 @@ it. Red text on a dialog is `textDanger`, never `accentRecord`.
 
 
 ### TrackRow (EditPage.cpp — the EDIT lane)
-The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / I-R-S-M in the MIXER's order / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). Lane and size are on the row's right-click menu. **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
+The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / I-R-S-M in the MIXER's order / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). Lane and size are on the row's right-click menu. **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift) · dead channel (red outline and INPUT LOST, or an amber NO SIGNAL tag, as on the MIXER strip). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
 
-**Live navigation:** the EDIT viewport follows a rolling playhead by default. A manual horizontal pan (trackpad, Shift+wheel, minimap) or timeline zoom switches to browse mode and must not be undone by the next UI timer tick. The small FOLLOW control restores live tracking; the next play/record pass starts following. During recording, row and ruler edits are locked while zoom, scrolling, minimap and FOLLOW remain usable. A fresh take starts with five minutes across the viewport; as it grows, the timeline widens at that same time scale so the waveform can keep scrolling. Vertical track scrolling and amplitude zoom never change horizontal follow. The ruler, pinned row headers and minimap all track the same viewport offset. The minimap's view box and every scrollbar thumb share one drawing: a `selectFill` ember outline over a faint fill of it. The macOS window has a 1210 × 700 minimum (`MainComponent::kMinWidth`) so fixed recording controls remain accessible when resized.
+**Live navigation:** the EDIT viewport follows a rolling playhead by default. A manual horizontal pan (trackpad, Shift+wheel, minimap) or timeline zoom switches to browse mode and must not be undone by the next UI timer tick. The small FOLLOW control restores live tracking. Since 2026-11-17, FOLLOW and H- / H+ / V- / V+ sit at the right of the transport row, beside MIXER / EDIT / PATCH, shown only in EDIT and never over the lanes (`EditPage::getZoomBar`, hosted by `MainComponent`). the next play/record pass starts following. During recording, row and ruler edits are locked while zoom, scrolling, minimap and FOLLOW remain usable. A fresh take starts with five minutes across the viewport; as it grows, the timeline widens at that same time scale so the waveform can keep scrolling. Vertical track scrolling and amplitude zoom never change horizontal follow. The ruler, pinned row headers and minimap all track the same viewport offset. The minimap's view box and every scrollbar thumb share one drawing: a `selectFill` ember outline over a faint fill of it. The macOS window has a 1210 × 700 minimum (`MainComponent::kMinWidth`) so fixed recording controls remain accessible when resized.
 
 ### TransportBar
 Path-drawn icon buttons (no glyph fonts): play/pause, stop, record, loop, return-to-zero, marker-drop. **States:** idle (cold control chrome, 3-step hover) · play active (accentPlay) · record active (accentRecord + the app-wide REC treatment) · loop engaged (engagedAmber). Record is shape-distinct from play (field rule: readable across a dark stage). All six expose spoken accessibility names (headless-tested).
 
 ### BigClockPanel
-The hero timecode plate. **Modes:** Idle (cold, lamp reads IDLE) · ArmedReady (amber lamp, reads ARMED) · Playing (active tint) · Recording (whole plate `takePlate` red with a 1 Hz `motion::pulseHz` breathe, white type, reads REC). Carries the time, record time left (between takes only pre-flight's figure while what it was worked out for is unchanged, otherwise DISK FREE; NO DRIVE in amber when the chosen sessions drive is unplugged) and the disk-health rows (free GB, missed samples, last write, markers) at body size, since they are the proof the take is safe. Those rows give way first when the row is short, in the order they are drawn. Fed by MainComponent's timer.
+The hero timecode plate. **Modes:** Idle (cold, lamp reads IDLE) · ArmedReady (amber lamp, reads ARMED) · Playing (active tint) · Recording (whole plate `takePlate` red with a 1 Hz `motion::pulseHz` breathe, white type, reads REC). Carries the time, record time left (between takes only pre-flight's figure while what it was worked out for is unchanged, otherwise DISK FREE; NO DRIVE in amber when the chosen sessions drive is unplugged) and the disk-health groups, since they are the proof the take is safe. Since 2026-11-17 each group is a small label over its value: MISSED (red "N!" on a miss), LAST WRITE, MARKERS and FREE, beside a large TIME LEFT. When the row is short the small groups give way in `BigClockPanel::giveWayOrder` (MARKERS, LAST WRITE, FREE, MISSED); TIME LEFT never does. In EDIT during a take the plate reads EDIT LOCKED under the state. Fed by MainComponent's timer.
 
 ### PerfDashboard
 The status panel beside the clock, in both views at every window size, one width rolling or not. Device format stands in its own narrow column. Beside it, top row: master loudness at body size (LUFS momentary and integrated, true peak, red and marked `!` within 1 dB of full scale); a dropped sample takes that row over. Second row: AUDIO, DISK and BUF, each green / yellow / red. One thin bar along the bottom shows disk load, full at 50 MB/s. Red ring while recording.

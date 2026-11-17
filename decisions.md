@@ -2,6 +2,34 @@
 
 
 
+## Nothing on a MIXER strip moves during a take; a dead channel marks its own strip — 2026-11-17
+
+**Status:** Accepted. The owner said "fix everything from the audit, and remove this amber", then "the zoom in and out toolbar should be another place, try to have space for it on the right side". They judged the result on screen: "everything is good now".
+
+**Context:** A design critique rendered the real window headless from a 22-strip show. It found:
+- the MIXER strip's spine lit and moving during a take;
+- a dead channel shown only in the banner, which took turns every 3 s;
+- meter ember starting at -18 dBFS, where recording practice keeps the safe zone up to about -12;
+- two labelled scales per strip;
+- EDIT's zoom buttons sitting on the audio side of the page.
+
+**Decision:**
+- The strip spine keeps the channel colour at all times. The only take cue on a MIXER strip is the armed R at `armRollFill`. This supersedes the 2026-06-14 note that the spine brightens and glows when armed. EDIT's static 3 px edge on a recording row stays: it doesn't move, and the owner didn't ask.
+- A channel alarm marks the strip it belongs to, the same way in MIXER, EDIT and the meterbridge (`StripAlarm.h`). A lost input gets a red outline, a red header band and INPUT LOST. An armed input with no signal yet gets an amber NO SIGNAL tag. The marks are static and clear on recovery or at the end of the take. The banner lists one alarm per line, most serious first, with "+N more" for the rest; a click on a channel line shows the strip.
+- Meter heat goes by dBFS: green to -12, ember to -6, orange to -2, white-hot above (`brand::meterHeatAtDb`). This is a Recording-local override; the family tokens.json fractions should become 0.8 / 0.9 / 0.9667.
+- One labelled scale per strip: the meter's signed dBFS scale. The fader keeps its ticks and labels only 0.
+- EDIT's FOLLOW / H- / H+ / V- / V+ are a bar the EDIT page owns and lays out. `MainComponent` hosts it at the right of the transport row, beside the view tabs, in the slot MIXER uses for GRID and strip width, and shows it only in EDIT.
+
+**Alternatives considered:**
+- A slower or dimmer glow: still motion, and the owner wants none.
+- Marking a dead channel only in the banner: the engineer still has to find the strip among 60.
+- Leaving the zoom bar in the ruler's header column, where the design pass had first moved it off the waveforms: the owner wanted it elsewhere, on the right.
+
+**Consequences:**
+- \+ A take with nothing wrong reads calm, and a fault points at its strip.
+- − These states can only be seen headless through the opt-in render harness (`DesignRenderHarness.cpp`, `ZF_RENDER_DIR`).
+- − Until the family tokens follow, the generated ForgeTokens.h and Recording's local heat values disagree.
+
 ## 2026-11-16 review fix round: the choices the fixes made — 2026-11-16
 
 **Status:** Made during the fixes; each is open to the owner's review.
@@ -1509,7 +1537,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 **Status:** Accepted
 **Context:** The Heated-Steel redesign reused bright brand orange and the meter's `meterHot` for *permanent* chrome — the strip spine, the fader-cap groove, the header seams — drawn at full intensity always. In a dark venue the eye couldn't separate "this channel exists" from "this channel is HOT": a record-armed strip and a peaking meter looked the same as idle UI.
-**Decision:** Bright/hot orange (and `meterHot` specifically) is reserved for **state** — record-armed, peaking, recording. Permanent structural chrome uses `brand::structuralForge()` (the structural-identity orange) drawn **ember-subdued at rest** (low alpha), escalating to full only when the element's owner is active (e.g. the spine brightens + glows when the strip is armed). The fader-cap groove moved off `meterHot` onto `structuralForge()` so a hot meter is once again the brightest orange on screen. Identity marks (dialog badge, splash, forge-marks) keep full brand orange — they're brand, not state.
+**Decision:** Bright/hot orange (and `meterHot` specifically) is reserved for **state** — record-armed, peaking, recording. Permanent structural chrome uses `brand::structuralForge()` (the structural-identity orange) drawn **ember-subdued at rest** (low alpha), escalating to full only when the element's owner is active (e.g. the spine brightens + glows when the strip is armed; superseded 2026-11-17: the spine now keeps the channel colour, see the top ADR). The fader-cap groove moved off `meterHot` onto `structuralForge()` so a hot meter is once again the brightest orange on screen. Identity marks (dialog badge, splash, forge-marks) keep full brand orange — they're brand, not state.
 **Rationale:** "Cold steel that runs HOT where the signal lives" only works if *hot* is visually earned. Reserving the loudest accent for live state restores at-a-glance readability without losing the forge identity.
 **Consequences:** + armed/peaking now pop; the resting wall is calmer. − any new always-on accent must consciously pick `structuralForge()` (subdued) over `meterHot`/`brandOrange`-at-full. Enforced by eye, not the token audit (both are valid tokens).
 

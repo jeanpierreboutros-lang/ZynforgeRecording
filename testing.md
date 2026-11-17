@@ -1,5 +1,44 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-17 design pass
+
+The design pass was made on three branches (strip, alarms, panels) from `57001ea` plus an opt-in render harness, and merged on `main` as `7ba286b`. The zoom-bar move followed in `299ceb4` / `d1a9f86`.
+
+### New test files
+
+| File | Groups | What it holds |
+|---|---|---|
+| `Design20261117StripTests.cpp` | 10 | Covers the strip itself: <ul><li>meter heat at -12 / -6 / -2 dBFS on the LED ladder;</li><li>no light on the spine and no motion during a take;</li><li>the signed meter scale, with the fader's ruler labelling only 0;</li><li>"-∞ dB" on every readout;</li><li>short routing labels on a narrow strip;</li><li>11 pt strip text;</li><li>meterbridge numbers clear of names at every width.</li></ul> |
+| `Design20261117AlarmsTests.cpp` | 23 | Covers the alarms: <ul><li>alarms mapped to strips, a stereo pair as one and a lost stream marking every strip it took out;</li><li>INPUT LOST / NO SIGNAL in MIXER and EDIT, cleared with the take;</li><li>the banner: one alarm per line, most serious first, "+N more", a click showing the strip or listing all;</li><li>the BACKUP dot and BACKUP OFF.</li></ul> |
+| `Design20261117PanelsTests.cpp` | 14 | Covers panels and dialogs: <ul><li>the plate: groups give way in order, labels over values, EDIT LOCKED;</li><li>the perf panel's loudness line at the minimum window;</li><li>PATCH header names;</li><li>shortcut rows wrapping;</li><li>Backup's Add mirror;</li><li>system title bars;</li><li>Session Info's file type;</li><li>EDIT row buttons;</li><li>the zoom bar at the right of the transport row at 1600 × 1000 and 1210 × 760, never over the lanes.</li></ul> |
+
+`DesignRenderHarness.cpp` (suite *Design render*) is opt-in. Unless `ZF_RENDER_DIR` is set it renders nothing. With it set, it draws the real window and dialogs from a synthetic 22-strip show to 2× PNGs:
+- MIXER and EDIT idle, armed, recording and after STOP;
+- the dead-channel alarm, extra alarm and backup-chip states (`ZF_RENDER_ALARMS=1`);
+- each strip size and the narrow window;
+- PATCH, DEVICE, Backup, pre-flight, New Session, Shortcuts, Session Info and Meters.
+
+Its DISK STRUGGLING, TP and LUFS readings are artefacts of feeding audio faster than real time.
+
+### Changed tests
+- The banner tests in `MainWindowFixTests.cpp` and `MainWindowGuardTests.cpp` now expect one alarm per line instead of turns.
+- `EditIntegrityTests.cpp` and `EditRowFixTests.cpp` now find FOLLOW and H+ in the hosted zoom bar (`EditPage::getZoomBar`).
+
+### Results
+- **`7ba286b`:**
+  - Release (arm64): 2037 test groups, 0 failures.
+  - ASan/UBSan/float-cast-overflow: 2037 / 0, with no sanitizer reports.
+  - The render harness also ran under ASan/UBSan with no reports. An intermediate fixer build had crashed in `LedMeter::setScaleFont`; the merged tree does not.
+  - TSan was not re-run: these are UI and message-thread changes, and the last TSan run, on the 2026-11-16 fixes, was 1990 / 0.
+- **`d1a9f86`:** the Release full run had 2037 groups, with 4 failures in two groups.
+  - One was an EDIT test that looked for H+ on the page. It was fixed, and the affected suites then had 0 failures.
+  - The other was *Capture repairs / A backup unplugged while its files are hashed*. It starved for CPU while the universal app built beside it, and passes alone (35 / 0).
+- **CI (GitHub, macOS 15):** green on `5a68142` (the code of `d1a9f86` plus docs), Debug and Release. The runs on `7ba286b` and `d1a9f86` were cancelled by the next push.
+- `tools/design_audit.sh` and `tools/invariants_audit.sh` are clean on every commit.
+
+### Not covered headless
+Everything in *2026-11-17 design pass* in [FIELD-TEST.md](FIELD-TEST.md): how the strips, banner, meters and plate look on a real display at FOH, with a real dead channel.
+
 ## 2026-11-16 fix round
 
 The review's 72 findings were fixed on seven branches (names, engine, play, session, net, capture, mixer) and merged on `integrate/fix-2026-11-16`, then `main`. Each fix has a regression test that was run on the unfixed code first and seen failing (the test-only seams each fixer added to make the old code testable are named in the fixer's commit), except where a headless test can't reach the path: JUCE's real keyboard-focus path (the flags on the real components are tested instead, and a Return delivered to LOCK), a real unmounted volume (paths under `/Volumes/ZF Not Plugged In <uuid>` stand in), the window text of a helper's configure refusal, and the X32's actual routing push.

@@ -1,11 +1,10 @@
 # Documentation index
 
-Reconciled on 2026-11-12 against `main`, after the 2026-11-11
-review's fixes (and on 2026-11-04 against `main` at `821131a`, after that day's). Documentation commits do not change the installed binaries: see the
-status in the [README](../README.md). The development Mac has `08fccd7` (on JUCE
-8.0.17-security, with that day's scan, scrollbar and review fixes), and the
-Mac mini and the current DMG have `281c6c0`, all protocol 4. `08fccd7` has not run
-on real hardware. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
+Reconciled on 2026-11-17 against `main` at `d1a9f86`, after the 2026-11-16
+review's fixes, take files named for their strips and the 2026-11-17 design pass. Earlier reconciliations were on 2026-11-12, after the 2026-11-11 review, and on 2026-11-04 at `821131a`. Documentation commits do not change the installed binaries: see the
+status in the [README](../README.md).
+
+The development Mac has `d1a9f86`, and the Mac mini has `281c6c0`, which no current DMG holds. Both use protocol 4. `d1a9f86` has not recorded on real hardware; `08fccd7`, before it, recorded the 2026-11-14 show. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
 rollback. Refer to the owning documents below instead of copying
 package hashes, test counts or acceptance claims into new guides.
 

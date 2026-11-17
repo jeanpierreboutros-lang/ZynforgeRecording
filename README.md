@@ -4,15 +4,27 @@ Live multitrack recorder + virtual soundcheck for macOS. Built on JUCE 8 / C++20
 
 A focused recording surface for engineers running front-of-house or monitors: capture console inputs and play those tracks back through the same outputs during soundcheck. **Not a DAW** — no plugins, no in-the-box effects. No recording system can guarantee against every failure; use independent redundancy for important shows.
 
-## Status — 2026-11-11
+## Status — 2026-11-17
 
-On 2026-11-11 a second whole-codebase review made 82 findings. All are fixed on six branches merged on `main`, two of them in part (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md) and *Bug audit, 2026-11-11* in [tasks.md](tasks.md)). The biggest: a take on a device pair no longer ends when the monitor output goes away, PLAY refuses a device at another rate than the session, a backup snapshot can no longer open as a session, strips added since the last save survive a crash, a tablet STOP button needs a value, and every prompt closes for a take started behind it. None of it has run on real hardware. Installed builds are in [INSTALL.md](INSTALL.md).
+On 2026-11-17 a design pass went onto `main`. It came from a critique of the real window and dialogs (top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)):
+- nothing on a MIXER strip lights or moves during a take any more;
+- a dead channel marks its own strip in MIXER, EDIT and the meterbridge;
+- the alarm banner shows one alarm per line;
+- the BACKUP button shows its state;
+- meter colours follow recording levels (green up to -12 dBFS);
+- EDIT's zoom buttons sit at the right of the transport row, beside the view tabs.
+
+Under it are all 72 fixes of the 2026-11-16 whole-codebase review (*Bug audit, 2026-11-16* in [tasks.md](tasks.md)) and take files named for their strips (`01 KiCK.wav`). The development Mac has all of it (`d1a9f86`), and the owner has judged the look on screen. None of it has recorded on real hardware yet.
+
+On 2026-11-14 `08fccd7` recorded its first real show on the development Mac: 66 strips through Dante Virtual Soundcard for 1 h 44 min, with no missed samples, no stall and no crash. The dead-channel alarm recorded the one fault: every Dante input dropped to silence for 20 s when the Mac's Dante network port lost its address (see [SHOW-READINESS.md](SHOW-READINESS.md)).
+
+Before that, on 2026-11-11, a second whole-codebase review made 82 findings. All are fixed on six branches merged on `main`, two of them in part (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md) and *Bug audit, 2026-11-11* in [tasks.md](tasks.md)). The biggest: a take on a device pair no longer ends when the monitor output goes away, PLAY refuses a device at another rate than the session, a backup snapshot can no longer open as a session, strips added since the last save survive a crash, a tablet STOP button needs a value, and every prompt closes for a take started behind it. None of it has run on real hardware. Installed builds are in [INSTALL.md](INSTALL.md).
 
 `main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). On 2026-11-04 it also took the fixes for all 75 findings of a whole-codebase review, across the capture helper, capture, engine, EDIT, sessions and the mixer. The development Mac has them (`0e1bd8a`); the mini does not, and they have not run on real hardware (see *Bug audit, 2026-11-04* in [tasks.md](tasks.md)). Since `f9467d3` it builds on JUCE 8.0.17-security instead of 8.0.4; the development Mac has that update, the Mac mini does not. Since `281c6c0` one take has run on real hardware: on 2026-11-03 `5c7a3e4` recorded 55 tracks for 4 h 10 min through Dante Virtual Soundcard at 48 kHz on the development Mac, with no missed samples. After it, EDIT drew only the first minutes of the take on the rows on screen, and the waveform rescan kept the drive so busy that the report's hashes and quitting crawled. `577592c` fixes the first. The second came from how the scans read, not from the drive: macOS read ahead for all 55 files at once and threw most of it away. `main` fixes it for the waveforms; the report's hash pass stays paced at about 15 MiB/s (see *First long take* and *Three-hour take* in [tasks.md](tasks.md)). On 2026-11-04 `577592c` recorded 54 tracks for 3 h 01 min on the same drive, again with no missed samples, and kept the whole take drawn after STOP; the zoomed-out waveform looked doubled, and now draws one shape (see *Three-hour take* in [tasks.md](tasks.md)). On that drive the post-STOP waveform rebuild took hours; `main` now redraws all 55 lanes of the 4 h 10 min take in about three minutes (see *Fixed — after the three-hour take* in [CHANGELOG.md](CHANGELOG.md)). Nothing has been tried on a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
-Installed builds: the development Mac has `08fccd7` (2026-11-12), `main` with the 2026-11-11 review's fixes.
-It passes **1588 test groups in Release and CI** and has recorded
-nothing yet; `577592c` and `5c7a3e4`, before it, recorded the takes above (see
+Installed builds: the development Mac has `d1a9f86` (2026-11-17), `main` with the design pass and the 2026-11-16 review's fixes.
+It passes **2037 test groups in Release, ASan/UBSan and CI** and has recorded
+nothing yet; `08fccd7`, before it, recorded the 2026-11-14 show, and `577592c` and `5c7a3e4` the long test takes (see
 [testing.md](testing.md)). The Mac mini still has
 verified `281c6c0` and its matching protocol-4 helper (its installer DMG was
 removed from `dist/` on 2026-11-12). That older build contains

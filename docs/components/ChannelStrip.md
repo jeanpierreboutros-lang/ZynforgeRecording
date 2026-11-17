@@ -63,10 +63,12 @@ The host wires `canOpenColourPicker` the same way: the swatch picker is modal an
 | Default | Strip wash in personality colour, neutral chrome | Hover lift on `mouseEnter` |
 | Hovered | ~6 % brightness lift on the wash + brighter edge | `mouseEnter` flips `hovered = true` and repaints; `mouseExit` reverts |
 | Selected | 2 px `accentSolo` outline overlay | Set via `setSelected(true)`; host manages the selection set |
-| Armed (REC on) | "R" button glows `accentRecord` | Audio-thread signal-arm path is independent of paint state |
+| Armed (REC on) | "R" fills `armFill`; while a take rolls it lifts to `armRollFill` (`setTakeRolling`). Nothing else on the strip lights or moves, and the spine keeps the channel colour (2026-11-17) | Audio-thread signal-arm path is independent of paint state |
 | Monitoring | "I" button glows `accentPlay` | Drives meter when not playing/recording |
 | Muted | "M" button glows `brandOrange`; lane content dimmed | |
 | Soloed | "S" button glows `accentSolo` | Other strips' mute behaviour controlled by engine |
+| Input lost | Red outline, red header band, INPUT LOST under the input (`setInputAlarm (stripalarm::Level::Lost)`) | Static and repaints only on a change; clears on recovery or at the end of the take |
+| No signal yet | Amber NO SIGNAL tag (`stripalarm::Level::NoSignal`) | A lost input on the same strip outranks it |
 
 ## Tokens used
 

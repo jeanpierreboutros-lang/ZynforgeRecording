@@ -1,5 +1,34 @@
 # Show readiness — planned SD5 recording
 
+## Decision as of 2026-11-17
+
+**First real show, 2026-11-14.** `08fccd7` on the development Mac recorded a show:
+- 66 strips (64 mono and one stereo mix pair) through Dante Virtual Soundcard;
+- 48 kHz / 24-bit, buffer 512, to an APFS SSD;
+- 1 h 44 min.
+
+The report shows no missed samples, no stall and no lost device, and there is no crash report. `tools/verify_take.sh` passes except for the integrity hashes. They were still pending when the app quit and still were on 2026-11-17. Open the session, leave it open until the hash pass ends, then run the check again.
+
+Two things happened on the network side, and the dead-channel alarm recorded both:
+- **All inputs silent for 20 s.** 33 minutes in, every Dante input went to exact digital zero for 19.8 s. Dante Virtual Soundcard's logs show its network port, a plug-in Ethernet adapter, losing its address at that moment ("ADDRNOTAVAIL"). macOS's Network settings had been opened seconds before. It isn't proven whether a setting change or the cable or adapter caused it. The files stay time-aligned, because DVS kept clocking and the recorder wrote the zeros.
+- **Stereo mix late.** The stereo mix pair was silent from the start until the link came back at that same moment.
+
+On show day:
+- leave Network settings closed during a take;
+- make sure the Dante adapter and its cable are secure;
+- after the show, read `channelAlarms` in session.report.json, then the DVS logs (`/Library/Logs/Audinate/DanteVirtualSoundcard/`) at the alarm times.
+
+**What changed since.** `main` now has:
+- all 72 fixes of the 2026-11-16 review;
+- take files named for their strips;
+- the 2026-11-17 design pass (see [CHANGELOG.md](CHANGELOG.md)).
+
+The development Mac has it as `d1a9f86`; the mini still has `281c6c0`. The new build has not recorded on real hardware.
+
+Before a show:
+- on the build that goes to the show, run these sections of [FIELD-TEST.md](FIELD-TEST.md): *2026-11-17 design pass*, *2026-11-16 fix round* and *Take file names (2026-11-16)*;
+- install the same build on both Macs before a session moves between them, because older builds don't see named take files.
+
 ## Decision as of 2026-11-11
 
 A second whole-codebase review made 82 findings; all are fixed on `main`, two in part (see *Bug audit, 2026-11-11* in [tasks.md](tasks.md)). None of it has run on real hardware, and [INSTALL.md](INSTALL.md) says which Mac has it. Do not take it to a show until it has been installed on purpose and has passed *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md), as well as the earlier rounds named below.
@@ -12,9 +41,9 @@ Three changes matter on show day:
 
 ## Decision as of 2026-11-03
 
-`main` now also carries a further round of fixes: which device a take records from, punch only where the timeline is the take file, failed reads treated as failures, backups and mirrors following strip moves, an alarm banner that shows every alarm, and the desk reading STAGE and Restore Gains back. **Only one take has run on real hardware (below).** The development Mac has it, now as `08fccd7`. The mini and the current DMG have `281c6c0` / protocol 4, so everything below about that build stands.
+`main` now also carries a further round of fixes: which device a take records from, punch only where the timeline is the take file, failed reads treated as failures, backups and mirrors following strip moves, an alarm banner that shows every alarm, and the desk reading STAGE and Restore Gains back. **Only one take has run on real hardware (below).** The development Mac has it, now as `d1a9f86`. The mini and the current DMG have `281c6c0` / protocol 4, so everything below about that build stands.
 
-Since then `main` has moved from JUCE 8.0.4 to 8.0.17-security. The development Mac has that build, now as `08fccd7`; the mini does not. The framework sits under every device, file, text and network path, so a result from `9a40f54` does not carry over to it: run *JUCE 8.0.17-security* in [FIELD-TEST.md](FIELD-TEST.md) on the build that goes to the show. It has not been tried on macOS 27; keep the show Mac on the macOS it is tested on.
+Since then `main` has moved from JUCE 8.0.4 to 8.0.17-security. The development Mac has that build, now as `d1a9f86`; the mini does not. The framework sits under every device, file, text and network path, so a result from `9a40f54` does not carry over to it: run *JUCE 8.0.17-security* in [FIELD-TEST.md](FIELD-TEST.md) on the build that goes to the show. It has not been tried on macOS 27; keep the show Mac on the macOS it is tested on.
 
 On 2026-11-03 `5c7a3e4` recorded 55 tracks for 4 h 10 min through Dante Virtual Soundcard with no missed samples. That is not the acceptance rehearsal below: not the SD5 / HDSPe path, no backup drive, and `tools/verify_take.sh` has not run yet. It found two faults after STOP. EDIT drew only the start of the take: fixed in `577592c`. The post-STOP rescan and hashing crawled on that exFAT drive. The rescan's cause was macOS reading ahead for all 55 files at once and throwing most of it away, not the drive; `main` reads takes past the page cache and redraws that take in about three minutes, but no installed build has that yet. The report's hash pass stays paced at about 15 MiB/s, about 2 h for that take. Still try a long take on an APFS drive before choosing the show drive (see *First long take* in [FIELD-TEST.md](FIELD-TEST.md)).
 

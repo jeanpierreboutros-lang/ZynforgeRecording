@@ -6,7 +6,7 @@ The development Mac now has `d1a9f86`, `main` on 2026-11-17: every fix of the 20
 
 ## Development Mac update — 2026-11-17 afternoon, EDIT's zoom bar on the right
 
-`d1a9f86` = `7ba286b` plus one owner's look request: FOLLOW / H- / H+ / V- / V+ moved from the ruler's header column to the right of the transport row, beside MIXER / EDIT / PATCH (the slot MIXER uses for GRID and strip width). GUI SHA-256 `7f7312aaa841a9df8278c6f2208c5c8e688d88cbbb207f94a57edad550951d1f`; the capture helper is unchanged (`9db1e6fb…cf9b`). Universal, Xcode generator with the stat-cache xcconfig. Tests: Release 2037 groups; the first full run had 4 failures in two groups: an EDIT test that looked for H+ on the page (fixed: it now looks in the hosted bar) and *Capture repairs / A backup unplugged while its files are hashed*, which starved for CPU while the universal app built beside it and passes alone (35 / 0), as it did in both full runs of `7ba286b`. Rollback: `/Applications/Zynforge Recording.app.backup-20261117-141344-before-d1a9f86` (`7ba286b`); the older `backup-20261117-132555-before-7ba286b` holds `08fccd7`. The app was opened for the owner.
+`d1a9f86` = `7ba286b` plus one owner's look request: FOLLOW / H- / H+ / V- / V+ moved from the ruler's header column to the right of the transport row, beside MIXER / EDIT / PATCH (the slot MIXER uses for GRID and strip width). GUI SHA-256 `7f7312aaa841a9df8278c6f2208c5c8e688d88cbbb207f94a57edad550951d1f`; the capture helper is unchanged (`9db1e6fb…cf9b`). Universal, Xcode generator with the stat-cache xcconfig. Tests: Release 2037 groups; the first full run had 4 failures in two groups: an EDIT test that looked for H+ on the page (fixed: it now looks in the hosted bar) and *Capture repairs / A backup unplugged while its files are hashed*, which starved for CPU while the universal app built beside it and passes alone (35 / 0), as it did in both full runs of `7ba286b`. Rollback: `/Applications/Zynforge Recording.app.backup-20261117-141344-before-d1a9f86` (`7ba286b`); the older `backup-20261117-132555-before-7ba286b` holds `08fccd7`. The app was opened for the owner. CI passed on `5a68142` (the same code plus docs), Debug and Release. The owner judged the look on screen the same afternoon: "everything is good now".
 
 ## Development Mac update — 2026-11-17, the 2026-11-16 review's fixes and the design pass
 
@@ -18,7 +18,7 @@ The development Mac (MacBook Pro) now has `7ba286b`: `08fccd7`'s successors thro
 | Capture helper | `9db1e6fb8c81ce0be5428f00ffbc3e0e78fc757291af18062a82f0db0e15cf9b` |
 
 - **Built with:** the Xcode generator under Xcode 27.2 with `XCODE_XCCONFIG_FILE` holding `SDK_STAT_CACHE_ENABLE = NO`. Release, universal (x86_64, arm64).
-- **Tests before install:** Release 2037 test groups / 0 failures; ASan/UBSan 2037 / 0 with no sanitizer reports; the opt-in design-render harness also ran under ASan/UBSan with no reports. TSan was not re-run for this pass (UI and message-thread changes; the last TSan run, on the 2026-11-16 fixes, was 1990 / 0). CI on `7ba286b` was running at install.
+- **Tests before install:** Release 2037 test groups / 0 failures; ASan/UBSan 2037 / 0 with no sanitizer reports; the opt-in design-render harness also ran under ASan/UBSan with no reports. TSan was not re-run for this pass (UI and message-thread changes; the last TSan run, on the 2026-11-16 fixes, was 1990 / 0). CI on `7ba286b` was cancelled when the next push started; the run on `5a68142` (the code of `d1a9f86` plus docs) passed, Debug and Release.
 - **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Copied with `ditto --norsrc --noextattr --noqtn`.
 - **Rollback:** `/Applications/Zynforge Recording.app.backup-20261117-132555-before-7ba286b` (`08fccd7`).
 - **After install:** the app was opened for the owner to judge the look; no take has been recorded on it. The checks are under *2026-11-17 design pass* and *2026-11-16 fix round* in [FIELD-TEST.md](FIELD-TEST.md). A new ad-hoc build asks for microphone access again.
@@ -37,7 +37,7 @@ The development Mac (MacBook Pro) now has `08fccd7`: `0e1bd8a` plus all 82 fixes
 - **Install:** neither the app nor the helper was running. The installed copy passes deep/strict verification and matches the stage (`diff -qr`). Both executables are universal (x86_64, arm64). Copied with `ditto --norsrc --noextattr --noqtn`.
 - **Rollback:** `/Applications/Zynforge Recording.app.backup-20261112-080844-before-08fccd7` (`0e1bd8a`).
 - **Signing:** ad-hoc with the hardened runtime and the audio-input entitlement. macOS will likely ask for the microphone again at the first launch.
-- **After install:** the installed app was not opened; no take has been recorded on it. The checks for this build are under *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
+- **After install:** the installed app was not opened then. On 2026-11-14 it recorded the first real show (66 strips, 1 h 44 min, no missed samples; see [SHOW-READINESS.md](SHOW-READINESS.md)). The checks for this build are under *2026-11-11 fix round* in [FIELD-TEST.md](FIELD-TEST.md).
 
 ## Previous development Mac update — 2026-11-04, the review's fixes
 
