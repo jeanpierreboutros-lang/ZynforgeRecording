@@ -1510,7 +1510,7 @@ namespace zynforge
                 auto& engine = show.engine;
                 auto& page = show.page();
                 auto* viewport = findChild<juce::Viewport> (page);
-                auto* hIn = buttonTitled (page, "Horizontal zoom in");
+                auto* hIn = buttonTitled (page.getZoomBar(), "Horizontal zoom in");   // the window hosts the bar
                 expect (viewport != nullptr && hIn != nullptr, "setup: the viewport and H+");
                 if (viewport != nullptr && hIn != nullptr && viewport->getViewedComponent() != nullptr)
                 {
