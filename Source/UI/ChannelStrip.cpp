@@ -1,5 +1,6 @@
 #include "ChannelStrip.h"
 #include <juce_audio_basics/juce_audio_basics.h>
+#include "../Audio/DisplayText.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "StripColourPicker.h"
@@ -11,25 +12,19 @@ namespace
 {
     namespace steel
     {
-        // A take rolling on this strip is the one thing that lights the spine.
-        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour colour,
-                               bool rolling, float pulse)
+        // The spine is the channel colour, rolling or not: nothing on a strip
+        // moves during a take (the owner's call, 2026-11-17).
+        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour colour)
         {
-            if (rolling)
-            {
-                const auto hot = zynforge::brand::structuralForge();
-                g.setColour (hot.withAlpha ((0.34f + 0.30f * pulse)));
-                g.fillRect (r.getX(), r.getY(), 9.0f + 5.0f * pulse, r.getHeight());
-                colour = hot;
-            }
             g.setColour (colour);
             g.fillRect (r.getX(), r.getY(), 4.0f, r.getHeight());
         }
 
         // Channel number: a small line above the name, which is what gets read.
-        inline void drawNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based)
+        inline void drawNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based,
+                                const juce::Font& font)
         {
-            g.setFont (zynforge::brand::type::mono (10.0f, true));
+            g.setFont (font);
             g.setColour (zynforge::brand::textPrimary);
             g.drawText (juce::String (channel1Based).paddedLeft ('0', 2), box,
                         juce::Justification::centredLeft, false);
@@ -39,17 +34,28 @@ namespace
 
 namespace zynforge
 {
-    // dB scale strip: paints tick + label at the standard fader dB values,
-    // mapped to its own height with the same skew as the fader slider.
+    // The fader's own marks: a tick at each standard fader dB value, hugging
+    // the fader, mapped with the same skew as the fader slider. Only unity is
+    // labelled: the meter's signed dBFS scale is the strip's one labelled
+    // scale, and two columns of numbers with their zeros at different
+    // heights read as one wrong scale.
     class ChannelStrip::DbRuler final : public juce::Component
     {
     public:
-        explicit DbRuler (juce::Slider& s) : slider (s) {}
+        explicit DbRuler (juce::Slider& s) : slider (s) { setInterceptsMouseClicks (false, false); }
+
+        static constexpr int kTickW = 4;
+
+        void setLabelFont (const juce::Font& f)
+        {
+            if (f == font) return;
+            font = f;
+            repaint();
+        }
+        const juce::Font& getLabelFont() const noexcept { return font; }
 
         void paint (juce::Graphics& g) override
         {
-            const float minDb = -60.0f;
-            const float maxDb =  12.0f;
             const int top    = 6;
             const int bottom = getHeight() - 6;
             const int trackH = bottom - top;
@@ -60,41 +66,24 @@ namespace zynforge
                 return (int) (bottom - prop * (double) trackH);
             };
 
-            // Crisp tabular (mono, bold) numerals -- a dB scale must be
-            // glanceable in a dark venue, so legibility wins over subtlety.
-            g.setFont (brand::type::mono (10.0f, true));
-
-            // Draw a label with a 1 px dark drop-shadow then a bright face, so
-            // it stays readable both over the dark track AND over the coloured
-            // fader fill below the thumb.
-            auto drawScaleLabel = [&] (const juce::String& txt, int y)
+            const int tickL = getWidth() - kTickW;
+            g.setFont (font);
+            for (int dB : kFaderMarksDb)   // top to bottom; -60 is the fader's OFF floor
             {
-                const auto box = juce::Rectangle<int> (6, y - 6, getWidth() - 6, 12);
-                g.setColour (brand::shadow::elev3());
-                g.drawText (txt, box.translated (0, 1), juce::Justification::centredLeft, false);
-                g.setColour (brand::textSecondary);
-                g.drawText (txt, box, juce::Justification::centredLeft, false);
-            };
-
-            // dB tick values (top → bottom). Positive values keep the '+' sign,
-            // negatives drop the minus to keep the column tight.
-            const int dBValues[] = { 12, 6, 0, -5, -10, -15, -20, -30, -40, -60 };
-            for (int dB : dBValues)
-            {
-                if ((float) dB < minDb || (float) dB > maxDb) continue;
                 const int y = yForDb ((float) dB);
                 g.setColour (brand::textTertiary);
-                g.drawHorizontalLine (y, 0.0f, 4.0f);
-                drawScaleLabel ((dB > 0) ? "+" + juce::String (dB)
-                                         : juce::String (std::abs (dB)), y);
+                g.drawHorizontalLine (y, (float) tickL, (float) getWidth());
+                const auto txt = faderMarkLabel (dB);
+                if (txt.isEmpty()) continue;
+                g.setColour (brand::textSecondary);
+                g.drawText (txt, juce::Rectangle<int> (0, y - 7, tickL - 2, 14),
+                            juce::Justification::centredRight, false);
             }
-
-            // Infinity glyph at the bottom of the range.
-            drawScaleLabel (juce::String::fromUTF8 ("\xe2\x88\x9e"), bottom - 6);
         }
 
     private:
         juce::Slider& slider;
+        juce::Font font { brand::type::mono (10.0f, true) };
     };
 
     // Small clickable colour chip embedded at the top-left of every strip.
@@ -139,8 +128,7 @@ namespace zynforge
             // Only push text into the label when it actually changed -- an
             // idle/silent strip otherwise re-lays-out its labels 10x/s for
             // nothing (this runs on 32 strips at once).
-            const juce::String dbText = dB <= -80.0f ? juce::String ("-inf")
-                                                      : juce::String (dB, 1) + " dB";
+            const juce::String dbText = levelText (dB, -80.0f, strip.readoutUnit);
             if (dbText != lastDbText)
             {
                 strip.dbLabel.setText (dbText, juce::dontSendNotification);
@@ -169,14 +157,6 @@ namespace zynforge
             // pair: the report has an entry for each, and R has no strip of its own.
             strip.state.fftBlockReady.store (false, std::memory_order_release);
             if (strip.pairState != nullptr) strip.pairState->fftBlockReady.store (false, std::memory_order_release);
-
-            // While a take rolls on this strip, repaint just the left spine
-            // column at 10 Hz so it breathes. Cheap: the rest of the strip stays
-            // static, honouring the 24-strip repaint budget. Skipped under
-            // reduced-motion (the spine then holds a static glow).
-            if (! zynforge::brand::reduceMotion() && strip.takeRolling
-                && strip.state.armed.load (std::memory_order_relaxed))
-                strip.repaint (0, 0, 16, strip.getHeight());
         }
     private:
         ChannelStrip& strip;
@@ -611,11 +591,11 @@ namespace zynforge
         addAndMakeVisible (nameLabel);
 
         // Input + output routing combos.
-        auto styleCombo = [] (juce::ComboBox& c)
+        auto styleCombo = [] (RoutingCombo& c)
         {
             c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
             c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
-            c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
+            c.setInk    (brand::textPrimary);   // short form when the entry doesn't fit
             c.setColour (juce::ComboBox::arrowColourId,      brand::textTertiary);
         };
         styleCombo (inputCombo);
@@ -701,6 +681,7 @@ namespace zynforge
         dbLabel.setFont (zynforge::brand::type::monoStamp());
         dbLabel.setColour (juce::Label::textColourId, brand::textPrimary);
         dbLabel.setJustificationType (juce::Justification::centred);
+        dbLabel.setBorderSize ({});   // the strip's width is the readout's, as faderValue's
         addAndMakeVisible (dbLabel);
 
         clipLabel.setFont (brand::type::mono (10.0f, true));
@@ -892,12 +873,13 @@ namespace zynforge
         addMouseListener (this, true);
     }
 
+    // Only the R lifts while a take rolls; the button repaints itself. The
+    // strip body (spine included) looks the same rolling or not.
     void ChannelStrip::setTakeRolling (bool rolling)
     {
         if (takeRolling == rolling) return;
         takeRolling = rolling;
         armButton.setColour (juce::ToggleButton::tickColourId, rolling ? brand::armRollFill : brand::armFill);
-        repaint();
     }
 
     // Pan readout for the room there is: "pan < L40 >", "< L40 >" or just "L40",
@@ -926,7 +908,10 @@ namespace zynforge
 
     void ChannelStrip::showFaderValue()
     {
-        faderValue.setText (gainFader.getTextFromValue (gainFader.getValue()), juce::dontSendNotification);
+        auto text = gainFader.getTextFromValue (gainFader.getValue());
+        const auto unit = gainFader.getTextValueSuffix();
+        if (! readoutUnit && text.endsWith (unit)) text = text.dropLastCharacters (unit.length());
+        faderValue.setText (text, juce::dontSendNotification);
     }
 
     // Clear of the spine on the left.
@@ -941,6 +926,21 @@ namespace zynforge
     {
         return contentArea().removeFromTop (kIdRowH).withWidth (20);
     }
+
+    // Text read during a show is 11 pt on every M and L strip; a narrower
+    // strip keeps 10, the floor of the type scale.
+    juce::Font ChannelStrip::readoutFont (bool bold) const
+    {
+        return brand::type::mono (getWidth() >= kReadableW ? 11.0f : 10.0f, bold);
+    }
+
+    juce::Font ChannelStrip::scaleFont() const
+    {
+        return getWidth() >= kReadableW ? brand::type::caption() : brand::type::label();
+    }
+
+    juce::Component* ChannelStrip::faderRuler() const noexcept { return dbRuler.get(); }
+    juce::Font ChannelStrip::faderRulerFont() const { return dbRuler != nullptr ? dbRuler->getLabelFont() : juce::Font(); }
 
     void ChannelStrip::paint (juce::Graphics& g)
     {
@@ -964,19 +964,8 @@ namespace zynforge
             g.fillRect (r);
             g.setColour (brand::stripHeaderFill (stripColour));
             g.fillRect (r.withHeight ((float) kHeaderH));
-
-            // The spine breathes at ~1 Hz while a take rolls here. Phase from
-            // the wall clock so it animates whenever paint() runs (StripTimer
-            // repaints the spine column at 10 Hz).
-            const bool rollingHere = takeRolling && state.armed.load (std::memory_order_relaxed);
-            float armPulse = 0.0f;
-            if (rollingHere)
-                armPulse = zynforge::brand::reduceMotion()
-                             ? 0.6f   // reduced-motion: static raised-glow end-state
-                             : 0.5f + 0.5f * std::sin ((float) (juce::Time::getMillisecondCounter() % 1000)
-                                                       / 1000.0f * juce::MathConstants<float>::twoPi);
-            steel::drawSpine (g, r, stripColour, rollingHere, armPulse);
-            steel::drawNumber (g, numberBounds(), stripIndex + 1);
+            steel::drawSpine (g, r, stripColour);
+            steel::drawNumber (g, numberBounds(), stripIndex + 1, readoutFont (true));
         }
 
         g.setColour (hovered ? brand::borderBright : brand::edge);
@@ -1127,6 +1116,7 @@ namespace zynforge
         }
         r.removeFromTop (brand::space::sm);
 
+        clipLabel.setFont (readoutFont (true));
         clipLabel.setBounds (r.removeFromTop (12));
 
         // ── 4. Fader area: [ ruler | fader | meter ] ───────────────
@@ -1135,32 +1125,46 @@ namespace zynforge
         auto bottom = r.removeFromBottom (brand::space::xl);
         dbLabel.setBounds (bottom);
         faderValue.setBounds (r.removeFromBottom (kFaderValueH));
+        // A readout too narrow for "-88.8 dB" drops the unit rather than
+        // clipping the number (XS on a small window).
+        static const float widestReadout = juce::GlyphArrangement::getStringWidth (brand::type::monoStamp(), "-88.8 dB");
+        const bool unitFits = widestReadout <= (float) dbLabel.getWidth();
+        if (unitFits != readoutUnit)
+        {
+            readoutUnit = unitFits;
+            showFaderValue();   // the peak readout follows on the strip's next tick
+        }
 
-        // Pro-Tools-style COMPACT fader cluster: the dB ruler hugs the fader on
-        // the left and the meter hugs it on the right, with the fader just wide
-        // enough for its cap -- no wide empty gutter. The cluster is centred in
-        // whatever width the strip has, so on a narrow strip it fills it (lots
-        // of strips per page) and on a wide one the scales still sit right
-        // beside the fader instead of floating at the strip edges.
-        // The numbers beside the fader are the fader's, so the meter carries its
-        // own dBFS scale wherever it fits: full scale is the top of the meter,
-        // level with +12 on the ruler, and without this -12 dBFS looks like 0.
+        // Pro-Tools-style COMPACT fader cluster: the fader's ticks hug the fader
+        // on the left and the meter hugs it on the right, with the fader just
+        // wide enough for its cap -- no wide empty gutter. The cluster is
+        // centred in whatever width the strip has, so on a narrow strip it
+        // fills it (lots of strips per page) and on a wide one the scales still
+        // sit right beside the fader instead of floating at the strip edges.
+        // The meter's signed dBFS scale is the strip's one labelled scale: full
+        // scale is the top of the meter, and it gets the room first. The fader's
+        // ruler (ticks and a 0) comes after.
+        const auto meterScaleFont = scaleFont();
         const int barsW     = (pairState != nullptr) ? 26 : 16;
-        const int scaleW    = 16;
-        const int rulerW    = 20;
+        static const int captionScaleW = LedMeter::scaleColumnWidth (brand::type::caption());
+        static const int labelScaleW   = LedMeter::scaleColumnWidth (brand::type::label());
+        const int scaleW    = getWidth() >= kReadableW ? captionScaleW : labelScaleW;
+        const int rulerW    = 14;
         const int faderW    = 30;
-        const bool roomForScale = r.getWidth() >= rulerW + 2 + kMinFaderW + 2 + barsW + scaleW;
+        const bool roomForScale = r.getWidth() >= kMinFaderW + 2 + barsW + scaleW;
         const int meterW    = barsW + (roomForScale ? scaleW : 0);
-        const int clusterW  = rulerW + 2 + faderW + 2 + meterW;
+        // A fader nobody can see can't be moved, so the ruler only takes what
+        // the fader can spare.
+        const bool roomForRuler = r.getWidth() >= rulerW + 2 + kMinFaderW + 2 + meterW;
+        const int clusterW  = (roomForRuler ? rulerW + 2 : 0) + faderW + 2 + meterW;
+        meter.setScaleFont (meterScaleFont);
         meter.setShowDbLabels (roomForScale);
 
         auto cluster = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), clusterW),
                                                 r.getHeight());
-        // On a narrow strip the meter's scale has to do: the ruler would take
-        // the whole fader's width, and a fader nobody can see can't be moved.
-        const bool roomForRuler = cluster.getWidth() >= rulerW + 2 + kMinFaderW + 2 + meterW;
         if (dbRuler != nullptr)
         {
+            dbRuler->setLabelFont (readoutFont (true));
             dbRuler->setVisible (roomForRuler);
             if (roomForRuler)
             {

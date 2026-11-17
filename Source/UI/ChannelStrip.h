@@ -6,6 +6,7 @@
 #include "FineFader.h"
 #include "LedMeter.h"
 #include "RenameLabel.h"
+#include "RoutingCombo.h"
 
 #include <functional>
 #include <memory>
@@ -14,6 +15,7 @@ namespace zynforge
 {
     class MixerFixTests;
     class UiFixTests;
+    class Design20261117StripTests;
 
     class ChannelStrip final : public juce::Component
     {
@@ -52,7 +54,8 @@ namespace zynforge
         // combos in sync when the PATCH page mutates routing.
         void refreshRoutingSelection();
 
-        // A take is on disk: armed strips light their spine for its length.
+        // A take is on disk: an armed R lifts to armRollFill for its length.
+        // Nothing else on the strip changes (no spine light, no motion).
         void setTakeRolling (bool rolling);
 
         // Re-reads name + colour from TrackState so changes made in the
@@ -129,6 +132,7 @@ namespace zynforge
     private:
         friend class zynforge::MixerFixTests;
         friend class zynforge::UiFixTests;
+        friend class zynforge::Design20261117StripTests;
         // The header plate: id row (number + chip) over the name row.
         static constexpr int kIdRowH   = 12;
         static constexpr int kNameRowH = 22;
@@ -137,9 +141,21 @@ namespace zynforge
         static constexpr int kMinFaderW   = 18;
         static constexpr int kMinFaderH   = 110;
         static constexpr int kHeightAboveFader = 265;
+        // From this width up (every M and L strip) the number, scales and
+        // readouts are 11 pt; below it they keep 10, the type scale's floor.
+        static constexpr int kReadableW = 70;
 
         juce::Rectangle<int> contentArea() const;
         juce::Rectangle<int> numberBounds() const;
+        juce::Font readoutFont (bool bold) const;   // number, ruler 0, clip count
+        juce::Font scaleFont() const;               // the meter's dBFS scale
+
+        // The fader's ruler: a tick at each of these fader values, and only
+        // unity labelled -- the meter's dBFS scale is the one labelled scale.
+        static constexpr int kFaderMarksDb[] = { 12, 6, 0, -5, -10, -15, -20, -30, -40, -60 };
+        static juce::String faderMarkLabel (int dB) { return dB == 0 ? juce::String ("0") : juce::String(); }
+        juce::Component* faderRuler() const noexcept;
+        juce::Font faderRulerFont() const;
         void showFaderValue();
         void showPanText();
         void ensureRoutingItem (juce::ComboBox&, int deviceChannel, int deviceChannels, const char* prefix);
@@ -181,8 +197,8 @@ namespace zynforge
 
         RenameLabel   nameLabel;
         juce::Label   outLabel;
-        juce::ComboBox inputCombo;
-        juce::ComboBox outputCombo;
+        RoutingCombo  inputCombo;
+        RoutingCombo  outputCombo;
         // Single-letter glyphs match the reference: R = record arm,
         // I = input monitor, M = mute, S = solo.
         juce::ToggleButton armButton   { "R" };
@@ -207,6 +223,7 @@ namespace zynforge
 
         bool selected { false };
         bool takeRolling { false };
+        bool readoutUnit { true };   // the level readouts have room for " dB"
         // False once invalidate() has run (the backing TrackState is being
         // destroyed). Guards StripTimer::timerCallback against a dangling ref.
         bool stripValid { true };
