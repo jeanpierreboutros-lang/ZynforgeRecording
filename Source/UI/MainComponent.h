@@ -42,6 +42,7 @@ namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemo
 namespace zynforge { class MixerFixTests; class UiFixTests; class NetFix20261116Tests; }
 namespace zynforge { class SessionFix20261116Tests; class MainWindowFix20261116Tests; class MixerFix20261116Tests; }
 namespace zynforge { class EngineFix20261116Tests; class PlayFix20261116Tests; class DesignRenderHarness; }
+namespace zynforge { class Design20261117PanelsTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -747,6 +748,7 @@ private:
     friend struct zynforge::ConcurrencyAuditAccess;
     friend class zynforge::MixerFix20261116Tests;
     friend class zynforge::PlayFix20261116Tests;
+    friend class zynforge::Design20261117PanelsTests;
 
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of
