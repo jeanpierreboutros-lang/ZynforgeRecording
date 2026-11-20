@@ -2,7 +2,15 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `d1a9f86`, `main` on 2026-11-17: every fix of the 2026-11-16 review and the 2026-11-17 design pass, with EDIT's zoom bar at the right of the transport row. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware.
+The development Mac now has `d1a9f86`, `main` on 2026-11-17: every fix of the 2026-11-16 review and the 2026-11-17 design pass, with EDIT's zoom bar at the right of the transport row. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app (see the cleanup below).
+
+## Development Mac cleanup — 2026-11-20
+
+At the owner's request ("remove all the old app on this Mac, and leave the latest pushed and updated") every older Recording app on the development Mac was removed, and only `/Applications/Zynforge Recording.app` = `d1a9f86` is left. That is the newest code on `main`: everything pushed after it is docs only. Its GUI SHA-256 `7f7312aa…` and helper `9db1e6fb…` match the update record below.
+
+- **Removed:** the 11 rollback bundles `/Applications/Zynforge Recording.app.backup-20261029-…` through `…backup-20261117-141344-before-d1a9f86` (`443c769` to `7ba286b`), moved to the owner's Trash. Also the built `Zynforge Recording.app` inside the working copy's `build`, `build-make`, `build-asan` and `build-tsan` folders, inside the stale `zynforge/ZynforgeRecording` copy on the drive, and in old agent scratch folders. The build folders themselves, `build/_deps/juce-src` and the *Zynforge Recording Tests* apps were left alone.
+- **macOS app list:** 73 stale Launch Services entries were dropped, most of them for paths under the drive's old names (`/Volumes/PJ /…`, `/Volumes/PJ NEW/zynforge/…`). `/Applications/Zynforge Recording.app` is now the only registered copy and opens `.zfproj` sessions.
+- **Rollback from now on:** rebuild and verify the wanted revision from Git (see *Rollback* below). Every `Rollback:` path in the update records below is gone. The Mac mini was not touched.
 
 ## Development Mac update — 2026-11-17 afternoon, EDIT's zoom bar on the right
 
@@ -393,20 +401,12 @@ tools/notarize.sh --app "$app" --identity "$identity" --profile <profile>       
 
 ## Rollback
 
-The October 5 two-Mac cleanup removed every app bundle older than `443c769` at the user's request. Since then each install has kept the build it replaced:
+The October 5 two-Mac cleanup removed every app bundle older than `443c769` at the user's request. The 2026-11-20 cleanup removed every rollback bundle on the development Mac at the owner's request, so it keeps none: only `d1a9f86` is installed there. The Mac mini still keeps the build its last install replaced:
 
 | Mac | Build | Path in `/Applications/` |
 | --- | --- | --- |
-| Development | `443c769` | `Zynforge Recording.app.backup-20261029-220944-before-281c6c0` |
-| Development | `281c6c0` | `Zynforge Recording.app.backup-20261102-094838-before-fffab44` |
-| Development | `fffab44` | `Zynforge Recording.app.backup-20261102-134207-before-d4a9a57` |
-| Development | `d4a9a57` | `Zynforge Recording.app.backup-20261103-032331-before-9a40f54` |
-| Development | `9a40f54` | `Zynforge Recording.app.backup-20261103-172758-before-5c7a3e4` |
-| Development | `5c7a3e4` | `Zynforge Recording.app.backup-20261103-233742-before-577592c` |
-| Development | `577592c` | `Zynforge Recording.app.backup-20261104-104037-before-eca170e` |
-| Development | `eca170e` | `Zynforge Recording.app.backup-20261104-214622-before-0e1bd8a` |
 | Mac mini | `443c769` | `Zynforge Recording.app.backup-20261029-221655-before-281c6c0` |
 
-The development Mac's list was checked on 2026-11-03; the mini's is from its installation record. Earlier code requires rebuilding and verifying that source revision. Every revision without `3ad6e41` (all of `main` before `8b2dad8`) fetches JUCE as a shallow clone of a pinned commit, which fails once that commit is no longer a branch tip (the 8.0.4 pin already does): configure it with `-DFETCHCONTENT_SOURCE_DIR_JUCE=<a JUCE checkout at that commit>`, or drop its `GIT_SHALLOW` line. Historical backup names in this document are not usable recovery paths.
+The mini's entry is from its installation record. A later install on the development Mac makes its own backup of the build it replaces, as *Preconditions* says. Earlier code requires rebuilding and verifying that source revision. Every revision without `3ad6e41` (all of `main` before `8b2dad8`) fetches JUCE as a shallow clone of a pinned commit, which fails once that commit is no longer a branch tip (the 8.0.4 pin already does): configure it with `-DFETCHCONTENT_SOURCE_DIR_JUCE=<a JUCE checkout at that commit>`, or drop its `GIT_SHALLOW` line. Historical backup names in this document are not usable recovery paths.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.
