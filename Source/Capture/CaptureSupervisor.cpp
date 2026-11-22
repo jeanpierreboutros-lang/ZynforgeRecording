@@ -1,6 +1,7 @@
 #include "CaptureSupervisor.h"
 #include "HelperBuild.h"
 #include "HelperExit.h"
+#include "../Network/CaptureIdentity.h"
 
 #include <juce_events/juce_events.h>
 
@@ -121,13 +122,30 @@ namespace zynforge::capture
             && ! lastStatus().recording;
     }
 
+    bool CaptureSupervisor::isOtherBuild (const juce::String& build)
+    {
+        const auto wanted = expectedHelperBuild();
+        return wanted.isNotEmpty() && build != wanted;
+    }
+
+    juce::String CaptureSupervisor::otherBuildNotice() const
+    {
+        if (isDaemonRecording())
+            return "This take is rolling in a capture daemon from another build of this app. STOP closes it "
+                   "normally; this build's daemon takes over once it is idle.";
+        return "A capture daemon from another build of this app is still attached: it was busy (closing a take, "
+               "or it did not answer). It is replaced with this build's daemon as soon as it is idle. Press "
+               "RECORD again in a moment, or turn the capture daemon off to record in this app.";
+    }
+
     // Attached to a daemon of another build: an app updated while it ran, or
     // one from before builds were named, that would otherwise go on being
     // driven with nothing said. True when it has gone and this build's helper
     // should be launched; false to stay attached to it. Never one with a take:
     // only a fresh status that says idle lets this ask, and the daemon refuses
     // Quit mid-take by itself. One closing a take sends no status until done,
-    // so it is kept too.
+    // so it is kept too; the caller names a kept one (keepsOtherBuild) and
+    // tick() comes back for it once it is idle.
     bool CaptureSupervisor::retireOtherBuild()
     {
         const auto wanted = expectedHelperBuild();
@@ -173,6 +191,10 @@ namespace zynforge::capture
         lastConnectError.clear();
         attachedBuild.clear();
         replacedOtherBuild = false;
+        otherBuildKept = false;
+        otherBuildIdleSinceMs = nextReplaceAttemptMs = 0;
+        failedReplaceAttempts = 0;
+        launchArgs = extraArgs;
         port = wantPort;
 
         client.onStatus = [this] (const EngineStatus& s)
@@ -200,11 +222,24 @@ namespace zynforge::capture
             deathReported = false;
             attachedBuild = greeting.build;
             attachedAtMs  = juce::Time::currentTimeMillis();
-            if (! retireOtherBuild()) return true;
+            if (! retireOtherBuild())
+            {
+                // Kept: rolling a take, or not shown to be idle. Named, and
+                // replaced by tick() once it is idle.
+                otherBuildKept = isOtherBuild (attachedBuild);
+                return true;
+            }
             replacedOtherBuild = true;   // gone: this build's helper takes its place below
         }
 
-        // Nothing there -- launch the binary.
+        return launchAndAttach();
+    }
+
+    // Nothing there (or a daemon of another build just quit) -- launch the
+    // binary and attach to it.
+    bool CaptureSupervisor::launchAndAttach()
+    {
+        const auto& extraArgs = launchArgs;
         if (! binaryPath.existsAsFile()) binaryPath = discoverBinary();
         if (! binaryPath.existsAsFile())
         {
@@ -241,6 +276,9 @@ namespace zynforge::capture
                     deathReported = false;
                     attachedBuild = greeting.build;
                     attachedAtMs  = juce::Time::currentTimeMillis();
+                    // That race can attach to one of another build too.
+                    otherBuildKept = isOtherBuild (attachedBuild);
+                    otherBuildIdleSinceMs = 0;
                     return true;
                 }
                 client.disconnect();
@@ -285,6 +323,9 @@ namespace zynforge::capture
         }
         attachedBuild = greeting.build;
         attachedAtMs  = juce::Time::currentTimeMillis();
+        // One of another build is named and replaced once idle, as at attach.
+        otherBuildKept = isOtherBuild (attachedBuild);
+        otherBuildIdleSinceMs = 0;
         // A restarted daemon knows none of this GUI's configuration.
         configuredCapture.clear();
         failedCapture.clear(); failedCaptureReason.clear(); retryCaptureAtMs = 0;
@@ -380,6 +421,17 @@ namespace zynforge::capture
                                             const juce::String& expectedDevice)
     {
         if (! isAttached()) return false;
+        // Never a take on a kept daemon of another build, and never in silence:
+        // a busy one would answer late or not at all, and either way the take
+        // would run on the old build with nothing said. The press asks for the
+        // swap at the next chance, past any wait after a failed one.
+        if (keepsOtherBuild())
+        {
+            if (refusal != nullptr) *refusal = otherBuildNotice();
+            if (unanswered != nullptr) *unanswered = false;   // nothing was asked
+            nextReplaceAttemptMs = 0;
+            return false;
+        }
 
         Command tc;  tc.action  = Action::SetTrackCount;    tc.intValue  = trackCount;
         Command fmt; fmt.action = Action::SetCaptureFormat; fmt.intValue = captureFormat;
@@ -421,6 +473,7 @@ namespace zynforge::capture
 
     juce::String CaptureSupervisor::deviceMismatch (const juce::String& ownDevice) const
     {
+        if (keepsOtherBuild()) return otherBuildNotice();
         const auto held = lastStatus().captureDevice;
         if (! hasStatus() || juce::Time::currentTimeMillis() - lastStatusAtMs() > 2000)
             return "The capture daemon has not said which audio device it holds. Press RECORD again, "
@@ -436,6 +489,9 @@ namespace zynforge::capture
     bool CaptureSupervisor::configureCapture (const juce::var& config, juce::String* refusal)
     {
         if (refusal != nullptr) refusal->clear();
+        // A kept daemon of another build is about to be replaced: nothing is
+        // set up on it. RECORD says why (deviceMismatch).
+        if (keepsOtherBuild()) return false;
         const auto text = juce::JSON::toString (config);
         const auto wanted = config.getProperty ("captureDevice", {});
         // Two processes each hold a device, and the daemon's can fall back or die
@@ -536,10 +592,58 @@ namespace zynforge::capture
         const bool processDead = launched && ! process.isRunning();
         const bool linkDropped = everAttached && ! client.isConnected()
                                     && ! client.wasSuperseded();
-        if (! processDead && ! linkDropped) return;
+        if (! processDead && ! linkDropped)
+        {
+            replaceOtherBuildWhenIdle();
+            return;
+        }
 
         deathReported = true;
         const bool wasRecording = lastStatus().recording;
         if (onDaemonDied) onDaemonDied (wasRecording);
+    }
+
+    // A daemon of another build kept at attach goes as soon as it is free: a
+    // fresh status that says idle, its take's claim let go (one still closing
+    // files holds it), no STOP of this window's in flight, the window with no
+    // take in hand, and idle for kOtherBuildIdleGraceMs, so the window has seen
+    // its take end. Then as at attach: asked to quit, and this build's daemon
+    // launched in its place. One that will not go is asked again later, less
+    // often, since each ask can hold this thread for the Quit's reply.
+    void CaptureSupervisor::replaceOtherBuildWhenIdle()
+    {
+        if (! otherBuildKept) return;
+        if (! client.isConnected()) { otherBuildIdleSinceMs = 0; return; }
+        if (! isOtherBuild (attachedBuild)) { otherBuildKept = false; return; }
+        const auto now = juce::Time::currentTimeMillis();
+        if (stopInFlight.load() || ! idleByFreshStatus()) { otherBuildIdleSinceMs = 0; return; }
+        if (otherBuildIdleSinceMs == 0) otherBuildIdleSinceMs = now;
+        if (now - otherBuildIdleSinceMs < kOtherBuildIdleGraceMs || now < nextReplaceAttemptMs) return;
+        if (mayReplaceOtherBuild && ! mayReplaceOtherBuild()) return;
+        const auto session = lastStatus().sessionPath;
+        if (session.isNotEmpty() && identity::TakeClaim::isHeld (juce::File (session))) return;
+
+        if (! retireOtherBuild())
+        {
+            // Still attached to it: it refused Quit, did not answer, or kept
+            // its port. 10, 20, 40, then every 80 s.
+            failedReplaceAttempts = juce::jmin (failedReplaceAttempts + 1, 4);
+            nextReplaceAttemptMs = juce::Time::currentTimeMillis() + ((juce::int64) 5000 << failedReplaceAttempts);
+            otherBuildIdleSinceMs = 0;
+            otherBuildKept = client.isConnected() && isOtherBuild (attachedBuild);
+            return;
+        }
+
+        otherBuildKept = false;
+        replacedOtherBuild = true;
+        launched = false;
+        // The new daemon knows none of this window's configuration.
+        configuredCapture.clear();
+        failedCapture.clear(); failedCaptureReason.clear(); retryCaptureAtMs = 0;
+        lastConnectError.clear();
+        // On failure none is attached and none is called dead: the next RECORD
+        // (or Reconnect) finds nothing there and launches one.
+        const bool started = launchAndAttach();
+        if (onOtherBuildReplaced) onOtherBuildReplaced (started);
     }
 }

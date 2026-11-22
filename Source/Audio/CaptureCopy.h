@@ -59,7 +59,16 @@ namespace zynforge
 
         std::vector<Track> tracks;                 // aligned with the recorder's tracks
         std::vector<WriterChannel::StampedPart> stampedParts;
+        // This copy's lead-in reservations, each with its marker written. The
+        // primary's STOP works from the recorder's pendingLeadIns; its copy
+        // carries them only so its thread can put the capture origin in them.
         std::vector<PendingLeadIn> leadIns;
+        // Where a punch began capturing on the timeline, once the distributor
+        // has seen it (-1 until then, and for any other pass). The markers were
+        // written with the armed position before go-live; placeLeadIns rewrites
+        // them once, so a crash mid-punch recovers to where the audio starts.
+        std::atomic<juce::int64> captureOrigin { -1 };
+        bool                     leadInsPlaced { false };   // this copy's thread only
 
         // Run first on this copy's thread: whatever joining the take takes. A
         // non-empty answer says why this copy cannot, and it leaves the take.
@@ -160,7 +169,13 @@ namespace zynforge
             else if (t.container == 1) w = t.bitDepth == 32 ? FloatAiffWriter::create (out, sampleRate, chans)
                                                             : PcmAiffWriter::create (out, sampleRate, chans, t.bitDepth);
             else                       w = juce::WavAudioFormat().createWriterFor (out, sampleRate, chans, t.bitDepth, meta, 0);
-            if (w == nullptr) delete out;
+            if (w == nullptr)
+            {
+                // The file is the one made just above, never one that was
+                // there: left empty, it would be a stray part with no main.
+                delete out;
+                target.deleteFile();
+            }
             else if (t.container == 0)
                 stampedParts.push_back ({ target, framesBefore, (juce::uint64) timeReference });
             return w;
@@ -277,6 +292,7 @@ namespace zynforge
                 bool wrote = false;
                 for (auto& t : tracks)
                     wrote = writeOneChunk (t, left, right, zeros) || wrote;
+                placeLeadIns();
 
                 const auto now = juce::Time::getMillisecondCounterHiRes();
                 if (flushWanted.load (std::memory_order_acquire) || now - lastFlush >= 5000.0)
@@ -294,6 +310,26 @@ namespace zynforge
             closeFilesNow();
             finished.store (true, std::memory_order_release);
             wakeWaiters();
+        }
+
+        // Once a punch's capture origin is known, each marker gets it, on this
+        // copy's own folder and off the audio thread. A marker that will not
+        // take it keeps the armed position, and STOP tries again (finishLeadIn).
+        void placeLeadIns()
+        {
+            if (leadInsPlaced || leadIns.empty()) return;
+            const auto origin = captureOrigin.load (std::memory_order_acquire);
+            if (origin < 0) return;
+            leadInsPlaced = true;
+            for (auto& lead : leadIns)
+            {
+                if (abandoned.load (std::memory_order_acquire)) return;   // its folder is not ours now
+                if (lead.timelineStart == origin) continue;
+                auto placed = lead;
+                placed.timelineStart = origin;
+                if (writeLeadInMarker (placed)) lead.timelineStart = origin;
+                noteProgress();
+            }
         }
 
         // Out of the take, by name. Everything the rings hold for it goes too.

@@ -699,10 +699,27 @@ namespace zynforge
     // this recorder just stashes + splices; it doesn't know which path armed it.
     bool MultitrackRecorder::recoverInterruptedPunches (const juce::File& audioDir,
                                                         int* recovered, bool* leadInsOwed,
-                                                        const std::function<void()>& onProgress)
+                                                        const std::function<void()>& onProgress,
+                                                        juce::String* problem)
     {
         if (recovered != nullptr) *recovered = 0;
         if (leadInsOwed != nullptr) *leadInsOwed = false;
+        if (problem != nullptr) problem->clear();
+        // Every way this can fail is a file or folder that would not move or be
+        // made: say which, so a refusal names it instead of saying nothing.
+        const auto fail = [problem] (const juce::String& why)
+        {
+            if (problem != nullptr) *problem = why;
+            return false;
+        };
+        const auto notMoved = [&fail] (const juce::File& file, const juce::File& to)
+        {
+            return fail (file.getFullPathName() + " could not be moved to " + to.getFullPathName());
+        };
+        const auto notMade = [&fail] (const juce::File& folder)
+        {
+            return fail ("the folder " + folder.getFullPathName() + " could not be created");
+        };
         if (! audioDir.isDirectory()) return true;
         // First, so anything below that opens or archives a take reads its
         // real length. A failed repair loses nothing: the audio stays in the
@@ -740,9 +757,10 @@ namespace zynforge
                     const auto root = audioDir.getFileName() == "Audio Files" ? audioDir.getParentDirectory() : audioDir;
                     committedArchive = root.getChildFile ("Session File Backups")
                                            .getNonexistentChildFile ("Interrupted Punch", {}, false);
-                    if (! committedArchive.createDirectory().wasOk()) return false;
+                    if (! committedArchive.createDirectory().wasOk()) return notMade (committedArchive);
                 }
-                if (! file.moveFileTo (committedArchive.getChildFile (file.getFileName()))) return false;
+                if (! file.moveFileTo (committedArchive.getChildFile (file.getFileName())))
+                    return notMoved (file, committedArchive);
             }
             marker.deleteFile();
         }
@@ -770,7 +788,7 @@ namespace zynforge
         const auto archiveRoot = sessionRoot
             .getChildFile ("Session File Backups")
             .getNonexistentChildFile ("Interrupted Punch", {}, false);
-        if (! archiveRoot.createDirectory().wasOk()) return false;
+        if (! archiveRoot.createDirectory().wasOk()) return notMade (archiveRoot);
         sidecars.sort();
         for (const auto& sidecar : sidecars)
         {
@@ -786,13 +804,14 @@ namespace zynforge
                                                                  stem + "_part*" + sidecar.getFileExtension()))
                 {
                     if (part.getFileName().contains (".punchbase") || punchSidecar (part).exists()) continue;
-                    if (! part.moveFileTo (archiveRoot.getChildFile (part.getFileName()))) return false;
+                    if (! part.moveFileTo (archiveRoot.getChildFile (part.getFileName())))
+                        return notMoved (part, archiveRoot);
                 }
-            if (target.exists() && ! target.moveFileTo (archived)) return false;
+            if (target.exists() && ! target.moveFileTo (archived)) return notMoved (target, archiveRoot);
             if (! sidecar.moveFileTo (target))
             {
                 if (archived.existsAsFile()) archived.moveFileTo (target);
-                return false;
+                return notMoved (sidecar, target);
             }
             // Mid-install, the temp files may be the only copy of the punch.
             const bool midInstall = installing.contains (stem);
@@ -800,7 +819,8 @@ namespace zynforge
                                                                   stem + ".punchtmp*"))
             {
                 if (! midInstall) temporary.deleteFile();
-                else if (! temporary.moveFileTo (archiveRoot.getChildFile (temporary.getFileName()))) return false;
+                else if (! temporary.moveFileTo (archiveRoot.getChildFile (temporary.getFileName())))
+                    return notMoved (temporary, archiveRoot);
             }
             if (midInstall) audioDir.getChildFile (stem + ".punchinstall").deleteFile();
             if (recovered != nullptr) ++*recovered;
@@ -992,6 +1012,8 @@ namespace zynforge
             return refuse ("Recording refused: two take files claim one track.");
         if (! resolveTakeFormats (take))
             return refuse ("Recording refused: the existing take files are in mixed formats and cannot be continued.");
+        if (! noStrayTakeParts (take))
+            return refuse ("Recording refused: a track has part files of a take but not its main file.");
         if (! continuationBasesIntact (take))
             return refuse ("Recording refused: the existing take is incomplete, so it cannot be continued.");
         noteExistingPrimaryBases (take);
@@ -1128,8 +1150,16 @@ namespace zynforge
     {
         int recovered = 0;
         bool leadInsOwed = false;
-        const bool restored = recoverInterruptedPunches (take.audioFilesDir, &recovered, &leadInsOwed);
-        if (leadInsOwed)
+        juce::String problem;
+        const bool restored = recoverInterruptedPunches (take.audioFilesDir, &recovered, &leadInsOwed, {}, &problem);
+        // A recovery that failed must not read as one that worked: the caller's
+        // fallback says the punch was put back.
+        if (! restored)
+            startError = "Recording refused: an interrupted punch could not be put back on this take ("
+                       + (problem.isNotEmpty() ? problem : juce::String ("a file would not move"))
+                       + "). Nothing was deleted. Check that the recording drive is connected, "
+                         "has room and is not read-only, then reopen the session.";
+        else if (leadInsOwed)
             startError = "Recording refused: a track still owes its silent lead-in and this drive will not take it. "
                          "Free some space and press RECORD again.";
         return restored && ! leadInsOwed
@@ -1331,6 +1361,49 @@ namespace zynforge
         return false;
     }
 
+    // Part files of a take whose main file is gone (moved in Finder, or left by
+    // a lead-in whose marker could not be read). No reader plays them, and any
+    // pass on that strip would land on them: a fresh main file would gain them
+    // as its tail, and a punch or a lead-in reserves the part numbers they hold.
+    // Empty when the strip has its main file, or no parts.
+    static juce::StringArray strayTakeParts (const takenames::StemIndex& onDisk, int track)
+    {
+        juce::StringArray parts;
+        for (const auto& file : onDisk.takeAudio (track))
+        {
+            if (takenames::isMain (takenames::parse (file.getFileName()))) return {};
+            parts.add (file.getFileName());
+        }
+        return parts;
+    }
+
+    static juce::String listStrayParts (const juce::StringArray& parts)
+    {
+        const int shown = juce::jmin (3, parts.size());
+        auto list = parts.joinIntoString (", ", 0, shown);
+        if (parts.size() > shown) list << " and " << (parts.size() - shown) << " more";
+        return list;
+    }
+
+    // Fresh, continue and punch alike, before anything is moved or opened. The
+    // engineer decides what those parts are; nothing here touches them.
+    bool MultitrackRecorder::noStrayTakeParts (const TakeStart& take)
+    {
+        const auto& onDisk = take.media.audioFiles();
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+        {
+            if (! opensOwnCaptureFile (i)) continue;
+            const auto parts = strayTakeParts (onDisk, (int) i);
+            if (parts.isEmpty()) continue;
+            startError = "Recording refused: track " + juce::String ((int) i + 1)
+                + " has part files of a take but not its main file (" + listStrayParts (parts)
+                + "), and a new pass would land on them. Nothing was changed. Put the main file back, "
+                  "or move those part files out of Audio Files, then press RECORD again.";
+            return false;
+        }
+        return true;
+    }
+
     bool MultitrackRecorder::continuationBasesIntact (const TakeStart& take)
     {
         if (! continueAsPart) return true;
@@ -1479,6 +1552,11 @@ namespace zynforge
     // would not open (e.g. disk full, permissions). A copy with less audio than
     // the timeline position gets a silent lead-in, written after STOP into part
     // slots reserved here (see PendingLeadIn).
+    //
+    // A lead-in is pushed only once its audio part has opened, so it is a file
+    // this pass made: abandonTakeStart and dropEmptyLeadIn remove only those.
+    // A slot or audio part already on the disk is someone's audio, and the
+    // track does not open rather than reserve it.
     bool MultitrackRecorder::openTrackFile (CaptureCopy& copy, std::size_t i, const juce::File& dir,
                                             const TakeFormat& fmt, const juce::String& trackName, int chans,
                                             const LeadInPlan& plan, bool primaryHadBase, juce::int64 prior,
@@ -1491,6 +1569,13 @@ namespace zynforge
         t.bitDepth = fmt.bitDepth;
         t.bytesPerSample = fmt.bitDepth / 8;
 
+        const auto failed = [&copy, &t]
+        {
+            t.failed = true;
+            copy.incomplete.store (true, std::memory_order_relaxed);
+            return false;
+        };
+
         auto file = dir.getChildFile (trackName + fmt.ext);
         if (plan.continuing)
         {
@@ -1498,6 +1583,7 @@ namespace zynforge
             file = next.first;
             t.partNumber = next.second;
         }
+        std::optional<PendingLeadIn> reserved;
         if (plan.editPass && (plan.continuing || ! primaryHadBase) && plan.timelineStart > prior)
         {
             PendingLeadIn lead;
@@ -1516,18 +1602,26 @@ namespace zynforge
                 + (plan.punching ? (juce::int64) (plan.sampleRate * 60.0) : 0);
             lead.parts = estimate <= maxFrames ? 1
                        : (int) juce::jmin ((juce::int64) 999, 1 + (estimate - 1) / maxFrames);
-            leadIns.push_back (lead);
+            // STOP writes silence into each slot, deleting what is there first,
+            // so a FILE in a slot (old audio) refuses the track. Anything else
+            // there is not audio: a folder that holds something can't be deleted,
+            // so the silence write fails at STOP and the lead-in stays owed, the
+            // full-drive path, with nothing lost.
+            for (int p = 0; p < lead.parts; ++p)
+                if (partFileFor (dir, trackName, fmt.ext, lead.firstPart + p).existsAsFile()) return failed();
             t.partNumber += lead.parts;
             file = partFileFor (dir, trackName, fmt.ext, t.partNumber);
+            reserved = lead;
         }
+        // openFile refuses a file that exists, so what opens is this pass's.
         t.writer.reset (copy.openFile (t, file, 0));
-        if (t.writer == nullptr)
-        {
-            t.failed = true;
-            copy.incomplete.store (true, std::memory_order_relaxed);
-            return false;
-        }
+        if (t.writer == nullptr) return failed();
         t.partFiles.add (file.getFileName());
+        if (reserved.has_value())
+        {
+            reserved->ownsAudioPart = true;
+            leadIns.push_back (*reserved);
+        }
         return true;
     }
 
@@ -1688,8 +1782,10 @@ namespace zynforge
 
             int recovered = 0;
             bool leadInsOwed = false;
-            if (! recoverInterruptedPunches (audioDir, &recovered, &leadInsOwed, [&copy] { copy.noteProgress(); }))
-                return left ("has an interrupted punch that could not be put back");
+            juce::String problem;
+            if (! recoverInterruptedPunches (audioDir, &recovered, &leadInsOwed, [&copy] { copy.noteProgress(); }, &problem))
+                return left ("has an interrupted punch that could not be put back"
+                             + (problem.isNotEmpty() ? " (" + problem + ")" : juce::String()));
             if (leadInsOwed)
                 return left ("still owes a silent lead-in it could not write");
             // Put back here, on its own folder: nothing more to do, and the next
@@ -1709,6 +1805,13 @@ namespace zynforge
             for (const auto& track : tracks)
                 if (const auto clash = onCopy.clash ((int) track.index); clash.isNotEmpty())
                     return left ("has, for track " + juce::String ((int) track.index + 1) + ", " + clash);
+            // As on the primary: a lead-in or a new main file would land on
+            // them, and a drop at STOP would delete them.
+            for (const auto& track : tracks)
+                if (const auto parts = strayTakeParts (onCopy, (int) track.index); ! parts.isEmpty())
+                    return left ("has, for track " + juce::String ((int) track.index + 1)
+                                 + ", part files of a take but not its main file (" + listStrayParts (parts)
+                                 + "), which were left as they are");
             for (auto& track : tracks)
                 if (const auto own = onCopy.stem ((int) track.index); own.isNotEmpty())
                     track.name = own;
@@ -1781,8 +1884,9 @@ namespace zynforge
             std::vector<PendingLeadIn> kept;
             for (const auto& lead : copy.leadIns)
             {
-                if (! partFileFor (lead.audioDir, lead.trackName, lead.ext,
-                                   lead.firstPart + lead.parts).existsAsFile()) continue;
+                if (! lead.ownsAudioPart
+                    || ! partFileFor (lead.audioDir, lead.trackName, lead.ext,
+                                      lead.firstPart + lead.parts).existsAsFile()) continue;
                 if (! writeLeadInMarker (lead)) copy.latchFailure();
                 kept.push_back (lead);
             }
@@ -2050,7 +2154,8 @@ namespace zynforge
 
     // Persist each reservation openTakeWriters made, so a crash before STOP
     // can still complete the lead-in on the next session open. A copy whose
-    // writer never opened records nothing this pass and needs no silence.
+    // writer never opened records nothing this pass and needs no silence; its
+    // part on the disk, if any, was there before and is not this pass's.
     bool MultitrackRecorder::writeLeadInMarkers (TakeStart& take)
     {
         juce::ignoreUnused (take);
@@ -2058,14 +2163,19 @@ namespace zynforge
         std::vector<PendingLeadIn> kept;
         for (const auto& lead : pendingLeadIns)
         {
-            if (! partFileFor (lead.audioDir, lead.trackName, lead.ext,
-                               lead.firstPart + lead.parts).existsAsFile()) continue;
+            if (! lead.ownsAudioPart
+                || ! partFileFor (lead.audioDir, lead.trackName, lead.ext,
+                                  lead.firstPart + lead.parts).existsAsFile()) continue;
             // Without its marker a crash would leave the new audio at the wrong
             // place, so the primary refuses the take.
             if (! writeLeadInMarker (lead)) ok = false;
             kept.push_back (lead);
         }
         pendingLeadIns = std::move (kept);
+        // The primary's thread puts a punch's capture origin in these markers
+        // (CaptureCopy::placeLeadIns).
+        for (auto& copy : copies)
+            if (copy->copyIndex == 0) copy->leadIns = pendingLeadIns;
         if (! ok) startError = "Recording refused: the lead-in marker could not be written; check the recording drive.";
         return ok;
     }
@@ -2264,6 +2374,8 @@ namespace zynforge
         std::vector<juce::File> unusedNewFiles;
         // Every file in partFiles is one this start created: opening refuses
         // an existing target, so a continuation's new part is safe to remove.
+        // A lead-in's audio part is among them; nothing else is removed, so a
+        // part that was on the disk before this start stays where it is.
         for (std::size_t i = 0; i < writers.size(); ++i)
             if (writers[i].active)
                 for (const auto& copy : copies)
@@ -2272,10 +2384,7 @@ namespace zynforge
         closeWriters();
         for (const auto& f : unusedNewFiles) f.deleteFile();
         for (const auto& lead : pendingLeadIns)
-        {
             leadInMarkerFor (lead).deleteFile();
-            partFileFor (lead.audioDir, lead.trackName, lead.ext, lead.firstPart + lead.parts).deleteFile();
-        }
         pendingLeadIns.clear();
         restorePunchStashes (take);
     }
@@ -2800,9 +2909,19 @@ namespace zynforge
     }
 
     // On failure the marker stays, so the next session open retries the write.
+    // It was written at RECORD with the armed position and a punch captures
+    // from a little later, so it gets the real start first: a drive that will
+    // not take the silence must not leave recovery lining up from the arm.
     bool MultitrackRecorder::finishLeadIn (const PendingLeadIn& lead, juce::int64 timelineStart,
                                            const std::function<void()>& onProgress)
     {
+        if (lead.timelineStart != timelineStart
+            && partFileFor (lead.audioDir, lead.trackName, lead.ext, lead.firstPart + lead.parts).existsAsFile())
+        {
+            auto placed = lead;
+            placed.timelineStart = timelineStart;
+            writeLeadInMarker (placed);
+        }
         if (! writeLeadIn (lead, timelineStart, onProgress)) return false;
         const auto marker = leadInMarkerFor (lead);
         marker.deleteFile();
@@ -2818,12 +2937,18 @@ namespace zynforge
     // would give the strip a silent take the length of the show, on every
     // copy, and hold RECORD while it wrote. The empty part goes instead, and
     // the track keeps the take it had.
+    //
+    // Only a part this pass created goes (ownsAudioPart). One that was on the
+    // disk is someone's audio, whatever its number.
     bool MultitrackRecorder::dropEmptyLeadIn (const PendingLeadIn& lead,
                                               std::vector<WriterChannel::StampedPart>& stamps)
     {
         const auto part = partFileFor (lead.audioDir, lead.trackName, lead.ext, lead.firstPart + lead.parts);
-        if (part.exists() && ! part.deleteFile()) return false;
-        std::erase_if (stamps, [&part] (const WriterChannel::StampedPart& stamped) { return stamped.file == part; });
+        if (lead.ownsAudioPart)
+        {
+            if (part.exists() && ! part.deleteFile()) return false;
+            std::erase_if (stamps, [&part] (const WriterChannel::StampedPart& stamped) { return stamped.file == part; });
+        }
         const auto marker = leadInMarkerFor (lead);
         marker.deleteFile();
         const auto folder = marker.getParentDirectory();
@@ -4430,6 +4555,14 @@ namespace zynforge
     void MultitrackRecorder::drainShard (ShardClient& shard)
     {
         if (! writersReady.load (std::memory_order_acquire)) return;
+
+        // A punch lands where capture began, which the audio thread learns at
+        // its first live block. Each copy puts that into its own lead-in
+        // markers, on its own thread (CaptureCopy::placeLeadIns): no disk here.
+        if (const auto origin = punchCaptureOrigin.load (std::memory_order_acquire); origin >= 0)
+            for (auto& copy : copies)
+                if (copy->captureOrigin.load (std::memory_order_relaxed) < 0)
+                    copy->captureOrigin.store (origin, std::memory_order_release);
 
         // One drainer per shard at a time: the shard's TimeSliceThread and a
         // fan-out drainOnce() (stopRecording flush / drainPendingForTests)

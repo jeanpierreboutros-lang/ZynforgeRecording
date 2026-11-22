@@ -198,6 +198,8 @@ namespace zynforge::songexport
                     if (cancel.load (std::memory_order_relaxed)) break;
                     if (! ok && error.isEmpty())
                         error = "Could not render " + target.destStem.getFileName();
+                    // Either pass: the render as it streamed, and at another
+                    // rate the converted file commit() wrote from it.
                     if (ok && out.hasClipped()) ++outcome.clippedFiles;
                 }
                 ++outcome.attempted;

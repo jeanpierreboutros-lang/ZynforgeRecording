@@ -295,6 +295,63 @@ namespace zynforge
                 expect (! w.engine().isRecording(), "a press meant as a punch ran as a new part");
                 expect (w.main.statusLabel.getText().contains ("press RECORD again"), w.main.statusLabel.getText());
             }
+
+            // Audit 2026-11-22 H2: RECORD then LOCK during a save dropped the
+            // press without a word, and the recorder sat locked and idle.
+            beginTest ("LOCK pressed after a held RECORD does not take the press back");
+            {
+                Window w;
+                w.arm ({ 0 });
+                SaveHeldOpen hold;
+                expect (w.saveRunning (hold));
+                w.main.onRecordClicked();
+                expect (w.main.recordPressHeldAtMs != 0, "setup: the press was not held");
+                w.main.onLockToggled();
+                expect (w.main.statusLabel.getText().contains ("RECORD is held"), w.main.statusLabel.getText());
+                w.saveFinishes (hold);
+                expect (w.engine().isRecording(), "the held press was dropped under LOCK");
+                expect (w.main.sessionLocked.load(), "the take unlocked the window");
+                w.main.onLockToggled();
+                w.main.onStopClicked();
+                w.main.onStopClicked();
+                expect (w.stopped());
+            }
+
+            // Audit 2026-11-22 M1 + H5: converting the last strip kept the undo
+            // history, so Cmd+Z unlinked the pair; older cues kept the old pan.
+            beginTest ("Convert to Stereo clears undo and carries the cues to the pair");
+            {
+                Window w (2);
+                w.engine().addOneStrip();   // a strip with no audio yet
+                const int last = w.engine().getRecorder().getNumTracks() - 1;
+                w.main.rebaselineMixerUndo();
+                w.engine().setTrackGainDb (0, -10.0f);
+                w.main.flushMixerUndo();
+                expect (w.main.undoManager.canUndo(), "setup: no undo step");
+
+                zynforge::SetlistBar::Cue cue;
+                cue.name = "Song 1";
+                zynforge::SetlistBar::StripSnapshot left;
+                left.stripId = w.engine().getRecorder().getTrack (last).stripId;
+                left.pan = 0.0f;
+                left.inputRouting = w.engine().getRecorder().getTrack (last).inputRouting.load();
+                cue.strips.push_back (left);
+                w.main.cues = { cue };
+
+                expect (w.main.convertStripToStereo (last), w.main.statusLabel.getText());
+                expect (w.engine().getRecorder().getTrack (last).isStereo.load(), "the strip is not stereo");
+                expect (! w.main.undoManager.canUndo(), "an older undo step could unlink the pair");
+                expect (w.main.statusLabel.getText().contains ("undo history cleared"), w.main.statusLabel.getText());
+                expect (w.main.cues.size() == 1 && w.main.cues[0].strips.size() == 2, "the right half is not in the cue");
+                if (w.main.cues.size() == 1 && w.main.cues[0].strips.size() == 2)
+                {
+                    expectWithinAbsoluteError (w.main.cues[0].strips[0].pan, -1.0f, 0.001f, "the cue keeps the mono pan");
+                    expectEquals (w.main.cues[0].strips[1].stripId,
+                                  w.engine().getRecorder().getTrack (last + 1).stripId);
+                    expectWithinAbsoluteError (w.main.cues[0].strips[1].pan, 1.0f, 0.001f);
+                }
+                w.main.cues.clear();
+            }
         }
 
         static EngineStatus quietNotice()

@@ -2050,7 +2050,7 @@ namespace zynforge
         return reorderTracks (order);
     }
 
-    bool AudioEngine::reorderTracks (const std::vector<int>& order)
+    bool AudioEngine::reorderTracks (const std::vector<int>& order, int freshStrip)
     {
         reorderRefusal.clear();
         // Every refusal says why: the strip menus show it, and "check disk
@@ -2112,7 +2112,7 @@ namespace zynforge
         for (int old = 1; old < n; ++old)
         {
             const int left = destination[(size_t) old - 1], right = destination[(size_t) old];
-            if (left < 0 || right < 0 || right == left + 1) continue;
+            if (left < 0 || right < 0 || right == left + 1 || old == freshStrip) continue;
             int channel = 0;
             getTrackAudioFile (media, old, &channel);
             if (channel != 1) continue;
@@ -2976,16 +2976,22 @@ namespace zynforge
         const auto* clips = tryClipsFor (track);
         if ((clips != nullptr && ! clips->empty()) || getTrackAudioFile (track).existsAsFile())
             return "This channel already has audio, so it stays mono; add a stereo channel for the next take";
+        // The right half is made as a new last strip first. A take file already
+        // numbered for that slot would become its audio.
+        if (getActiveSessionDir().isDirectory() && takeMedia().find (n).existsAsFile())
+            return "A stray take file is numbered " + juce::String (n + 1)
+                 + ", one past the last strip; move it out of Audio Files before making a channel stereo";
         return {};
     }
 
-    bool AudioEngine::convertToStereo (int track, juce::String* why)
+    bool AudioEngine::convertToStereo (int track, juce::String* why, StereoConversion* report)
     {
         const auto fail = [why] (const juce::String& reason)
         {
             if (why != nullptr) *why = reason;
             return false;
         };
+        if (report != nullptr) *report = {};
         if (const auto refusal = stereoConversionRefusal (track); refusal.isNotEmpty())
             return fail (refusal);
 
@@ -2993,8 +2999,55 @@ namespace zynforge
         const auto name = recorder.getTrack (track).getNameThreadSafe();
         const auto colour = recorder.getTrack (track).colourARGB.load (std::memory_order_relaxed);
 
+        // Every strip's patch, read before anything moves. Inputs are explicit
+        // channels (applyPersistedStripState stores one); -1 is no input. An
+        // output below 0 is the master, and a saved soundcheck output below 0
+        // is none.
+        std::vector<int> in ((size_t) n), out ((size_t) n), saved ((size_t) n);
+        for (int t = 0; t < n; ++t)
+        {
+            const auto& s = recorder.getTrack (t);
+            const int raw = s.inputRouting.load (std::memory_order_relaxed);
+            in[(size_t) t]    = raw < -1 ? t : raw;
+            out[(size_t) t]   = s.outputRouting.load (std::memory_order_relaxed);
+            saved[(size_t) t] = s.outputBeforeVsc.load (std::memory_order_relaxed);
+        }
+        // The right half takes the channel after its left half, as a channel
+        // inserted on the desk would. Every other strip on that channel, then on
+        // the one after, and so on while the channels run on, moves one channel
+        // on to make room, wherever it sits in the strip order: a strip dragged
+        // to the front still holds its desk channel. The run stops at the first
+        // channel no strip uses, so nothing lands on a channel another strip
+        // holds; a strip past that gap keeps its patch.
+        const auto pushedRun = [n, track] (const std::vector<int>& value, int leftChannel, int& lastMoved)
+        {
+            std::vector<bool> pushed ((size_t) n, false);
+            lastMoved = -1;
+            if (leftChannel < 0) return pushed;
+            for (int channel = leftChannel + 1;; ++channel)
+            {
+                bool found = false;
+                for (int t = 0; t < n; ++t)
+                    if (t != track && ! pushed[(size_t) t] && value[(size_t) t] == channel)
+                        pushed[(size_t) t] = found = true;
+                if (! found) break;
+                lastMoved = channel;
+            }
+            return pushed;
+        };
+        StereoConversion moved;
+        const auto inRun    = pushedRun (in,    in[(size_t) track],    moved.inputsTo);
+        const auto outRun   = pushedRun (out,   out[(size_t) track],   moved.outputsTo);
+        const auto savedRun = pushedRun (saved, saved[(size_t) track], moved.savedTo);
+        if (moved.inputsTo  >= 0) moved.inputsFrom  = in[(size_t) track] + 1;
+        if (moved.outputsTo >= 0) moved.outputsFrom = out[(size_t) track] + 1;
+        if (moved.savedTo   >= 0) moved.savedFrom   = saved[(size_t) track] + 1;
+        moved.showOutputsSaved = saved[(size_t) track] != TrackState::kNoSavedOutput;
+
         // The right half is added at the end, then moved in after its left half
         // in one reorder, the transaction that renames the later strips' takes.
+        // The new strip is named in the reorder: it has no take of its own, so
+        // a stereo take on the strip it was appended after is not its right half.
         setStripCount (n + 1);
         if (recorder.getNumTracks() != n + 1)
         {
@@ -3007,18 +3060,38 @@ namespace zynforge
             for (int i = 0; i <= track; ++i) order.push_back (i);
             order.push_back (n);
             for (int i = track + 1; i < n; ++i) order.push_back (i);
-            if (! reorderTracks (order))
+            if (! reorderTracks (order, n))
             {
                 const auto reason = reorderRefusal;
                 setStripCount (n);
                 return fail (reason.isNotEmpty() ? reason : juce::String ("The strips could not move; nothing changed"));
             }
-            // A default patch is the strip's own position, and every strip after
-            // this one just moved down a place: pin each to the input it heard,
-            // so making one channel stereo repatches no other.
-            for (int t = track + 2; t <= n; ++t)
-                if (recorder.getTrack (t).inputRouting.load (std::memory_order_relaxed) < -1)
-                    setTrackInputRouting (t, t - 1);
+        }
+
+        // Old strip t is now at t, or t + 1 if it came after the converted one.
+        const int numIn  = getCurrentDeviceInputCount();
+        const int numOut = getCurrentDeviceOutputCount();
+        for (int t = 0; t < n; ++t)
+        {
+            if (t == track) continue;
+            const int now = t > track ? t + 1 : t;
+            const auto i = (size_t) t;
+            const bool inputMoved = inRun[i], outputMoved = outRun[i];
+            if (inputMoved)
+            {
+                setTrackInputRouting (now, in[i] + 1);
+                ++moved.inputsMoved;
+                if (numIn > 0 && in[i] < numIn && in[i] + 1 >= numIn) ++moved.pastLastInput;
+            }
+            if (outputMoved)
+            {
+                setTrackOutputRouting (now, out[i] + 1);
+                ++moved.outputsMoved;
+                if (numOut > 0 && out[i] < numOut && out[i] + 1 >= numOut) ++moved.pastLastOutput;
+            }
+            if (inputMoved && outputMoved) ++moved.bothMoved;
+            if (savedRun[i])
+                recorder.getTrack (now).outputBeforeVsc.store (saved[i] + 1, std::memory_order_relaxed);
         }
 
         const int right = track + 1;
@@ -3029,6 +3102,12 @@ namespace zynforge
         if (! linkStereoPair (track, true))
             return fail ("The right half was added as its own channel but could not be linked; "
                          "use Link to next channel (stereo)");
+        // The right half's output, when this device ends before it.
+        const int rightOut = recorder.getTrack (right).outputRouting.load (std::memory_order_relaxed);
+        moved.rightPastLastOutput = numOut > 0 && rightOut >= numOut;
+        moved.leftId  = recorder.getTrack (track).stripId;
+        moved.rightId = recorder.getTrack (right).stripId;
+        if (report != nullptr) *report = moved;
         return true;
     }
 

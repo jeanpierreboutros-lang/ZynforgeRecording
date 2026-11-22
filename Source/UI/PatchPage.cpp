@@ -4,6 +4,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "FloatingLaunch.h"
+#include "LeftClickOnly.h"
 
 #include <limits>
 
@@ -390,6 +391,12 @@ namespace zynforge
             void mouseDown (const juce::MouseEvent& e) override
             {
                 if (engine.areControlsLocked()) { dragActive = false; return; }
+                // A dot toggles on every press, and JUCE sends a press for each
+                // click of a double-click: the second cleared what the first
+                // patched, and a linked clear takes the strip's input AND its
+                // output. A right press asks for a menu PATCH doesn't have.
+                // Neither changes anything here.
+                if (e.getNumberOfClicks() > 1 || leftclick::isMenuPress (e)) { dragActive = false; return; }
                 const auto logical  = logicalStrips();
                 const int numStrips = (int) logical.size();
                 const int numHw     = isInput ? engine.getCurrentDeviceInputCount()
@@ -404,16 +411,18 @@ namespace zynforge
                     const int col = x / L.colW;
                     if (col < 0 || col >= numStrips) return;
                     const auto& ls = logical[(std::size_t) col];
-                    const int totalTracks = engine.getRecorder().getNumTracks();
                     dragActive = false;
                     if (refusedForTake()) return;
-                    if (! ls.stereo)
+                    // Going mono -> stereo needs a right partner. A pill that
+                    // does nothing says why, as the MIXER's link does.
+                    if (const auto why = PatchPage::linkRefusal (engine, ls.trackIndex, ls.stereo); why.isNotEmpty())
                     {
-                        // Going mono → stereo. Need a right partner.
-                        if (ls.trackIndex + 1 >= totalTracks) return;
-                        if (engine.getRecorder().getTrack (ls.trackIndex + 1).isStereo.load()) return;
+                        engine.getRemotes().showHostStatus (why);
+                        return;
                     }
-                    if (engine.linkStereoPair (ls.trackIndex, ! ls.stereo) && ! ls.stereo)
+                    if (! engine.linkStereoPair (ls.trackIndex, ! ls.stereo))
+                        engine.getRemotes().showHostStatus (PatchPage::linkRefusedByEngine());
+                    else if (! ls.stereo)
                     {
                         const auto wrapped = engine.pairWrapNotice (ls.trackIndex);
                         if (wrapped.isNotEmpty()) engine.getRemotes().showHostStatus (wrapped);
@@ -700,6 +709,17 @@ namespace zynforge
                     break;
                 }
         return rows;
+    }
+
+    juce::String PatchPage::linkRefusal (AudioEngine& engine, int firstTrack, bool stereo)
+    {
+        if (stereo) return {};
+        auto& rec = engine.getRecorder();
+        if (firstTrack < 0 || firstTrack >= rec.getNumTracks()) return "That channel no longer exists";
+        if (firstTrack + 1 >= rec.getNumTracks())
+            return "The last channel has no neighbour to link with -- right-click its MIXER strip for Convert to Stereo";
+        if (rec.getTrack (firstTrack + 1).isStereo.load()) return "Unlink the neighbouring stereo pair first";
+        return {};
     }
 
     int PatchPage::offDeviceOutput (AudioEngine& engine, int firstTrack, bool stereo)

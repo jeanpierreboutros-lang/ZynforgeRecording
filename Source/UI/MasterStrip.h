@@ -5,6 +5,7 @@
 #include "../Audio/AudioEngine.h"
 #include "FineFader.h"
 #include "LedMeter.h"
+#include "LeftClickOnly.h"
 
 #include <memory>
 #include <utility>
@@ -39,8 +40,10 @@ namespace zynforge
         juce::Label      gainLabel;
         juce::ComboBox   outputCombo;
         juce::Label      heldLabel;       // shown while the mix is held off its pair
-        juce::ToggleButton modeButton { "ST" };   // toggles between MONO and STEREO
-        juce::ToggleButton muteButton { "MUTE" };
+        // The master has no menu, so a right-click on it does nothing: it muted
+        // the PA or flipped the mode, and right-dragged the fader.
+        LeftClickOnly<juce::ToggleButton> modeButton { "ST" };   // toggles between MONO and STEREO
+        LeftClickOnly<juce::ToggleButton> muteButton { "MUTE" };
         FineFader        fader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
         LedMeter         meter;
         int lastNumOutputs { -1 };

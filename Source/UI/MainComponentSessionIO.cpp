@@ -2619,11 +2619,19 @@ void MainComponent::onLoadSessionClicked()
                      | juce::FileBrowserComponent::canSelectDirectories;
 
     juce::Component::SafePointer<MainComponent> self (this);
-    chooser->launchAsync (flags, [self, this] (const juce::FileChooser& fc)
+    chooser->launchAsync (flags, [self, this, scope = questionScope()] (const juce::FileChooser& fc)
     {
         if (self == nullptr) return;
         const auto dir = fc.getResult();
-        if (dir.isDirectory()) completeOpenFolder (dir);
+        if (! dir.isDirectory()) return;
+        // Replacing was confirmed for the session open when the panel opened,
+        // not for one a Finder open put there behind it (audit 2026-11-22, L5).
+        if (! stillInScope (scope))
+        {
+            showStatus ("Another session opened while the Open panel was up -- choose File > Open again");
+            return;
+        }
+        completeOpenFolder (dir);
     });
 }
 

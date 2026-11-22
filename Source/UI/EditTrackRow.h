@@ -19,6 +19,7 @@
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
 #include "LedMeter.h"
+#include "LeftClickOnly.h"
 #include "StripColourPicker.h"
 #include "RenameLabel.h"
 
@@ -88,6 +89,12 @@ namespace zynforge
         static constexpr int kRowButtonH  = 26;  // I / R / S / M row, at the default row height
         static constexpr int kMinRowH     = 20;
         static constexpr int kMaxRowH     = 800;
+        // A press that moves less than this is a click: it selects and edits
+        // nothing. mouseDrag starts a clip move / trim / fade / gain / crossfade
+        // or a Selector range only once the pointer has gone this far, and
+        // mouseUp calls the gesture a click only if it never did. One number for
+        // both: at fit zoom on a long show 1 px is seconds of audio.
+        static constexpr int kClickSlopPx = 5;
 
         // Callback fired by the right-click menu so the owning TrackList
         // can recompute layout (and resolve "fit to window").
@@ -174,6 +181,9 @@ namespace zynforge
         int draggingXfadeAIdx { -1 };
         int draggingXfadeBIdx { -1 };
         int dragStartX          {  0 };
+        // The pointer has left kClickSlopPx since the press: the gesture is a
+        // drag from here on, even if it comes back to where it started.
+        bool pastClickSlop      { false };
         juce::int64 lastDragSamples { 0 };
         juce::int64 dragStartFadeIn  { 0 };
         juce::int64 dragStartFadeOut { 0 };
@@ -803,13 +813,15 @@ namespace zynforge
         // `existingFrac` of the lane (the take's share of the timeline). For a
         // CONTINUE that's [0, takeEnd); for a PUNCH it's the WHOLE take (the
         // capture is overlaid in the middle, not appended). The caller computes
-        // existingFrac from the timeline so it's right in both cases.
+        // existingFrac from the timeline so it's right in both cases. A held take
+        // drawn under a clip cropped shorter than the take passes more than 1:
+        // the take runs past the lane, and the clip's block clips it.
         void drawContinueExisting (juce::Graphics& g, juce::Rectangle<int> area,
                                    juce::AudioThumbnail& thumb, bool wholeFile, int chan, float zoom,
                                    double existingFrac)
         {
             if (existingFrac <= 0.0 || thumb.getTotalLength() <= 0.0) return;
-            auto existing = area.withWidth ((int) (area.getWidth() * juce::jlimit (0.0, 1.0, existingFrac)));
+            auto existing = area.withWidth ((int) (area.getWidth() * existingFrac));
             if (existing.getWidth() <= 0) return;
             g.setColour (brand::clipWave (getStripColour()).withAlpha (brand::alpha::muted));   // existing take = dim context
             drawThumbnailVisible (g, thumb, existing, 0.0, thumb.getTotalLength(), wholeFile ? -1 : chan, zoom);
@@ -1229,10 +1241,24 @@ namespace zynforge
             // has clip blocks. A CONTINUE records onto a take whose existing
             // audio is a seeded clip (so haveClipBlocks is true), and we must
             // still show the NEW audio building live instead of only the static
-            // clips. The clip-block renderer below is suppressed while showLive
-            // for the same reason, then takes over on stop once the file scans.
-            if (! haveClipBlocks || showLive)
+            // clips. The clip-block renderer below is suppressed while capturing
+            // for the same reason.
+            // Once STOP has settled the row is editable again, and a press hits
+            // clipHitOrder / topClipAt / the crossfade handles while the rescan
+            // runs -- on a long take, minutes. So the clips take the lane back at
+            // once, over the held envelope: blocks, names, selection, fades and
+            // handles draw as usual, and each clip draws the stretch of envelope
+            // it plays, where it plays it, so an edit made before the scan ends
+            // is seen as it lands. Only the per-clip file waveform waits for the
+            // scan (the hold and its release are unchanged).
+            const bool heldUnderClips = liveHold && ! liveRecording && haveClipBlocks
+                                     && ! engine.isCaptureFinalizing();
+            // The live lanes: the envelope across `liveShare` of the lane, the
+            // existing take dim across `existingShare` of it.
+            auto drawContinuous = [&] (double liveShare, double existingShare)
             {
+            const auto confine = [liveShare] (juce::Rectangle<int> a)
+            { return a.withWidth (juce::jmax (1, (int) (a.getWidth() * liveShare))); };
             if (stereo)
             {
                 // L on top, R on bottom -- Pro-Tools-style stereo lanes.
@@ -1257,15 +1283,15 @@ namespace zynforge
                     // A take seeded from the held one draws that take itself.
                     if (! seededFromHold())
                     {
-                        drawContinueExisting (g, laneL, thumbnailL, ! stereoOneFile, 0, waveZoom (thumbnailL), existingFrac);
-                        drawContinueExisting (g, laneR, rightThumb(), ! stereoOneFile, 1, waveZoom (rightThumb()), existingFrac);
+                        drawContinueExisting (g, laneL, thumbnailL, ! stereoOneFile, 0, waveZoom (thumbnailL), existingShare);
+                        drawContinueExisting (g, laneR, rightThumb(), ! stereoOneFile, 1, waveZoom (rightThumb()), existingShare);
                     }
                     // Live capture glows hot (recording NOW); the post-stop hold dims
                     // to the channel colour so it matches the clean thumbnail that
                     // replaces it (no flash of orange barcode on stop).
                     const auto liveColour = liveRecording ? brand::meterHot : waveColour;
-                    drawLiveEnvelope (g, confineLive (laneL), recPeakL, vz, liveColour);
-                    drawLiveEnvelope (g, confineLive (laneR), recPeakR, vz, liveColour);
+                    drawLiveEnvelope (g, confine (laneL), recPeakL, vz, liveColour);
+                    drawLiveEnvelope (g, confine (laneR), recPeakR, vz, liveColour);
                 }
                 // Thin divider between lanes
                 g.setColour (brand::edge);
@@ -1282,26 +1308,66 @@ namespace zynforge
                 // growing capture. After stop it dims to ember and holds until
                 // the real thumbnail finishes scanning (no blank gap).
                 if (! seededFromHold())
-                    drawContinueExisting (g, inner, thumbnailL, false, monoFileChannel, waveZoom (thumbnailL), existingFrac);
+                    drawContinueExisting (g, inner, thumbnailL, false, monoFileChannel, waveZoom (thumbnailL), existingShare);
                 // Live capture glows hot (recording NOW); the post-stop hold dims
                 // to the channel colour so it matches the clean thumbnail that
                 // replaces it (no flash of orange barcode on stop).
-                drawLiveEnvelope (g, confineLive (inner), recPeakL, vz, liveRecording ? brand::meterHot : waveColour);
+                drawLiveEnvelope (g, confine (inner), recPeakL, vz, liveRecording ? brand::meterHot : waveColour);
             }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
                 drawWaveOutlined (thumbnailL, inner, false, monoFileChannel,
                                   0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
-            }   // end "! haveClipBlocks" continuous-waveform fallback
+            };   // end drawContinuous
+
+            if (heldUnderClips)
+            {
+                // The envelope and the dim take are in TAKE time: sample s of the
+                // file at lane x = inner.x + s * W / total. Draw them at the scale
+                // the clip blocks use, once per clip, clipped to the block and slid
+                // by the clip's (timeline start - file start), so a moved, trimmed
+                // or deleted clip moves, trims or drops its part of the take.
+                const juce::int64 laneTotal = juce::jmax<juce::int64> (1, laneTimelineSamples());
+                const auto lane = TimelineMapper::forLane (inner, laneTotal);
+                const double pxPerSample = (double) inner.getWidth() / (double) laneTotal;
+                const double srH = engine.getPlayer().getSampleRate() > 0.0
+                                     ? engine.getPlayer().getSampleRate() : 48000.0;
+                // A clip cropped far shorter than the take puts the take well past
+                // the lane; keep the pixel arithmetic inside an int.
+                constexpr double kMaxPx = 1.0e9;
+                const double maxShare  = kMaxPx / (double) juce::jmax (1, inner.getWidth());
+                const double heldShare = juce::jmin (maxShare, (double) liveRecSamples / (double) laneTotal);
+                const double takeShare = juce::jmin (maxShare, thumbnailL.getTotalLength() * srH / (double) laneTotal);
+                for (const auto& c : *clipsForWave)
+                {
+                    // A clip that plays another file holds none of this take
+                    // (laneWaveFor's test).
+                    if (c.audioFile != juce::File() && c.audioFile != currentFileL)
+                        continue;
+                    const int xL = lane.toXFloor (c.timelineStartSamples);
+                    const int xR = lane.toXFloor (c.timelineStartSamples + c.fileLengthSamples);
+                    if (xR <= xL) continue;
+                    juce::Graphics::ScopedSaveState ss (g);
+                    g.reduceClipRegion (juce::Rectangle<int> (xL, inner.getY(), xR - xL, inner.getHeight()));
+                    g.setOrigin (juce::roundToInt (juce::jlimit (-kMaxPx, kMaxPx,
+                        (double) (c.timelineStartSamples - c.fileStartSamples) * pxPerSample)), 0);
+                    drawContinuous (heldShare, takeShare);
+                }
+            }
+            else if (! haveClipBlocks || showLive)
+                drawContinuous (liveFrac, existingFrac);
 
             // ─── Clip region blocks (waveform mode) ─────────────────
             // After Edit ▸ Split / Separate, the track grows a clip list.
             // Paint each clip boundary as a 1 px vertical cut + a small
             // ⌐ marker at the top of the lane so the engineer can see
-            // where the split landed. Skipped while showLive -- the live
+            // where the split landed. Skipped while capturing -- the live
             // capture envelope above owns the lane during a take (incl. a
             // CONTINUE), so the static clips don't paint over the growing
-            // forge-orange waveform.
-            if (auto* clips = showLive ? nullptr : engine.tryClipsFor (index))
+            // forge-orange waveform -- and while a held row's STOP still
+            // finalizes (the timeline is locked then). A held row that has
+            // settled draws them over its envelope (heldUnderClips): what a
+            // press can hit is on screen.
+            if (auto* clips = (! showLive || heldUnderClips) ? engine.tryClipsFor (index) : nullptr)
             {
                 const auto& player = engine.getPlayer();
                 // The lanes' own span: during a take it is the recording's, and
@@ -1350,6 +1416,9 @@ namespace zynforge
                         // mapped to the clip's file region -- so a moved / slip-
                         // trimmed clip shows the audio it actually references,
                         // not whatever a continuous full-lane thumbnail would.
+                        // A held row draws its envelope here instead (above),
+                        // until the scan this waveform needs has finished.
+                        if (! showLive)
                         {
                             auto waveArea = block.withTrimmedTop (headH).reduced (1, 1);
                             const auto waveL = laneWaveFor (c, false);
@@ -1972,6 +2041,8 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            pastClickSlop = false;   // every press starts as a click
+
             // JUCE delivers mouse events to a disabled component, and a session
             // job holds the page disabled until the host's next tick locks it.
             if (! isEnabled()) return;
@@ -2381,6 +2452,20 @@ namespace zynforge
                 ! isEnabled() || (page != nullptr && page->isTimelineReadOnly()))
                 return;
 
+            // A clip or range gesture edits nothing until the pointer leaves the
+            // click slop. JUCE calls mouseDrag on the first pixel of movement,
+            // and at fit zoom on a 3-hour show that pixel is seconds: a click
+            // meant to select a clip slid it (with its stereo half and group
+            // peers), trimmed it near an edge, or turned a playhead click into
+            // a range. Past the slop every edit below still measures from the
+            // press point, so the clip does not jump when it starts to follow.
+            if (! pastClickSlop && e.getDistanceFromDragStart() >= kClickSlopPx)
+                pastClickSlop = true;
+            if (! pastClickSlop
+                && (draggingClipIdx >= 0 || draggingXfadeAIdx >= 0
+                    || draggingClipMode == ClipDrag::SelectRange))
+                return;
+
             // Crossfade midpoint drag. Convert the mouse x to a
             // sample position, then set both adjacent clips' fades
             // so the equal-power crossfade point lands there.
@@ -2639,7 +2724,10 @@ namespace zynforge
             // selection click. Capture the clip + whether the mouse moved
             // before the resets below wipe draggingClipIdx.
             const int  clickedClipIdx = draggingClipIdx;
-            const bool wasClick       = (e.getDistanceFromDragStart() < 5);
+            // The same slop mouseDrag waits for: a press that never left it
+            // edited nothing, so it is a click.
+            const bool wasClick       = ! pastClickSlop && e.getDistanceFromDragStart() < kClickSlopPx;
+            pastClickSlop    = false;
             dragging         = false;
             resizeAllDrag    = false;
             draggingClipIdx  = -1;
@@ -3019,6 +3107,49 @@ namespace zynforge
             // Each peer keeps its own fade on the edge this item doesn't set.
             const bool setsIn  = chosen < 200 || chosen == 300;
             const bool setsOut = chosen >= 200;
+
+            // setClipFades refuses a fade that overruns its clip, so a preset
+            // longer than the room the clip's other fade leaves did nothing,
+            // silently, and on peers whose other fades differ it landed on some
+            // and not the rest. Shorten it to what fits the tightest peer, give
+            // every peer that same length, and say so. A locked peer refuses the
+            // item whole, as it does Duplicate and Delete.
+            const auto say = [this] (const juce::String& text)
+            {
+                if (auto* page = findParentComponentOfClass<EditPage>(); page != nullptr && page->onStatus)
+                    page->onStatus (text);
+            };
+            if (clipedit::anyLocked (engine, targets))
+            {
+                say ("A peer of this clip is locked -- unlock it first");
+                return;
+            }
+            if (setsIn != setsOut)
+            {
+                juce::int64 room = std::numeric_limits<juce::int64>::max();
+                for (auto [p, pi] : targets)
+                    if (const auto* pc = clipOn (p, pi))
+                        room = juce::jmin (room, pc->fileLengthSamples - (setsIn ? pc->fadeOutSamples
+                                                                                 : pc->fadeInSamples));
+                room = juce::jmax<juce::int64> (0, room);
+                auto& wanted = setsIn ? newIn : newOut;
+                const juce::String edgeName     = setsIn ? "in"  : "out";
+                const juce::String oppositeName = setsIn ? "out" : "in";
+                if (wanted > room && room <= 0)
+                {
+                    say ("No room for a fade " + edgeName + " -- the clip's fade " + oppositeName + " fills it");
+                    return;
+                }
+                if (wanted > room)
+                {
+                    wanted = room;
+                    const double sr = engine.getPlayer().getSampleRate() > 0.0
+                                        ? engine.getPlayer().getSampleRate() : 48000.0;
+                    say ("Fade " + edgeName + " shortened to "
+                         + juce::String (juce::roundToInt ((double) room * 1000.0 / sr))
+                         + " ms to fit the clip's fade " + oppositeName);
+                }
+            }
             withUndo ("Clip fades", [&]
             {
                 for (auto [p, pi] : targets)
@@ -3426,10 +3557,12 @@ namespace zynforge
         // Same single-letter glyphs as the mixer strips: R / I / M / S.
         // LookAndFeel::drawToggleButton paints the pill in the colour
         // pinned via ToggleButton::tickColourId when toggled on.
-        juce::ToggleButton        armButton  { "R" };
-        juce::ToggleButton        monButton  { "I" };
-        juce::ToggleButton        muteButton { "M" };
-        juce::ToggleButton        soloButton { "S" };
+        // A right-click on the header is the row menu; it must not also arm,
+        // monitor, mute or solo (LeftClickOnly.h, audit 2026-11-22).
+        LeftClickOnly<juce::ToggleButton> armButton  { "R" };
+        LeftClickOnly<juce::ToggleButton> monButton  { "I" };
+        LeftClickOnly<juce::ToggleButton> muteButton { "M" };
+        LeftClickOnly<juce::ToggleButton> soloButton { "S" };
         juce::ComboBox            inputCombo;
         juce::ComboBox            outputCombo;
         LedMeter                  meter;

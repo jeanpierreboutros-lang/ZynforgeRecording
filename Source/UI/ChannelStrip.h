@@ -5,6 +5,7 @@
 #include "../Audio/TrackState.h"
 #include "FineFader.h"
 #include "LedMeter.h"
+#include "LeftClickOnly.h"
 #include "RenameLabel.h"
 #include "RoutingCombo.h"
 #include "StripAlarm.h"
@@ -17,6 +18,7 @@ namespace zynforge
     class MixerFixTests;
     class UiFixTests;
     class Design20261117StripTests;
+    class Fix20261122StripTests;
 
     class ChannelStrip final : public juce::Component
     {
@@ -146,6 +148,7 @@ namespace zynforge
         friend class zynforge::MixerFixTests;
         friend class zynforge::UiFixTests;
         friend class zynforge::Design20261117StripTests;
+        friend class zynforge::Fix20261122StripTests;
         // The header plate: id row (number + chip) over the name row.
         static constexpr int kIdRowH   = 12;
         static constexpr int kNameRowH = 22;
@@ -213,18 +216,20 @@ namespace zynforge
         RoutingCombo  inputCombo;
         RoutingCombo  outputCombo;
         // Single-letter glyphs match the reference: R = record arm,
-        // I = input monitor, M = mute, S = solo.
-        juce::ToggleButton armButton   { "R" };
-        juce::ToggleButton monButton   { "I" };
-        juce::ToggleButton muteButton  { "M" };
-        juce::ToggleButton soloButton  { "S" };
+        // I = input monitor, M = mute, S = solo. A right-click on one opens the
+        // strip's menu and presses nothing (LeftClickOnly).
+        LeftClickOnly<juce::ToggleButton> armButton   { "R" };
+        LeftClickOnly<juce::ToggleButton> monButton   { "I" };
+        LeftClickOnly<juce::ToggleButton> muteButton  { "M" };
+        LeftClickOnly<juce::ToggleButton> soloButton  { "S" };
         juce::Label   dbLabel;
         juce::Label   faderValue;
         juce::Label   clipLabel;
         // Mono: panSlider + panLabel ('pan  <  0  >'). Stereo: two
         // knobs panSlider/panSliderR, two compact labels ('<  100  >').
-        juce::Slider  panSlider;
-        juce::Slider  panSliderR;
+        // A right press or right double-click never turns them (LeftClickOnly).
+        LeftClickOnly<juce::Slider> panSlider;
+        LeftClickOnly<juce::Slider> panSliderR;
         juce::Label   panLabel;
         juce::Label   panLabelR;
         FineFader     gainFader;   // fixed 0.5 dB/notch wheel (Shift = 0.1)

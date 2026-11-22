@@ -555,7 +555,15 @@ namespace zynforge
         if (closeFailed->load()) { error = kFinalWriteFailed; return false; }
 
         if (convertOnCommit)
-            return exporter.exportTrack (temporary, destWithoutExt, options, error, cancel);
+        {
+            // The float sibling cannot clip; the converted file can. write()
+            // measured before the conversion, and a rate change moves the
+            // peaks, so the exporter's pass over the converted audio counts too.
+            const int clippedBefore = exporter.getClippedFiles();
+            const bool converted = exporter.exportTrack (temporary, destWithoutExt, options, error, cancel);
+            clipped = clipped || exporter.getClippedFiles() > clippedBefore;
+            return converted;
+        }
         const auto finalFile = destWithoutExt.withFileExtension (TrackExporter::extensionFor (options.format));
         return installCompletedExport (temporary, finalFile, error);
     }

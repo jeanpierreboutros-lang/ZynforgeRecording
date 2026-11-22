@@ -20,6 +20,7 @@
 #include "NewSessionDialog.h"
 #include "Meterbridge.h"
 #include "RecordPosition.h"
+#include "StereoConvertCues.h"
 #include "../Audio/ChannelCsv.h"
 #include "../Audio/TrackOrder.h"
 
@@ -869,10 +870,26 @@ bool MainComponent::convertStripToStereo (int track)
     // The strips are rebuilt anyway; nothing may sample a TrackState while the
     // recorder grows, moves the strips and (on a refusal) shrinks again.
     condemnAllStrips();
-    const bool ok = engine.convertToStereo (track, &why);
+    zynforge::AudioEngine::StereoConversion moved;
+    const bool ok = engine.convertToStereo (track, &why, &moved);
     lastTrackCount = -1;
     if (! ok) { showStatus (why); return false; }
-    rebaselineMixerUndo();   // the strip count changed: not a mixer undo step
+
+    // Undo cannot take a conversion back, and an older mixer step restores the
+    // strip as it was before it: Cmd+Z would unlink the pair and leave a stray
+    // "<name> R" strip. So the history goes, on every path (a middle strip's
+    // reorder already empties it), and the status line says so.
+    const bool hadUndo = undoManager.canUndo() || undoManager.canRedo();
+    undoManager.clearUndoHistory();
+    clipClipboard = juce::var();
+    rebaselineMixerUndo();
+
+    // Cues saved before it move the same way, so a recall can't undo the room
+    // it made, then the session saves at once: reorderTracks wrote only the
+    // half-made layout to session_mix.json.
+    zynforge::stereoconvert::carryCues (cues, moved);
+    setlistBar.setCues (cues, currentCueIndex);
+    if (engine.getActiveSessionDir().isDirectory()) saveCueChanges ({});
 
     const int numInputs = engine.getCurrentDeviceInputCount();
     auto& rec = engine.getRecorder();
@@ -881,9 +898,29 @@ bool MainComponent::convertStripToStereo (int track)
     const auto inputs = inL < 0 ? juce::String ("no input")
                       : inR == inL + 1 ? "In " + juce::String (inL + 1) + "-" + juce::String (inR + 1)
                       : "In " + juce::String (inL + 1) + " + In " + juce::String (inR + 1);
+    auto message = "Strip " + juce::String (track + 1) + " is now stereo (" + inputs + ")";
+    // Say what moved to make room, so a repatch is never a surprise. "Input
+    // and output" only when the same strips moved both.
+    const bool sameStrips = moved.inputsMoved == moved.outputsMoved && moved.bothMoved == moved.inputsMoved;
+    if (moved.inputsMoved > 0 && sameStrips)
+        message << "; " << zynforge::counted (moved.inputsMoved, "strip") << " moved one input and output on";
+    else
+    {
+        if (moved.inputsMoved > 0)
+            message << "; " << zynforge::counted (moved.inputsMoved, "strip") << " moved one input on";
+        if (moved.outputsMoved > 0)
+            message << "; " << zynforge::counted (moved.outputsMoved, "strip") << " moved one output on";
+    }
+    if (moved.pastLastInput > 0)
+        message << "; " << zynforge::counted (moved.pastLastInput, "strip") << " now past this device's last input";
+    if (moved.pastLastOutput > 0)
+        message << "; " << zynforge::counted (moved.pastLastOutput, "strip") << " now past this device's last output";
+    if (moved.rightPastLastOutput)
+        message << "; the right half's output is past this device's last output";
     const auto wrapped = engine.pairWrapNotice (track);
-    showStatus (wrapped.isNotEmpty() ? wrapped
-                : "Strip " + juce::String (track + 1) + " is now stereo (" + inputs + ")");
+    if (wrapped.isNotEmpty()) message << "; " << wrapped;
+    if (hadUndo) message << "; undo history cleared";
+    showStatus (message);
     return true;
 }
 

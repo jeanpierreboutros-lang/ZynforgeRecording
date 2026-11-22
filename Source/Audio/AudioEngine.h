@@ -427,14 +427,38 @@ namespace zynforge
         // empty when it can (convertToStereo). Reads the session's take listing,
         // never during a take.
         juce::String stereoConversionRefusal (int track);
+        // What a conversion moved to make room: for the status line, and so the
+        // host can move the cues' saved patches the same way. A range is the
+        // OLD channels that each moved one on (-1, -1 = none).
+        struct StereoConversion
+        {
+            int inputsMoved    = 0;   // strips moved one input on
+            int outputsMoved   = 0;   // strips moved one output on
+            int bothMoved      = 0;   // of those, strips that moved both
+            int pastLastInput  = 0;   // strips this move took past this device's last input
+            int pastLastOutput = 0;   // ... or output
+            bool rightPastLastOutput = false;   // the right half's output is past it
+            int inputsFrom  = -1, inputsTo  = -1;
+            int outputsFrom = -1, outputsTo = -1;
+            int savedFrom   = -1, savedTo   = -1;   // saved soundcheck (show) outputs
+            // True when the left strip has a saved soundcheck output: then a
+            // strip's show output is the saved one (vsc::showOutput).
+            bool showOutputsSaved = false;
+            juce::String leftId, rightId;           // the pair's strip ids
+        };
         // Turns mono strip `track` into a stereo strip without taking the next
         // strip: a right half is inserted straight after it (one reorderTracks
         // call when it is not the last strip), named "<name> R", then linked.
-        // The strip keeps its name, settings and number; the strips after it
-        // keep the input they hear. False with `why` set when refused, and then
-        // nothing has changed. A strip with audio stays mono: RECORD refuses a
-        // mono take under a stereo strip.
-        bool  convertToStereo (int track, juce::String* why = nullptr);
+        // The strip keeps its name, settings and number, and every strip keeps
+        // its takes. The right half takes the input after the left; every other
+        // strip on the inputs that run on from there, wherever it sits in the
+        // strip order, moves one input on, up to the first input no strip uses,
+        // and outputs (and saved soundcheck outputs) the same way, so nothing
+        // shares a channel it didn't before. A strip past that gap keeps its
+        // patch. False with `why` set when refused, and then nothing has
+        // changed. A strip with audio stays mono: RECORD refuses a mono take
+        // under a stereo strip. Cues are the host's: see StereoConversion.
+        bool  convertToStereo (int track, juce::String* why = nullptr, StereoConversion* report = nullptr);
         // Non-empty when a linked pair's R isn't the input after its L here,
         // because this device ends before it.
         juce::String pairWrapNotice (int leftIndex);
@@ -493,7 +517,10 @@ namespace zynforge
         // same TrackState references -- only their contents swap -- so
         // strips don't dangle. Returns true on success.
         bool swapTracks (int a, int b);
-        bool reorderTracks (const std::vector<int>& order);
+        // `freshStrip`: an old index just appended with no take (Convert to
+        // Stereo's right half). It never counts as the right half of the stereo
+        // take on the strip before it, which it only sits after for a moment.
+        bool reorderTracks (const std::vector<int>& order, int freshStrip = -1);
         // Why the last reorder was refused or failed, for the engineer. Every
         // refusal sets it.
         juce::String getReorderRefusal() const { return reorderRefusal; }

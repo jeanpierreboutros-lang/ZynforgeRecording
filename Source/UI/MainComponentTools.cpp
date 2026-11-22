@@ -717,6 +717,22 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
             ? "!! CAPTURE DAEMON UNAVAILABLE MID-TAKE -- may still be recording. Reconnect and verify before touching storage."
             : "Capture daemon connection lost or process exited.");
     };
+    // A daemon of another build kept at attach (rolling, or too busy to show
+    // it was idle) is swapped for this build's by the supervisor's tick, never
+    // under a take this window has in hand.
+    captureSupervisor.mayReplaceOtherBuild = [this]
+    {
+        return ! engine.isRecording() && ! engine.isCaptureFinalizing() && ! captureMetadataPending
+            && pendingMetadataSaves == 0 && daemonStartUnansweredMs == 0 && ! daemonLinkLost;
+    };
+    captureSupervisor.onOtherBuildReplaced = [this] (bool started)
+    {
+        daemonTakeAdopted = false;
+        showStatus (started
+            ? "Capture daemon from another build of this app replaced -- RECORD now runs in this build's daemon."
+            : "The capture daemon from another build of this app quit, but this build's could not be started ("
+                  + captureSupervisor.lastConnectError + "). RECORD tries again.");
+    };
 
     if (! captureSupervisor.connectOrLaunch (captureDaemonPort))
     {
@@ -743,8 +759,14 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
         // Kept because it is rolling (connectOrLaunch replaces only an idle one).
         if (captureSupervisor.helperIsOtherBuild())
             showStatus ("REATTACHED to a take rolling in a capture daemon from another build of this app -- "
-                        "STOP closes it normally. Reopen the app after it to use this build's daemon.");
+                        "STOP closes it normally. This build's daemon takes over once it is idle.");
     }
+    // Kept because it could not be shown to be idle: it sent no status (one
+    // closing a take sends none until it is done), or it did not answer Quit.
+    // Named here, refused for RECORD, and replaced once it is idle.
+    else if (captureSupervisor.keepsOtherBuild())
+        showStatus ("A capture daemon from another build of this app is still busy -- it is replaced with this "
+                    "build's as soon as it is idle. RECORD waits until then.");
     else
         showStatus (captureSupervisor.didReplaceOtherBuild()
             ? "Capture daemon from another build of this app replaced -- RECORD now runs out-of-process."

@@ -37,6 +37,12 @@ namespace zynforge
         // What a patch click says while a take records or saves: the engine
         // refuses it, and a click that does nothing looks broken mid-show.
         static juce::String lockedForTake() { return "Patch is locked while a take records -- change it after STOP"; }
+        // Why the stereo pill can't link this strip to the next, or empty when it
+        // can (unlinking a pair always can). Said on the status line, in the
+        // MIXER's words, instead of a pill that silently does nothing.
+        static juce::String linkRefusal (AudioEngine& engine, int firstTrack, bool stereo);
+        // linkStereoPair refused (a take or its save): the MIXER's words too.
+        static juce::String linkRefusedByEngine() { return "Stop recording before linking or unlinking a stereo pair"; }
 
         // Column and row of every strip a drag lays down, from where it began.
         // A pair takes two rows, so the strip after it starts two rows on and

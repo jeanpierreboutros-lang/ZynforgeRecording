@@ -149,6 +149,9 @@ namespace zynforge::capture
         CallbackWatchdog    callbackWatchdog;              // under commandLock
         double              lastDiskHealthUpdateMs { 0.0 }; // under commandLock
         identity::TakeClaim takeClaim;                      // under commandLock
+        // START refuses when the claim can't be held after these tries.
+        static constexpr int kTakeClaimTries   = 4;
+        static constexpr int kTakeClaimRetryMs = 50;
         mutable std::mutex  deviceNameLock;   // JUCE owns the setup; the status thread may not read it
         juce::String        deviceName;       // set while a device runs
         juce::String        appliedDeviceState; // message thread: the setup the last configure opened

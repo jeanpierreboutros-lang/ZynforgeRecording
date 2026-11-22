@@ -34,7 +34,7 @@ namespace zynforge
         struct Parsed
         {
             Command command { Command::None };
-            int     value   { 0 };   // MarkerGoto: the 1-based marker number
+            int     value   { 0 };   // MarkerGoto: the 1-based marker number; 0: the address alone
         };
 
         struct AddressEntry { const char* address; Command command; };
@@ -53,7 +53,10 @@ namespace zynforge
         // A desk key can send on press and on release, so integer 0 is the
         // release and means nothing. Only the exact addresses above, with no
         // argument or one integer, are commands: None otherwise. No pattern
-        // matching, so a wildcard address can't reach any of them.
+        // matching, so a wildcard address can't reach any of them. The address
+        // alone comes back with value 0, which no integer message can carry
+        // (isValueless): the listener refuses a valueless STOP and pairs the
+        // rest (ValuelessPairs).
         inline Parsed parse (const juce::OSCMessage& m)
         {
             const auto path = m.getAddressPattern().toString();
@@ -66,6 +69,12 @@ namespace zynforge
             if (m.size() == 1 && value == 0) return {};
             if (command == Command::MarkerGoto && value < 1) return {};
             return { command, value };
+        }
+
+        // The address alone: nothing in it says press or release.
+        inline bool isValueless (const Parsed& p) noexcept
+        {
+            return p.command != Command::None && p.value == 0;
         }
 
         using oscwire::normaliseSourceIp;
@@ -88,6 +97,39 @@ namespace zynforge
 
         private:
             struct Slot { double lastMs { 0.0 }; int value { 0 }; bool seen { false }; };
+            std::array<Slot, (size_t) Command::Count> slots;
+        };
+
+        // A key set to send the address alone sends the same packet on press
+        // AND on release, and nothing in it says which is which. Held past the
+        // debounce window, the release was a second command: a second marker,
+        // a second jump, a second STOP tap. So a valueless message is a press,
+        // and the next valueless one for the same command inside this window is
+        // its release and does nothing. A key held longer than the window acts
+        // again on release; a desk that sends the address only on press loses
+        // a second press inside the window (send 1 on press and every press
+        // counts). STOP is never guessed at: a valueless STOP is refused, as on
+        // the Generic OSC port. The window is the two-tap STOP's.
+        inline constexpr double kValuelessPairMs = 2000.0;
+
+        class ValuelessPairs
+        {
+        public:
+            // True when this valueless message is the release of the press
+            // before it. Either way the next one is a press again.
+            bool isRelease (Command c, double nowMs)
+            {
+                auto& slot = slots[(size_t) c];
+                const bool release = slot.awaiting && nowMs - slot.pressMs < kValuelessPairMs;
+                slot.awaiting = false;
+                return release;
+            }
+            void pressed (Command c, double nowMs) { slots[(size_t) c] = { nowMs, true }; }
+            // This key sends values after all: its next valueless message is a press.
+            void forget (Command c) { slots[(size_t) c] = {}; }
+
+        private:
+            struct Slot { double pressMs { 0.0 }; bool awaiting { false }; };
             std::array<Slot, (size_t) Command::Count> slots;
         };
     }
@@ -121,10 +163,13 @@ namespace zynforge
         void handle (const juce::OSCMessage&, double nowMs);
         void perform (const deskmacro::Parsed&);
         void report (const juce::String& message);
+        void refuseValuelessStop (double nowMs);
         void locateToIndex (int index, const juce::String& refusalIfMissing);
 
         AudioEngine&        engine;
         deskmacro::Debouncer debouncer;
+        deskmacro::ValuelessPairs valueless;
+        double              lastValuelessStopNoticeMs { -1.0e9 };
         bool                listening { false };
         int                 port { deskmacro::kDefaultPort };
         juce::String        source;

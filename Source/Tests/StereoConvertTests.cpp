@@ -1,7 +1,8 @@
 // Right-click > Convert to Stereo (2026-11-22): a mono strip becomes a stereo
 // strip in place. A right half is inserted straight after it, so the next
-// strip keeps its channel (Link to next channel takes it), and the strips after
-// keep their takes and the input they hear. A strip with audio stays mono.
+// strip keeps its channel (Link to next channel takes it) and its takes; the
+// later strips on the inputs and outputs after it move one on to make room, up
+// to the first gap. A strip with audio stays mono.
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -10,8 +11,10 @@
 #include "../Audio/MultitrackRecorder.h"
 #include "../UI/EditPage.h"
 #include "../UI/EditTrackRow.h"
+#include "../UI/StereoConvertCues.h"
 
 #include <functional>
+#include <set>
 
 namespace zynforge
 {
@@ -33,16 +36,17 @@ public:
         { return dir.getChildFile ("Audio Files/" + juce::String::formatted ("Track_%02d.wav", n)); }
     };
 
-    static bool writeTake (const juce::File& file, float value, int samples = 4800)
+    static bool writeTake (const juce::File& file, float value, int samples = 4800, int channels = 1)
     {
         file.getParentDirectory().createDirectory();
         file.deleteFile();
         juce::WavAudioFormat wav;
         std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (
-            file.createOutputStream().release(), kRate, 1, 24, {}, 0));
+            file.createOutputStream().release(), kRate, (unsigned int) channels, 24, {}, 0));
         if (writer == nullptr) return false;
-        juce::AudioBuffer<float> audio (1, samples);
-        juce::FloatVectorOperations::fill (audio.getWritePointer (0), value, samples);
+        juce::AudioBuffer<float> audio (channels, samples);
+        for (int c = 0; c < channels; ++c)
+            juce::FloatVectorOperations::fill (audio.getWritePointer (c), value, samples);
         return writer->writeFromAudioSampleBuffer (audio, 0, samples);
     }
 
@@ -107,6 +111,11 @@ public:
         AudioEngine::setTestModeSkipAudioInit (true);
         lastStripConvertsInPlace();
         middleStripKeepsTheOthers();
+        laterStripsMakeRoom();
+        everyStripMakesRoom();
+        stereoTakeOnTheLastStrip();
+        strayTakeRefused();
+        cuesFollowTheConversion();
         refusalsChangeNothing();
         editRowOffersIt();
     }
@@ -174,12 +183,178 @@ private:
         expectWithinAbsoluteError (firstSample (e.getTrackAudioFile (0)), 0.25f, 0.001f, "Kick lost its take");
         expect (! e.getTrackAudioFile (1).existsAsFile(), "the converted strip found someone's take");
 
-        // Nobody else was repatched: the default patch follows the position, so
-        // Bass is pinned to what it heard, and Gtr keeps its hand patch.
-        expectEquals (heardInput (e, 3), bassHeard, "making Keys stereo moved Bass to another input");
-        expectEquals (heardInput (e, 4), 9, "Gtr lost its patch");
+        // Keys R took In 3, so Bass, on the input straight after, moved one on.
+        // Gtr's hand patch (In 10) is past the gap and stays.
         expectEquals (heardInput (e, 2), heardInput (e, 1) + 1);
+        expectEquals (heardInput (e, 3), bassHeard + 1, "Bass was left on the input Keys R now takes");
+        expectEquals (heardInput (e, 4), 9, "Gtr, past the gap, was repatched");
         closeEngine (e);
+    }
+
+    void laterStripsMakeRoom()
+    {
+        beginTest ("The strips on the inputs and outputs after it move one on, up to the first gap");
+        AudioEngine e;
+        // A..D patched In/Out 1..4, E by hand on In/Out 11, F on its default (In 6, master).
+        openStrips (e, { "A", "B", "C", "D", "E", "F" });
+        for (int i = 0; i < 4; ++i) e.setTrackLinkedRouting (i, i);
+        e.setTrackLinkedRouting (4, 10);
+        // In soundcheck each strip's show output is saved: B's on Out 2, C's on Out 3.
+        track (e, 1).outputBeforeVsc.store (1);
+        track (e, 2).outputBeforeVsc.store (2);
+        AudioEngine::StereoConversion moved;
+        juce::String why;
+        expect (e.convertToStereo (1, &why, &moved), why);
+        expectEquals (e.getRecorder().getNumTracks(), 7);
+        // A, B (L In 2), B R (In 3), C, D, E, F
+        expectEquals (nameOf (e, 3), juce::String ("C"));
+        expectEquals (heardInput (e, 1), 1);
+        expectEquals (heardInput (e, 2), 2, "the right half is not on the input after its left half");
+        expectEquals (track (e, 2).outputRouting.load(), 2, "the right half is not on the output after its left half");
+        expectEquals (heardInput (e, 3), 3, "C stayed on the input B R now takes");
+        expectEquals (heardInput (e, 4), 4, "D stayed on the input C now takes");
+        expectEquals (track (e, 3).outputRouting.load(), 3, "C's output did not move on");
+        expectEquals (track (e, 4).outputRouting.load(), 4, "D's output did not move on");
+        expectEquals (track (e, 3).outputBeforeVsc.load(), 3, "C's saved show output did not move with it");
+        expectEquals (heardInput (e, 5), 10, "E, past the gap, was repatched");
+        expectEquals (track (e, 5).outputRouting.load(), 10);
+        expectEquals (heardInput (e, 6), 5, "F, past the gap, followed its new position to another input");
+        expect (track (e, 6).outputRouting.load() < 0, "F left the master");
+        expectEquals (track (e, 0).outputRouting.load(), 0, "an earlier strip moved");
+        expectEquals (moved.inputsMoved, 2);
+        expectEquals (moved.outputsMoved, 2);
+        expectEquals (moved.bothMoved, 2);
+        expectEquals (moved.inputsFrom, 2);
+        expectEquals (moved.inputsTo, 3);
+        closeEngine (e);
+    }
+
+    // Audit 2026-11-22 H4: the run searched only later strips, so a strip
+    // dragged to the front kept a channel a moved strip then landed on.
+    void everyStripMakesRoom()
+    {
+        beginTest ("Strips anywhere in the order make room, so no two share a channel after it");
+        {
+            AudioEngine e;
+            // Vox dragged to the front on In 4; A In 1, T1 In 2, T2 In 3, OH In 5.
+            openStrips (e, { "Vox", "A", "T1", "T2", "OH" });
+            const int patch[] = { 3, 0, 1, 2, 4 };
+            for (int i = 0; i < 5; ++i) e.setTrackLinkedRouting (i, patch[i]);
+            juce::String why;
+            expect (e.convertToStereo (2, &why), why);
+            // Vox, A, T1 (In 2), T1 R (In 3), T2, OH
+            expectEquals (heardInput (e, 3), 2);
+            expectEquals (heardInput (e, 4), 3, "T2 did not move off the input T1 R took");
+            expectEquals (heardInput (e, 0), 4, "Vox, earlier in the order, kept the input T2 now takes");
+            expectEquals (heardInput (e, 5), 5, "OH stayed on the input Vox now takes");
+            std::set<int> inputs, outputs;
+            for (int i = 0; i < e.getRecorder().getNumTracks(); ++i)
+            {
+                inputs.insert (heardInput (e, i));
+                outputs.insert (track (e, i).outputRouting.load());
+            }
+            expectEquals ((int) inputs.size(), 6, "two strips share an input after the conversion");
+            expectEquals ((int) outputs.size(), 6, "two strips share an output after the conversion");
+            closeEngine (e);
+        }
+        {
+            // The last strip: an earlier strip on the channel after it moves.
+            AudioEngine e;
+            openStrips (e, { "A", "B" });
+            e.setTrackLinkedRouting (0, 1);
+            e.setTrackLinkedRouting (1, 0);
+            juce::String why;
+            expect (e.convertToStereo (1, &why), why);
+            expectEquals (heardInput (e, 2), 1, "the right half is not on the input after its left half");
+            expectEquals (heardInput (e, 0), 2, "A kept the input the right half took");
+            closeEngine (e);
+        }
+    }
+
+    // Audit 2026-11-22 L4: with a stereo take on the last strip, the right
+    // half appended for a moment after it read as that take's right half, and
+    // the move was refused with a reason naming neither strip.
+    void stereoTakeOnTheLastStrip()
+    {
+        beginTest ("A stereo take on the last strip does not stop a middle strip converting");
+        Session s;
+        AudioEngine e;
+        openStrips (e, { "Keys", "Bass", "Pad" });
+        e.setActiveSessionDir (s.dir);
+        e.claimMixerFor (s.dir);
+        e.saveSessionMixTo (s.dir);
+        expect (writeTake (s.take (3), 0.5f, 4800, 2), "fixture: Pad's stereo take");
+        juce::String why;
+        expect (e.convertToStereo (0, &why), why);
+        expectEquals (e.getRecorder().getNumTracks(), 4);
+        expectEquals (nameOf (e, 3), juce::String ("Pad"));
+        int channel = -1;
+        const auto padTake = e.getTrackAudioFile (3, &channel);
+        expectWithinAbsoluteError (firstSample (padTake), 0.5f, 0.001f, "Pad lost its take");
+        expectEquals (channel, 0);
+        closeEngine (e);
+    }
+
+    void strayTakeRefused()
+    {
+        beginTest ("A stray take numbered one past the last strip is refused, not adopted");
+        Session s;
+        AudioEngine e;
+        openStrips (e, { "Keys", "Bass" });
+        e.setActiveSessionDir (s.dir);
+        e.claimMixerFor (s.dir);
+        e.saveSessionMixTo (s.dir);
+        expect (writeTake (s.take (3), 0.5f), "fixture: a stray Track_03");
+        juce::String why;
+        expect (! e.convertToStereo (0, &why), "the right half would have played a stray take");
+        expect (why.containsIgnoreCase ("stray"), "no reason: " + why);
+        expectEquals (e.getRecorder().getNumTracks(), 2);
+        closeEngine (e);
+    }
+
+    // Audit 2026-11-22 H5: cues saved before a conversion move the same way.
+    void cuesFollowTheConversion()
+    {
+        beginTest ("Cues carry the room the conversion made, and the pair's image");
+        AudioEngine::StereoConversion m;
+        m.inputsFrom = 2;  m.inputsTo = 3;
+        m.outputsFrom = 2; m.outputsTo = 2;
+        m.leftId = "L";    m.rightId = "R";
+        SetlistBar::Cue cue;
+        const auto snap = [] (juce::String id, int in, int out)
+        {
+            SetlistBar::StripSnapshot s;
+            s.stripId = id; s.inputRouting = in; s.outputRouting = out;
+            return s;
+        };
+        cue.strips = { snap ("L", 1, 1), snap ("X", 2, 2), snap ("Y", 3, 3), snap ("Z", 9, -1) };
+        std::vector<SetlistBar::Cue> cues { cue };
+        stereoconvert::carryCues (cues, m);
+        const auto& st = cues[0].strips;
+        expectEquals ((int) st.size(), 5, "the right half was not added to the cue");
+        if (st.size() == 5)
+        {
+            expectEquals (st[0].stripId, juce::String ("L"));
+            expectWithinAbsoluteError (st[0].pan, -1.0f, 0.001f);
+            expectEquals (st[1].stripId, juce::String ("R"));
+            expectWithinAbsoluteError (st[1].pan, 1.0f, 0.001f);
+            expectEquals (st[2].inputRouting, 3, "X's input did not move with it");
+            expectEquals (st[2].outputRouting, 3);
+            expectEquals (st[3].inputRouting, 4, "Y's input did not move with it");
+            expectEquals (st[3].outputRouting, 3, "Y's output was outside the output run");
+            expectEquals (st[4].inputRouting, 9, "a strip past the gap moved");
+            expectEquals (st[4].outputRouting, -1);
+        }
+        // During soundcheck a cue holds the saved show output.
+        AudioEngine::StereoConversion vsc;
+        vsc.showOutputsSaved = true;
+        vsc.outputsFrom = 2; vsc.outputsTo = 9;   // live outputs sit on the inputs
+        vsc.savedFrom = 5;  vsc.savedTo = 5;
+        std::vector<SetlistBar::Cue> show { SetlistBar::Cue {} };
+        show[0].strips = { snap ("X", -1, 5), snap ("Y", -1, 3) };
+        stereoconvert::carryCues (show, vsc);
+        expectEquals (show[0].strips[0].outputRouting, 6, "the show output did not move");
+        expectEquals (show[0].strips[1].outputRouting, 3, "a live soundcheck output moved a show output");
     }
 
     void refusalsChangeNothing()

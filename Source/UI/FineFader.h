@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Audio/DisplayText.h"
+#include "LeftClickOnly.h"
 
 #include <cmath>
 
@@ -17,10 +18,16 @@ namespace zynforge
     //
     // (Was a fine-trim fader; the engineer asked for click-drag-only, so the
     // wheel-step logic is gone.)
-    class FineFader : public juce::Slider
+    //
+    // A right-click, Ctrl-click or middle press is not a drag either
+    // (LeftClickOnly): it opens the strip's menu and leaves the level alone.
+    // JUCE handed it to the Slider first, which jumped a snapping fader to the
+    // pointer and sent the gain to the engine, the pair and the edit group; two
+    // right-clicks made a double-click and put the fader at 0 dB.
+    class FineFader : public LeftClickOnly<juce::Slider>
     {
     public:
-        using juce::Slider::Slider;
+        using LeftClickOnly<juce::Slider>::LeftClickOnly;
 
         void mouseWheelMove (const juce::MouseEvent& e,
                              const juce::MouseWheelDetails& wheel) override

@@ -1,10 +1,29 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-22 whole-codebase bug hunt, all 34 fixed
+
+The audit (2 critical, 5 high, 7 medium, 20 low; register outside the repo, `ZynforgeRecording-audit-2026-11-22.md` beside it) was fixed area by area. Each area got its own test file, all in the CMake test target:
+
+| File | Suite | Groups | Covers |
+|---|---|---|---|
+| `Fix20261122RecorderTests.cpp` | *Fixes 2026-11-22 recorder* | 9 | Parts-only strips refused for fresh/continue/punch (stray part intact), a backup holding one sits out, lead-ins delete only their own files, the marker carries the capture origin (crash and full-drive recovery line up), a failed punch recovery says so |
+| `Fix20261122NetworkTests.cpp` | *Fixes 2026-11-22 network* | 11 | Valueless desk-macro STOP refused, press+release pairs act once (STOP, MARKER, RECORD/PLAY/PAUSE), a busy other-build helper named/refused/replaced (real helper binary), SCP and MIDI/TCP floods capped and counted, a stalled desk can't hold the message thread, START refuses an unclaimable take, patch saves during a take report pending/failed truthfully |
+| `Fix20261122ExportTests.cpp` | *Fixes 2026-11-22 export* | 10 | Resampled song-export overs reported, clock probe never returns another device's reading, Mackie 3-2-2-3 display bytes, timecode labels truncate at every frame boundary, a timed-out speed probe stops and leaves no file |
+| `Fix20261122EditTests.cpp` | *Fixes 2026-11-22 EDIT* | 11 | 5 px click slop on clip body/trim/gain and Selector, real drags unchanged, held rows draw and move their clips after STOP, fade presets shortened equally across peers, enclosed clips get no crossfade, minimap box and click |
+| `Fix20261122StripTests.cpp` | *Fixes 2026-11-22 strips* | 11 | Right-clicks never move faders/pans or press R/I/M/S, master ST/MUTE or setlist buttons; PATCH double/right-click keeps the patch; pill says why; meters keep CLIP on right-click; chip opens on left only; Session Settings Apply passes no unchanged rate |
+
+Also: *Convert to stereo* grew to 9 groups (room made across the whole strip order with no shared channel, a stereo take on the last strip, a stray take refused, cues carried), and *Main window fixes* gained two (LOCK after a held RECORD still records; Convert to Stereo clears undo and carries cues). `ConsoleVscTests` now sends desk-macro STOP with a value and spaces valueless macros 3 s apart (the 2 s release pairing).
+
+Two tests failed on the first full run and were fixed before the result below: the new strips suite ran before any suite had put the engine in test mode, so PATCH saw the Mac's real 1-input device (the suite now calls `setTestModeSkipAudioInit`); and *Engine mix safety*'s full-drive fixture (a folder in the lead-in slot) tripped the new reserved-slot refusal, which now refuses only a FILE there.
+
+**Results:** Release 2103 test groups, 0 failures (the final run is recorded in INSTALL.md with the install); both static gates clean. ASan/UBSan and TSan were not run for this pass.
+
 ## 2026-11-22 Convert to Stereo
 
-`StereoConvertTests.cpp` (suite *Convert to stereo*, 4 groups) covers right-click Convert to Stereo:
+`StereoConvertTests.cpp` (suite *Convert to stereo*, 5 groups) covers right-click Convert to Stereo:
 - the last strip converts in place: name, strip id, colour, fader and arm kept, a right half named "<name> R", pans hard L/R, the right half on the next input;
-- a middle strip in a saved session converts without taking the next strip: that strip's take moves with it, a default-patched strip is pinned to the input it heard, a hand patch is kept;
+- a middle strip in a saved session converts without taking the next strip: that strip's take moves with it, the default-patched strip on the next input moves one input on, a hand patch past the gap is kept;
+- the later strips on the following inputs, outputs and saved soundcheck outputs move one on up to the first gap; a hand patch and a default strip past the gap, and earlier strips, keep theirs;
 - refusals change nothing: a strip with a take, a stereo strip, a right half and a missing strip;
 - EDIT's row header offers it on a mono row only (never on a lane), and the choice reaches `EditPage::onRowConvertToStereo` with the strip.
 

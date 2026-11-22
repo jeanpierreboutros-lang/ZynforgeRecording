@@ -175,8 +175,10 @@ namespace zynforge::mcu
     // The 10-digit LED time display takes one CC per digit: controller
     // 0x40 = rightmost digit, 0x49 = leftmost. The value's low 6 bits are
     // the 7-seg character (ASCII '0'..'9' and ' ' map straight through);
-    // OR 0x40 lights that digit's decimal point. We render HH:MM:SS:FF and
-    // light the dots between the H/M/S/F groups.
+    // OR 0x40 lights that digit's decimal point. Mackie Control groups the
+    // digits hours 3, minutes 2, seconds 2, frames 3 (the BARS / BEATS /
+    // SUB DIV / TICKS legend over the same digits), so HH:MM:SS:FF does not
+    // fill the right-hand 8: see timeDisplayMessages.
     inline juce::MidiMessage timeDigit (int position0Right, char c, bool dot) noexcept
     {
         const int chr = ((int) (juce::uint8) c) & 0x3F;
@@ -184,13 +186,17 @@ namespace zynforge::mcu
                                                    (chr | (dot ? 0x40 : 0)) & 0x7F);
     }
 
-    // Format a transport position (seconds) as HH:MM:SS:FF for the display.
-    // Returns exactly 8 characters; dots sit after the HH, MM and SS groups.
+    // Format a transport position (seconds) as HHMMSSFF for the display:
+    // exactly 8 characters. A readout names the frame the position is IN, so
+    // the frame count truncates (the last moment of frame 29 reads 29, never
+    // the next second). The tiny allowance keeps a position that is exactly
+    // on a frame boundary, but came out a hair under it in floating point, in
+    // the frame it starts.
     inline juce::String timeString (double seconds, int fps) noexcept
     {
         const bool neg = seconds < 0.0;
         double s = std::abs (seconds);
-        const int totalFrames = (int) std::floor (s * juce::jmax (1, fps) + 0.5);
+        const int totalFrames = (int) std::floor (s * juce::jmax (1, fps) + 1.0e-6);
         const int ff = totalFrames % juce::jmax (1, fps);
         const int totSec = totalFrames / juce::jmax (1, fps);
         const int hh = (totSec / 3600) % 100;
@@ -200,21 +206,25 @@ namespace zynforge::mcu
         return juce::String::formatted ("%02d%02d%02d%02d", hh, mm, ss, ff);
     }
 
-    // Emit the 10 per-digit messages for an HH:MM:SS:FF readout into `out`
-    // (the leftmost two digits stay blank for an 8-char timecode). Dots are
-    // lit on the digits ending the HH, MM and SS groups.
+    // Emit the 10 per-digit messages for an HH:MM:SS:FF readout into `out`,
+    // left to right, in the Mackie Control grouping: hours 0x49-0x47,
+    // minutes 0x46-0x45, seconds 0x44-0x43, frames 0x42-0x40. Two-digit
+    // hours and frames sit right-aligned in their 3-digit groups, so 0x49
+    // and 0x42 stay blank. The dot on the last digit of the hours, minutes
+    // and seconds groups separates them; the frames group ends the readout
+    // and has none.
     inline void timeDisplayMessages (double seconds, int fps, std::vector<juce::MidiMessage>& out)
     {
         const auto tc = timeString (seconds, fps);       // 8 chars "HHMMSSFF"
-        // Right-justified across digits 0..7 (0 = rightmost). Digits 8,9 blank.
-        for (int d = 8; d < 10; ++d) out.push_back (timeDigit (d, ' ', false));
-        for (int i = 0; i < 8; ++i)
+        const auto digit = [&out, &tc] (int position0Right, int charIndex, bool dot)
         {
-            const int posFromRight = 7 - i;              // tc[0] is leftmost (HH tens)
-            // Group-ending digits carry the separator dot: after HH (i==1),
-            // after MM (i==3), after SS (i==5).
-            const bool dot = (i == 1 || i == 3 || i == 5);
-            out.push_back (timeDigit (posFromRight, (char) tc[i], dot));
-        }
+            out.push_back (timeDigit (position0Right, (char) tc[charIndex], dot));
+        };
+        out.push_back (timeDigit (9, ' ', false));
+        digit (8, 0, false);  digit (7, 1, true);        // hours
+        digit (6, 2, false);  digit (5, 3, true);        // minutes
+        digit (4, 4, false);  digit (3, 5, true);        // seconds
+        out.push_back (timeDigit (2, ' ', false));
+        digit (1, 6, false);  digit (0, 7, false);       // frames
     }
 }

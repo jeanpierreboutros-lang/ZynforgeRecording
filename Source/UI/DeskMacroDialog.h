@@ -89,9 +89,10 @@ namespace zynforge
                 copyB.onClick = [] { juce::SystemClipboard::copyTextToClipboard (addressList()); };
                 addAndMakeVisible (copyB);
 
-                noteL.setText ("Send each as an address alone or with an integer. Integer messages are the "
-                               "most reliable type on DiGiCo. 0 is ignored (a button release); any other "
-                               "integer fires. marker/goto takes the marker number, from 1.",
+                noteL.setText ("Send 1 on press (a 0 on release is ignored). Integer messages are the most "
+                               "reliable type on DiGiCo. STOP needs that value: sent as the address alone it "
+                               "is refused. The others also work as the address alone, but the same one again "
+                               "within 2 s counts as the key's release. marker/goto takes the marker number, from 1.",
                                juce::dontSendNotification);
                 noteL.setFont (brand::type::caption());
                 noteL.setColour (juce::Label::textColourId, brand::textTertiary);

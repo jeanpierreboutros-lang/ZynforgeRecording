@@ -203,6 +203,7 @@ namespace zynforge
         friend class NetworkFixTests;
         friend class NetworkStateTests;
         friend class NetFix20261116Tests;
+        friend class Fix20261122NetworkTests;
         void handleMessage (const ConsoleMessage&);
         // ONE repeating heartbeat; it runs while the link is up.
         //
@@ -243,7 +244,29 @@ namespace zynforge
         bool pushContradictsPatch (int block, int value) const;
         void readMovedPatch();
         void loadSessionState (const juce::File& dir);
-        bool persistPatch();
+        // Where the patch half of the state file stands after persistPatch.
+        // pending: a take holds the desk, so it is written off this thread and
+        // the answer comes back later (patchSaveFinished). Never "saved" for a
+        // write that has not happened.
+        enum class PatchSave { saved, failed, pending };
+        PatchSave persistPatch();
+        // What one write of it did, for the session and for every other
+        // session whose file said SOUNDCHECK.
+        struct PatchSaveOutcome
+        {
+            juce::File              dir;
+            bool                    onSoundcheck { false };
+            bool                    saved { false };   // this session's file (true with no session)
+            juce::Array<juce::File> cleared;           // others whose file now says STAGE
+            int                     othersFailed { 0 };
+        };
+        void applyPatchSave (const PatchSaveOutcome&);
+        void patchSaveFinished (const PatchSaveOutcome&);
+        // A save finished off the thread reports here, never into a link that
+        // is gone: the destructor clears the owner, on this thread.
+        struct SaveLife { ConsoleLink* owner { nullptr }; };
+        std::shared_ptr<SaveLife> saveLife { std::make_shared<SaveLife> (SaveLife { this }) };
+        int patchSavesInFlight { 0 };
         bool takeIsHoldingDesk() const { return takeHoldsDesk != nullptr && takeHoldsDesk(); }
         bool isRoutingValue (int value) const noexcept
         { return value >= 0 && value < profile.cardBlockFirst + profile.numInBlocks; }

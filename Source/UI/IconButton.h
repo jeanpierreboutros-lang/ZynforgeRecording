@@ -12,7 +12,9 @@ namespace zynforge
     // Reuses juce::TextButton paint for the pill background; the icon is
     // overlaid in paintButton(). Keeps every header control on the same
     // visual grid even when we swap text for a glyph.
-    class IconButton final : public juce::TextButton
+    // Not final: a bar with a right-click menu wraps it in LeftClickOnly
+    // (the setlist bar's + CUE).
+    class IconButton : public juce::TextButton
     {
     public:
         IconButton (zynforge::icons::Glyph g, const juce::String& label)

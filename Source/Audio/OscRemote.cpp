@@ -263,6 +263,13 @@ namespace zynforge
             const bool valued = payloadCount >= 1 && ! m[0].isString();
             const int nameAt = valued ? 1 : 0;
             const auto name = payloadCount > nameAt && m[nameAt].isString() ? m[nameAt].getString() : juce::String();
+            // A button that sends the address alone sends it on press and on
+            // release: held past the repeat filter it dropped two markers. The
+            // same message again within 2 s is that key's release, as on the
+            // desk macro port (deskmacro::ValuelessPairs, audit 2026-11-22).
+            if (valued) markerPairs.forget (deskmacro::Command::Marker);
+            else if (markerPairs.isRelease (deskmacro::Command::Marker, nowMs)) return true;
+            else markerPairs.pressed (deskmacro::Command::Marker, nowMs);
             if (! markerDebouncer.admit ({ deskmacro::Command::Marker, name.hashCode() }, nowMs)) return true;
             dropMarker (name);
             return true;

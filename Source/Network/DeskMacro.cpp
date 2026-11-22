@@ -66,11 +66,35 @@ namespace zynforge
                                     + "  " + consolelog::describe (m));
         const auto parsed = deskmacro::parse (m);
         if (parsed.command == deskmacro::Command::None) return;
-        if (! debouncer.admit (parsed, nowMs))
+
+        // STOP must say press (1) or release (0). A key set to send the
+        // address alone sends the same packet on press and on release, and a
+        // press held past the debounce window ended a take by itself: its
+        // release was the second STOP tap.
+        const bool addressAlone = deskmacro::isValueless (parsed);
+        if (addressAlone && parsed.command == deskmacro::Command::Stop)
+        {
+            refuseValuelessStop (nowMs);
+            return;
+        }
+
+        // Every sighting counts for the debouncer, a release's too, so a key
+        // that repeats while held stays one press.
+        const bool fresh = debouncer.admit (parsed, nowMs);
+        if (! addressAlone)
+            valueless.forget (parsed.command);
+        else if (valueless.isRelease (parsed.command, nowMs))
+        {
+            engine.getRemotes().logOsc ("macro: the same address again inside 2 s, taken as the key's release "
+                                        "and ignored -- send 1 on press for every press to count");
+            return;
+        }
+        if (! fresh)
         {
             engine.getRemotes().logOsc ("macro: repeat inside the debounce window, ignored");
             return;
         }
+        if (addressAlone) valueless.pressed (parsed.command, nowMs);
         perform (parsed);
     }
 
@@ -78,6 +102,16 @@ namespace zynforge
     {
         engine.getRemotes().logOsc ("macro: " + message);
         engine.getRemotes().showHostStatus ("Desk macro: " + message);
+    }
+
+    // Said where the desk is being set up: the status line and the OSC log.
+    // Once a second at most, as a held or repeating key would flood both.
+    void DeskMacroListener::refuseValuelessStop (double nowMs)
+    {
+        if (nowMs - lastValuelessStopNoticeMs < 1000.0) return;
+        lastValuelessStopNoticeMs = nowMs;
+        report ("STOP refused -- /zynforge/macro/stop needs a value: 1 on press, 0 on release. "
+                "Set the desk macro to send one.");
     }
 
     void DeskMacroListener::locateToIndex (int index, const juce::String& refusalIfMissing)

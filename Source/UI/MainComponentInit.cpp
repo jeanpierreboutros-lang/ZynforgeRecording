@@ -817,6 +817,8 @@ void MainComponent::rebuildStrips()
         {
             if (i + 1 < engine.getRecorder().getNumTracks())
                 setStereoLink (i, ! engine.getRecorder().getTrack (i).isStereo.load());
+            else   // the last strip has no neighbour: say so, as PATCH does
+                showStatus (zynforge::PatchPage::linkRefusal (engine, i, false));
         };
         s->setMenuCallbacks (std::move (deleteCb),
                              std::move (addCb),

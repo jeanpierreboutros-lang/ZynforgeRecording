@@ -86,7 +86,9 @@ namespace zynforge
         juce::Font font { brand::type::mono (10.0f, true) };
     };
 
-    // Small clickable colour chip embedded at the top-left of every strip.
+    // Small clickable colour chip embedded at the top-left of every strip. A
+    // left click opens the palette; a right-click is the strip's menu alone
+    // (the palette opened under it, and the menu on top of the palette).
     class ChannelStrip::Swatch final : public juce::Component,
                                        public juce::SettableTooltipClient
     {
@@ -105,7 +107,10 @@ namespace zynforge
             g.drawRoundedRectangle (r, brand::radius::sm, 1.0f);
         }
 
-        void mouseDown (const juce::MouseEvent&) override { if (onClick && isEnabled()) onClick(); }
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (onClick && isEnabled() && ! leftclick::isMenuPress (e)) onClick();
+        }
     };
 
     class ChannelStrip::StripTimer final : public juce::Timer
@@ -368,8 +373,10 @@ namespace zynforge
         // Checked BEFORE the child-origin guard below: the children cover
         // almost the whole strip, so requiring a bare-background hit made
         // the menu feel broken -- most right-clicks landed on a child and
-        // did nothing. The controls don't use the right button themselves,
-        // so there's no conflict.
+        // did nothing. JUCE gives the press to the control under the pointer
+        // BEFORE this listener, so every control here ignores a menu press
+        // itself (LeftClickOnly buttons, fader and knobs; the chip and the
+        // meter check too): the menu is all a right-click does.
         if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
         {
             showContextMenu();
@@ -699,8 +706,6 @@ namespace zynforge
         muteButton .setTooltip ("Mute -- silence this channel in monitor + playback. Recording still hits disk.");
         soloButton .setTooltip ("Solo -- when any track is soloed, only soloed tracks are audible.");
         meter      .setTooltip ("Peak + RMS LED meter -- click to clear the clip indicator.");
-        if (swatch != nullptr)
-            swatch->setTooltip ("Click for a colour palette. Right-click the strip for more options.");
 
         // ── Accessibility ──────────────────────────────────────────────
         // The single-letter glyphs (R / I / M / S) are meaningless to a
@@ -810,7 +815,8 @@ namespace zynforge
         // made the cap drift up/down out of sync with the cursor -- the
         // gig-two complaint. The fader only receives clicks inside its own
         // narrow bounds, not the strip body, so strip-select clicks elsewhere
-        // never touch it.
+        // never touch it. A right-click on it snaps nothing: FineFader leaves
+        // a menu press to the strip's menu.
         gainFader.setSliderSnapsToMousePosition (true);
         // Same reasoning as the pan knob: scroll-wheel / trackpad
         // gestures should NEVER move the gain. The fader changes only
@@ -864,6 +870,8 @@ namespace zynforge
 
         swatch = std::make_unique<Swatch>();
         swatch->setDisplayColour (getResolvedColour());
+        // Set here: the tooltips above run before the chip exists.
+        swatch->setTooltip ("Click for a colour palette. Right-click the strip for more options.");
         swatch->onClick = [this] { openColourPicker(); };
         addAndMakeVisible (*swatch);
 
@@ -871,7 +879,8 @@ namespace zynforge
 
         // Bubble every child component's mouseDown up to this strip so a
         // right-click anywhere on the strip -- even on a button or fader --
-        // opens the context menu.
+        // opens the context menu. The child has had the press by then, which
+        // is why each of them ignores a menu press (see mouseDown).
         addMouseListener (this, true);
     }
 

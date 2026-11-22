@@ -175,24 +175,40 @@ namespace zynforge::clocksource
         if (deviceName.isEmpty()) return;
         {
             const std::lock_guard<std::mutex> guard (shared->lock);
+            // The read in flight picks this device up when it finishes.
+            shared->wanted = deviceName;
             if (shared->inFlight) return;
             shared->inFlight = true;
             // A stalled read must leave "unknown", not the last device's clock.
-            shared->reading = {};
+            shared->reading    = {};
+            shared->readingFor = {};
         }
         const auto launched = juce::Thread::launch (
             [state = shared, read = readerFn, deviceName]
             {
-                const auto reading = read (deviceName);
-                const std::lock_guard<std::mutex> guard (state->lock);
-                state->reading  = reading;
-                state->inFlight = false;
-                state->finished.notify_all();
+                // A read finished for a device nobody asks about any more is
+                // dropped, and the one asked for since is read next.
+                auto device = deviceName;
+                for (;;)
+                {
+                    const auto answer = read (device);
+                    const std::lock_guard<std::mutex> guard (state->lock);
+                    if (state->wanted == device)
+                    {
+                        state->reading    = answer;
+                        state->readingFor = device;
+                        state->inFlight   = false;
+                        state->finished.notify_all();
+                        return;
+                    }
+                    device = state->wanted;
+                }
             });
         if (! launched)
         {
             const std::lock_guard<std::mutex> guard (shared->lock);
             shared->inFlight = false;
+            shared->finished.notify_all();
         }
     }
 
@@ -201,10 +217,13 @@ namespace zynforge::clocksource
         if (deviceName.isEmpty()) return {};
         request (deviceName);
         std::unique_lock<std::mutex> guard (shared->lock);
+        // One time limit for the whole answer, including the rest of another
+        // device's read that was in flight when this one was asked for.
         if (! shared->finished.wait_for (guard, std::chrono::milliseconds (timeoutMs),
                                          [this] { return ! shared->inFlight; }))
             return {};   // the driver did not answer in time
-        return shared->reading;
+        // Someone may have asked for another device since: its answer is not ours.
+        return shared->readingFor == deviceName ? shared->reading : Reading {};
     }
 
     Reading Probe::latest() const

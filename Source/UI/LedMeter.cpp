@@ -1,4 +1,5 @@
 #include "LedMeter.h"
+#include "LeftClickOnly.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -98,9 +99,13 @@ namespace zynforge
             repaint();
     }
 
-    void LedMeter::mouseDown (const juce::MouseEvent&)
+    void LedMeter::mouseDown (const juce::MouseEvent& e)
     {
         if (detached || ! isEnabled()) return;   // condemned (state is freed), or LOCK
+        // Only a left click clears. A right-click here opens the strip's (or
+        // row's) menu, and wiped CLIP xN and the clip pip on both halves on its
+        // way, evidence the engineer had not looked at yet.
+        if (leftclick::isMenuPress (e)) return;
         showClip = false;
         state.clipped  .store (false, std::memory_order_relaxed);
         state.clipCount.store (0,     std::memory_order_relaxed);

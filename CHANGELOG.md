@@ -19,7 +19,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Added — Convert to Stereo, 2026-11-22
 
-- **Right-click ▸ Convert to Stereo** on a mono strip in MIXER, or on a mono row's channel name in EDIT, turns that strip into a stereo strip in place. It keeps its name, number, colour, fader, arm and cues; a right half named "<name> R" is added straight after it and hears the next input. Unlike Link to next channel, the neighbouring channel is not taken: the strips after it keep their takes and the input they hear. A strip that already has audio stays mono (the status line says why), because a recorded mono take can't continue as a stereo strip.
+- **Right-click ▸ Convert to Stereo** on a mono strip in MIXER, or on a mono row's channel name in EDIT, turns that strip into a stereo strip in place. It keeps its name, number, colour, fader, arm and cues; a right half named "<name> R" is added straight after it and hears the next input. Unlike Link to next channel, the neighbouring channel is not taken, and every strip keeps its takes. To make room, every strip that sits on the following inputs moves one input on (In 6 becomes In 7, and so on), wherever it is in the strip order, and likewise outputs, up to the first gap in the numbering, so no two strips end up sharing a channel; the status line says how many moved. Saved cues move the same way and give the pair its stereo image, the session saves at once, and the undo history is cleared (an older undo step would have split the pair). A strip that already has audio stays mono (the status line says why), because a recorded mono take can't continue as a stereo strip.
+
+### Fixed — whole-codebase bug hunt, 2026-11-22
+
+A read of the whole codebase found 34 problems (2 critical, 5 high, 7 medium, 20 low); all are fixed here, with Convert to Stereo's own seven folded into the entry above.
+
+**Recording and transport**
+- **Desk macros:** a STOP key must now send 1 on press (0 on release). A STOP with no value is refused and the status line says why, so one held key can no longer end a take. Other keys that send only their address act once per press, not on press and again on release; the Generic OSC `/zynforge/marker` does the same, so a held button drops one marker.
+- A punch on a strip whose main take file was missing could delete that strip's earlier audio. Recording now refuses any pass on such a strip, names the leftover part files, and touches nothing. A backup or mirror holding such files sits out the take and keeps them.
+- RECORD pressed during a save and then LOCK no longer drops the take without a word: the press still starts when the save ends, and the window stays locked.
+- After a crash or a full drive, a punched new track's silent lead-in could start a fraction of a second early. It now lines up where the punch actually began recording.
+- When an interrupted punch could not be put back, the app said it had been. It now says it failed, which file or folder caused it, and what to do.
+- Capture helper: if an older helper from before an app update is still busy when the app opens, the status line says so, RECORD waits instead of starting a take on it, and it is replaced by this build's helper as soon as it is idle. RECORD is also refused with a reason if the helper can't mark the take as its own.
+
+**Mixer, PATCH and setlist**
+- A right-click on a channel or master fader no longer jumps the level to the pointer, and two quick right-clicks no longer reset it to 0 dB. Pan knobs don't turn on a right-click either. The strip menu still opens.
+- A right-click on R, I, M or S (MIXER and EDIT), or on the master's MUTE or ST, no longer presses the button.
+- A right-click on a setlist button no longer updates, adds, recalls or steps to another cue, so Rename and Delete act on the cue you were on.
+- A double-click or right-click on a PATCH dot no longer leaves the channel with no input and no output.
+- The PATCH stereo button, and MIXER's Link to next channel on the last strip, now say why they can't link instead of doing nothing.
+- A right-click on a meter (to open the strip menu) no longer clears CLIP xN; only a left click does. The same in EDIT and the meterbridge.
+- A right-click on a strip's colour chip opens only the strip menu, not the colour palette under it.
+- Session Settings no longer switches the session to 48 kHz when you Apply a pre-roll or format change on a session whose rate isn't in the list. The box shows the real rate (or Keep current), and the rate changes only when you pick a new one.
+
+**EDIT**
+- A click on a clip no longer nudges, trims, fades or changes the gain of it, or of its stereo half and edit-group clips. The mouse now has to move 5 pixels before a clip edit starts, and before the Range tool selects a range. On a long show seen whole, one pixel was several seconds.
+- Right after STOP, while the waveforms reload, EDIT shows each clip's edges, name, selection and fades over the just-recorded waveform, and a clip you move or delete takes its part of the waveform with it. Before, clips were invisible until the reload finished but could still be clicked, moved and deleted.
+- A fade-in or fade-out preset from the clip menu that is longer than the clip has room for is shortened to fit; both halves of a stereo strip and every edit-group clip get the same fade, and the status line says so. Before, it silently did nothing, or changed only some of them.
+- A short clip placed inside a longer one no longer shows a crossfade, and dragging there no longer fades out the end of the long clip.
+- The minimap box now marks exactly the part of the timeline on screen beside the track headers, and clicking the minimap centres that moment in the visible area.
+
+**Sessions, export and consoles**
+- File ▸ Open no longer replaces a session that was opened from Finder while its folder panel was up.
+- Export Songs at a different sample rate now warns when the converted files went over full scale and CLIPPED. Before, it only caught overs that were there before the conversion.
+- Pre-flight's clock-source line, and the take report, can no longer show the previous interface's clock just after a device change.
+- Pre-flight: a disk speed test that does not finish in time now stops and deletes its test file, instead of carrying on writing 16 MB to the session drive in the background.
+- On a Mackie Control surface, the time display now lines up with its HOURS / MINUTES / SECONDS / FRAMES groups, and shows the frame the playhead is in instead of rounding up.
+- Timeline CSV export: marker, cue and clip timecodes show the frame the position is in, not the next one.
+- Yamaha and Allen & Heath console links: a flood of console messages can no longer swamp the app (the extra ones are dropped and counted), and a desk that stops reading can no longer freeze the window.
+- Console patch: a STAGE/SOUNDCHECK change saved during a take now says the session is being updated, reports if that save fails, and a session whose file could not be updated is kept for the next try.
 
 ### Changed — design pass, 2026-11-17
 

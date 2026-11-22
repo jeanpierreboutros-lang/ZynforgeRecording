@@ -202,10 +202,13 @@ namespace zynforge
         // onProgress ticks through every long write (a lead-in it completes is
         // silence the length of the take so far), so a copy doing this is seen
         // making progress, not hung.
+        // problem: on false, which file or folder would not move or be made,
+        // with its path, so a refusal can say what failed instead of nothing.
         static bool recoverInterruptedPunches (const juce::File& audioDir,
                                                int* recovered = nullptr,
                                                bool* leadInsOwed = nullptr,
-                                               const std::function<void()>& onProgress = {});
+                                               const std::function<void()>& onProgress = {},
+                                               juce::String* problem = nullptr);
 
         // A track still owes its silence. The marker names it by number, so its
         // number has to stand until then: a marker that outlived a strip move
@@ -831,6 +834,7 @@ namespace zynforge
         void prepareBackupCopy (TakeStart&);
         static bool orphanedContinuation (const juce::File& dir, const juce::String& stem,
                                           const juce::String& ext);
+        bool noStrayTakeParts (const TakeStart&);
         bool continuationBasesIntact (const TakeStart&);
         void noteExistingPrimaryBases (TakeStart&);
         void invalidateReportsBeforeMediaMutation (TakeStart&);
@@ -983,6 +987,7 @@ namespace zynforge
         friend class MainWindowFixTests;       // what the window refuses while a take finalizes
         friend class CaptureRepairTests;       // copy lines, install crashes, copy hashes
         friend class EngineRepairTests;
+        friend class Fix20261122RecorderTests; // lead-in parts this start did not create
         std::function<void()> afterFifoReservationForTests;
         std::function<void()> beforeStampForTests;
         std::function<void (CaptureCopy&)> beforeCopyWriteForTests;
@@ -1215,6 +1220,9 @@ namespace zynforge
             juce::int64  timelineStart { 0 };    // where the pass begins (start-time estimate)
             int          copyIndex { 0 };        // 0 primary, 1 backup, 2+ mirror (not persisted)
             std::size_t  trackIndex { 0 };       // the strip it lines up (not persisted)
+            // This pass created the audio part (not persisted). Only then may a
+            // drop remove it: a part that was on the disk is someone's audio.
+            bool         ownsAudioPart { false };
         };
         static juce::File partFileFor (const juce::File& audioDir, const juce::String& trackName,
                                        const juce::String& ext, int part);
@@ -1224,10 +1232,15 @@ namespace zynforge
         // has nothing to line up: see dropEmptyLeadIn.
         static bool writeLeadIn (const PendingLeadIn&, juce::int64 timelineStart,
                                  const std::function<void()>& onProgress = {});
+        // writeLeadIn, then the marker goes. A timelineStart other than the
+        // marker's (a punch captures from a little after where it was armed) is
+        // written into the marker first, so a write that fails leaves a marker
+        // that recovery lines up where the audio really starts.
         static bool finishLeadIn (const PendingLeadIn&, juce::int64 timelineStart,
                                   const std::function<void()>& onProgress = {});
         // The pass wrote no frames to this lead-in's audio part: no silence is
-        // owed. Removes the empty part (and its stamp) and the marker.
+        // owed. Removes the empty part (and its stamp) if this pass created it
+        // (ownsAudioPart), and the marker.
         static bool dropEmptyLeadIn (const PendingLeadIn&, std::vector<WriterChannel::StampedPart>& stamps);
         static bool writeLeadInMarker (const PendingLeadIn&);
         static bool openTrackFile (CaptureCopy&, std::size_t track, const juce::File& dir, const TakeFormat&,

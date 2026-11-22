@@ -663,7 +663,8 @@ namespace zynforge
                 SceneBench b;
                 DeskMacroListener macro (b.main.engine);
                 double t = 10000.0;
-                auto send = [&] (const char* address) { macro.dispatchForTest (juce::OSCMessage (address), t += 1000.0); };
+                // 3 s apart: a valueless macro within 2 s of the same one is its release.
+                auto send = [&] (const char* address) { macro.dispatchForTest (juce::OSCMessage (address), t += 3000.0); };
                 auto sendGoto = [&] (int n)
                 { macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/marker/goto", (juce::int32) n), t += 1000.0); };
 
@@ -779,15 +780,15 @@ namespace zynforge
                         rec.processBlock (&input, 1, 256);
 
                     DeskMacroListener macro (main.engine);
-                    macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/stop"), 0.0);
+                    macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/stop", (juce::int32) 1), 0.0);
                     expect (main.engine.isRecording(), "the first STOP ended the take");
                     expect (main.statusLabel.getText().containsIgnoreCase ("armed"), main.statusLabel.getText());
                     expect (main.stopArmedAtMs != 0, "the first STOP must arm the guard");
 
-                    macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/stop"), 100.0);
+                    macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/stop", (juce::int32) 1), 100.0);
                     expect (main.engine.isRecording(), "a double-fired STOP ended the take");
 
-                    macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/stop"), 600.0);
+                    macro.dispatchForTest (juce::OSCMessage ("/zynforge/macro/stop", (juce::int32) 1), 600.0);
                     expect (pump ([&] { return ! main.engine.isRecording() && ! main.captureMetadataPending
                                                && main.pendingMetadataSaves == 0; }, 5000),
                             "a deliberate second STOP did not end the take");

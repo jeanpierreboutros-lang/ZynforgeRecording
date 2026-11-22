@@ -8,7 +8,11 @@
 namespace zynforge
 {
     ConsoleLink::ConsoleLink()  = default;
-    ConsoleLink::~ConsoleLink() { disconnect(); }
+    ConsoleLink::~ConsoleLink()
+    {
+        saveLife->owner = nullptr;   // a background patch save still running reports to nobody
+        disconnect();
+    }
 
     void ConsoleLink::setProfile (ConsoleProfile::Kind k)
     {
@@ -363,9 +367,13 @@ namespace zynforge
             return;
         }
         patch = Patch::Stage;
-        const bool saved = persistPatch();
-        if (onStatus) onStatus (saved ? "Console back on STAGE, confirmed by the desk (restored show patch)."
-                                      : "Console back on STAGE, confirmed by the desk, but the session could not be updated.");
+        const auto saved = persistPatch();
+        if (onStatus) onStatus (saved == PatchSave::saved
+                                    ? "Console back on STAGE, confirmed by the desk (restored show patch)."
+                                : saved == PatchSave::pending
+                                    ? "Console back on STAGE, confirmed by the desk (restored show patch). "
+                                      "The session is being updated in the background."
+                                    : "Console back on STAGE, confirmed by the desk, but the session could not be updated.");
     }
 
     void ConsoleLink::finishPatchCheck()
@@ -386,10 +394,14 @@ namespace zynforge
         if (onCard == 0)
         {
             patch = Patch::Stage;
-            const bool saved = ! wasOnSoundcheck || persistPatch();
+            const auto saved = wasOnSoundcheck ? persistPatch() : PatchSave::saved;
             if (onStatus) onStatus (! wasOnSoundcheck ? juce::String ("The desk is on its stage inputs.")
-                                    : saved ? "The desk is on its stage inputs, so SOUNDCHECK is cleared. Nothing was written to it."
-                                            : "The desk is on its stage inputs, but the session could not be updated.");
+                                    : saved == PatchSave::saved
+                                        ? "The desk is on its stage inputs, so SOUNDCHECK is cleared. Nothing was written to it."
+                                    : saved == PatchSave::pending
+                                        ? "The desk is on its stage inputs, so SOUNDCHECK is cleared. Nothing was written to it; "
+                                          "the session is being updated in the background."
+                                        : "The desk is on its stage inputs, but the session could not be updated.");
             return;
         }
         const auto blocks = juce::String (onCard) + " of " + juce::String (profile.numInBlocks) + " input blocks";
@@ -641,7 +653,9 @@ namespace zynforge
         deskRead.clear();
         patch = Patch::Soundcheck;
         deskAsked = true;
-        if (! persistPatch())
+        // Only a write that has happened: the desk moves once the way back is
+        // on disk. (A take refuses this above, so nothing waits off the thread.)
+        if (persistPatch() != PatchSave::saved)
         {
             patch = stageBefore;
             stagePatch.clear();
@@ -924,42 +938,97 @@ namespace zynforge
     // The patch half of the state file, written when the desk moves. Gains keep
     // their own rule (only a finished capture is saved), so an unfinished one
     // here must not replace what the file holds. During a take this stays off
-    // the thread that STOP runs on.
-    bool ConsoleLink::persistPatch()
+    // the thread that STOP runs on, and says pending until the write answers:
+    // it used to say saved as soon as the thread started. The list of sessions
+    // on SOUNDCHECK follows what was written, entry by entry (applyPatchSave).
+    ConsoleLink::PatchSave ConsoleLink::persistPatch()
     {
         const bool onSoundcheck = patch == Patch::Soundcheck;
         juce::Array<juce::File> others;
         if (! onSoundcheck)
         {
-            others.swapWith (sessionsOnSoundcheck);
+            others = sessionsOnSoundcheck;
             others.removeAllInstancesOf (sessionDir);
         }
 
-        const auto save = [dir = sessionDir, state = toJson(), keepFileGains = ! gainCaptureComplete, others]
+        const auto save = [dir = sessionDir, state = toJson(), keepFileGains = ! gainCaptureComplete,
+                           others, onSoundcheck]
         {
+            PatchSaveOutcome outcome;
+            outcome.dir = dir;
+            outcome.onSoundcheck = onSoundcheck;
             for (const auto& other : others)
             {
                 const auto f = other.getChildFile (kStateFileName);
-                const auto saved = juce::JSON::parse (f);
-                if (auto* object = saved.getDynamicObject())
-                {
-                    object->setProperty ("deskPatch", "stage");
-                    atomicfile::writeText (f, juce::JSON::toString (saved));
-                }
+                auto saved = juce::JSON::parse (f);
+                auto* object = saved.getDynamicObject();
+                // Nothing readable there says SOUNDCHECK any more.
+                if (object == nullptr) { outcome.cleared.add (other); continue; }
+                object->setProperty ("deskPatch", "stage");
+                if (atomicfile::writeText (f, juce::JSON::toString (saved))) outcome.cleared.add (other);
+                else ++outcome.othersFailed;
             }
-            if (dir == juce::File()) return true;
-            if (! dir.isDirectory()) return false;
+            if (dir == juce::File()) { outcome.saved = true; return outcome; }
+            if (! dir.isDirectory()) return outcome;
             const auto f = dir.getChildFile (kStateFileName);
             if (keepFileGains)
                 if (auto* object = state.getDynamicObject())
                     object->setProperty ("gains", juce::JSON::parse (f).getProperty ("gains", juce::Array<juce::var>()));
-            return atomicfile::writeText (f, juce::JSON::toString (state));
+            outcome.saved = atomicfile::writeText (f, juce::JSON::toString (state));
+            return outcome;
         };
 
-        const bool saved = takeIsHoldingDesk() ? juce::Thread::launch (save) : save();
-        if (saved && onSoundcheck && sessionDir != juce::File())
-            sessionsOnSoundcheck.addIfNotAlreadyThere (sessionDir);
-        return saved;
+        if (! takeIsHoldingDesk())
+        {
+            const auto outcome = save();
+            applyPatchSave (outcome);
+            return outcome.saved ? PatchSave::saved : PatchSave::failed;
+        }
+
+        std::weak_ptr<SaveLife> weak = saveLife;
+        ++patchSavesInFlight;
+        const bool launched = juce::Thread::launch ([save, weak]
+        {
+            const auto outcome = save();
+            juce::MessageManager::callAsync ([weak, outcome]
+            {
+                if (auto life = weak.lock())
+                    if (life->owner != nullptr) life->owner->patchSaveFinished (outcome);
+            });
+        });
+        if (launched) return PatchSave::pending;
+        --patchSavesInFlight;
+        return PatchSave::failed;
+    }
+
+    // Only a file that now says what the link knows leaves the list or joins
+    // it. One that could not be written still says SOUNDCHECK on disk, so it
+    // stays, and the next STAGE write tries it again.
+    void ConsoleLink::applyPatchSave (const PatchSaveOutcome& outcome)
+    {
+        for (const auto& cleared : outcome.cleared)
+            sessionsOnSoundcheck.removeAllInstancesOf (cleared);
+        if (! outcome.saved || outcome.dir == juce::File()) return;
+        if (outcome.onSoundcheck) sessionsOnSoundcheck.addIfNotAlreadyThere (outcome.dir);
+        else                      sessionsOnSoundcheck.removeAllInstancesOf (outcome.dir);
+    }
+
+    // A take's background save answered. Saying nothing is right for one that
+    // worked; one that did not is said, as it would have been at once.
+    void ConsoleLink::patchSaveFinished (const PatchSaveOutcome& outcome)
+    {
+        patchSavesInFlight = juce::jmax (0, patchSavesInFlight - 1);
+        applyPatchSave (outcome);
+        if (! onStatus || (outcome.saved && outcome.othersFailed == 0)) return;
+        juce::StringArray problems;
+        if (! outcome.saved)
+            problems.add ("the console state could not be saved to " + outcome.dir.getFileName()
+                          + ", so its file still has what it had before");
+        if (outcome.othersFailed > 0)
+            problems.add (juce::String (outcome.othersFailed) + " other session"
+                          + (outcome.othersFailed == 1 ? " still says" : "s still say")
+                          + " the desk is on SOUNDCHECK");
+        onStatus ("Console: " + problems.joinIntoString ("; ") + ".");
     }
 
     bool ConsoleLink::saveTo (const juce::File& sessionDir) const

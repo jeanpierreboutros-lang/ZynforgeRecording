@@ -1510,9 +1510,10 @@ namespace zynforge
             }
         }
 
-        // Keep the overview navigator in sync with the live scroll/zoom.
+        // Keep the overview navigator in sync with the live scroll/zoom. Its box
+        // is the lane right of the header pinned at the view's left edge.
         if (minimap.isVisible())
-            minimap.setView (list->getWidth(), 380,
+            minimap.setView (list->getWidth(), brand::space::editHeaderW,   // == TrackRow::headerW (same token)
                              viewport.getViewPositionX(), viewport.getViewWidth());
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IconButton.h"
+#include "LeftClickOnly.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
@@ -79,7 +80,10 @@ namespace zynforge
         std::function<void()>     onRecallCue;   // 'Recall' -- re-apply the selected cue
         // Triggered by the right-click menu on the bar or combo. The
         // engineer picks the cue first (combo selection or step), then
-        // right-clicks for Rename / Delete.
+        // right-clicks for Rename / Delete. No button on the bar acts on that
+        // right-click (LeftClickOnly), so the menu works on the cue that was
+        // current: a right-click on Update overwrote the cue, and one on the
+        // arrow stepped to the next, so Delete took the wrong cue.
         std::function<void()>     onRenameCue;
         std::function<void()>     onDeleteCue;
         // Reorder the active cue: -1 = move up (earlier in list),
@@ -102,11 +106,11 @@ namespace zynforge
         // vector-icon vocabulary. Forward/backward triangles drawn in
         // a juce::Path; theming follows the standard ZynForge button
         // chrome via the host LookAndFeel.
-        class ArrowButton final : public juce::Button
+        class ArrowButton final : public LeftClickOnly<juce::Button>
         {
         public:
             ArrowButton (const juce::String& n, bool forward)
-                : juce::Button (n), pointsRight (forward) {}
+                : LeftClickOnly<juce::Button> (n), pointsRight (forward) {}
 
             void paintButton (juce::Graphics& g, bool over, bool down) override
             {
@@ -139,9 +143,9 @@ namespace zynforge
         ArrowButton        prevButton  { "Previous cue", false };
         juce::ComboBox     cueCombo;
         ArrowButton        nextButton  { "Next cue",     true };
-        IconButton         addCueButton { icons::Glyph::Plus, "CUE" };
-        juce::TextButton   updateButton;
-        juce::TextButton   recallButton;
+        LeftClickOnly<IconButton>       addCueButton { icons::Glyph::Plus, "CUE" };
+        LeftClickOnly<juce::TextButton> updateButton;
+        LeftClickOnly<juce::TextButton> recallButton;
 
         bool suppressComboCallback { false };
         bool collapsed { false };

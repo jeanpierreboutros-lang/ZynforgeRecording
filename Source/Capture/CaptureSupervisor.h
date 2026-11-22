@@ -31,7 +31,9 @@ namespace zynforge::capture
     //    idle one we attached to is asked by Quit alone (it is not our child).
     //  * An idle daemon of another build (HelperBuild.h) found at attach is
     //    asked to quit and this build's helper launched in its place; one with
-    //    a take rolling is kept.
+    //    a take rolling, or one that can't be shown to be idle (closing a take
+    //    it sends no status; or it did not answer Quit), is kept and named,
+    //    no take starts on it, and tick() replaces it as soon as it is idle.
     //
     // The daemon side needs no watchdog: a vanished GUI just drops the
     // socket (SIGPIPE ignored) and recording continues.
@@ -135,10 +137,29 @@ namespace zynforge::capture
         juce::String expectedHelperBuild();
         bool helperIsOtherBuild() { return isAttached() && attachedBuild != expectedHelperBuild(); }
         // The last connectOrLaunch asked an idle daemon of another build to
-        // quit and launched this build's in its place.
+        // quit and launched this build's in its place (or tick() did since).
         bool didReplaceOtherBuild() const noexcept { return replacedOtherBuild; }
+        // Attached to a daemon of another build that was kept: it was rolling a
+        // take, or it could not be shown to be idle at attach (one closing a
+        // take sends no status until it is done; one may not answer Quit). It
+        // used to be kept with nothing said, and driven. Now no take starts on
+        // it: configureCapture sends it nothing, and deviceMismatch and
+        // startRecording refuse with otherBuildNotice(). tick() replaces it as
+        // soon as a fresh status says it is idle, its take's claim is free and
+        // mayReplaceOtherBuild agrees.
+        bool keepsOtherBuild() const noexcept { return otherBuildKept && client.isConnected(); }
+        juce::String otherBuildNotice() const;
+        // The window's say before tick() swaps helpers under it: false while it
+        // has a take in hand (rolling, closing, its metadata still saving). Unset
+        // means yes. Message thread.
+        std::function<bool()> mayReplaceOtherBuild;
+        // Message thread, from tick(): the kept daemon was replaced by this
+        // build's (true), or it quit and this build's could not be started
+        // (false; lastConnectError says why, and none is attached).
+        std::function<void (bool launched)> onOtherBuildReplaced;
         // Why this daemon must not take a RECORD for a window whose input device
-        // is ownDevice, from its latest status. Empty when it may.
+        // is ownDevice, from its latest status: a kept daemon of another build
+        // first (keepsOtherBuild), then the device. Empty when it may.
         juce::String deviceMismatch (const juce::String& ownDevice) const;
         juce::String configuredCapture;
         juce::String failedCapture;
@@ -168,6 +189,17 @@ namespace zynforge::capture
         bool heldDeviceDiffers (const juce::String& wanted) const;
         bool idleByFreshStatus() const;
         bool retireOtherBuild();
+        bool launchAndAttach();
+        bool isOtherBuild (const juce::String& build);
+        void replaceOtherBuildWhenIdle();
+        bool               otherBuildKept { false };
+        juce::int64        otherBuildIdleSinceMs { 0 };   // 0 = not seen idle since the last check
+        juce::int64        nextReplaceAttemptMs { 0 };
+        int                failedReplaceAttempts { 0 };
+        juce::StringArray  launchArgs;                    // connectOrLaunch's extraArgs, for a later launch
+        // Idle this long before tick() swaps helpers: the window has seen the
+        // take end by then.
+        static constexpr juce::int64 kOtherBuildIdleGraceMs = 1000;
         juce::String       attachedBuild;
         juce::int64        attachedAtMs { 0 };   // when the last hello was answered
         juce::String       failedCaptureReason;

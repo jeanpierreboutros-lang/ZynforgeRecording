@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -12,22 +13,56 @@ namespace zynforge::preflight
     // window freezes for as long as it waits.
     inline constexpr int kDriveWaitMs = 1500, kSpeedTestWaitMs = 4000;
 
+    namespace detail
+    {
+        // The cancel flag of the withinTime run on this thread, if any.
+        inline const std::atomic<bool>*& runningProbeCancel() noexcept
+        {
+            static thread_local const std::atomic<bool>* flag = nullptr;
+            return flag;
+        }
+    }
+
+    // True on a probe thread whose withinTime caller has stopped waiting:
+    // nobody will read the answer, so a probe that writes stops at its next
+    // step and cleans up. Always false on any other thread.
+    inline bool probeCancelled() noexcept
+    {
+        const auto* flag = detail::runningProbeCancel();
+        return flag != nullptr && flag->load (std::memory_order_relaxed);
+    }
+
     // A stat or a write on a dead mount can block for minutes or for good. The
     // probe runs on a thread of its own that owns only what it was handed, so a
     // drive that never answers strands that thread and costs the caller
-    // `waitMs`. Empty means no answer in time.
+    // `waitMs`. Empty means no answer in time. On a timeout the probe is
+    // cancelled (probeCancelled turns true on its thread): a call stuck inside
+    // the drive stays stuck, but a probe between steps, like the speed test
+    // between chunks, stops there instead of writing on after the answer was
+    // given up.
     template <typename Probe>
     auto withinTime (int waitMs, Probe probe) -> std::optional<decltype (probe())>
     {
         using Result = decltype (probe());
-        struct Shared { juce::WaitableEvent done { true }; Result value {}; };
+        struct Shared
+        {
+            juce::WaitableEvent done { true };
+            std::atomic<bool>   cancelled { false };
+            Result              value {};
+        };
         auto shared = std::make_shared<Shared>();
         std::thread ([shared, run = std::move (probe)]() mutable
         {
+            detail::runningProbeCancel() = &shared->cancelled;
             shared->value = run();
+            detail::runningProbeCancel() = nullptr;
             shared->done.signal();
         }).detach();
-        if (! shared->done.wait (waitMs)) return std::nullopt;
+        if (! shared->done.wait (waitMs))
+        {
+            shared->cancelled.store (true, std::memory_order_relaxed);
+            return std::nullopt;
+        }
         return shared->value;
     }
 
@@ -61,14 +96,23 @@ namespace zynforge::preflight
 
     // Sustained sequential write speed of the volume behind `dir`, in
     // MB/s, measured by streaming `megabytes` of data to a temp file in
-    // 1 MB chunks (flushed) and timing it. Returns <= 0 on failure. A
-    // 16 MB probe finishes in well under a second on any disk that can
-    // host a show; this deliberately measures the *write path the
-    // recorder will use* (same folder, same filesystem) rather than
+    // 1 MB chunks, flushed to the disk at the end, and timing it. Returns
+    // <= 0 on failure. A 16 MB probe finishes in well under a second on any
+    // disk that can host a show; this deliberately measures the *write path
+    // the recorder will use* (same folder, same filesystem) rather than
     // trusting the drive's marketing numbers.
-    inline double measureWriteSpeedMBps (const juce::File& dir, int megabytes = 16)
+    //
+    // Cancelled (`cancel`, or probeCancelled under withinTime) it stops
+    // before the next chunk, skips the flush and deletes its file: a speed
+    // test pre-flight gave up on must not go on loading the session drive.
+    inline double measureWriteSpeedMBps (const juce::File& dir, int megabytes = 16,
+                                         const std::atomic<bool>* cancel = nullptr)
     {
-        if (megabytes <= 0 || ! dir.isDirectory()) return -1.0;
+        const auto stopped = [cancel]
+        {
+            return probeCancelled() || (cancel != nullptr && cancel->load (std::memory_order_relaxed));
+        };
+        if (megabytes <= 0 || stopped() || ! dir.isDirectory()) return -1.0;
         auto probe = dir.getNonexistentChildFile (".zf-preflight-speed", ".tmp");
 
         juce::HeapBlock<char> chunk (1 << 20);
@@ -83,8 +127,10 @@ namespace zynforge::preflight
             const auto t0 = juce::Time::getHighResolutionTicks();
             bool ok = true;
             for (int mb = 0; mb < megabytes && ok; ++mb)
-                ok = os.write (chunk.get(), 1 << 20);
-            os.flush();
+                ok = ! stopped() && os.write (chunk.get(), 1 << 20);
+            // No flush once it failed or was cancelled: forcing megabytes
+            // nobody will time onto the disk is the work to avoid.
+            if (ok) os.flush();
             ok = ok && os.getStatus().wasOk();
             const auto t1 = juce::Time::getHighResolutionTicks();
             const double secs = juce::Time::highResolutionTicksToSeconds (t1 - t0);

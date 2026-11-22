@@ -231,13 +231,21 @@ void MainComponent::releaseHeldRecordPress()
     if (recordPressHeldAtMs == 0 || pendingMetadataSaves != 0) return;
     const auto heldForMs = juce::Time::getMillisecondCounter() - recordPressHeldAtMs;
     recordPressHeldAtMs = 0;
-    if (sessionLocked) return;
+    // LOCK pressed after RECORD ("start the show and lock it") does not take
+    // the press back: it was made before the lock, so it starts as it would
+    // have and the window stays locked. Dropping it here left the recorder
+    // locked and idle without a word (audit 2026-11-22, H2).
     // Rolling, RECORD punches. Stopped, it appends. A press made in one state
     // never runs in the other.
     if (heldForMs > kLongestHoldMs) showStatus ("Saving took too long -- press RECORD again");
     else if (engine.getPlayer().isPlaying() != recordPressHeldRolling)
         showStatus ("The transport moved while RECORD was held -- press RECORD again");
-    else onRecordClicked();
+    else
+    {
+        onRecordClicked();
+        if (sessionLocked && engine.isRecording())
+            showStatus ("LOCKED -- recording; click UNLOCK to resume control");
+    }
 }
 
 // Names what holds RECORD up, so the engineer (or the twin's operator, who
@@ -1411,7 +1419,9 @@ void MainComponent::applyLockState()
 
     lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
     lockButton.setToggleState (sessionLocked, juce::dontSendNotification);
-    showStatus (sessionLocked ? "LOCKED -- click UNLOCK to resume control"
+    showStatus (sessionLocked && recordPressHeldAtMs != 0
+                    ? "LOCKED -- RECORD is held and starts as soon as this save finishes"
+                : sessionLocked ? "LOCKED -- click UNLOCK to resume control"
                               : engine.isRecording()  ? "Recording"
                               : engine.isPlaying()    ? "Playing"
                                                       : "Idle");

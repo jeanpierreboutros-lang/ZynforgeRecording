@@ -202,6 +202,12 @@ namespace zynforge
     // its neighbour (and the gap between them), and its handle wrote fades
     // as long as both clips. Overlaps under minOverlap samples are too small
     // to read and are skipped.
+    // A pair is a crossfade only where the two really meet at a boundary: the
+    // incoming clip starts inside the outgoing one (after its start) and ends
+    // after it. A short clip pasted inside a long one is not a crossfade:
+    // pairing it drew an X over the short clip whose handle faded out the END
+    // of the long one, far from the edit. Enclosed clips are stepped over, so
+    // the long clip still crossfades into the clip that carries on past its end.
     inline std::vector<std::pair<int, int>> timelineCrossfades (const std::vector<Clip>& clips,
                                                                 juce::int64 minOverlap = 64)
     {
@@ -215,9 +221,16 @@ namespace zynforge
         for (size_t k = 0; k + 1 < order.size(); ++k)
         {
             const auto& a = clips[(size_t) order[k]];
-            const auto& b = clips[(size_t) order[k + 1]];
-            if (a.timelineStartSamples + a.fileLengthSamples - b.timelineStartSamples >= minOverlap)
-                pairs.emplace_back (order[k], order[k + 1]);
+            const auto aEnd = a.timelineStartSamples + a.fileLengthSamples;
+            for (size_t j = k + 1; j < order.size(); ++j)
+            {
+                const auto& b = clips[(size_t) order[j]];
+                if (aEnd - b.timelineStartSamples < minOverlap) break;   // starts too late, as do the rest
+                if (b.timelineStartSamples + b.fileLengthSamples <= aEnd) continue;   // inside a
+                if (b.timelineStartSamples > a.timelineStartSamples)
+                    pairs.emplace_back (order[k], order[j]);
+                break;   // b carries on past a's end: a's one crossfade, or (same start) none
+            }
         }
         return pairs;
     }

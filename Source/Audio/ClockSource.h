@@ -88,6 +88,12 @@ namespace zynforge::clocksource
     // than it asked to. One read at a time; a stalled driver holds that one
     // read and nothing else. The thread owns only `Shared`, so it can outlive
     // the Probe.
+    //
+    // A reading is kept with the device it is for. A device asked for while
+    // another one's read runs is read after it, on the same thread, and only
+    // the device asked for last is kept, so wait (B) and latest() never hand
+    // back device A's clock: wait (B) answers B within its time limit, or
+    // "not available".
     class Probe
     {
     public:
@@ -97,7 +103,7 @@ namespace zynforge::clocksource
 
         void    request (const juce::String& deviceName);   // never waits
         Reading wait (const juce::String& deviceName, int timeoutMs);
-        Reading latest() const;
+        Reading latest() const;   // the device asked for last, or unknown
 
     private:
         struct Shared
@@ -105,7 +111,9 @@ namespace zynforge::clocksource
             std::mutex              lock;
             std::condition_variable finished;
             bool                    inFlight { false };
+            juce::String            wanted;       // the device asked for last
             Reading                 reading;
+            juce::String            readingFor;   // the device `reading` is for; empty = none
         };
         Reader readerFn;
         std::shared_ptr<Shared> shared { std::make_shared<Shared>() };

@@ -325,6 +325,28 @@ namespace zynforge::capture
                 {
                     if (beforeStartForTests) beforeStartForTests();
                     dir.createDirectory();
+                }
+                // The take's claim, before recording.session exists and before
+                // anything about this take is set up. Crash recovery and a
+                // window that lost its helper tell a live session from a
+                // crashed one by it, so a take that rolled unclaimed could be
+                // listed as crashed and offered for deletion. A probe holds it
+                // for an instant (hold() waits that out); a few tries cover a
+                // slow one. Anything that keeps it is another helper writing
+                // into this folder, or a /tmp folder this helper can't use.
+                const bool mayStart = r.error.isEmpty();
+                bool claimed = false;
+                for (int attempt = 0; mayStart && ! claimed && attempt < kTakeClaimTries; ++attempt)
+                {
+                    if (attempt > 0) juce::Thread::sleep (kTakeClaimRetryMs);
+                    claimed = takeClaim.hold (dir);
+                }
+                if (mayStart && ! claimed)
+                    r.error = "the capture helper could not claim this session's take (another capture helper "
+                              "may be recording into this folder, or its private folder in /tmp can't be "
+                              "written); nothing was recorded";
+                if (claimed)
+                {
                     // Continue into a new part even after reattaching/restarting
                     // the GUI. Existing takes must never be truncated.
                     const auto audio = dir.getChildFile ("Audio Files");
@@ -339,7 +361,6 @@ namespace zynforge::capture
                     // The name the running device started under: the setup
                     // itself belongs to the message thread.
                     recorder.setClockDevice (heldDevice());
-                    takeClaim.hold (dir);   // before recording.session exists
                     if (recorder.startRecording (dir))
                     { captureDeviceLost.store (false); r.ok = true; }
                     else r.error = recorder.getStartError().isNotEmpty()

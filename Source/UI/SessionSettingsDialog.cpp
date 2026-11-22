@@ -54,7 +54,19 @@ namespace
             rateBox.addItem ("96 kHz",    4);
             rateBox.addItem ("176.4 kHz", 5);
             rateBox.addItem ("192 kHz",   6);
-            rateBox.setSelectedId (rateIdFromHz (sr), juce::dontSendNotification);
+            // A rate the list doesn't hold (or none yet) is shown as it is, not
+            // as 48 kHz: Apply would have moved the session to 48 kHz when the
+            // engineer only changed the pre-roll.
+            if (rateIdFromHz (sr) == 0)
+            {
+                auto kHz = juce::String (sr / 1000.0, 1);
+                if (kHz.endsWith (".0")) kHz = kHz.dropLastCharacters (2);
+                rateBox.addItem (sr > 0.0 ? kHz + " kHz (current)" : juce::String ("Keep current"), kKeepRateId);
+            }
+            rateBox.setSelectedId (rateIdFromHz (sr) != 0 ? rateIdFromHz (sr) : kKeepRateId,
+                                   juce::dontSendNotification);
+            openedRateId = rateBox.getSelectedId();
+            rateBox.setTitle ("Sample Rate");
             addAndMakeVisible (rateBox);
 
             preRollBox.setTitle ("Pre-roll");
@@ -112,15 +124,20 @@ namespace
             addAndMakeVisible (cancelB);
         }
 
+        // The listed rates' ids; 0 for a rate the list doesn't hold.
         static int rateIdFromHz (double hz)
         {
             if (juce::approximatelyEqual (hz, 44100.0))  return 1;
+            if (juce::approximatelyEqual (hz, 48000.0))  return 2;
             if (juce::approximatelyEqual (hz, 88200.0))  return 3;
             if (juce::approximatelyEqual (hz, 96000.0))  return 4;
             if (juce::approximatelyEqual (hz, 176400.0)) return 5;
             if (juce::approximatelyEqual (hz, 192000.0)) return 6;
-            return 2;   // 48 kHz default
+            return 0;
         }
+        // The unlisted current rate, or "Keep current" with none: Apply leaves
+        // the rate alone.
+        static constexpr int kKeepRateId = 7;
         static double hzFromRateId (int id)
         {
             switch (id) { case 1: return 44100.0;  case 3: return 88200.0;
@@ -162,7 +179,12 @@ namespace
             // Change the SESSION rate (updates pendingSampleRate + the
             // record-guard, and asks the device to follow) via the host,
             // so it actually sticks instead of only nudging the device.
-            if (onApplySampleRate) onApplySampleRate (hzFromRateId (rateBox.getSelectedId()));
+            // Only when the engineer changed the rate box: Apply for the
+            // pre-roll or the format must not re-send the rate (and ask the
+            // device to follow a session it was deliberately clocked apart from).
+            const int rateId = rateBox.getSelectedId();
+            if (onApplySampleRate && rateId != openedRateId && rateId >= 1 && rateId <= 6)
+                onApplySampleRate (hzFromRateId (rateId));
             close();
         }
 
@@ -215,6 +237,7 @@ namespace
         juce::ComboBox fmtBox, rateBox, bitsBox, preRollBox;
         juce::TextButton applyB, cancelB, changePathB;
         juce::ToggleButton stereoMixB;
+        int openedRateId { 0 };   // what the rate box showed when the dialog opened
     };
 }
 

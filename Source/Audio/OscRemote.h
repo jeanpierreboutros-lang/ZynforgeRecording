@@ -100,6 +100,7 @@ namespace zynforge
         double testNowMs { -1.0 };
         deskmacro::Debouncer stopDebouncer;     // /zynforge/stop presses
         deskmacro::Debouncer markerDebouncer;   // /zynforge/marker presses
+        deskmacro::ValuelessPairs markerPairs;  // a valueless /zynforge/marker press and its release
         deskmacro::Debouncer sceneDebouncer;    // /zynforge/scene presses
         double lastValuelessStopNoticeMs { -1.0e9 };
         void refuseValuelessStop (double nowMs);

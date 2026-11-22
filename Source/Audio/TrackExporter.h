@@ -85,7 +85,9 @@ namespace zynforge
         bool isOpen() const noexcept { return writer != nullptr; }
         bool write (const juce::AudioBuffer<float>& block, int numSamples);
         bool commit (juce::String& error, const std::atomic<bool>* cancel = nullptr);
-        // Audio over full scale went into a format that cannot hold it.
+        // Audio over full scale went into a format that cannot hold it. Final
+        // after commit(): a rate conversion is measured again as it converts,
+        // since resampling moves the peaks.
         bool hasClipped() const noexcept { return clipped; }
 
     private:

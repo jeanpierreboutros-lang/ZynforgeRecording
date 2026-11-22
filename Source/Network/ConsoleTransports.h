@@ -20,8 +20,19 @@
 #include "OscPacketReceiver.h"
 
 #include <atomic>
+#include <cerrno>
+#include <condition_variable>
+#include <cstring>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
+#if JUCE_MAC || JUCE_LINUX
+ #include <fcntl.h>
+ #include <poll.h>
+ #include <sys/socket.h>
+#endif
 
 namespace zynforge
 {
@@ -127,27 +138,55 @@ namespace zynforge
         std::atomic<bool> connected { false };
     };
 
-    // ── ASCII line protocol over TCP (Yamaha SCP) ───────────────────────────
-    // SCP is newline-terminated text, e.g.
-    //     get MIXER:Current/InCh/Label/Name 0 0
-    //     OK get MIXER:Current/InCh/Label/Name 0 0 "KICK"
-    // We split the wire into address = first token after the verb, args = the
-    // remainder; the PROFILE decides what any of it means.
-    class TextLineTransport final : public ConsoleTransport
+    // ── What the two TCP transports share ───────────────────────────────────
+    // A reader thread frames the stream (the subclass's consume) and hands each
+    // message to the bounded inbound backlog (deliverOnMessageThread). A writer
+    // thread owns every write: send() only queues the bytes, so a desk that
+    // stops reading can never hold the message thread. send() used to write on
+    // it, blocking, with no deadline. The queue is capped; a message that does
+    // not fit, or that the desk takes nothing of within kWriteBudgetMs, is
+    // dropped, counted (getSendDropCount) and reported through
+    // onUnhandledTraffic. A write cut off part-way would glue the rest of the
+    // next message to what went out, so that closes the link instead, and
+    // ConsoleLink's watchdog reports it lost.
+    class TcpStreamTransport : public ConsoleTransport
     {
     public:
-        ~TextLineTransport() override { disconnect(); }
+        // A subclass's destructor calls disconnect() first: its reader may be
+        // inside consume(), which is the subclass's.
+        ~TcpStreamTransport() override { disconnect(); }
 
-        juce::String getName() const override { return "SCP/TCP"; }
-        bool isConnected() const override     { return running.load(); }
+        bool isConnected() const override { return running.load(); }
 
         bool connect (const juce::String& host, int port) override
         {
             disconnect();
-            socket = std::make_unique<juce::StreamingSocket>();
-            if (! socket->connect (host, port, 2000)) { socket.reset(); return false; }
+            resetFraming();
+            auto s = std::make_unique<juce::StreamingSocket>();
+            if (! s->connect (host, port, 2000)) return false;
+           #if JUCE_MAC || JUCE_LINUX
+            // The writer polls with a deadline and never waits in the kernel.
+            // JUCE's read (false) puts the descriptor in the same mode.
+            const int handle = s->getRawSocketHandle();
+            const int statusFlags = ::fcntl (handle, F_GETFL, 0);
+            if (statusFlags < 0 || ::fcntl (handle, F_SETFL, statusFlags | O_NONBLOCK) < 0) return false;
+            #ifdef SO_NOSIGPIPE
+            int on = 1;
+            ::setsockopt (handle, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof (on));
+            #endif
+           #endif
+            socket = std::move (s);
+            overflowSource = host + ":" + juce::String (port);
+            clearInbound (true);
+            {
+                const std::lock_guard<std::mutex> g (outLock);
+                outQueue.clear();
+                outBytes = 0;
+            }
+            sendDropped.store (0, std::memory_order_relaxed);
             running.store (true);
             reader = std::thread ([this] { readLoop(); });
+            writer = std::thread ([this] { writeLoop(); });
             return true;
         }
 
@@ -161,16 +200,198 @@ namespace zynforge
             // The whole process aborted on the next Connect / profile change /
             // quit after a console dropped its link. CaptureLink::disconnect
             // documents having been bitten by exactly this; the lesson didn't
-            // reach here.
+            // reach here. The writer the same; and the writer goes first,
+            // before the socket closes: it writes to the raw descriptor, which
+            // the system could hand to another file once closed.
             running.store (false);
+            { const std::lock_guard<std::mutex> g (outLock); }   // a writer about to wait sees the flag
+            outReady.notify_all();
+            if (writer.joinable()) writer.join();
             if (socket != nullptr) socket->close();   // unblocks the reader
             if (reader.joinable()) reader.join();
             socket.reset();
+            {
+                const std::lock_guard<std::mutex> g (outLock);
+                outQueue.clear();
+                outBytes = 0;
+            }
+            clearInbound (false);
         }
 
+        // Outgoing messages dropped since connect(): the queue was full, or the
+        // desk took nothing of one within kWriteBudgetMs.
+        juce::int64 getSendDropCount() const noexcept { return sendDropped.load (std::memory_order_relaxed); }
+
+        static constexpr size_t kMaxQueuedSends = 1024;
+        static constexpr size_t kMaxQueuedBytes = 1u << 20;
+        static constexpr double kWriteBudgetMs  = 1000.0;
+
+    protected:
+        // Reader thread: frame what `scratch` holds, deliver every whole
+        // message through deliverOnMessageThread and keep the rest. False
+        // tears the link down (a runaway line).
+        virtual bool consume (juce::MemoryBlock& scratch) = 0;
+        virtual void resetFraming() {}
+
+        // Message thread: hands one message's bytes to the writer. False when
+        // there is no link, or when it was dropped because the queue is full.
+        bool queueBytes (std::vector<juce::uint8> bytes)
+        {
+            if (! running.load() || bytes.empty()) return false;
+            {
+                const std::lock_guard<std::mutex> g (outLock);
+                if (outQueue.size() < kMaxQueuedSends && outBytes + bytes.size() <= kMaxQueuedBytes)
+                {
+                    outBytes += bytes.size();
+                    outQueue.push_back (std::move (bytes));
+                    outReady.notify_one();
+                    return true;
+                }
+            }
+            noteSendDropped ("not sent: the desk is not taking what was already sent");
+            return false;
+        }
+
+    private:
+        static constexpr double kSendReportMs = 1000.0;
+
+        void readLoop()
+        {
+            juce::MemoryBlock scratch;
+            char buf[2048];
+            while (running.load() && socket != nullptr)
+            {
+                const int ready = socket->waitUntilReady (true, 200);
+                if (ready < 0) break;
+                if (ready == 0) continue;
+                const int got = socket->read (buf, sizeof (buf), false);
+                if (got <= 0) break;
+                scratch.append (buf, (size_t) got);
+                if (! consume (scratch)) break;
+            }
+            running.store (false);
+        }
+
+        void writeLoop()
+        {
+            for (;;)
+            {
+                std::vector<juce::uint8> next;
+                {
+                    std::unique_lock<std::mutex> g (outLock);
+                    while (running.load() && outQueue.empty())
+                        outReady.wait_for (g, std::chrono::milliseconds (200));
+                    if (! running.load()) return;
+                    next = std::move (outQueue.front());
+                    outQueue.pop_front();
+                    outBytes -= next.size();
+                }
+                const auto wrote = writeWithinBudget (next);
+                if (wrote == Wrote::all) continue;
+                if (! running.load()) return;   // closing: nothing to say
+                if (wrote == Wrote::nothing)
+                {
+                    noteSendDropped ("not sent: the desk took none of it within "
+                                     + juce::String ((int) kWriteBudgetMs) + " ms");
+                    continue;
+                }
+                sendDropped.fetch_add (1, std::memory_order_relaxed);
+                reportOnMessageThread (overflowSource, "link closed: a message to the desk was cut off part-way, "
+                                                       "and the rest of the stream would not have read as sent");
+                running.store (false);   // the reader leaves within its wait; the watchdog says the link is lost
+                return;
+            }
+        }
+
+        // all: every byte went out. nothing: the deadline passed with none
+        // written, so the stream is still whole. broken: part of it went, or
+        // the socket failed.
+        enum class Wrote { all, nothing, broken };
+
+        Wrote writeWithinBudget (const std::vector<juce::uint8>& bytes)
+        {
+            const auto deadline = juce::Time::getMillisecondCounterHiRes() + kWriteBudgetMs;
+            size_t sent = 0;
+           #if JUCE_MAC || JUCE_LINUX
+            const int handle = socket->getRawSocketHandle();
+            while (sent < bytes.size() && running.load())
+            {
+                const auto remaining = deadline - juce::Time::getMillisecondCounterHiRes();
+                if (remaining <= 0.0) break;
+                // Short slices, so disconnect() never waits on a full budget.
+                pollfd descriptor { handle, POLLOUT, 0 };
+                const int ready = ::poll (&descriptor, 1, (int) juce::jlimit (1.0, 50.0, remaining));
+                if (ready < 0 && errno == EINTR) continue;
+                if (ready < 0 || (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) return Wrote::broken;
+                if (ready == 0) continue;
+                int flags = MSG_DONTWAIT;
+               #ifdef MSG_NOSIGNAL
+                flags |= MSG_NOSIGNAL;
+               #endif
+                const auto n = ::send (handle, bytes.data() + sent, bytes.size() - sent, flags);
+                if (n < 0)
+                {
+                    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                    return Wrote::broken;
+                }
+                if (n == 0) return Wrote::broken;
+                sent += (size_t) n;
+            }
+           #else
+            while (sent < bytes.size() && running.load()
+                   && juce::Time::getMillisecondCounterHiRes() < deadline)
+            {
+                if (socket->waitUntilReady (false, 50) <= 0) continue;
+                const int n = socket->write (bytes.data() + sent, (int) (bytes.size() - sent));
+                if (n <= 0) return Wrote::broken;
+                sent += (size_t) n;
+            }
+           #endif
+            if (sent == bytes.size()) return Wrote::all;
+            return sent == 0 ? Wrote::nothing : Wrote::broken;
+        }
+
+        // Message thread (a full queue) or the writer (a write that timed
+        // out): counted always, said at most once a second.
+        void noteSendDropped (const juce::String& why)
+        {
+            const auto count = sendDropped.fetch_add (1, std::memory_order_relaxed) + 1;
+            const auto now = juce::Time::getMillisecondCounterHiRes();
+            auto next = nextSendReportMs.load (std::memory_order_relaxed);
+            if (now < next) return;
+            if (! nextSendReportMs.compare_exchange_strong (next, now + kSendReportMs)) return;
+            reportOnMessageThread (overflowSource, "-> " + why + " (" + juce::String (count) + " dropped so far)");
+        }
+
+        std::unique_ptr<juce::StreamingSocket> socket;
+        std::thread       reader;
+        std::thread       writer;
+        std::atomic<bool> running { false };
+        std::mutex        outLock;
+        std::condition_variable outReady;
+        std::deque<std::vector<juce::uint8>> outQueue;   // guarded by outLock
+        size_t            outBytes { 0 };                // guarded by outLock
+        std::atomic<juce::int64>  sendDropped { 0 };
+        std::atomic<double>       nextSendReportMs { 0.0 };
+    };
+
+    // ── ASCII line protocol over TCP (Yamaha SCP) ───────────────────────────
+    // SCP is newline-terminated text, e.g.
+    //     get MIXER:Current/InCh/Label/Name 0 0
+    //     OK get MIXER:Current/InCh/Label/Name 0 0 "KICK"
+    // We split the wire into address = first token after the verb, args = the
+    // remainder; the PROFILE decides what any of it means.
+    class TextLineTransport final : public TcpStreamTransport
+    {
+    public:
+        ~TextLineTransport() override { disconnect(); }
+
+        juce::String getName() const override { return "SCP/TCP"; }
+
+        // Queued for the writer thread (TcpStreamTransport): true once queued.
         bool send (const ConsoleMessage& m) override
         {
-            if (! running.load() || socket == nullptr || m.isEmpty()) return false;
+            if (! isConnected() || m.isEmpty()) return false;
             juce::String line = m.address;
             for (const auto& a : m.args)
             {
@@ -181,16 +402,8 @@ namespace zynforge
                 else              line << a.toString();
             }
             line << "\n";
-            const auto utf8 = line.toRawUTF8();
-            const int total = (int) std::strlen (utf8);
-            int sent = 0;
-            while (sent < total)
-            {
-                const int n = socket->write (utf8 + sent, total - sent);
-                if (n <= 0) return false;
-                sent += n;
-            }
-            return true;
+            const auto* utf8 = line.toRawUTF8();
+            return queueBytes (std::vector<juce::uint8> (utf8, utf8 + std::strlen (utf8)));
         }
 
         // Split one SCP line into a ConsoleMessage. Static + public so the
@@ -246,101 +459,54 @@ namespace zynforge
             return m;
         }
 
-    private:
-        void readLoop()
+    protected:
+        bool consume (juce::MemoryBlock& scratch) override
         {
-            juce::MemoryBlock scratch;
-            char buf[2048];
-            while (running.load() && socket != nullptr)
+            // Split on '\n' at the BYTE level so a multi-byte character
+            // straddling a read boundary survives (same approach as
+            // CaptureLink::pumpLines).
+            const auto* base = static_cast<const char*> (scratch.getData());
+            const size_t size = scratch.getSize();
+            size_t start = 0;
+            for (size_t i = 0; i < size; ++i)
             {
-                const int ready = socket->waitUntilReady (true, 200);
-                if (ready < 0) break;
-                if (ready == 0) continue;
-                const int got = socket->read (buf, sizeof (buf), false);
-                if (got <= 0) break;
-                scratch.append (buf, (size_t) got);
-
-                // Split on '\n' at the BYTE level so a multi-byte character
-                // straddling a read boundary survives (same approach as
-                // CaptureLink::pumpLines).
-                const auto* base = static_cast<const char*> (scratch.getData());
-                const size_t size = scratch.getSize();
-                size_t start = 0;
-                for (size_t i = 0; i < size; ++i)
-                {
-                    if (base[i] != '\n') continue;
-                    const auto line = juce::String::fromUTF8 (base + start, (int) (i - start));
-                    start = i + 1;
-                    auto m = parseLine (line);
-                    if (! m.isEmpty()) deliverOnMessageThread (std::move (m));
-                }
-                if (start > 0)
-                {
-                    juce::MemoryBlock rest;
-                    if (size > start) rest.append (base + start, size - start);
-                    scratch = std::move (rest);
-                }
-                if (scratch.getSize() > (1u << 20)) break;   // runaway line: tear down
+                if (base[i] != '\n') continue;
+                const auto line = juce::String::fromUTF8 (base + start, (int) (i - start));
+                start = i + 1;
+                auto m = parseLine (line);
+                if (! m.isEmpty()) deliverOnMessageThread (std::move (m));
             }
-            running.store (false);
+            if (start > 0)
+            {
+                juce::MemoryBlock rest;
+                if (size > start) rest.append (base + start, size - start);
+                scratch = std::move (rest);
+            }
+            return scratch.getSize() <= (1u << 20);   // runaway line: tear down
         }
-
-        std::unique_ptr<juce::StreamingSocket> socket;
-        std::thread       reader;
-        std::atomic<bool> running { false };
     };
 
     // ── MIDI over TCP (Allen & Heath) ───────────────────────────────────────
     // A&H desks speak ordinary MIDI on a TCP stream. We frame on status bytes
     // and hand the PROFILE a synthetic address plus the raw bytes as args, so
     // the dialect (which NRPN/SysEx means what) stays out of the transport.
-    class MidiTcpTransport final : public ConsoleTransport
+    class MidiTcpTransport final : public TcpStreamTransport
     {
     public:
         ~MidiTcpTransport() override { disconnect(); }
 
         juce::String getName() const override { return "MIDI/TCP"; }
-        bool isConnected() const override     { return running.load(); }
 
-        bool connect (const juce::String& host, int port) override
-        {
-            disconnect();
-            runningStatus = 0;
-            socket = std::make_unique<juce::StreamingSocket>();
-            if (! socket->connect (host, port, 2000)) { socket.reset(); return false; }
-            running.store (true);
-            reader = std::thread ([this] { readLoop(); });
-            return true;
-        }
-
-        void disconnect() override
-        {
-            // See TextLineTransport::disconnect -- an unconditional join. A
-            // reader that exited on its own (desk dropped the link) must still
-            // be joined or destroying it calls std::terminate().
-            running.store (false);
-            if (socket != nullptr) socket->close();
-            if (reader.joinable()) reader.join();
-            socket.reset();
-        }
-
-        // Outbound: args are raw MIDI byte values (0..255) built by the profile.
+        // Outbound: args are raw MIDI byte values (0..255) built by the
+        // profile. Queued for the writer thread: true once queued.
         bool send (const ConsoleMessage& m) override
         {
-            if (! running.load() || socket == nullptr || m.args.empty()) return false;
+            if (! isConnected() || m.args.empty()) return false;
             std::vector<juce::uint8> bytes;
             bytes.reserve (m.args.size());
             for (const auto& a : m.args)
                 bytes.push_back ((juce::uint8) juce::jlimit (0, 255, (int) a));
-            int sent = 0;
-            const int total = (int) bytes.size();
-            while (sent < total)
-            {
-                const int n = socket->write (bytes.data() + sent, total - sent);
-                if (n <= 0) return false;
-                sent += n;
-            }
-            return true;
+            return queueBytes (std::move (bytes));
         }
 
         // Frame a byte stream into MIDI messages. Static + public so the suite
@@ -443,31 +609,18 @@ namespace zynforge
             frame (buffer, out, status);
         }
 
-    private:
-        void readLoop()
+    protected:
+        bool consume (juce::MemoryBlock& scratch) override
         {
-            juce::MemoryBlock scratch;
-            char buf[2048];
-            while (running.load() && socket != nullptr)
-            {
-                const int ready = socket->waitUntilReady (true, 200);
-                if (ready < 0) break;
-                if (ready == 0) continue;
-                const int got = socket->read (buf, sizeof (buf), false);
-                if (got <= 0) break;
-                scratch.append (buf, (size_t) got);
-
-                std::vector<ConsoleMessage> msgs;
-                frame (scratch, msgs, runningStatus);
-                for (auto& m : msgs) deliverOnMessageThread (std::move (m));
-                if (scratch.getSize() > (1u << 20)) break;
-            }
-            running.store (false);
+            std::vector<ConsoleMessage> msgs;
+            frame (scratch, msgs, runningStatus);
+            for (auto& m : msgs) deliverOnMessageThread (std::move (m));
+            return scratch.getSize() <= (1u << 20);
         }
 
-        std::unique_ptr<juce::StreamingSocket> socket;
-        std::thread       reader;
-        std::atomic<bool> running { false };
-        juce::uint8       runningStatus { 0 };
+        void resetFraming() override { runningStatus = 0; }
+
+    private:
+        juce::uint8 runningStatus { 0 };   // the reader's, between connects
     };
 }

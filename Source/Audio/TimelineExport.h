@@ -80,10 +80,29 @@ namespace zynforge::timelineexport
     };
 
     // SMPTE HH:MM:SS:FF for a sample position at the given audio rate + fps.
+    // A label names the frame the position is IN, so the frame count
+    // truncates: the last sample of frame 29 reads :29, never the next
+    // second. At a whole-number rate (every rate a device runs at) the count
+    // is exact integer arithmetic, so a sample on a frame boundary is the
+    // frame it starts, with no floating error to put it in the one before.
+    // fps is the nominal integer rate (frameRateFor: 29.97 counts as 30), so
+    // frames count straight through in real time and none are dropped. A
+    // position before the start reads as the start.
     inline juce::String samplesToTimecode (juce::int64 samples, double sampleRate, int fps)
     {
-        if (sampleRate <= 0.0 || fps <= 0) return "00:00:00:00";
-        const juce::int64 totalFrames = (juce::int64) llround ((double) samples / sampleRate * (double) fps);
+        if (! std::isfinite (sampleRate) || sampleRate <= 0.0 || fps <= 0) return "00:00:00:00";
+        const auto position = juce::jmax<juce::int64> (0, samples);
+        juce::int64 totalFrames = 0;
+        if (sampleRate < 1.0e9 && juce::exactlyEqual (std::floor (sampleRate), sampleRate))
+        {
+            // Whole seconds first, so position x fps cannot overflow.
+            const auto rate = (juce::int64) sampleRate;
+            totalFrames = position / rate * fps + position % rate * fps / rate;
+        }
+        else
+        {
+            totalFrames = (juce::int64) std::floor ((double) position * (double) fps / sampleRate + 1.0e-9);
+        }
         const int ff = (int) (totalFrames % fps);
         const juce::int64 totalSec = totalFrames / fps;
         const int ss = (int) (totalSec % 60);
