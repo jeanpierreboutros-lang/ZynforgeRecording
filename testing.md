@@ -1,5 +1,15 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-22 Convert to Stereo
+
+`StereoConvertTests.cpp` (suite *Convert to stereo*, 4 groups) covers right-click Convert to Stereo:
+- the last strip converts in place: name, strip id, colour, fader and arm kept, a right half named "<name> R", pans hard L/R, the right half on the next input;
+- a middle strip in a saved session converts without taking the next strip: that strip's take moves with it, a default-patched strip is pinned to the input it heard, a hand patch is kept;
+- refusals change nothing: a strip with a take, a stereo strip, a right half and a missing strip;
+- EDIT's row header offers it on a mono row only (never on a lane), and the choice reaches `EditPage::onRowConvertToStereo` with the strip.
+
+**Results on `e6a359f`:** Release (universal build, run on arm64) 2041 test groups, 0 failures; both static gates clean. ASan/UBSan and TSan not run for this change.
+
 ## 2026-11-17 design pass
 
 The design pass was made on three branches (strip, alarms, panels) from `57001ea` plus an opt-in render harness, and merged on `main` as `7ba286b`. The zoom-bar move followed in `299ceb4` / `d1a9f86`.

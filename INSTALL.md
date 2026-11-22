@@ -2,7 +2,21 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `d1a9f86`, `main` on 2026-11-17: every fix of the 2026-11-16 review and the 2026-11-17 design pass, with EDIT's zoom bar at the right of the transport row. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app (see the cleanup below).
+The development Mac now has `e6a359f`, `main` on 2026-11-22: `d1a9f86` plus right-click Convert to Stereo. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app (see the cleanup below).
+
+## Development Mac update — 2026-11-22, Convert to Stereo
+
+`e6a359f` = `d1a9f86` plus the owner's feature request: right-click Convert to Stereo on a mono strip in MIXER and on a mono row header in EDIT turns that strip into a stereo strip in place, without taking the neighbouring strip (top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)).
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `e3c812a7c36320d345fb05bb12436e7bee80a65519193717155f6b70a9e652e4` |
+| Capture helper | `9db1e6fb8c81ce0be5428f00ffbc3e0e78fc757291af18062a82f0db0e15cf9b` (unchanged) |
+
+- **Built with:** the Xcode generator under Xcode 27.2 with `XCODE_XCCONFIG_FILE` holding `SDK_STAT_CACHE_ENABLE = NO`, in a fresh `build-xc` folder (the checkout's `build*` folders point at the drive's old path) with `-DFETCHCONTENT_SOURCE_DIR_JUCE=build/_deps/juce-src`, the pinned JUCE commit. Release, universal (x86_64, arm64).
+- **Tests before install:** the new *Convert to stereo* suite 4 / 0. The full Release suite (2041 groups, 0 failures) was still running when the owner asked to open the app, so the app was installed first; the suite then finished green on the same code. ASan/UBSan and TSan were not run for this change. Both static gates clean.
+- **Install:** neither the app nor the helper was running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Copied with `ditto --norsrc --noextattr --noqtn`. The replaced `d1a9f86` bundle went to the owner's Trash, as the 2026-11-20 cleanup asked: rollback is a rebuild from Git.
+- **After install:** the app opened (about 110 MB RSS, no crash report). No take has been recorded on it. A new ad-hoc build may ask for microphone access again.
 
 ## Development Mac cleanup — 2026-11-20
 
