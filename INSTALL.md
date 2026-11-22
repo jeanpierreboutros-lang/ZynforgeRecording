@@ -2,7 +2,21 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `e6a359f`, `main` on 2026-11-22: `d1a9f86` plus right-click Convert to Stereo. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app (see the cleanup below).
+The development Mac now has `a3ffc1b`, `main` on 2026-11-22: Convert to Stereo (with the input/output shift) plus the fixes for all 34 findings of the 2026-11-22 whole-codebase audit. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app (see the cleanup below).
+
+## Development Mac update — 2026-11-22 evening, the whole-codebase audit fixed
+
+`a3ffc1b` = `e6a359f` plus Convert to Stereo's input/output shift (owner's request) and all 34 fixes of the 2026-11-22 audit (2 critical, 5 high, 7 medium, 20 low; top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). The owner asked to fix all, commit, push and install to try it.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `3f297c49f54ef4934c81c048191654ced861646fdd1dd5eb5a965f8381d7b0fe` |
+| Capture helper | `32fb87076eea56d3229f8480bfa9e49d8c0b6f94812f5bc09ab397bd7f7c5f5b` (changed: take claim, other-build replacement) |
+
+- **Built with:** the Xcode generator under Xcode 27.2 with `XCODE_XCCONFIG_FILE` holding `SDK_STAT_CACHE_ENABLE = NO`, in `build-xc`. Release, universal (x86_64, arm64).
+- **Tests before install:** Release 2103 test groups / 0 failures on the installed code; both static gates clean. ASan/UBSan and TSan were not run.
+- **Install:** the running app was quit gracefully (osascript) and neither the app nor the helper was left running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Copied with `ditto --norsrc --noextattr --noqtn`. The replaced `e6a359f`+shift bundle went to the owner's Trash (rollback is a rebuild from Git, per the 2026-11-20 cleanup).
+- **After install:** the app opened (about 94 MB RSS, no crash report). No take has been recorded on it. GUI and helper are a matched pair: the Mac mini (`281c6c0`) must get both together. A desk macro STOP key must now send 1 on press.
 
 ## Development Mac update — 2026-11-22, Convert to Stereo
 
