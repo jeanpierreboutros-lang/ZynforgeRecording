@@ -296,6 +296,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/SettingsBatchAuditTests.cpp
     Source/Tests/ShowHandoffTests.cpp
     Source/Tests/SongDetectorTests.cpp
+    Source/Tests/StereoConvertTests.cpp
     Source/Tests/StereoExportTests.cpp
     Source/Tests/StripLifetimeTests.cpp
     Source/Tests/TimecodeTests.cpp

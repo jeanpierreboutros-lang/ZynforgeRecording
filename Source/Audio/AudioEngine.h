@@ -423,6 +423,18 @@ namespace zynforge
         // Links or unlinks a pair with the pans that go with it. False, with the
         // pans untouched, when the engine refused: they reach monitor and stream.
         bool  linkStereoPair (int leftIndex, bool link);
+        // Why mono strip `track` can't become a stereo strip in place now, or
+        // empty when it can (convertToStereo). Reads the session's take listing,
+        // never during a take.
+        juce::String stereoConversionRefusal (int track);
+        // Turns mono strip `track` into a stereo strip without taking the next
+        // strip: a right half is inserted straight after it (one reorderTracks
+        // call when it is not the last strip), named "<name> R", then linked.
+        // The strip keeps its name, settings and number; the strips after it
+        // keep the input they hear. False with `why` set when refused, and then
+        // nothing has changed. A strip with audio stays mono: RECORD refuses a
+        // mono take under a stereo strip.
+        bool  convertToStereo (int track, juce::String* why = nullptr);
         // Non-empty when a linked pair's R isn't the input after its L here,
         // because this device ends before it.
         juce::String pairWrapNotice (int leftIndex);

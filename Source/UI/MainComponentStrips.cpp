@@ -860,6 +860,33 @@ bool MainComponent::setStereoLink (int i, bool link)
     return true;
 }
 
+bool MainComponent::convertStripToStereo (int track)
+{
+    if (! canMutateTimeline ("making a channel stereo")) return false;
+    juce::String why;
+    if (const auto refusal = engine.stereoConversionRefusal (track); refusal.isNotEmpty())
+    { showStatus (refusal); return false; }
+    // The strips are rebuilt anyway; nothing may sample a TrackState while the
+    // recorder grows, moves the strips and (on a refusal) shrinks again.
+    condemnAllStrips();
+    const bool ok = engine.convertToStereo (track, &why);
+    lastTrackCount = -1;
+    if (! ok) { showStatus (why); return false; }
+    rebaselineMixerUndo();   // the strip count changed: not a mixer undo step
+
+    const int numInputs = engine.getCurrentDeviceInputCount();
+    auto& rec = engine.getRecorder();
+    const int inL = zynforge::listenedInput (track,     rec.getTrack (track)    .inputRouting.load(), numInputs);
+    const int inR = zynforge::listenedInput (track + 1, rec.getTrack (track + 1).inputRouting.load(), numInputs);
+    const auto inputs = inL < 0 ? juce::String ("no input")
+                      : inR == inL + 1 ? "In " + juce::String (inL + 1) + "-" + juce::String (inR + 1)
+                      : "In " + juce::String (inL + 1) + " + In " + juce::String (inR + 1);
+    const auto wrapped = engine.pairWrapNotice (track);
+    showStatus (wrapped.isNotEmpty() ? wrapped
+                : "Strip " + juce::String (track + 1) + " is now stereo (" + inputs + ")");
+    return true;
+}
+
 void MainComponent::createSessionFromConsole()
 {
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }

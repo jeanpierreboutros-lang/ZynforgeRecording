@@ -2959,6 +2959,79 @@ namespace zynforge
         return true;
     }
 
+    juce::String AudioEngine::stereoConversionRefusal (int track)
+    {
+        if (isRecording()) return "Stop recording before making a channel stereo";
+        if (isCaptureFinalizing() || isSessionTransitionActive())
+            return "The take is still being saved, or a session job is running; try again when it ends";
+        const int n = recorder.getNumTracks();
+        if (track < 0 || track >= n) return "That channel no longer exists";
+        if (recorder.getTrack (track).isStereo.load()
+            || (track > 0 && recorder.getTrack (track - 1).isStereo.load()))
+            return "That channel is already stereo";
+        if (n >= 256) return "The session already has 256 tracks; delete one to make room for the right half";
+        // A recorded mono take can't continue as a stereo strip: RECORD refuses
+        // a take whose file has another channel layout. An unlinked right half
+        // of a stereo file counts too (getTrackAudioFile finds its channel 1).
+        const auto* clips = tryClipsFor (track);
+        if ((clips != nullptr && ! clips->empty()) || getTrackAudioFile (track).existsAsFile())
+            return "This channel already has audio, so it stays mono; add a stereo channel for the next take";
+        return {};
+    }
+
+    bool AudioEngine::convertToStereo (int track, juce::String* why)
+    {
+        const auto fail = [why] (const juce::String& reason)
+        {
+            if (why != nullptr) *why = reason;
+            return false;
+        };
+        if (const auto refusal = stereoConversionRefusal (track); refusal.isNotEmpty())
+            return fail (refusal);
+
+        const int n = recorder.getNumTracks();
+        const auto name = recorder.getTrack (track).getNameThreadSafe();
+        const auto colour = recorder.getTrack (track).colourARGB.load (std::memory_order_relaxed);
+
+        // The right half is added at the end, then moved in after its left half
+        // in one reorder, the transaction that renames the later strips' takes.
+        setStripCount (n + 1);
+        if (recorder.getNumTracks() != n + 1)
+        {
+            setStripCount (n);
+            return fail ("The right half could not be added; nothing changed");
+        }
+        if (track + 1 < n)
+        {
+            std::vector<int> order;
+            for (int i = 0; i <= track; ++i) order.push_back (i);
+            order.push_back (n);
+            for (int i = track + 1; i < n; ++i) order.push_back (i);
+            if (! reorderTracks (order))
+            {
+                const auto reason = reorderRefusal;
+                setStripCount (n);
+                return fail (reason.isNotEmpty() ? reason : juce::String ("The strips could not move; nothing changed"));
+            }
+            // A default patch is the strip's own position, and every strip after
+            // this one just moved down a place: pin each to the input it heard,
+            // so making one channel stereo repatches no other.
+            for (int t = track + 2; t <= n; ++t)
+                if (recorder.getTrack (t).inputRouting.load (std::memory_order_relaxed) < -1)
+                    setTrackInputRouting (t, t - 1);
+        }
+
+        const int right = track + 1;
+        // An unnamed strip shows its number; its right half stays unnamed too.
+        const bool named = ! name.removeCharacters (" ").containsOnly ("0123456789");
+        setTrackName (right, named ? name + " R" : juce::String());
+        if (colour != 0) setTrackColour (right, juce::Colour ((juce::uint32) colour));
+        if (! linkStereoPair (track, true))
+            return fail ("The right half was added as its own channel but could not be linked; "
+                         "use Link to next channel (stereo)");
+        return true;
+    }
+
     juce::String AudioEngine::pairWrapNotice (int leftIndex)
     {
         if (leftIndex < 0 || leftIndex + 1 >= recorder.getNumTracks()) return {};

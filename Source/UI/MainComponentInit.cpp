@@ -446,6 +446,16 @@ MainComponent::MainComponent()
         if (editPage != nullptr) editPage->repaint();
         confirmDeleteChannels ([this] { deleteSelectedStrips(); });
     };
+    // Right-click > Convert to Stereo on a mono row header. Async: the
+    // conversion rebuilds every row, and the call comes from a row's menu.
+    editPage->onRowConvertToStereo = [this] (int physTrack)
+    {
+        juce::MessageManager::callAsync ([self = juce::Component::SafePointer<MainComponent> (this),
+                                          physTrack, scope = questionScope()]
+        {
+            if (self != nullptr && self->stillInScope (scope)) self->convertStripToStereo (physTrack);
+        });
+    };
     // Clip-edit undo bridge: a clip drag (trim / move / fade) snapshots
     // the playlist JSON at mouse-down and pushes a single Cmd+Z step at
     // mouse-up. pushClipUndo no-ops when nothing changed.
@@ -811,6 +821,16 @@ void MainComponent::rebuildStrips()
         s->setMenuCallbacks (std::move (deleteCb),
                              std::move (addCb),
                              std::move (linkStereoCb));
+        // Async: the conversion rebuilds every strip, this one included, and
+        // the call comes from this strip's own menu callback.
+        s->onConvertToStereo = [this, i]
+        {
+            juce::MessageManager::callAsync ([self = juce::Component::SafePointer<MainComponent> (this),
+                                              i, scope = questionScope()]
+            {
+                if (self != nullptr && self->stillInScope (scope)) self->convertStripToStereo (i);
+            });
+        };
 
         s->canOpenColourPicker = [this] { return colourPickerMayOpen(); };
 

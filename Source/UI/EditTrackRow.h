@@ -213,7 +213,7 @@ namespace zynforge
             nameLabel.setFont (brand::type::channelName());
             nameLabel.setEditable (false, true, false);
             nameLabel.setTooltip ("Double-click to rename this track. Changes mirror to the MIXER + PATCH views. "
-                                  "Right-click for what the lane shows, row size and Delete Channel.");
+                                  "Right-click for what the lane shows, row size, Convert to Stereo and Delete Channel.");
             nameLabel.onTextChange = [this]
             {
                 const auto typed = nameLabel.getText().trim();
@@ -3174,7 +3174,8 @@ namespace zynforge
         // The row's menu, on its name, its bare header and any lane with no clip
         // under the pointer. A row left on Markers refuses every clip gesture,
         // so the way back is offered wherever the engineer ends up clicking.
-        static constexpr int kMenuLaneWaveform = 31, kMenuLaneMarkers = 32, kMenuDeleteChannel = 33;
+        static constexpr int kMenuLaneWaveform = 31, kMenuLaneMarkers = 32, kMenuDeleteChannel = 33,
+                             kMenuConvertToStereo = 34;
         juce::PopupMenu rowMenu (bool withDelete) const
         {
             juce::PopupMenu menu;
@@ -3211,6 +3212,8 @@ namespace zynforge
             if (withDelete)
             {
                 menu.addSeparator();
+                // The channel items, as on the MIXER strip's menu.
+                if (! stereo) menu.addItem (kMenuConvertToStereo, "Convert to Stereo");
                 menu.addItem (kMenuDeleteChannel, "Delete Channel");
             }
             return menu;
@@ -3242,6 +3245,12 @@ namespace zynforge
             {
                 if (auto* page = findParentComponentOfClass<EditPage>(); page != nullptr && page->onRowDelete)
                     page->onRowDelete (index);
+                return;
+            }
+            else if (chosen == kMenuConvertToStereo)
+            {
+                if (auto* page = findParentComponentOfClass<EditPage>(); page != nullptr && page->onRowConvertToStereo)
+                    page->onRowConvertToStereo (index);
                 return;
             }
             else return;

@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added — Convert to Stereo, 2026-11-22
+
+- **Right-click ▸ Convert to Stereo** on a mono strip in MIXER, or on a mono row's channel name in EDIT, turns that strip into a stereo strip in place. It keeps its name, number, colour, fader, arm and cues; a right half named "<name> R" is added straight after it and hears the next input. Unlike Link to next channel, the neighbouring channel is not taken: the strips after it keep their takes and the input they hear. A strip that already has audio stays mono (the status line says why), because a recorded mono take can't continue as a stereo strip.
+
 ### Changed — design pass, 2026-11-17
 
 From a design critique of the real window and dialogs, rendered headless; the owner said "fix everything, and remove this amber".

@@ -427,6 +427,7 @@ namespace zynforge
         menu.addItem (10, "Add channel");
         menu.addItem (11, "Delete channel");
         menu.addSeparator();
+        if (! isStereo) menu.addItem (13, "Convert to Stereo");
         menu.addItem (12, isStereo ? "Unlink stereo pair" : "Link to next channel (stereo)");
         menu.addSeparator();
         menu.addItem (2, "Change colour...");
@@ -485,6 +486,7 @@ namespace zynforge
                 case 10: if (addCb)        addCb();        break;
                 case 11: requestDelete(); break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
+                case 13: if (onConvertToStereo) onConvertToStereo(); break;
                 default:
                     // Edit group assignment: 900 = None, 901..908 = group 0..7.
                     if (chosen == 900 || (chosen >= 901 && chosen <= 908))

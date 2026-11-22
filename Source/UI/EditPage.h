@@ -115,6 +115,9 @@ namespace zynforge
         // the physical track index; the host selects that strip, confirms,
         // and removes it. Recorded files stay on disk.
         std::function<void (int /*physTrack*/)>                    onRowDelete;
+        // Right-click > Convert to Stereo on a mono row's header: the host makes
+        // that strip a stereo strip in place (MainComponent::convertStripToStereo).
+        std::function<void (int /*physTrack*/)>                    onRowConvertToStereo;
 
         // Clip-edit undo bridge. A TrackRow calls beginClipEdit() when a
         // clip drag (trim / move / fade) starts and commitClipEdit() when

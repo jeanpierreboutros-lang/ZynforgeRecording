@@ -105,6 +105,11 @@ namespace zynforge
         // so the assignment persists.
         IntCallback onEditGroupChanged;
 
+        // Right-click > Convert to Stereo on a mono strip: the host makes this
+        // strip a stereo strip in place (MainComponent::convertStripToStereo),
+        // or says on the status line why it can't. Not offered on a stereo strip.
+        VoidCallback onConvertToStereo;
+
         // The engine applies both, so a stereo strip's two halves move as one.
         std::function<void (bool)> onStreamSendChanged;
 

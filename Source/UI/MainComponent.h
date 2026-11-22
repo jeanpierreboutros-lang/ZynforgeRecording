@@ -347,6 +347,10 @@ private:
     // and the rebuild come with it. False, with the reason on the status line,
     // when refused.
     bool setStereoLink (int leftIndex, bool link);
+    // Right-click > Convert to Stereo on a mono strip (MIXER and EDIT): the
+    // strip becomes a stereo strip in place, through AudioEngine::convertToStereo.
+    // False, with the reason on the status line, when refused.
+    bool convertStripToStereo (int track);
     void showBatchColourDialog();
     void deleteSelectedStrips();
     // Stop every live strip's timers before a recorder-vector shrink frees the
