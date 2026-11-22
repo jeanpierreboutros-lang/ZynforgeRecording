@@ -139,6 +139,8 @@ ZynforgeRecording/
 │   │   ├── EditTrackRow.h             — EditPage::TrackRow + TimelineMapper (split out of EditPage.cpp)
 │   │   ├── PatchPage.{h,cpp}          — input / output routing matrix
 │   │   ├── SetlistBar.{h,cpp}         — cue list + jump controls (path-drawn arrows)
+│   │   ├── LeftClickOnly.h            — controls that ignore a right-click (the menu's)
+│   │   ├── StereoConvertCues.h        — cues follow a Convert to Stereo
 │   │   ├── BigClockPanel.{h,cpp}      — hero timer + disk-health banner with pulse
 │   │   ├── TransportBar.{h,cpp}       — play / stop / record (path-drawn icons)
 │   │   ├── Toast.h                    — non-modal feedback pill
@@ -254,6 +256,18 @@ The host intercepts all remote RECORD and STOP actions in `MainComponent::handle
 - `CaptureCopy::writeFailed` and `MultitrackRecorder::driveIsGone`: what STOP needs before it calls a copy intact. `CaptureCopy::noteProgress` is ticked through every long copy step, lead-in silence included. `MultitrackRecorder::dropEmptyLeadIn`; `SessionPlayer::trackFailedToOpen`.
 - `TimecodeChase::labelWord` and `timeOfDayNow`: the label, its lateness and its arrival in one 64-bit atomic, so chase and the BWF anchor read where the master is now. Drop-frame converts by frame count.
 - `Source/UI/TimelineCarry.h`: `timelinecarry::carryForward`, how an undo or redo of Crop or Ripple Delete carries marker and cue edits made since; replaces `keepAddedSince`. `SetlistBar::Cue::runtimeId` (runtime only) is its key for cues.
+- **2026-11-22.**
+  - `AudioEngine::convertToStereo` / `stereoConversionRefusal` (Convert to Stereo: append, one `reorderTracks (order, freshStrip)`, link, make room across the patch; `StereoConversion` reports the moved ranges).
+  - `Source/UI/StereoConvertCues.h` (`stereoconvert::carryCues`).
+  - `Source/UI/LeftClickOnly.h` (`LeftClickOnly<T>`, `leftclick::isMenuPress`).
+  - `deskmacro::ValuelessPairs` (DeskMacro.h).
+  - `TcpStreamTransport` (ConsoleTransports.h): a reader thread, a bounded writer thread, and a bounded inbound backlog in `ConsoleTransport::deliverOnMessageThread`.
+  - `MultitrackRecorder::noStrayTakeParts`, `PendingLeadIn::ownsAudioPart`, `CaptureCopy::placeLeadIns`.
+  - `CaptureSupervisor::replaceOtherBuildWhenIdle` / `otherBuildNotice`.
+  - `ConsoleLink::PatchSave`.
+  - `preflight::probeCancelled`.
+  - `TimelineMinimap::viewBox`.
+  - `TrackRow::kClickSlopPx`.
 - `Source/UI/ShortcutSheet.h`: the rows Help ▸ Keyboard Shortcuts draws, each with the presses it stands for; a test holds it to `MainComponent::keyPressed`.
 - `MainComponent::askClosesForTake (MessageBoxOptions, callback)`: a message box opened at once and marked to close for a take, in place of `AlertWindow::showAsync`. With `closesForTake` and `launchClosesForTake` (`FloatingLaunch.h`) it covers every modal in `Source/UI`; the invariants gate's 40th rule holds that. `MainComponent::reserveForPickerAnswer`: a session file panel takes the session only when answered.
 - `sessionrepair::isInsideBackups` / `backupFolderRefusal` (`SessionRepair.h`) and `sessionbackup::holdsOnlySessionDocuments` (`SessionBackup.h`): a snapshot never opens as a session, and retention deletes only document-only snapshots.

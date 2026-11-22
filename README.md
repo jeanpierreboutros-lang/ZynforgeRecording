@@ -6,6 +6,12 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status — 2026-11-17
 
+On 2026-11-22 two things went onto `main` (top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)):
+- **Convert to Stereo**: right-click a mono strip (MIXER) or its name (EDIT) and it becomes a stereo strip in place. The next strip is not taken, and the strips on the following inputs and outputs move one on to make room.
+- **Fixes for all 34 findings of a whole-codebase review** (*Bug audit, 2026-11-22* in [tasks.md](tasks.md)). The two critical ones: a desk-macro STOP sent as the address alone could end a take with one held press (it now needs a value), and a punch on a strip whose main take file was missing could delete its part files. Right-clicks no longer move faders or press buttons, and a click in EDIT no longer nudges a clip.
+
+The development Mac has it as `a3ffc1b`, for the owner's show on 2026-11-23; it has not recorded on real hardware yet (see *Decision as of 2026-11-22* in [SHOW-READINESS.md](SHOW-READINESS.md)).
+
 On 2026-11-17 a design pass went onto `main`. It came from a critique of the real window and dialogs (top of *Unreleased* in [CHANGELOG.md](CHANGELOG.md)):
 - nothing on a MIXER strip lights or moves during a take any more;
 - a dead channel marks its own strip in MIXER, EDIT and the meterbridge;
@@ -22,9 +28,9 @@ Before that, on 2026-11-11, a second whole-codebase review made 82 findings. All
 
 `main` has Scene Follow and desk macros, timestamped BWF with channel names, a dead-channel alarm, the clock source in pre-flight, Reaper and DAWproject export, Export Songs, the Twin Recorder link and Mac packaging, plus several rounds of punch, capture, session, editing, EDIT, network and playback fixes (see *Unreleased* in [CHANGELOG.md](CHANGELOG.md)). On 2026-11-04 it also took the fixes for all 75 findings of a whole-codebase review, across the capture helper, capture, engine, EDIT, sessions and the mixer. The development Mac has them (`0e1bd8a`); the mini does not, and they have not run on real hardware (see *Bug audit, 2026-11-04* in [tasks.md](tasks.md)). Since `f9467d3` it builds on JUCE 8.0.17-security instead of 8.0.4; the development Mac has that update, the Mac mini does not. Since `281c6c0` one take has run on real hardware: on 2026-11-03 `5c7a3e4` recorded 55 tracks for 4 h 10 min through Dante Virtual Soundcard at 48 kHz on the development Mac, with no missed samples. After it, EDIT drew only the first minutes of the take on the rows on screen, and the waveform rescan kept the drive so busy that the report's hashes and quitting crawled. `577592c` fixes the first. The second came from how the scans read, not from the drive: macOS read ahead for all 55 files at once and threw most of it away. `main` fixes it for the waveforms; the report's hash pass stays paced at about 15 MiB/s (see *First long take* and *Three-hour take* in [tasks.md](tasks.md)). On 2026-11-04 `577592c` recorded 54 tracks for 3 h 01 min on the same drive, again with no missed samples, and kept the whole take drawn after STOP; the zoomed-out waveform looked doubled, and now draws one shape (see *Three-hour take* in [tasks.md](tasks.md)). On that drive the post-STOP waveform rebuild took hours; `main` now redraws all 55 lanes of the 4 h 10 min take in about three minutes (see *Fixed — after the three-hour take* in [CHANGELOG.md](CHANGELOG.md)). Nothing has been tried on a real console, a real stream loss or two real Macs. See [FIELD-TEST.md](FIELD-TEST.md). Automated results are in [testing.md](testing.md). The DiGiCo addresses stay unverified until the desk test kit there is run.
 
-Installed builds: the development Mac has `d1a9f86` (2026-11-17), `main` with the design pass and the 2026-11-16 review's fixes.
-It passes **2037 test groups in Release, ASan/UBSan and CI** and has recorded
-nothing yet; `08fccd7`, before it, recorded the 2026-11-14 show, and `577592c` and `5c7a3e4` the long test takes (see
+Installed builds: the development Mac has `a3ffc1b` (2026-11-22), `main` with Convert to Stereo and the 2026-11-22 review's fixes.
+It passes **2103 test groups in Release** (ASan/UBSan and TSan not re-run) and has recorded
+nothing yet; `d1a9f86` (2037 groups in Release, ASan/UBSan and CI) came before it; `08fccd7`, before it, recorded the 2026-11-14 show, and `577592c` and `5c7a3e4` the long test takes (see
 [testing.md](testing.md)). The Mac mini still has
 verified `281c6c0` and its matching protocol-4 helper (its installer DMG was
 removed from `dist/` on 2026-11-12). That older build contains

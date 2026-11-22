@@ -17,6 +17,7 @@ The development Mac now has `a3ffc1b`, `main` on 2026-11-22: Convert to Stereo (
 - **Tests before install:** Release 2103 test groups / 0 failures on the installed code; both static gates clean. ASan/UBSan and TSan were not run.
 - **Install:** the running app was quit gracefully (osascript) and neither the app nor the helper was left running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Copied with `ditto --norsrc --noextattr --noqtn`. The replaced `e6a359f`+shift bundle went to the owner's Trash (rollback is a rebuild from Git, per the 2026-11-20 cleanup).
 - **After install:** the app opened (about 94 MB RSS, no crash report). No take has been recorded on it. GUI and helper are a matched pair: the Mac mini (`281c6c0`) must get both together. A desk macro STOP key must now send 1 on press.
+- **Show fallback:** the owner records the 2026-11-23 show on this build. Until after it, the Trash holds `Zynforge Recording.app.backup-20261122-before-convert-stereo` (= `d1a9f86`, GUI `7f7312aa…`) and the two later bundles. Drag the `d1a9f86` one back to Applications, renamed `Zynforge Recording.app`, to fall back. Quit the app gracefully first; sessions open in either.
 
 ## Development Mac update — 2026-11-22, Convert to Stereo
 

@@ -111,6 +111,8 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Inline a `withAlpha(0.xx)` literal. Use a named step from `brand::alpha::` (`subtle`/`dimmed`/`ghost`/`scrim`/`muted`/`prominent`/`bold`). If none fits, add a line to the ad-hoc catalog in `BrandColors.h` rather than leaving the magic number undocumented.
 - Pass a raw corner-radius float to `fill/drawRoundedRectangle`. Use `brand::radius::{sm,md,lg,xl}`. Sub-2 px micro-radii on meter segments / icon glyphs are the only exception (geometry-forced, radius < half the element height).
 - Introduce new identity-sensitive persistence keyed only by array index. Prefer `TrackState::stripId`; compatibility formats require explicit remapping.
+- Put a stock `juce::Button` or `juce::Slider` on a channel strip, an EDIT row header, the master or the setlist bar: their parent opens a menu on a right-click, and a stock control acts on it too. Use `LeftClickOnly<T>` (`Source/UI/LeftClickOnly.h`).
+- Start a clip edit on the first `mouseDrag`: wait for `TrackRow::kClickSlopPx`, the threshold that also decides a click.
 - Add a plugin hosting hook. See `decisions.md` *No plugin hosting*.
 - Name, credit or compare to any competing recorder anywhere.
 - `--force` push or amend a pushed commit.

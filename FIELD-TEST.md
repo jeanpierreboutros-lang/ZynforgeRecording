@@ -1,4 +1,4 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-11-16)
+# ZynForge Recording — Field-Test Checklist (updated 2026-11-22)
 
 Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak, which ends only when someone presses STOP twice: nothing stops it unattended. Tick boxes only after performing them; the failure column tells you when to stop and report. The development Mac has `eca170e`, the Mac mini and the current DMG have `281c6c0`, all protocol 4, and `main` (now on JUCE 8.0.17-security) is ahead of both: unless a section says otherwise, a check describes `main`. Automated results are in [testing.md](testing.md). Physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
 
@@ -7,6 +7,19 @@ Never force-quit, unplug hardware or delete sessions during production recording
 **Severity legend:** 🟥 = data-loss class (stop, report immediately) · 🟧 = audio-path class (stop if reproducible) · 🟨 = UX / stage-readiness · ⬜ = cosmetic.
 
 ---
+
+## 2026-11-22 Convert to Stereo and audit fixes — not yet performed
+
+On `a3ffc1b` (development Mac), on the show rig, with a disposable session. Do the first three before the 2026-11-23 show.
+
+- [ ] 🟥 **Rehearsal take.** All show channels armed, backup drive on if it will be used, 5-10 min, STOP, play back; `tools/verify_take.sh` passes. Stop and fall back to `d1a9f86` (in the Trash) if not.
+- [ ] 🟥 **Desk macro STOP.** With the macro key sending 1 on press: one press arms, a second within 2 s stops. Sent as the address alone: refused, and the status line says to send 1.
+- [ ] 🟧 **Right-click is only a menu.** Right-click a channel fader, the master fader, a pan knob, R/I/M/S (MIXER and EDIT), a meter and the colour chip: the menu opens and nothing else changes (no level jump, no mute, CLIP count kept).
+- [ ] 🟧 **Convert to Stereo.** On a mono strip in the middle of the session (no audio yet): it becomes a stereo pair in place, the strips on the following inputs/outputs move one on, no two strips share an input in PATCH, and recalling a cue saved before keeps the new patch and the pair's image. Record a short take on it: one stereo file.
+- [ ] 🟧 **RECORD then LOCK.** During an autosave (or right after a Save), press RECORD then LOCK at once: the take starts and the window stays locked.
+- [ ] 🟨 **PATCH.** Double-click a dot: the strip stays patched. The stereo pill on the last strip says why it can't link.
+- [ ] 🟨 **EDIT.** At fit zoom on a long take, click clips with a little hand movement: they select and never move. Right after STOP, clips show over the fresh waveform while it reloads.
+- [ ] 🟨 **Console links (Yamaha/A&H, if used).** Normal names and scene recalls still arrive; disconnecting the desk shows the link lost.
 
 ## 2026-11-17 design pass — not yet performed
 

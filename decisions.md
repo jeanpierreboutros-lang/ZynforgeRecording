@@ -2,6 +2,47 @@
 
 
 
+## Convert to Stereo inserts a channel, as a desk does — 2026-11-22
+
+**Status:** Accepted. The owner asked for a way to make a mono track stereo "without creating a new one, on the right-click menu", then: "it should automatically reorder the input of the continuous channels, and output".
+
+**Context:** A stereo strip is two adjacent physical tracks, the left one flagged (`isStereo`), recorded as one interleaved file. The existing Link to next channel turns the next strip into the right half, which takes a channel the engineer may already use for another source.
+
+**Decision:**
+- Convert to Stereo inserts a new right half straight after the strip (append, then ONE `reorderTracks`, so the later strips' takes are renamed in the existing journalled transaction) and links the pair. The strip keeps its name, number, settings and strip id, so its cues.
+- Room is made like a channel inserted on the desk. The right half takes the left's input + 1 and output + 1. Every other strip on the channels that run on from there, wherever it sits in the strip order, moves one channel on, up to the first channel no strip uses. Saved soundcheck outputs move the same way. A strip past that gap keeps its patch.
+- Cues saved before the conversion move by the same ranges, and give the pair its image (L hard left, R hard right).
+- Undo history is cleared, the session saves at once, and the status line says what moved.
+- A strip that already has audio stays mono: RECORD refuses a mono take under a stereo strip.
+
+**Alternatives considered:**
+- Pin every other strip to the input it heard (the first build). The owner wanted the following channels to move, as they do on the desk.
+- Move only the strips after the converted one in the strip order. Rejected by the audit (H4): a strip dragged to the front still holds its desk channel, and a later strip pushed onto it recorded the wrong source.
+- Convert a recorded mono strip too. That would leave a strip RECORD refuses for the rest of the session.
+
+**Consequences:**
+- \+ A stereo source can be added mid-list without losing a channel or re-patching by hand.
+- − Strips on later channels move. The status line names how many, and PATCH shows the result.
+- − Like any strip move, a conversion clears undo.
+
+## The 2026-11-22 review fix round: the choices the fixes made — 2026-11-22
+
+**Status:** Accepted. The owner said "GO FIX ALL" to the 34 findings.
+
+**Decision (where a fix had a choice):**
+- **Desk-macro STOP needs a value**, as the Generic OSC STOP already did. Other valueless macros (and OSC `/zynforge/marker`) treat the same message again within 2 s as that key's release. A desk that sends only on press loses a second press inside 2 s, and sending 1 on press avoids it. The other choice was refusing every valueless macro, which would cut off desks that can only send an address.
+- **A right-click is a menu and nothing else.** Controls on strips, the master, EDIT row headers and the setlist drop menu presses themselves (`LeftClickOnly`), rather than the strip trying to cancel a press after the fact.
+- **A strip with take parts but no main file refuses every pass**, naming the parts. The engineer decides what they are, rather than the recorder renumbering around them.
+- **RECORD held for a save, then LOCK: the take starts.** The press was made before the lock; the other choice, dropping it, left a locked idle recorder at the start of a show.
+- **EDIT click slop 5 px**, the same threshold that already decided a click on release.
+- **Rows holding their take after STOP draw their clips** over the held waveform rather than refusing clip edits until the rescan ends.
+- **An other-build capture helper busy at attach is kept, named, refused for takes and replaced once idle**, rather than killed under a finalizing take.
+
+**Consequences:**
+- \+ Every finding is fixed, with tests; nothing in the live capture path changed except refusals and lead-in bookkeeping.
+- − Desk macro setups that send STOP as an address must change.
+- − None of it has run on real hardware yet (SHOW-READINESS.md).
+
 ## Nothing on a MIXER strip moves during a take; a dead channel marks its own strip — 2026-11-17
 
 **Status:** Accepted. The owner said "fix everything from the audit, and remove this amber", then "the zoom in and out toolbar should be another place, try to have space for it on the right side". They judged the result on screen: "everything is good now".

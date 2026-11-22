@@ -1,5 +1,17 @@
 # Show readiness — planned SD5 recording
 
+## Decision as of 2026-11-22
+
+**The owner will record the 2026-11-23 show with `a3ffc1b` on the development Mac.** It is `d1a9f86` plus right-click Convert to Stereo and the fixes for all 34 findings of the 2026-11-22 whole-codebase review. It passes 2103 test groups in Release and both static gates, but it has not recorded on real hardware, and the day's changes touched the recorder, the capture helper and the console links. ASan/UBSan and TSan were not re-run.
+
+Before the show:
+- record a throwaway take on the show rig (all channels armed, backup on if used), STOP, play it back, and run `tools/verify_take.sh` on it;
+- if desk macros are used, set the STOP key to send 1 on press: a STOP sent as the address alone is now refused (it could end a take on one held press);
+- do any Convert to Stereo during setup, not mid-show (it clears undo and saves the session);
+- keep the Trash: it holds `d1a9f86`, which opens the same sessions, as an instant fallback (drag it back to Applications).
+
+The show-day notes under *Decision as of 2026-11-17* still apply (clear NO SIGNAL alarms before doors, leave Network settings alone during a take). The Mac mini still has `281c6c0`.
+
 ## Decision as of 2026-11-17
 
 **First real show, 2026-11-14.** `08fccd7` on the development Mac recorded a show:

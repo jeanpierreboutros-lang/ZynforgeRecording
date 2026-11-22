@@ -1,5 +1,31 @@
 # Project Tasks
 
+## Bug audit, 2026-11-22
+
+The owner asked for a read of the whole codebase before the next show: "find real bugs, broken edge cases, and anything that falls over in front of a user". Seven reviewers read about 77,000 lines; every critical and high finding was re-checked by hand. 34 findings: 2 critical, 5 high, 7 medium, 20 low. The register is `ZynforgeRecording-audit-2026-11-22.md` beside the repository; never commit it, the repository is public. The owner said "GO FIX ALL": all are fixed in `a3ffc1b`, installed on the development Mac and pushed. Details are in CHANGELOG *Fixed — whole-codebase bug hunt, 2026-11-22*; the tests in testing.md.
+
+- [x] C1: desk-macro STOP sent as the address alone is refused; valueless presses pair with their release (desk macros, and OSC `/zynforge/marker`).
+- [x] C2: a punch on a strip with take parts but no main file no longer deletes them; such strips refuse every pass, and lead-ins delete only files they opened.
+- [x] H1-H3: right-clicks never move faders or pans (`LeftClickOnly`); RECORD held for a save then LOCK still records; EDIT needs 5 px before a click becomes a clip edit.
+- [x] H4, H5, M1, L1-L4: Convert to Stereo's own problems (shared channels, cues, undo, half-saved layout, status line, the last strip's stereo take).
+- [x] M2-M7 and the remaining lows: right-click buttons, PATCH double-click, held rows after STOP, old-build helper, console TCP floods, song-export clipping, clock probe, MCU display, timecode truncation, speed-probe cancel, fade presets, crossfades, minimap, meter/chip right-click, Session Settings rate, File > Open scope, take claim, patch-save truth, lead-in origin, punch-recovery message.
+- [ ] Owner: before the 2026-11-23 show, record a throwaway take on the show rig with `a3ffc1b` (all channels armed, backup on if used), STOP, play back; then `tools/verify_take.sh` on it.
+- [ ] Owner: set the desk macro STOP key to send 1 on press (a STOP sent as the address alone is now refused).
+- [ ] Owner: run *2026-11-22 Convert to Stereo and audit fixes* in [FIELD-TEST.md](FIELD-TEST.md).
+- [ ] Keep the Trash until after the show: it holds `d1a9f86` (and the `e6a359f` build) as an instant fallback (INSTALL.md).
+- [ ] ASan/UBSan and TSan runs on `a3ffc1b` (not run for this pass).
+- [ ] The Mac mini still has `281c6c0`; the capture helper changed, so it needs the whole app.
+- [ ] The EDIT zoom/FOLLOW and transport buttons still act on a right-click (they open no menu, so it was left; low risk).
+
+## Convert to Stereo, 2026-11-22
+
+The owner asked: "if I create a mono track for recording I need an option to convert this track to stereo without creating a new one, on the right-click menu", then "it should automatically reorder the input of the continuous channels, and output".
+
+- [x] Right-click Convert to Stereo on a mono MIXER strip and a mono EDIT row name (`e6a359f`): the strip keeps its name, settings and cues; a right half `<name> R` is inserted after it; Link to next channel stays for joining two strips.
+- [x] The strips on the following inputs and outputs (and saved soundcheck outputs) move one on, up to the first gap, wherever they sit in the strip order; cues follow (`a3ffc1b`).
+- [x] A strip with audio stays mono and says why (RECORD would refuse a mono take under a stereo strip).
+- [ ] Owner: try it on the show rig (FIELD-TEST.md).
+
 ## Design pass, 2026-11-17
 
 This came from a design critique of the real window (rendered headless). The owner said "fix everything from the audit, and remove this amber", then asked for EDIT's zoom buttons on the right. It is on `main` and installed on the development Mac as `d1a9f86`, and the owner judged it on screen: "everything is good now".

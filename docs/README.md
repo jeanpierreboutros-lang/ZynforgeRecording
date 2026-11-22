@@ -1,10 +1,10 @@
 # Documentation index
 
-Reconciled on 2026-11-17 against `main` at `d1a9f86`, after the 2026-11-16
+Reconciled on 2026-11-22 against `main` at `a3ffc1b`, after Convert to Stereo and the fixes for all 34 findings of the 2026-11-22 whole-codebase review (its register stays outside the public repository). Before that on 2026-11-17 at `d1a9f86`, after the 2026-11-16
 review's fixes, take files named for their strips and the 2026-11-17 design pass. Earlier reconciliations were on 2026-11-12, after the 2026-11-11 review, and on 2026-11-04 at `821131a`. Documentation commits do not change the installed binaries: see the
 status in the [README](../README.md).
 
-The development Mac has `d1a9f86`, and the Mac mini has `281c6c0`, which no current DMG holds. Both use protocol 4. `d1a9f86` has not recorded on real hardware; `08fccd7`, before it, recorded the 2026-11-14 show. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
+The development Mac has `a3ffc1b`, and the Mac mini has `281c6c0`, which no current DMG holds. Both use protocol 4. `a3ffc1b` has not recorded on real hardware; `08fccd7` recorded the 2026-11-14 show. [INSTALL.md](../INSTALL.md) owns what each Mac keeps as a
 rollback. Refer to the owning documents below instead of copying
 package hashes, test counts or acceptance claims into new guides.
 
