@@ -2028,7 +2028,8 @@ namespace zynforge
         int capturedChannels = 0;
         for (const auto& w : writers)
             if (w.active) capturedChannels += w.numChannels;
-        const int ringFrames = copyRingFrames ((int) copies.size(), capturedChannels) + preRollLimit;
+        const int ringFrames = copyRingFrames ((int) copies.size(), capturedChannels) + preRollLimit
+                             + copyStallFrames ((int) copies.size(), capturedChannels, preRollLimit);
         for (auto& copy : copies)
         {
             copy->ringFrames = ringFrames;
@@ -2075,7 +2076,7 @@ namespace zynforge
 
     // Four seconds or so per copy, like the audio FIFO, until that is more than
     // a gigabyte of ring: then less, never under a second. A take with pre-roll
-    // adds preRollFramesFitting on top.
+    // adds preRollFramesFitting on top, and copyStallFrames tops every take up.
     int MultitrackRecorder::copyRingFrames (int numCopies, int channels) const noexcept
     {
         if (copyRingFramesForTests > 0) return juce::jmax (copyRingFramesForTests, CaptureCopy::kChunkFrames);
@@ -2085,6 +2086,28 @@ namespace zynforge
                && (juce::int64) frames * (juce::int64) sizeof (float) * channels * numCopies > kMaxRingBytes)
             frames /= 2;
         return frames;
+    }
+
+    // A drive can stop answering for seconds and then carry on. In the
+    // 2026-11-23 show a USB SSD took 7 to 9 s to finish its writes three times,
+    // and the backup, with the ring above (about 5.5 s at 48 kHz), lost 16 s
+    // while the primary lost nothing. So every copy's ring is topped up to hold
+    // kCopyStallSeconds of live audio, from the memory the pre-roll leaves under
+    // kMaxRingBytes: the pre-roll that fits and the memory ceiling are exactly
+    // what they were, and with more channels or copies than the ceiling allows
+    // the room shrinks, never below the ring above. A ring's pages are touched
+    // only as audio reaches them. A test that sized the ring itself gets none.
+    static constexpr int kCopyStallSeconds = 20;
+
+    int MultitrackRecorder::copyStallFrames (int numCopies, int channels, int preRollFrames) const noexcept
+    {
+        if (copyRingFramesForTests > 0 || sampleRate <= 0.0) return 0;
+        const auto limit = copyRingBytesForTests > 0 ? copyRingBytesForTests : kMaxRingBytes;
+        const auto bytesPerFrame = (juce::int64) sizeof (float) * juce::jmax (1, channels) * juce::jmax (1, numCopies);
+        const auto ring = (juce::int64) copyRingFrames (numCopies, channels);
+        const auto wanted = (juce::int64) (sampleRate * kCopyStallSeconds) - ring;
+        const auto room = limit / bytesPerFrame - ring - (juce::int64) juce::jmax (0, preRollFrames);
+        return (int) juce::jmax ((juce::int64) 0, juce::jmin (wanted, room));
     }
 
     // A copy writes its pre-roll before its first live sample, so live audio

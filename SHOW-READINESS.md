@@ -1,5 +1,25 @@
 # Show readiness — planned SD5 recording
 
+## Second real show, 2026-11-23
+
+`a3ffc1b` on the development Mac recorded the show:
+- 86 strips (82 mono and two stereo, 84 files) through an RME HDSPe AoX (Dante);
+- 48 kHz / 24-bit, buffer 512;
+- primary on a PCIe SSD (APFS), backup on a portable USB SSD (APFS);
+- 1 h 35 min.
+
+The report shows no missed samples, no stall, no lost device and no crash. The hashes were pending when the app quit. On 2026-11-24 the same build opened the session and finished them: about 50 minutes for the primary and an hour for the backup, both at about 25 MB/s. `tools/verify_take.sh` then passed every file: headers, lengths and frame counts, and all 84 re-hashed against the report. It flags only the two things below.
+
+- **The backup lost 16 s; the primary lost nothing.** There were three holes in the backup, about 1, 5 and 7 s long, written as silence so the backup stays aligned. At each one the kernel logged the backup volume taking 7.2, 9.0 and 7.5 s to flush its writes (`apfs tx_flush ... took N us`). No USB reset was logged, the drive was 29 % full, and Spotlight was indexing it. The ring then held about 5.5 s; `main` now holds 20 s (2026-11-24, see the top ADR of [decisions.md](decisions.md)). That covers pauses like these, but a drive that pauses for seconds is still a weak backup.
+- **One stereo feed dropped to exact digital zero.** That feed was silent for the first 11.6 min, then for 3 s and 11 s, then for the last 2 min. No other channel on the same card dropped at those moments, so the fault was upstream of the recorder: the feed's source or its own Dante subscription.
+
+27 more inputs held only a noise floor all show (about −100 dBFS). The owner confirmed they were spare backup playback channels, with no audio expected. The dead-channel alarm stays quiet on them by design, because it fires only on exact digital zero.
+
+Before the next show:
+- turn Spotlight off on every take drive (`sudo mdutil -i off "/Volumes/<drive>"`);
+- put the backup on a drive that keeps up, plugged straight into the Mac with no hub;
+- after the show, read `channelAlarms` and `copyProblems` in session.report.json. For a copy problem, look for slow flushes on that drive: `/usr/bin/log show --start "<take start>" --end "<stop>" --predicate 'sender == "apfs" AND eventMessage CONTAINS "to flush"'`. On the RME card, Dante problems show in Dante Controller, not in the Dante Virtual Soundcard logs.
+
 ## Decision as of 2026-11-22
 
 **The owner will record the 2026-11-23 show with `a3ffc1b` on the development Mac.** It is `d1a9f86` plus right-click Convert to Stereo and the fixes for all 34 findings of the 2026-11-22 whole-codebase review. It passes 2103 test groups in Release and both static gates, but it has not recorded on real hardware, and the day's changes touched the recorder, the capture helper and the console links. ASan/UBSan and TSan were not re-run.

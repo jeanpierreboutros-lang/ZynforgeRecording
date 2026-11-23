@@ -39,6 +39,14 @@ This came from a design critique of the real window (rendered headless). The own
 - [ ] Family tokens: Recording draws meter heat by dBFS (`brand::meterHeatAtDb`). The family `tokens.json` heat fractions should become 0.8 / 0.9 / 0.9667 so the generated `ForgeTokens.h` agrees.
 - [ ] The Mac mini still has `281c6c0`.
 
+## Second real show, 2026-11-23
+
+- [x] `a3ffc1b` recorded 86 strips for 1 h 35 min through an RME HDSPe AoX, with no missed samples, no stall and no crash. Hashes finished on 2026-11-24, and `tools/verify_take.sh` passed every file (see *Second real show* in [SHOW-READINESS.md](SHOW-READINESS.md)).
+- [x] The backup lost 16 s to three 7–9 s write pauses on its USB SSD. Every copy's ring now holds 20 s (2026-11-24, top ADR of [decisions.md](decisions.md)), tested red-first: *A backup drive that stops answering for 8 s loses nothing*.
+- [x] 27 inputs at the noise floor all show were spare backup playback channels (owner, 2026-11-24).
+- [ ] Install the 20 s rings on the development Mac (owner's go).
+- [ ] Owner: turn Spotlight off on the take drives, and pick a backup drive that keeps up.
+
 ## First real show, 2026-11-14
 
 - [x] `08fccd7` recorded 66 strips for 1 h 44 min through Dante Virtual Soundcard, with no missed samples, no stall and no crash (see *Decision as of 2026-11-17* in [SHOW-READINESS.md](SHOW-READINESS.md)).

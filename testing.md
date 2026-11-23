@@ -1,5 +1,13 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-24 copy rings hold 20 s
+
+Two groups added to *Capture path* (`CapturePathTests.cpp`, in `testPreRoll`):
+- *A backup drive that stops answering for 8 s loses nothing.* It holds the backup copy's thread in `beforeCopyWriteForTests` while 8 s of a ramp arrives, then releases it. The test expects no backup failure, no copy problems, no missed samples, and the whole ramp in both the primary and the backup file. On the old ring (2^18 frames, about 5.5 s) it failed with the show's message: "Backup lost 2.9 s of audio; the other copies have it", and 142848 wrong frames in the backup.
+- *The stall room only takes memory the pre-roll leaves, under the same ceiling.* 20 s of live ring for 86 channels on two copies and for one channel on one copy. A whole 30 s pre-roll at 56 channels on two copies still fits and leaves more than 19 s. At 256 channels on six copies the pre-roll keeps its share and the top-up is zero, with every case under 1 GiB. A test-sized ring gets no top-up.
+
+Results on the change: *Capture path* 53 / 0. Full Release suite **2105 test groups, 0 failures**. Both static gates clean. ASan/UBSan and TSan were not run for this change, which only changes how big the copy rings are.
+
 ## 2026-11-22 whole-codebase bug hunt, all 34 fixed
 
 The audit (2 critical, 5 high, 7 medium, 20 low; register outside the repo, `ZynforgeRecording-audit-2026-11-22.md` beside it) was fixed area by area. Each area got its own test file, all in the CMake test target:

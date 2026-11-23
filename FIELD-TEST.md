@@ -309,7 +309,8 @@ Force-killing can wedge an audio device, so keep a recovery plan and stop if the
 - [ ] **The same on a session never saved.** As above with a brand new session and no Save before RECORD. Same result. Confirm `session_mix.json` is in the take folder before the force-quit.
 - [ ] **Device loss.** Pull the interface during a punch on a long take: the UI stays alive and the button returns to RECORD when the take has closed.
 - [ ] **Long pre-roll.** 30 s pre-roll on 56 tracks with a slow USB backup and a NAS mirror: `missedSamples` 0 on the primary.
-- [ ] **Ring memory.** Watch RSS on a 64-channel take with 3 copies and no pre-roll: at most about 200 MB of ring. On `main` a long pre-roll adds to that, up to 1 GiB of ring in all.
+- [ ] **Ring memory.** Watch RSS on a 64-channel take with 3 copies and no pre-roll. Since 2026-11-24 the rings hold 20 s each: about 740 MB of ring, reached about 20 s into the take (it was about 200 MB). A long pre-roll fits inside the same 1 GiB in all.
+- [ ] **Backup drive pause (2026-11-24).** On a long take with a backup on a USB drive, pull the backup's cable for 5 s and plug it back in, or watch for a real pause: `log show ... 'sender == "apfs" AND eventMessage CONTAINS "to flush"'`. Any pause under about 20 s should leave `copyProblems` empty and `backupFailed` false. DISK STRUGGLING should show during the pause and clear after it.
 
 ### Sessions
 

@@ -17,6 +17,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed — copies ride out 20 s drive pauses, 2026-11-24
+- Every copy's buffer (primary, backup, each mirror) now holds 20 s of live audio instead of about 5.5 s. In the 2026-11-23 show a USB backup SSD took 7 to 9 s to finish its writes three times and the backup lost 16 s; the same pauses now lose nothing.
+- The extra room only uses memory the pre-roll leaves under the existing 1 GiB limit, so the pre-roll that fits is unchanged. Ring memory during a take is now about 660 MB at 86 channels on two copies (was about 180 MB).
+- A backup whose drive dies outright is now marked failed about 20 s after it stops rather than about 5.5 s. DISK STRUGGLING still warns within a few seconds. See *Every copy's ring holds 20 s of live audio* in [decisions.md](decisions.md).
+
 ### Added — Convert to Stereo, 2026-11-22
 
 - **Right-click ▸ Convert to Stereo** on a mono strip in MIXER, or on a mono row's channel name in EDIT, turns that strip into a stereo strip in place. It keeps its name, number, colour, fader, arm and cues; a right half named "<name> R" is added straight after it and hears the next input. Unlike Link to next channel, the neighbouring channel is not taken, and every strip keeps its takes. To make room, every strip that sits on the following inputs moves one input on (In 6 becomes In 7, and so on), wherever it is in the strip order, and likewise outputs, up to the first gap in the numbering, so no two strips end up sharing a channel; the status line says how many moved. Saved cues move the same way and give the pair its stereo image, the session saves at once, and the undo history is cleared (an older undo step would have split the pair). A strip that already has audio stays mono (the status line says why), because a recorded mono take can't continue as a stereo strip.

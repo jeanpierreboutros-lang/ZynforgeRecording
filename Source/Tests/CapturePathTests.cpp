@@ -683,6 +683,87 @@ namespace zynforge
                 expectEquals (rec.getPreRollNotice(), juce::String());
             }
 
+            // 2026-11-23 show: the backup's USB SSD took 7 to 9 s to finish its
+            // writes three times, and a ring of about 5.5 s lost 16 s of the
+            // backup while the primary, on another drive, lost nothing.
+            beginTest ("A backup drive that stops answering for 8 s loses nothing");
+            {
+                const auto root = tempDir ("stall");
+                const juce::ScopeGuard cleanUp { [&] { MultitrackRecorder::deleteSessionAfterCancellingReports (root); } };
+                const auto session = root.getChildFile ("session");
+                const auto backup = root.getChildFile ("backup");
+                expect (backup.createDirectory().wasOk());
+                auto entered = std::make_shared<juce::WaitableEvent> (true);
+                auto released = std::make_shared<juce::WaitableEvent> (true);
+                const juce::ScopeGuard unblock { [released] { released->signal(); } };
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (backup);
+                rec.setBackupCaptureFormat (CaptureFormat::Wav24);
+                rec.beforeCopyWriteForTests = [entered, released] (Copy& copy)
+                {
+                    if (copy.copyIndex != 1) return;      // only the backup's drive stops
+                    entered->signal();
+                    released->wait (-1);
+                };
+                Ramp ramp { rec };
+                expect (rec.startRecording (session), rec.getStartError());
+                rec.waitForCopiesOpenForTests();
+                for (int b = 0; b < 4000 && ! entered->wait (0); ++b)
+                {
+                    ramp.block();
+                    rec.drainOnce();
+                    if (b > 100) entered->wait (5);
+                }
+                expect (entered->wait (0), "the backup never reached a write");
+
+                const auto stalledAt = ramp.frame;
+                while (ramp.frame < stalledAt + 8 * (juce::int64) kRate)
+                {
+                    ramp.block();
+                    rec.drainOnce();
+                }
+                expect (! rec.hasBackupFailed(), "an 8 s stall failed the backup: "
+                                                  + rec.getCopyProblems().joinIntoString (" | "));
+                released->signal();
+                for (int b = 0; b < 40; ++b) { ramp.block(); rec.drainOnce(); }
+                rec.stopRecording();
+
+                expect (rec.getCopyProblems().isEmpty(), rec.getCopyProblems().joinIntoString (" | "));
+                expect (! rec.hasBackupFailed());
+                expect (! rec.hasPrimaryFailed());
+                expectEquals (rec.getMissedSamples(), (juce::int64) 0);
+                expectRamp (session.getChildFile ("Audio Files/Track_01.wav"), 0, ramp.frame, "the primary");
+                expectRamp (backup.getChildFile ("session/Audio Files/Track_01.wav"), 0, ramp.frame, "the backup");
+            }
+
+            beginTest ("The stall room only takes memory the pre-roll leaves, under the same ceiling");
+            {
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                const auto live = [&rec] (int copies, int channels, int preRoll)
+                { return rec.copyRingFrames (copies, channels) + rec.copyStallFrames (copies, channels, preRoll); };
+                const auto bytes = [&live] (int copies, int channels, int preRoll)
+                { return (juce::int64) (live (copies, channels, preRoll) + preRoll) * (juce::int64) sizeof (float) * channels * copies; };
+                // The 2026-11-23 show: 86 channels on a primary and a backup.
+                expectEquals (live (2, 86, 0), 20 * (int) kRate);
+                expectEquals (live (1, 1, 0), 20 * (int) kRate);
+                // The pre-roll that fits is what it was, and a whole 30 s one
+                // still leaves almost all of the room.
+                const int whole = rec.preRollFramesFitting (2, 56, 30 * (int) kRate);
+                expectEquals (whole, 30 * (int) kRate);
+                expectGreaterThan (live (2, 56, whole), 19 * (int) kRate);
+                expect (bytes (2, 56, whole) <= (juce::int64) 1 << 30, "a 30 s pre-roll went past the memory limit");
+                // Past the ceiling the pre-roll keeps its share and the room gives way.
+                const int cut = rec.preRollFramesFitting (6, 256, 30 * (int) kRate);
+                expectEquals (rec.copyStallFrames (6, 256, cut), 0);
+                expect (bytes (6, 256, cut) <= (juce::int64) 1 << 30, "the rings went past the memory limit");
+                // A test that sizes the ring itself gets no extra room.
+                rec.copyRingFramesForTests = MultitrackRecorder::CaptureCopy::kChunkFrames;
+                expectEquals (rec.copyStallFrames (2, 1, 0), 0);
+            }
+
             beginTest ("A cut pre-roll is a quiet notice on the banner, and crosses from the daemon");
             {
                 AudioEngine::setTestModeSkipAudioInit (true);

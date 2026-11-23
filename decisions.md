@@ -2,6 +2,29 @@
 
 
 
+## Every copy's ring holds 20 s of live audio — 2026-11-24
+
+**Status:** Accepted. After the 2026-11-23 show the owner asked for a bigger backup buffer "if it is good for the app", and that it "will not change the behavior".
+
+**Context:** In the 2026-11-23 show (86 strips, 1 h 35 min, primary on a PCIe SSD, backup on a portable USB SSD) the backup lost 16 s in three holes, about 1, 5 and 7 s. At each one the kernel logged an APFS transaction on the backup volume taking 7.2, 9.0 and 7.5 s to flush, plus a 1.1 s one that cost nothing. The primary, on another drive, logged none and lost nothing. No USB reset or error was logged, the drive was 29 % full, and Spotlight was indexing it during the take. A copy's ring was 2^18 frames (about 5.5 s at 48 kHz), so any stall longer than that dropped audio from that copy.
+
+**Decision:**
+- `copyStallFrames` tops every copy's ring (primary, backup, mirrors) up to `kCopyStallSeconds` = 20 s of live audio.
+- It takes only the memory the pre-roll leaves under the existing 1 GiB ceiling (`kMaxRingBytes`). `preRollFramesFitting` is unchanged, so the pre-roll that fits and the ceiling are what they were. With many channels and copies the top-up shrinks first, to nothing at worst, never below the old ring.
+- A test that sizes the ring itself (`copyRingFramesForTests`) gets no top-up.
+
+**Alternatives considered:**
+- Raise the 1 GiB ceiling. That would change memory use at the top end, which the owner asked us not to do.
+- Warn when a copy passes the old 5.5 s lag. That adds a new alarm, and DISK STRUGGLING already warns within seconds of a stall, because it compares the write rate, backup included, with what the take needs.
+- Rely on a better backup drive only. That's still advised (*Second real show* in SHOW-READINESS.md), but a drive's internal pauses can't be seen or ruled out from the Mac.
+
+**Consequences:**
+- \+ A copy rides out a drive pause of up to about 20 s with nothing lost, and its report and banner stay clean.
+- − Ring memory as a take runs: about 660 MB for 86 channels on two copies, 740 MB for 64 channels on three (was 180 and 200 MB). Pages are touched only as audio reaches them, so the full size is reached about 20 s into a take. The total stays under 1 GiB, as before.
+- − A copy whose drive dies outright is marked failed (BACKUP alarm, `backupFailed`) about 20 s after it stops, not 5.5 s. DISK STRUGGLING still comes within a few seconds.
+- − After a long pause a copy can be up to 20 s behind the primary while it catches up. The files still line up by sample, and STOP's limits (30 s with no progress, 60 s of draining) are unchanged.
+- The BUF meter in the perf panel is a percentage of the ring, so the same lag reads lower.
+
 ## Convert to Stereo inserts a channel, as a desk does — 2026-11-22
 
 **Status:** Accepted. The owner asked for a way to make a mono track stereo "without creating a new one, on the right-click menu", then: "it should automatically reorder the input of the continuous channels, and output".

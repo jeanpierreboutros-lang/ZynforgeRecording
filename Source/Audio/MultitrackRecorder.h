@@ -776,6 +776,7 @@ namespace zynforge
         const CaptureCopy* copyAt (int copyIndex) const noexcept;
         bool isCopyOutOfTake (int copyIndex) const noexcept;
         int  copyRingFrames (int numCopies, int channels) const noexcept;
+        int  copyStallFrames (int numCopies, int channels, int preRollFrames) const noexcept;
         int  preRollFramesFitting (int numCopies, int channels, int wanted) const noexcept;
         int  armedCaptureChannels() const noexcept;
         juce::StringArray describeCopyProblems() const;
