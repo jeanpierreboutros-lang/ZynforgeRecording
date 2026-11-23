@@ -2,7 +2,22 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `a3ffc1b`, `main` on 2026-11-22: Convert to Stereo (with the input/output shift) plus the fixes for all 34 findings of the 2026-11-22 whole-codebase audit. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app (see the cleanup below).
+The development Mac now has `e4e8d61`, `main` on 2026-11-24: `a3ffc1b` plus copy rings that hold 20 s of live audio. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app in Applications (see the cleanup below).
+
+## Development Mac update — 2026-11-24, copy rings hold 20 s
+
+`e4e8d61` = `a3ffc1b`, which recorded the 2026-11-23 show, plus one change: every copy's ring (primary, backup, mirrors) now holds 20 s of live audio instead of about 5.5 s. The extra only uses memory the pre-roll leaves under the same 1 GiB ceiling. In that show a USB backup SSD paused 7 to 9 s three times and the backup lost 16 s (top ADR of [decisions.md](decisions.md)). The owner asked for it "if it is good for the app" and without a change in behaviour, then said to commit, push, install and put every old version in the Trash.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `d062e320e21f1993678ae198914207880a860430332c3b47e1f5020e10a88c92` |
+| Capture helper | `044eb304d40abf5315e5f4ce2386a6f1b43de7b4d3276d6774ad00f81dcf46fa` (changed: it records with the same rings) |
+
+- **Built with:** the Xcode generator under Xcode 27.2 with `XCODE_XCCONFIG_FILE` holding `SDK_STAT_CACHE_ENABLE = NO`, in `build-xc`. Release, universal (x86_64, arm64). Ad-hoc signed with the hardened runtime and the audio-input entitlement.
+- **Tests before install:** Release 2105 test groups / 0 failures. The new stall test failed first on `a3ffc1b`'s ring. Both static gates were clean. ASan/UBSan and TSan were not run.
+- **Install:** the owner had quit the app, and the helper wasn't running either. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Copied with `ditto --norsrc --noextattr --noqtn`.
+- **Old versions:** the replaced `a3ffc1b` went to the owner's Trash as `Zynforge Recording.app.backup-20261124-a3ffc1b`, beside the three 2026-11-22 bundles already there. 47 Launch Services entries were unregistered: the Trash copies, the `build-xc` build output, and paths that no longer exist (old drive names, old scratch folders). `/Applications/Zynforge Recording.app` is now the only registered Recording app, and `.zfproj` opens with it. Rollback is a rebuild from Git, or drag `…backup-20261124-a3ffc1b` back to Applications while the Trash still holds it.
+- **After install:** the app opened and reloaded the last session (86 tracks, idle, about 1.1 GB of memory while its waveforms loaded; the rings are only filled during a take). No crash report. No take has been recorded on it yet.
 
 ## Development Mac update — 2026-11-22 evening, the whole-codebase audit fixed
 

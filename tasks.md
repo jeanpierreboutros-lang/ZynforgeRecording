@@ -44,7 +44,7 @@ This came from a design critique of the real window (rendered headless). The own
 - [x] `a3ffc1b` recorded 86 strips for 1 h 35 min through an RME HDSPe AoX, with no missed samples, no stall and no crash. Hashes finished on 2026-11-24, and `tools/verify_take.sh` passed every file (see *Second real show* in [SHOW-READINESS.md](SHOW-READINESS.md)).
 - [x] The backup lost 16 s to three 7–9 s write pauses on its USB SSD. Every copy's ring now holds 20 s (2026-11-24, top ADR of [decisions.md](decisions.md)), tested red-first: *A backup drive that stops answering for 8 s loses nothing*.
 - [x] 27 inputs at the noise floor all show were spare backup playback channels (owner, 2026-11-24).
-- [ ] Install the 20 s rings on the development Mac (owner's go).
+- [x] Installed the 20 s rings (`e4e8d61`) on the development Mac on 2026-11-24. Every older version is in the Trash (INSTALL.md).
 - [ ] Owner: turn Spotlight off on the take drives, and pick a backup drive that keeps up.
 
 ## First real show, 2026-11-14
