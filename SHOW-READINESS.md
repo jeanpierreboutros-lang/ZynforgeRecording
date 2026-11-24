@@ -1,5 +1,30 @@
 # Show readiness — planned SD5 recording
 
+## Before the next show (as of 2026-11-24)
+
+The development Mac has `4e0afa7`. In both real shows the recorder lost nothing once audio reached it. The 2026-11-23 drops came from the app's mid-take SMART poll, which is fixed: the 86-track reproduction logged 0 overloads. A skipped CoreAudio cycle from any cause is now counted, filled and flagged. `4e0afa7` has not recorded a show yet, and has not run on the RME rig since the fix.
+
+1. **Rehearsal take on the show rig.** RME HDSPe, every channel armed, backup on, 15-30 minutes. Then `tools/verify_take.sh` must show "no CoreAudio overload", `missedSamples` 0 and `inputCyclesSkipped` 0. Answer Allow to the first launch's microphone question.
+2. **One audio device.** Set the output to the HDSPe too, not the MacBook speakers. Two devices make macOS join two clocks.
+3. **Buffer 1024** when nothing is monitored through the Mac: more headroom for the audio thread, and a recorder doesn't care about latency.
+4. **The Mac:**
+   - Quit every other app (no builds, test runs or AI coding sessions).
+   - Turn on Do Not Disturb.
+   - Turn off automatic updates and Time Machine.
+   - Never sleep; stay on mains power.
+5. **The drives:**
+   - Primary on the fast SSD.
+   - Backup on a drive that keeps up, plugged straight into the Mac (the USB SSD froze 7-9 s on 2026-11-23).
+   - Spotlight off on both (`sudo mdutil -i off "/Volumes/<drive>"`).
+6. **Dante:**
+   - Clear every NO SIGNAL alarm before doors.
+   - Leave macOS Network settings alone during a take.
+7. **During the show:**
+   - Glance at MISSED and the alarm banner, and note the time of anything that shows.
+   - Run nothing heavy on that Mac.
+8. **After the show:** run `verify_take.sh`. It reads macOS's audio log too.
+9. **For a show that can't be repeated, record twice** (a second recorder on Dante, or the desk). The Mac mini's `281c6c0` has the 72-second bug: don't record on it until it is updated.
+
 ## Second real show, 2026-11-23
 
 `a3ffc1b` on the development Mac recorded the show:

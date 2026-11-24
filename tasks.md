@@ -44,7 +44,9 @@ This came from a design critique of the real window (rendered headless). The own
 A sixth whole-codebase review at `b3810ac` made 41 findings (0 critical, 4 high, 17 medium, 20 low). All are fixed on eight branches merged on `main`, each tested red first (see the top ADR of [decisions.md](decisions.md) and testing.md).
 
 - [ ] Owner: review the top ADR's decisions, above all the judgement call that a skipped cycle in a stopped-transport punch is filled and the punch kept, and that a cue recalled during a save holds its inputs.
-- [ ] Owner: run *2026-11-24 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the show rig.
+- [x] Installed `4e0afa7` on the development Mac on 2026-11-24; older versions are in the Trash (INSTALL.md).
+- [ ] Owner: run *2026-11-24 fix round* in [FIELD-TEST.md](FIELD-TEST.md) and the rehearsal take in SHOW-READINESS.md *Before the next show* on the show rig.
+- [ ] The Mac mini still has `281c6c0`, which has the 72-second SMART fork bug: do not record on it until it gets `4e0afa7` or later.
 - [ ] Left as found (out of scope): a twin follower's own failed STOP that finished before the leader's STOP still reads "stopped" on the leader; a cue recalled during a save loses its playhead move; in helper mode a cue recalled during the helper's STOP wait takes the during-take path; a StereoMix try-lock miss near STOP drops that block from the mix; Cmd+X on a range clears the range current at its answer; `askChildrenToExit` signals every helper child after a failed launch.
 
 ## Second real show, 2026-11-23

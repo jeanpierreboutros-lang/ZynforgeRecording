@@ -2,7 +2,30 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `11c3145`, `main` on 2026-11-24: the 20 s copy rings, plus the fix for the 2026-11-23 drops (no fork mid-take, skipped CoreAudio cycles counted and filled). The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app in Applications (see the cleanup below).
+The development Mac now has `4e0afa7`, `main` on 2026-11-24: the 20 s copy rings, the fix for the 2026-11-23 drops (no fork mid-take, skipped CoreAudio cycles counted and filled), and the fixes for all 41 findings of the 2026-11-24 review. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app in Applications (see the cleanup below).
+
+## Development Mac update — 2026-11-24, the 2026-11-24 review fixed
+
+`4e0afa7` = `11c3145` plus the fixes for all 41 findings of the 2026-11-24 whole-codebase review (top ADR of [decisions.md](decisions.md)). It includes the gaps found in `11c3145`'s own skipped-cycle fix: StereoMix now gets the same silence as the tracks, a skip never discards a punch, and a driver's split buffers are not read as skips. The owner said: "push, commit, and install the latest version, then update all the docs to finish this session, move old versions to the bin".
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `a6af86876207a72d1ae2b01a6ced13c911cbb17e8f39c19beb28b61c134d333a` |
+| Capture helper | `00fe47ba429c77747566883e95a8446b03fb2a48f0625e5eb202b7cf143de0c8` (changed: hand-over, deferred device restart) |
+
+- **Built with:** `build-xc`, Xcode 27.2 with `SDK_STAT_CACHE_ENABLE = NO`, Release, universal (x86_64, arm64). Ad-hoc, hardened runtime, audio-input entitlement.
+- **Tests before install:**
+  - Release: 2200 groups / 0 failures.
+  - ASan/UBSan: 2200 / 0, no reports.
+  - TSan: 2200 groups, no race reports, after three test-side fixes (testing.md).
+  - Both gates are clean, and `test_verify_tools.py` passes.
+  - CI is green on `4e0afa7` (Debug and Release).
+- **Install:** the app and its helper were not running. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Copied with `ditto --norsrc --noextattr --noqtn`.
+- **Old versions in the Bin:**
+  - The replaced `11c3145` went to the owner's Trash as `…backup-20261124-11c3145`. The Trash also holds `e4e8d61`, `a3ffc1b` and the three 2026-11-22 bundles.
+  - The leftover settings copy from that morning's reproduction tests (`…settings.before-repro-20261124`) went there too.
+  - Launch Services was cleaned again: `/Applications` is the only registered Recording app.
+- **After install:** the app was not opened. The first launch of this new ad-hoc build asks for the microphone (answer Allow), and the device must be chosen if macOS dropped it. No take has been recorded on it: run the rehearsal take in *Before the next show* (SHOW-READINESS.md) on the show rig first.
 
 ## Development Mac update — 2026-11-24, the 72-second drops fixed
 
