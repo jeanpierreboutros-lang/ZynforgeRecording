@@ -14,8 +14,10 @@
 
 #include "OscPacketReceiver.h"
 
+#include <algorithm>
 #include <array>
 #include <functional>
+#include <vector>
 
 namespace zynforge
 {
@@ -50,19 +52,24 @@ namespace zynforge
             { "/zynforge/macro/marker/goto", Command::MarkerGoto },
         }};
 
+        // The exact address only: no pattern matching, so a wildcard address
+        // can't reach any of them.
+        inline Command commandFor (const juce::String& path)
+        {
+            for (const auto& entry : kAddresses)
+                if (path == entry.address) return entry.command;
+            return Command::None;
+        }
+
         // A desk key can send on press and on release, so integer 0 is the
         // release and means nothing. Only the exact addresses above, with no
-        // argument or one integer, are commands: None otherwise. No pattern
-        // matching, so a wildcard address can't reach any of them. The address
+        // argument or one integer, are commands: None otherwise. The address
         // alone comes back with value 0, which no integer message can carry
         // (isValueless): the listener refuses a valueless STOP and pairs the
         // rest (ValuelessPairs).
         inline Parsed parse (const juce::OSCMessage& m)
         {
-            const auto path = m.getAddressPattern().toString();
-            auto command = Command::None;
-            for (const auto& entry : kAddresses)
-                if (path == entry.address) command = entry.command;
+            const auto command = commandFor (m.getAddressPattern().toString());
             if (command == Command::None || m.size() > 1) return {};
             if (m.size() == 1 && ! m[0].isInt32()) return {};
             const int value = m.size() == 1 ? m[0].getInt32() : 0;
@@ -75,6 +82,19 @@ namespace zynforge
         inline bool isValueless (const Parsed& p) noexcept
         {
             return p.command != Command::None && p.value == 0;
+        }
+
+        // One of the addresses above with a value parse() does not take: a
+        // float (TouchOSC's default 1.0), text, or more than one argument. It
+        // is still no command (integers only, decisions.md), but a key set
+        // that way did nothing and said nothing, and a RECORD key could leave
+        // a show unrecorded. The command it was meant for, or None.
+        inline Command commandWithWrongValue (const juce::OSCMessage& m)
+        {
+            const auto command = commandFor (m.getAddressPattern().toString());
+            if (command == Command::None || m.size() == 0) return Command::None;
+            if (m.size() == 1 && m[0].isInt32()) return Command::None;
+            return command;
         }
 
         using oscwire::normaliseSourceIp;
@@ -110,6 +130,12 @@ namespace zynforge
         // a second press inside the window (send 1 on press and every press
         // counts). STOP is never guessed at: a valueless STOP is refused, as on
         // the Generic OSC port. The window is the two-tap STOP's.
+        //
+        // A key is the command and, on the Generic OSC port, the marker's
+        // name: two press-only buttons named Verse and Chorus are two keys, and
+        // Chorus pressed a second after Verse is no release of it (it was
+        // dropped as one; audit 2026-11-24). The same name again is still the
+        // release. The desk macro port has no names: one key per command.
         inline constexpr double kValuelessPairMs = 2000.0;
 
         class ValuelessPairs
@@ -117,20 +143,43 @@ namespace zynforge
         public:
             // True when this valueless message is the release of the press
             // before it. Either way the next one is a press again.
-            bool isRelease (Command c, double nowMs)
+            bool isRelease (Command c, double nowMs) { return isRelease (c, {}, nowMs); }
+            bool isRelease (Command c, const juce::String& name, double nowMs)
             {
-                auto& slot = slots[(size_t) c];
-                const bool release = slot.awaiting && nowMs - slot.pressMs < kValuelessPairMs;
-                slot.awaiting = false;
-                return release;
+                for (auto it = awaiting.begin(); it != awaiting.end(); ++it)
+                    if (it->command == c && it->name == name)
+                    {
+                        const bool release = nowMs - it->pressMs < kValuelessPairMs;
+                        awaiting.erase (it);
+                        return release;
+                    }
+                return false;
             }
-            void pressed (Command c, double nowMs) { slots[(size_t) c] = { nowMs, true }; }
+            void pressed (Command c, double nowMs) { pressed (c, {}, nowMs); }
+            void pressed (Command c, const juce::String& name, double nowMs)
+            {
+                forget (c, name);
+                // A press past its window pairs with nothing; dropping it keeps
+                // a stream of different names from growing this list.
+                awaiting.erase (std::remove_if (awaiting.begin(), awaiting.end(), [nowMs] (const Awaiting& a)
+                                                { return nowMs - a.pressMs >= kValuelessPairMs; }),
+                                awaiting.end());
+                if (awaiting.size() >= kMaxAwaiting) awaiting.erase (awaiting.begin());
+                awaiting.push_back ({ c, name, nowMs });
+            }
             // This key sends values after all: its next valueless message is a press.
-            void forget (Command c) { slots[(size_t) c] = {}; }
+            void forget (Command c) { forget (c, {}); }
+            void forget (Command c, const juce::String& name)
+            {
+                awaiting.erase (std::remove_if (awaiting.begin(), awaiting.end(), [c, &name] (const Awaiting& a)
+                                                { return a.command == c && a.name == name; }),
+                                awaiting.end());
+            }
 
         private:
-            struct Slot { double pressMs { 0.0 }; bool awaiting { false }; };
-            std::array<Slot, (size_t) Command::Count> slots;
+            static constexpr size_t kMaxAwaiting = 32;
+            struct Awaiting { Command command { Command::None }; juce::String name; double pressMs { 0.0 }; };
+            std::vector<Awaiting> awaiting;
         };
     }
 
@@ -164,12 +213,14 @@ namespace zynforge
         void perform (const deskmacro::Parsed&);
         void report (const juce::String& message);
         void refuseValuelessStop (double nowMs);
+        void refuseWrongValue (deskmacro::Command, const juce::OSCMessage&, double nowMs);
         void locateToIndex (int index, const juce::String& refusalIfMissing);
 
         AudioEngine&        engine;
         deskmacro::Debouncer debouncer;
         deskmacro::ValuelessPairs valueless;
         double              lastValuelessStopNoticeMs { -1.0e9 };
+        double              lastWrongValueNoticeMs { -1.0e9 };
         bool                listening { false };
         int                 port { deskmacro::kDefaultPort };
         juce::String        source;

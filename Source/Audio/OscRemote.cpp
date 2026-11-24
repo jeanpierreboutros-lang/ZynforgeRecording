@@ -267,9 +267,11 @@ namespace zynforge
             // release: held past the repeat filter it dropped two markers. The
             // same message again within 2 s is that key's release, as on the
             // desk macro port (deskmacro::ValuelessPairs, audit 2026-11-22).
-            if (valued) markerPairs.forget (deskmacro::Command::Marker);
-            else if (markerPairs.isRelease (deskmacro::Command::Marker, nowMs)) return true;
-            else markerPairs.pressed (deskmacro::Command::Marker, nowMs);
+            // The same message means the same name: Verse then Chorus from two
+            // buttons are two presses (audit 2026-11-24).
+            if (valued) markerPairs.forget (deskmacro::Command::Marker, name);
+            else if (markerPairs.isRelease (deskmacro::Command::Marker, name, nowMs)) return true;
+            else markerPairs.pressed (deskmacro::Command::Marker, name, nowMs);
             if (! markerDebouncer.admit ({ deskmacro::Command::Marker, name.hashCode() }, nowMs)) return true;
             dropMarker (name);
             return true;

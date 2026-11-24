@@ -9,6 +9,25 @@ namespace zynforge
     namespace
     {
         constexpr double kPrevGraceSeconds = 1.0;
+
+        juce::String keyLabel (deskmacro::Command command)
+        {
+            using Command = deskmacro::Command;
+            switch (command)
+            {
+                case Command::Record:     return "RECORD";
+                case Command::Stop:       return "STOP";
+                case Command::Play:       return "PLAY";
+                case Command::Pause:      return "PAUSE";
+                case Command::Marker:     return "MARKER";
+                case Command::MarkerNext: return "MARKER NEXT";
+                case Command::MarkerPrev: return "MARKER PREV";
+                case Command::MarkerGoto: return "MARKER GOTO";
+                case Command::None:
+                case Command::Count:      break;
+            }
+            return "key";
+        }
     }
 
     DeskMacroListener::DeskMacroListener (AudioEngine& e) : engine (e)
@@ -65,7 +84,12 @@ namespace zynforge
         engine.getRemotes().logOsc ("macro <- " + getCurrentSource().toString()
                                     + "  " + consolelog::describe (m));
         const auto parsed = deskmacro::parse (m);
-        if (parsed.command == deskmacro::Command::None) return;
+        if (parsed.command == deskmacro::Command::None)
+        {
+            if (const auto meant = deskmacro::commandWithWrongValue (m); meant != deskmacro::Command::None)
+                refuseWrongValue (meant, m, nowMs);
+            return;
+        }
 
         // STOP must say press (1) or release (0). A key set to send the
         // address alone sends the same packet on press and on release, and a
@@ -112,6 +136,25 @@ namespace zynforge
         lastValuelessStopNoticeMs = nowMs;
         report ("STOP refused -- /zynforge/macro/stop needs a value: 1 on press, 0 on release. "
                 "Set the desk macro to send one.");
+    }
+
+    // A key set to send a float (TouchOSC's default 1.0) or text did nothing
+    // and said nothing. Integers only (decisions.md), so it is still ignored;
+    // the status line says how to set the key. Once a second at most, as for
+    // STOP. The value itself is not repeated: text here may be a token meant
+    // for the Generic OSC port.
+    void DeskMacroListener::refuseWrongValue (deskmacro::Command meant, const juce::OSCMessage& m, double nowMs)
+    {
+        if (nowMs - lastWrongValueNoticeMs < 1000.0) return;
+        lastWrongValueNoticeMs = nowMs;
+        const auto sent = m.size() > 1      ? juce::String (m.size()) + " values"
+                        : m[0].isFloat32()  ? juce::String ("a float")
+                        : m[0].isString()   ? juce::String ("text")
+                                            : juce::String ("a value that is not an integer");
+        const auto press = meant == deskmacro::Command::MarkerGoto ? juce::String ("the marker number")
+                                                                   : juce::String ("1");
+        report (keyLabel (meant) + " ignored -- " + m.getAddressPattern().toString() + " sent " + sent
+                + "; send one integer: " + press + " on press, 0 on release.");
     }
 
     void DeskMacroListener::locateToIndex (int index, const juce::String& refusalIfMissing)
