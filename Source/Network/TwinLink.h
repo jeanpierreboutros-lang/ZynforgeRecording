@@ -142,7 +142,10 @@ namespace zynforge::twin
         // with the reason in `refusal`.
         virtual bool twinStartRecord (juce::String& refusal) = 0;
         // Ends the take through this Mac's finalization path, then calls
-        // `done` with the outcome. It may call `done` much later.
+        // `done` with the outcome. It may call `done` much later. Also called
+        // when the take has already stopped here and is still finalizing (a
+        // STOP pressed on this Mac too): then it stops nothing and calls
+        // `done` with how that finalization ends.
         virtual void twinStopRecord (std::function<void (bool ok, juce::String text)> done) = 0;
         virtual void twinDropMarker (const juce::String& name) = 0;
         virtual void twinNotify (const juce::String& text) = 0;
@@ -330,6 +333,7 @@ namespace zynforge::twin
         bool         leaderTakeActive { false };
         bool         adoptedTake { false };
         juce::String followerTakeId;     // the take the link started here
+        juce::String closingTakeId;      // that take once it has ended here, until its files are closed
         bool         adoptedUnlinked { false };   // a rolling take this window found, with no link record
         juce::String lastSummaryBody;
         // A start or stop the leader sent that the follower has not answered.

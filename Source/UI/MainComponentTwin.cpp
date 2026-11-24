@@ -66,6 +66,25 @@ bool MainComponent::twinStartRecord (juce::String& refusal)
 
 void MainComponent::twinStopRecord (std::function<void (bool, juce::String)> done)
 {
+    juce::Component::SafePointer<MainComponent> self (this);
+    // The take has already stopped here (STOP pressed on this Mac at about the
+    // moment of the leader's) and its files are still closing. The leader
+    // hears how that ends, so a save that fails reaches it. Nothing is
+    // stopped and LOCK has nothing to refuse: a take started here once those
+    // files have closed is not the one the leader stopped.
+    if (! engine.isRecording() && (captureMetadataPending || engine.isCaptureFinalizing()))
+    {
+        whenReady ([self]
+        {
+            return self == nullptr || (! self->captureMetadataPending && ! self->engine.isCaptureFinalizing());
+        }, [self, done]
+        {
+            if (self == nullptr) return;
+            const auto error = self->lastCaptureFinalizationError;
+            done (error.isEmpty(), error);
+        });
+        return;
+    }
     // LOCK refuses every remote STOP. The take keeps rolling and the leader
     // is told why.
     if (sessionLocked)
@@ -76,7 +95,6 @@ void MainComponent::twinStopRecord (std::function<void (bool, juce::String)> don
     // This is the far end of a STOP already confirmed twice on the leader, so
     // it is not one more first tap. A tap armed here must not outlive the take.
     stopArmedAtMs = 0;
-    juce::Component::SafePointer<MainComponent> self (this);
     // A STOP is already closing this take: STOP pressed here and on the leader
     // at about the same moment. That STOP's outcome is the answer; a second
     // one would only be refused as pending and read as a failure there.

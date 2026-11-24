@@ -1015,6 +1015,7 @@ namespace zynforge::twin
             return;
         }
         followerTakeId = take;
+        closingTakeId.clear();
         adoptedUnlinked = false;
         localRolling = true;
         rollingChangedAtMs = juce::Time::getMillisecondCounter();
@@ -1035,7 +1036,28 @@ namespace zynforge::twin
             queueBody (makeObject ({ { "m", "stopResult" }, { "take", take }, { "ok", ok }, { "text", text } }));
         };
 
-        if (! host.twinStatus().recording) { reply (true, {}); return; }
+        const auto answerWhenStopped = [this, reply]
+        {
+            host.twinStopRecord ([reply, guard = std::weak_ptr<bool> (alive)] (bool ok, juce::String text)
+            {
+                if (! guard.expired()) reply (ok, text);
+            });
+        };
+
+        const auto status = host.twinStatus();
+        if (! status.recording)
+        {
+            // STOP pressed here at about the moment of the leader's: this
+            // linked take has stopped, and its files are still closing. The
+            // answer is how that ends. "Stopped" now would hide a save that
+            // then fails, and the leader would never show FOLLOWER STOP
+            // PROBLEM. The host stops nothing for it.
+            const bool linkedTakeClosing = status.finalizing && take.isNotEmpty()
+                                        && (take == followerTakeId || take == closingTakeId);
+            if (linkedTakeClosing) answerWhenStopped();
+            else reply (true, {});
+            return;
+        }
         if (take.isEmpty() || take != followerTakeId)
         {
             reply (false, adoptedUnlinked
@@ -1043,10 +1065,7 @@ namespace zynforge::twin
                 : "this take was started on the follower; stop it there");
             return;
         }
-        host.twinStopRecord ([reply, guard = std::weak_ptr<bool> (alive)] (bool ok, juce::String text)
-        {
-            if (! guard.expired()) reply (ok, text);
-        });
+        answerWhenStopped();
     }
 
     void TwinLink::onLocalTakeEnded()
@@ -1055,7 +1074,8 @@ namespace zynforge::twin
         localFinishing = true;
         rollingChangedAtMs = juce::Time::getMillisecondCounter();
         if (followerTakeId.isNotEmpty()) host.twinRememberLinkedTake ({}, {});
-        followerTakeId.clear();
+        // The leader's STOP for it may still be on its way while it finalizes.
+        closingTakeId = std::exchange (followerTakeId, {});
         adoptedUnlinked = false;
         if (config.role == Role::Leader && leaderTakeActive)
         {
@@ -1073,6 +1093,7 @@ namespace zynforge::twin
     void TwinLink::onLocalTakeFinished()
     {
         localFinishing = false;
+        closingTakeId.clear();
         for (auto& record : records)
             if (! record.finished)
             {
