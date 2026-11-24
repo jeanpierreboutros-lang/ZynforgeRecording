@@ -19,6 +19,7 @@ namespace zynforge
     class UiFixTests;
     class Design20261117StripTests;
     class Fix20261122StripTests;
+    class Fix20261124MixerTests;
 
     class ChannelStrip final : public juce::Component
     {
@@ -149,6 +150,7 @@ namespace zynforge
         friend class zynforge::UiFixTests;
         friend class zynforge::Design20261117StripTests;
         friend class zynforge::Fix20261122StripTests;
+        friend class zynforge::Fix20261124MixerTests;
         // The header plate: id row (number + chip) over the name row.
         static constexpr int kIdRowH   = 12;
         static constexpr int kNameRowH = 22;
