@@ -12,8 +12,12 @@
 // missed. The trace it leaves is the next buffer's host time: it is late by
 // the frames that were lost.
 //
-// Audio thread only: no allocation, no lock. JUCE stamps only the first chunk
-// of a split IO cycle, so frames are counted from stamp to stamp.
+// Audio thread only: no allocation, no lock. Frames are counted from stamp to
+// stamp, because a split IO cycle is not stamped piece by piece: JUCE's
+// CoreAudio device stamps only its first chunk, and JUCE's
+// CallbackMaxSizeEnforcer (a driver whose buffer is bigger than the size
+// asked for) hands every piece the same stamp. A stamp equal to the last one
+// is that same cycle, so it counts as no stamp.
 namespace zynforge
 {
     class CycleGapDetector
@@ -28,7 +32,7 @@ namespace zynforge
                 return 0;
             }
             juce::int64 lost = 0;
-            if (hostNs != nullptr)
+            if (hostNs != nullptr && (std::int64_t) *hostNs != lastNs)
             {
                 const auto now = (std::int64_t) *hostNs;
                 if (lastNs >= 0 && framesSinceStamp > 0)

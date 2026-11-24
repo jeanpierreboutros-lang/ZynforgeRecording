@@ -322,6 +322,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/MixKernelTests.cpp
     Source/Tests/TransportBarAccessibilityTests.cpp
     Source/Tests/UiFixTests.cpp
+    Source/Tests/Fix20261124CaptureTests.cpp
 )
 
 target_compile_definitions(ZynforgeRecordingTests PRIVATE

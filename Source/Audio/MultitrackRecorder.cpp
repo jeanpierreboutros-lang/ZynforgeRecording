@@ -675,15 +675,11 @@ namespace zynforge
         }
     }
 
-    void MultitrackRecorder::addCaptureGap (juce::int64 frames) noexcept
+    juce::int64 MultitrackRecorder::captureGapInSection (juce::int64 frames, bool fill) noexcept
     {
-        if (frames <= 0) return;
-        // The audio thread, before this block's processBlock: as there, no lock.
-        const CallbackSection section (callbackEpoch);
-        const auto* view = liveView.load (std::memory_order_seq_cst);
-        if (view == nullptr || ! view->recording) return;
         const int lost = (int) juce::jmin (frames, (juce::int64) std::numeric_limits<int>::max());
         const int n = (int) juce::jmin (fifos.size(), captureArms.size());
+        juce::int64 counted = 0;
         // The channels processBlock feeds: armed ones, and the right half of
         // an armed pair. A saturated descriptor ring ends on a gap, so this
         // one joins it (accountCapture).
@@ -693,42 +689,40 @@ namespace zynforge
             const bool pairArmed = ch > 0 && tracks[(size_t) ch - 1]->isStereo.load (std::memory_order_relaxed)
                                 && captureArms[(size_t) ch - 1];
             if (! armed && ! pairArmed) continue;
-            fifos[(size_t) ch]->accountCapture (0, lost);
+            if (fill) fifos[(size_t) ch]->accountCapture (0, lost);
             missedSamples.fetch_add (lost, std::memory_order_relaxed);
-        }
-        samplesSinceStart.fetch_add (lost, std::memory_order_relaxed);
-        alarmFrames.store (alarmFrames.load (std::memory_order_relaxed) + lost, std::memory_order_relaxed);
-    }
-
-    void MultitrackRecorder::noteSkippedInputCycle (juce::int64 frames, bool fill) noexcept
-    {
-        if (frames <= 0) return;
-        {
-            // Not nested: addCaptureGap opens its own section.
-            const CallbackSection section (callbackEpoch);
-            const auto* view = liveView.load (std::memory_order_seq_cst);
-            if (view == nullptr || ! view->recording) return;
-            inputSkipCycles.fetch_add (1, std::memory_order_relaxed);
-            inputSkipFrames.fetch_add (frames, std::memory_order_relaxed);
+            counted += lost;
         }
         if (fill)
         {
-            addCaptureGap (frames);
-            return;
+            samplesSinceStart.fetch_add (lost, std::memory_order_relaxed);
+            alarmFrames.store (alarmFrames.load (std::memory_order_relaxed) + lost, std::memory_order_relaxed);
         }
+        return counted;
+    }
+
+    void MultitrackRecorder::addCaptureGap (juce::int64 frames) noexcept
+    {
+        if (frames <= 0) return;
+        // The audio thread, before this block's processBlock: as there, no lock.
         const CallbackSection section (callbackEpoch);
         const auto* view = liveView.load (std::memory_order_seq_cst);
         if (view == nullptr || ! view->recording) return;
-        // Counted on every channel the take captures, as addCaptureGap counts.
-        const int n = (int) juce::jmin (fifos.size(), captureArms.size());
-        for (int ch = 0; ch < n; ++ch)
-        {
-            const bool armed = captureArms[(size_t) ch];
-            const bool pairArmed = ch > 0 && tracks[(size_t) ch - 1]->isStereo.load (std::memory_order_relaxed)
-                                && captureArms[(size_t) ch - 1];
-            if (armed || pairArmed)
-                missedSamples.fetch_add (frames, std::memory_order_relaxed);
-        }
+        captureGapInSection (frames, true);
+    }
+
+    juce::int64 MultitrackRecorder::noteSkippedInputCycle (juce::int64 frames, bool fill) noexcept
+    {
+        if (frames <= 0) return 0;
+        // One section for the count and the fill, so a take that stops in
+        // between can never get one without the other.
+        const CallbackSection section (callbackEpoch);
+        const auto* view = liveView.load (std::memory_order_seq_cst);
+        if (view == nullptr || ! view->recording) return 0;
+        inputSkipCycles.fetch_add (1, std::memory_order_relaxed);
+        inputSkipFrames.fetch_add (frames, std::memory_order_relaxed);
+        inputSkipMissed.fetch_add (captureGapInSection (frames, fill), std::memory_order_relaxed);
+        return fill ? frames : 0;
     }
 
     // NOTE: punch-in is triggered two ways, both via armPunchIn(): the normal
@@ -2500,6 +2494,7 @@ namespace zynforge
         missedSamples    .store (0, std::memory_order_relaxed);
         inputSkipCycles  .store (0, std::memory_order_relaxed);
         inputSkipFrames  .store (0, std::memory_order_relaxed);
+        inputSkipMissed  .store (0, std::memory_order_relaxed);
         latches->primaryLostFrames.store (0, std::memory_order_relaxed);
         captureDeviceLost.store (false, std::memory_order_relaxed);
         deviceStallMs.store (0, std::memory_order_relaxed);
@@ -2866,6 +2861,10 @@ namespace zynforge
 
         juce::Time  stoppedAt;
         juce::int64 totalSamples {}, totalMissed {};
+        // The missed samples that are holes in the capture (a FIFO or copy
+        // ring that overflowed, a device's absence), so not a skipped cycle:
+        // what a punch's splice refuses.
+        juce::int64 captureHoles {};
         bool        deviceLostAtStop {};
         juce::int64 deviceStallMsAtStop {};
         juce::int64 inputSkipCyclesAtStop {}, inputSkipFramesAtStop {};
@@ -3147,7 +3146,11 @@ namespace zynforge
         TakeStop stop;
         stop.stoppedAt        = juce::Time::getCurrentTime();
         stop.totalSamples     = samplesSinceStart.load (std::memory_order_relaxed);
+        // The skipped cycles' share first: were the callback still running,
+        // a skip between the two reads would count as a hole, never hide one.
+        const auto skipMissed = inputSkipMissed.load (std::memory_order_relaxed);
         stop.totalMissed      = getMissedSamples();
+        stop.captureHoles     = juce::jmax ((juce::int64) 0, stop.totalMissed - skipMissed);
         stop.deviceLostAtStop = captureDeviceLost.load (std::memory_order_relaxed);
         stop.deviceStallMsAtStop = deviceStallMs.load (std::memory_order_relaxed);
         stop.inputSkipCyclesAtStop = inputSkipCycles.load (std::memory_order_relaxed);
@@ -3306,7 +3309,9 @@ namespace zynforge
         // Spliced into a temp file, nothing committed. Splicing a capture with a
         // hole would replace audio that is on disk and good with silence the
         // engineer never played, and then delete the original. A FIFO gap sits
-        // before the copies split, so it is in every one of them.
+        // before the copies split, so it is in every one of them. A cycle
+        // CoreAudio skipped is not a hole (TakeStop::captureHoles): the device
+        // lost that input, and the capture holds all it was given.
         void prepare (juce::AudioFormatManager& fm, const TakeStop::PunchFiles& files,
                       juce::int64 punchPosition, juce::int64 fifoGap, const std::function<void()>& onProgress)
         {
@@ -3433,7 +3438,7 @@ namespace zynforge
                 continue;
             }
 
-            primary.prepare (fm, stop.punchFiles[i].primary, stop.punchPosition, stop.totalMissed, {});
+            primary.prepare (fm, stop.punchFiles[i].primary, stop.punchPosition, stop.captureHoles, {});
             if (primary.spliced && primary.install())
             {
                 stop.punchVerdicts[i] = TakeStop::PunchVerdict::committed;
@@ -3608,7 +3613,7 @@ namespace zynforge
                 job->verdicts = stop.punchVerdicts;
             }
             job->punchPosition = stop.punchPosition;
-            job->fifoGap       = stop.totalMissed;
+            job->fifoGap       = stop.captureHoles;
             job->stoppedAt     = stop.stoppedAt;
             job->leadIns        = copy->leadIns;
             job->timelineStart  = stop.timelineStart;

@@ -3702,15 +3702,24 @@ namespace zynforge
         }
 
         // A cycle CoreAudio skipped (an overload, 2026-11-23 show): its input
-        // never came. Counted as missed and named in the report; a live take
-        // holds it as silence so every track stays on the clock. A take that
-        // follows playback is still on its timeline (the player lost the same
-        // cycle), so there it is only counted.
-        if (skippedFrames > 0 && gapFrames == 0 && recorder.isRecording())
+        // never came. It is the take's only when this block is captured from
+        // its first frame; a punch's pre-roll and post-roll, the block its in
+        // point falls inside and a transport stopped inside its window lose
+        // nothing the punch keeps. Then it is counted as missed and named in
+        // the report. A block captured on a free-running timeline (no playhead
+        // for processBlock below) holds it as silence, so every track and the
+        // mix stay on the clock. One captured on the player's timeline (a
+        // punch, a take that follows playback) is still on it, since the
+        // player lost the same cycle: there it is only counted, and a punch's
+        // splice never reads it as a hole.
+        juce::int64 skipGapFrames = 0;
+        if (skippedFrames > 0 && gapFrames == 0 && punchSamples > 0 && punchOffset == 0
+            && recorder.isRecording())
         {
             const double rate = deviceSampleRate.load (std::memory_order_relaxed);
-            recorder.noteSkippedInputCycle (juce::jmin (skippedFrames, (juce::int64) (rate * kMaxGapSeconds)),
-                                            ! playerWasRolling);
+            const bool freeRunning = ! playerWasRolling;
+            skipGapFrames = recorder.noteSkippedInputCycle (
+                juce::jmin (skippedFrames, (juce::int64) (rate * kMaxGapSeconds)), freeRunning);
         }
 
         bool capturedThisBlock = false;
@@ -3943,7 +3952,9 @@ namespace zynforge
 
         if (wantMixCapture)
         {
-            if (gapFrames > 0) stereoMixWriter->addGap (gapFrames);
+            // The silence every track got before this block (a device's return,
+            // a skipped cycle), so the mix stays on their clock.
+            if (gapFrames + skipGapFrames > 0) stereoMixWriter->addGap (gapFrames + skipGapFrames);
             const float* chans[2] = { stereoMixScratch.getReadPointer (0),
                                       stereoMixScratch.getReadPointer (1) };
             if (! stereoMixWriter->write (chans, numSamples))

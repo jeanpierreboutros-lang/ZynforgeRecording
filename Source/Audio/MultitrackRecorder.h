@@ -304,12 +304,17 @@ namespace zynforge
         // says the take has a hole.
         void addCaptureGap (juce::int64 frames) noexcept;
         // An IO cycle CoreAudio skipped (CycleGapDetector), from the audio
-        // thread before the block that follows it. Always counted as missed
-        // and in the report (inputCyclesSkipped, inputSkippedFrames). A live
-        // take gets it as silence like addCaptureGap, so it stays on the clock;
-        // a take that follows playback (`fill` false) does not, because the
-        // player skipped the same cycle and the take is still on its timeline.
-        void noteSkippedInputCycle (juce::int64 frames, bool fill) noexcept;
+        // thread before the block that follows it, and only when that block
+        // is captured. Counted as missed and in the report (inputCyclesSkipped,
+        // inputSkippedFrames). `fill`: the block is captured on a free-running
+        // timeline, so it gets the frames as silence like addCaptureGap and
+        // stays on the clock; the return is the frames filled, for the mix to
+        // get the same. A take on the player's timeline (`fill` false: a punch,
+        // a take that follows playback) does not, because the player skipped
+        // the same cycle. Either way a punch's splice never reads a skipped
+        // cycle as a hole in its capture: the device lost that input, the
+        // capture lost nothing it was given.
+        juce::int64 noteSkippedInputCycle (juce::int64 frames, bool fill) noexcept;
         juce::int64 getInputCyclesSkipped() const noexcept { return inputSkipCycles.load (std::memory_order_relaxed); }
         juce::int64 getInputSkippedFrames() const noexcept { return inputSkipFrames.load (std::memory_order_relaxed); }
         // Wall time this take had no audio callback. It leaves no gap in the
@@ -1103,6 +1108,14 @@ namespace zynforge
         std::atomic<juce::int64> missedSamples      { 0 };
         std::atomic<juce::int64> inputSkipCycles    { 0 };   // IO cycles CoreAudio skipped this take
         std::atomic<juce::int64> inputSkipFrames    { 0 };
+        // The part of missedSamples those skipped cycles added (summed over
+        // channels, as missedSamples is). Not a hole for a punch's splice.
+        std::atomic<juce::int64> inputSkipMissed    { 0 };
+        // Audio thread, inside a CallbackSection with a recording view: counts
+        // `frames` as missed on every channel the take captures and, with
+        // `fill`, puts them in each one's timeline as silence. Returns what it
+        // added to missedSamples.
+        juce::int64 captureGapInSection (juce::int64 frames, bool fill) noexcept;
 
         // BWF time reference for this pass. The anchor and hint are set before
         // the writers open and read-only after. The audio thread stores the
