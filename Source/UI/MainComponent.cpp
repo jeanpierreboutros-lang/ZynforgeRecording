@@ -1053,6 +1053,9 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistM
 void MainComponent::saveFinalizedCaptureMetadata (bool mediaOk, juce::String mediaError,
                                                   std::function<void (bool)> completion)
 {
+    // The take's files are final: a cue recalled meanwhile gets its inputs now,
+    // before RECORD is free again and before this save writes the mix.
+    applyHeldCueInputs();
     juce::Component::SafePointer<MainComponent> self (this);
     captureMetadataPending = true;
     lastCaptureFinalizationError.clear();
