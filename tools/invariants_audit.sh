@@ -538,6 +538,18 @@ grep -q 'void EditPage::timerCallback' Source/UI/EditPage.cpp \
 EDIT_TICK=$(sed -n '/void EditPage::timerCallback/,/^    }/p' Source/UI/EditPage.cpp 2>/dev/null \
             | sed 's,//.*,,' | grep -E "$FS_CALLS")
 [[ -n "$EDIT_TICK" ]] && HITS+=$'\n'"Source/UI/EditPage.cpp (timerCallback): $EDIT_TICK"
+# The autosave check runs on that tick too. While a take's files close after a
+# device loss nothing is recording and no job holds the slot, and it used to
+# stat the folder there and even queue a save into it (2026-11-24, MAIN-04).
+AUTOSAVE=$(sed -n '/void MainComponent::serviceAutosave/,/^}/p' Source/UI/MainComponentSessionIO.cpp 2>/dev/null | sed 's,//.*,,')
+if [[ -z "$AUTOSAVE" ]]; then
+    HITS+=$'\n'"Source/UI/MainComponentSessionIO.cpp: serviceAutosave moved; point this rule at it"
+else
+    grep -q 'isTakeOnDisk' <<<"$AUTOSAVE" \
+        || HITS+=$'\n'"Source/UI/MainComponentSessionIO.cpp (serviceAutosave): no isTakeOnDisk guard"
+    AUTOSAVE_FS=$(grep -E "$FS_CALLS" <<<"$AUTOSAVE")
+    [[ -n "$AUTOSAVE_FS" ]] && HITS+=$'\n'"Source/UI/MainComponentSessionIO.cpp (serviceAutosave): $AUTOSAVE_FS"
+fi
 report "a take's status path reads no disk" \
        "read recorder.readDiskEstimate(), or gate an idle-only read behind engine.isTakeOnDisk()" \
        "$(sed '/^$/d' <<<"$HITS")"
@@ -621,6 +633,23 @@ done
 report "every modal closes for a take started behind it" \
        "mark it with closesForTake / launchClosesForTake / askClosesForTake (FloatingLaunch.h), or say why with a modal-over-take-ok: comment" \
        "$HITS"
+
+# ── Playback reads its clip lists without the editors' lock ─────────────────
+# A clip edit held clipsLock while the render tried it, and every miss was a
+# block of silence on every output (2026-11-24, PLAY-01). The render now reads
+# a published ClipSet; clipsLock belongs to the editors only.
+HITS=""
+for fn in renderBlock prepareJump cueUpcoming; do
+    BODY=$(sed -n "/SessionPlayer::$fn (/,/^    }/p" Source/Audio/SessionPlayer.cpp 2>/dev/null | sed 's,//.*,,')
+    if [[ -z "$BODY" ]]; then
+        HITS+=$'\n'"Source/Audio/SessionPlayer.cpp: $fn moved; point this rule at it"
+    elif grep -q 'clipsLock' <<<"$BODY"; then
+        HITS+=$'\n'"Source/Audio/SessionPlayer.cpp ($fn): takes clipsLock"
+    fi
+done
+report "playback reads clip lists without the editors' lock" \
+       "the render, prepareJump and cueUpcoming read the published ClipSet; take clipsLock only on the editing side" \
+       "$(sed '/^$/d' <<<"$HITS")"
 
 echo
 if [[ $FAIL -eq 0 ]]; then
