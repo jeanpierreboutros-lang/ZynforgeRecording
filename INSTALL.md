@@ -2,7 +2,21 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-The development Mac now has `e4e8d61`, `main` on 2026-11-24: `a3ffc1b` plus copy rings that hold 20 s of live audio. The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app in Applications (see the cleanup below).
+The development Mac now has `11c3145`, `main` on 2026-11-24: the 20 s copy rings, plus the fix for the 2026-11-23 drops (no fork mid-take, skipped CoreAudio cycles counted and filled). The Mac mini still has `281c6c0`; no DMG holds it, and it has not run on real hardware. Since 2026-11-20 the development Mac keeps no older Recording app in Applications (see the cleanup below).
+
+## Development Mac update — 2026-11-24, the 72-second drops fixed
+
+`11c3145` = `e4e8d61` plus the fix for the digital drops the owner heard in the 2026-11-23 show (top ADR of [decisions.md](decisions.md)). The owner asked: "How can I fix the app, and don't make this happen again?"
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `ffe2b4668d2f1144c93dec5988a5e15fff73c9a284ff75cb7c72abc3934d369b` |
+| Capture helper | `f3de09f5767487ccc3a6203a17104da9583a1957af0b23031dde2c2319394395` (changed: it counts skipped cycles too) |
+
+- **Built with:** `build-xc`, Xcode 27.2 with `SDK_STAT_CACHE_ENABLE = NO`, Release, universal (x86_64, arm64). Ad-hoc, hardened runtime, audio-input entitlement.
+- **Tests before install:** Release 2108 groups / 0 failures. The new test failed first on `e4e8d61`. Both gates were clean, including the new "no process is launched with fork()"; `test_verify_tools.py` passes. ASan/UBSan and TSan were not run.
+- **Install:** the app was quit gracefully. Its "Save changes to the show session?" prompt was answered Don't Save, since nothing in it had changed. The stage and the installed copy pass deep/strict verification and match (`diff -qr`). Copied with `ditto --norsrc --noextattr --noqtn`. The replaced `e4e8d61` went to the Trash (`…backup-20261124-e4e8d61`), and Launch Services was cleaned again: `/Applications` is the only registered Recording app. macOS asked for the microphone, and the owner said Allow.
+- **Verified on this build:** the reproduction from the investigation, run again. Input was Pro Tools Audio Bridge 64 with output on the MacBook speakers, 86 armed strips, primary on the PCIe SSD and backup on the USB SSD, for 6 min 39 s (07:48–07:55). Result: **0 CoreAudio overloads** in macOS's log (the old build had 5 in the same time, every 73.4 s), no `diskutil` during the take, and a report with `missedSamples` 0 and `inputCyclesSkipped` 0. The user's settings were saved before and restored after; the test sessions went to the Trash.
 
 ## Development Mac update — 2026-11-24, copy rings hold 20 s
 

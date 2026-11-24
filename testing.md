@@ -11,6 +11,10 @@ Three groups added to *Engine device fixes 2026-11-11* (`EngineDeviceTests.cpp`,
 
 Gates: the invariants audit has a new rule, "no process is launched with fork()" (`ChildProcess`, `fork`, `vfork`, `popen`, `system` outside Source/Tests). It is clean on the fix and catches the old `querySmartStatus`. `tools/verify_take.sh` reads `inputCyclesSkipped` and macOS's log for the take window (`ZF_VERIFY_SKIP_SYSLOG=1` skips the log); on the 2026-11-23 show it reports the 101 overloads. `tools/test_verify_tools.py` passes.
 
+Results: *Engine device fixes 2026-11-11* 23 / 0. Full Release suite **2108 test groups, 0 failures**. Both gates clean. ASan/UBSan and TSan were not run.
+
+Proof on the installed build (`11c3145`): the same reproduction for 6 min 39 s logged **0 overloads** (the old build had 5 in that time), no `diskutil` ran, and the report has `missedSamples` 0 and `inputCyclesSkipped` 0.
+
 ## 2026-11-24 copy rings hold 20 s
 
 Two groups added to *Capture path* (`CapturePathTests.cpp`, in `testPreRoll`):
