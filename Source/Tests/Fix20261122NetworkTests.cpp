@@ -33,6 +33,17 @@
 #include <thread>
 #include <vector>
 
+// ThreadSanitizer slows every send several times over; the hold limit below is
+// for the real app, so under TSan it gets three times the room.
+#if defined (__has_feature)
+ #if __has_feature (thread_sanitizer)
+  #define ZF_NETFIX22_UNDER_TSAN 1
+ #endif
+#endif
+#ifndef ZF_NETFIX22_UNDER_TSAN
+ #define ZF_NETFIX22_UNDER_TSAN 0
+#endif
+
 namespace zynforge
 {
     namespace
@@ -469,7 +480,8 @@ namespace zynforge
                     if (! link.send (ConsoleMessage ("set MIXER:Current/InCh/Label/Name", { i % 64, 0, name })))
                         ++refused;
                 const auto took = juce::Time::getMillisecondCounterHiRes() - before;
-                expectLessThan (took, 2000.0, "sending held the message thread for " + juce::String (took, 0) + " ms");
+                const double holdLimitMs = ZF_NETFIX22_UNDER_TSAN ? 6000.0 : 2000.0;
+                expectLessThan (took, holdLimitMs, "sending held the message thread for " + juce::String (took, 0) + " ms");
                 expectGreaterThan (refused, 0, "8 MB went into a queue capped at 1 MB");
                 expectGreaterThan (link.getSendDropCount(), (juce::int64) 0, "the drops were not counted");
                 pumpUntil ([&] { return reports.size() > 0; }, 3000);

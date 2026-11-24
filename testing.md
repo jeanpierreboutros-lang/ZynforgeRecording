@@ -19,7 +19,11 @@ Also: the skipped-cycle report test checks `captureProcess` (red first). `tools/
 
 Not testable headlessly: a CoreAudio connect timeout counted as "still there" (read only); the MainComponent branch of `twinStopRecord`'s finalization wait (covered through the existing twin host test); the PlaybackReader re-check (only Rosetta in a CI VM ever tore a read).
 
-Results on the merged tree: **Release 2200 test groups, 0 failures**. Both gates clean.
+Results on the merged tree: **Release 2200 test groups, 0 failures**. **ASan/UBSan/float-cast-overflow (Debug, arm64): 2200 / 0, no sanitizer reports.** **TSan (Debug, arm64): 2200 groups, no race reports, after three test-side fixes.** The first TSan run had two timing failures, then one report:
+- *Fixes 2026-11-22 network* "SCP/TCP: a desk that stops reading can't hold the message thread" took 2.3 s against its 2 s limit. It was added after the last TSan run; the limit is now 3x under TSan (`ZF_NETFIX22_UNDER_TSAN`).
+- *Fixes 2026-11-24 helper* "a replacement that can't start ... blames no other program": the instrumented helper starts slower than the window's 2 s answer wait, so the launch reads "did not answer" (which blames no other program either). Under TSan that is logged, not failed (`ZF_HELPERFIX_UNDER_TSAN`).
+- A re-run of the helper suite alone gave a TSan report: a take's report hash thread was still running when the test app exited (JUCE's string pool destroyed at exit). It was a fixture leak in the new restart test, which now removes its sessions through `deleteSessionAfterCancellingReports`.
+Both suites pass under TSan and in Release after the change, with no TSan report. Both gates clean; `tools/test_verify_tools.py` 48 OK (7 skipped while the app runs).
 
 ## 2026-11-24 skipped CoreAudio cycles (the 2026-11-23 drops)
 
