@@ -29,6 +29,8 @@ namespace zynforge
     SessionPlayer::SessionPlayer()
     {
         formatManager.registerBasicFormats();
+        liveClipSet = std::make_unique<ClipSet>();
+        publishedClips.store (liveClipSet.get(), std::memory_order_release);
         readerThread.startThread();
     }
 
@@ -78,9 +80,10 @@ namespace zynforge
     {
         std::vector<Clip> result;
         const juce::ScopedLock sl (clipsLock);
-        for (const auto& clips : activeClips)
-            for (const auto& clip : clips)
-                if (clip.audioFile != juce::File()) result.push_back (clip);
+        for (const auto& list : liveClipSet->tracks)
+            if (list != nullptr)
+                for (const auto& clip : list->clips)
+                    if (clip.audioFile != juce::File()) result.push_back (clip);
         return result;
     }
 
@@ -282,6 +285,7 @@ namespace zynforge
 
     void SessionPlayer::finishPreparedClipPublication()
     {
+        // Only empty entries go: every list resolved them to no reader already.
         const juce::ScopedLock sl (clipsLock);
         for (auto it = extraReaders.begin(); it != extraReaders.end();)
             if (! it->second) it = extraReaders.erase (it); else ++it;
@@ -296,24 +300,36 @@ namespace zynforge
         std::vector<juce::int64> lengths;   // built before the render's lock is taken
         lengths.reserve (prepared->tracks.size());
         for (const auto& t : prepared->tracks) lengths.push_back (t.length);
+        FreedSets freed;   // destroyed after the locks are released
         {
-            const juce::ScopedLock sl (tracksLock);
-            retired->tracks.swap (tracks);
-            tracks.swap (prepared->tracks);
-            readerCount.store ((int) tracks.size(), std::memory_order_release);
-            const juce::ScopedLock info (infoLock);
-            unopenedTracks.swap (prepared->unopened);
-            clashText.swapWith (prepared->clashes);
-            trackLengths.swap (lengths);
-        }
-        {
-            const juce::ScopedLock sl (clipsLock);
-            if (! preserveClipState || sessionDir != prepared->directory)
+            const juce::ScopedLock cl (clipsLock);
+            // The lists kept (or none), resolved against the new readers, all
+            // built before the render's lock is taken.
+            auto next = std::make_unique<ClipSet>();
+            if (preserveClipState && sessionDir == prepared->directory)
+                for (const auto& list : liveClipSet->tracks)
+                    next->tracks.push_back (list != nullptr ? resolveClips (list->clips, prepared->explicitReaders)
+                                                            : nullptr);
+            for (int i = 0; i < kMaxAuthoritativeTracks; ++i)
+                authoritativeFlags[(size_t) i].store (next->listFor (i) != nullptr ? 1 : 0, std::memory_order_release);
             {
-                activeClips.clear();
-                clipsAuthoritative.clear();
-                for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
+                const juce::ScopedLock sl (tracksLock);
+                retired->tracks.swap (tracks);
+                tracks.swap (prepared->tracks);
+                readerCount.store ((int) tracks.size(), std::memory_order_release);
+                // No render runs while this lock is held, and the next one
+                // enters the new set: every older set, and the old readers
+                // they point at, is out of use from here.
+                publishedClips.store (next.get(), std::memory_order_seq_cst);
+                const juce::ScopedLock info (infoLock);
+                unopenedTracks.swap (prepared->unopened);
+                clashText.swapWith (prepared->clashes);
+                trackLengths.swap (lengths);
             }
+            freed.push_back (std::move (liveClipSet));
+            for (auto& set : retiredClipSets) freed.push_back (std::move (set));
+            retiredClipSets.clear();
+            liveClipSet = std::move (next);
             retired->explicitReaders.swap (extraReaders);
             extraReaders.swap (prepared->explicitReaders);
         }
@@ -340,25 +356,34 @@ namespace zynforge
         playing.store (false, std::memory_order_release);
         waitForCallbackDrain();
 
+        // Destroyed after the locks are released: a reader's teardown waits
+        // for its read thread.
+        FreedSets freed;
+        ReaderMap oldReaders;
+        std::vector<Track> oldTracks;
         {
-            const juce::ScopedLock sl (clipsLock);
+            const juce::ScopedLock cl (clipsLock);
             // Clear ALL clip state, not just the cross-track readers -- otherwise
             // a new/empty session inherits the previous session's clips and draws
             // its audio on a freshly-added channel.
-            extraReaders.clear();
-            activeClips.clear();
-            clipsAuthoritative.clear();
+            auto empty = std::make_unique<ClipSet>();
             for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
+            {
+                const juce::ScopedLock sl (tracksLock);
+                oldTracks.swap (tracks);
+                readerCount.store (0, std::memory_order_release);
+                publishedClips.store (empty.get(), std::memory_order_seq_cst);   // no render runs meanwhile
+                const juce::ScopedLock info (infoLock);
+                unopenedTracks.clear();
+                clashText.clear();
+                trackLengths.clear();
+            }
+            freed.push_back (std::move (liveClipSet));
+            for (auto& set : retiredClipSets) freed.push_back (std::move (set));
+            retiredClipSets.clear();
+            liveClipSet = std::move (empty);
+            oldReaders.swap (extraReaders);
         }
-        {
-            const juce::ScopedLock sl (tracksLock);
-            tracks.clear();
-            const juce::ScopedLock info (infoLock);
-            unopenedTracks.clear();
-            clashText.clear();
-            trackLengths.clear();
-        }
-        readerCount.store (0, std::memory_order_release);
         loaded     .store (false, std::memory_order_release);
         sessionName.clear();
         sessionDir = juce::File();
@@ -472,13 +497,101 @@ namespace zynforge
         return rangeArmed.load (std::memory_order_acquire) && hasLoopRegion();
     }
 
+    std::shared_ptr<const SessionPlayer::TrackClips> SessionPlayer::resolveClips (std::vector<Clip> clips,
+                                                                                  const ReaderMap& readers)
+    {
+        auto list = std::make_shared<TrackClips>();
+        list->sources.reserve (clips.size());
+        for (const auto& c : clips)
+        {
+            ClipSource source;
+            if (c.audioFile != juce::File())
+            {
+                source.ownTake = false;
+                const auto it = readers.find (c.audioFile.getFullPathName());
+                source.reader = it != readers.end() ? it->second.get() : nullptr;
+            }
+            list->sources.push_back (source);
+        }
+        list->clips = std::move (clips);
+        return list;
+    }
+
+    bool SessionPlayer::resolvedAgainst (const TrackClips& list, const ReaderMap& readers)
+    {
+        for (size_t k = 0; k < list.clips.size(); ++k)
+        {
+            if (list.sources[k].ownTake) continue;
+            const auto it = readers.find (list.clips[k].audioFile.getFullPathName());
+            if ((it != readers.end() ? it->second.get() : nullptr) != list.sources[k].reader) return false;
+        }
+        return true;
+    }
+
+    PlaybackReader* SessionPlayer::readerFor (const TrackClips& list, size_t clip, const Track& t) noexcept
+    {
+        const auto& source = list.sources[clip];
+        return source.ownTake ? t.reader.get() : source.reader;
+    }
+
+    void SessionPlayer::publishClips (std::vector<std::shared_ptr<const TrackClips>> lists,
+                                      std::vector<std::unique_ptr<PlaybackReader>> dropped, FreedSets& freed)
+    {
+        // A list resolved before a reader for its file opened (another track's
+        // edit, a reload) is resolved again: the render looks nothing up by name.
+        for (auto& list : lists)
+            if (list != nullptr && ! resolvedAgainst (*list, extraReaders))
+                list = resolveClips (list->clips, extraReaders);
+        auto next = std::make_unique<ClipSet>();
+        next->tracks = std::move (lists);
+        publishedClips.store (next.get(), std::memory_order_seq_cst);
+        for (int i = 0; i < kMaxAuthoritativeTracks; ++i)
+            authoritativeFlags[(size_t) i].store (next->listFor (i) != nullptr ? 1 : 0, std::memory_order_release);
+        jassert (liveClipSet != nullptr);
+        if (liveClipSet == nullptr) liveClipSet = std::make_unique<ClipSet>();   // nothing pointed at `dropped`
+        liveClipSet->droppedReaders = std::move (dropped);
+        retiredClipSets.push_back (std::move (liveClipSet));
+        liveClipSet = std::move (next);
+        reclaimClipSets (freed);
+    }
+
+    void SessionPlayer::reclaimClipSets (FreedSets& freed)
+    {
+        // Oldest first, and never the set the render is on or any after it: a
+        // reader a set dropped is pointed at by every set before it too. A set
+        // once replaced is never entered again (enterClipSet re-checks the
+        // published one after marking), so a set seen unmarked here is free.
+        size_t done = 0;
+        while (done < retiredClipSets.size()
+               && clipsInUse.load (std::memory_order_seq_cst) != retiredClipSets[done].get())
+            ++done;
+        for (size_t i = 0; i < done; ++i) freed.push_back (std::move (retiredClipSets[i]));
+        retiredClipSets.erase (retiredClipSets.begin(), retiredClipSets.begin() + (std::ptrdiff_t) done);
+    }
+
+    const SessionPlayer::ClipSet* SessionPlayer::enterClipSet() noexcept
+    {
+        // Mark the set, then check it is still the published one: an edit that
+        // replaced it meanwhile either sees the mark and keeps it, or is seen
+        // here and the published one is taken instead. An edit publishes at
+        // most every few microseconds, so this settles at once.
+        for (int tries = 0; tries < 16; ++tries)
+        {
+            const auto* set = publishedClips.load (std::memory_order_seq_cst);
+            clipsInUse.store (set, std::memory_order_seq_cst);
+            if (publishedClips.load (std::memory_order_seq_cst) == set) return set;
+        }
+        clipsInUse.store (nullptr, std::memory_order_release);
+        return nullptr;
+    }
+
     void SessionPlayer::setTrackClips (int trackIdx, std::vector<Clip> clips)
     {
         if (trackIdx < 0 || trackIdx >= kMaxAuthoritativeTracks) return;
 
         // Build readers for any clip that references a file other than its
         // track's own -- OUTSIDE the lock, since opening a file is slow.
-        std::vector<std::pair<juce::String, std::unique_ptr<PlaybackReader>>> built;
+        ReaderMap built;
         std::set<juce::String> queued;
         for (const auto& c : clips)
         {
@@ -499,32 +612,59 @@ namespace zynforge
                 br->setReadTimeout (1000);
                 br->read (&prime, 0, 512, juce::jmax ((juce::int64) 0, c.fileStartSamples), true, true);
                 br->setReadTimeout (0);
-                built.emplace_back (key, std::move (br));
+                built.emplace (key, std::move (br));
             }
         }
 
-        // Readers whose file no clip references any more (e.g. superseded
-        // consolidates) are moved here and destroyed AFTER the lock is
-        // released -- tearing down a PlaybackReader unregisters it
-        // from the read thread, which is too slow to hold the lock for.
-        std::vector<std::unique_ptr<PlaybackReader>> stale;
+        // Everything this edit lets go of is destroyed after the locks are
+        // released, on this thread: sets the render has left (and the readers
+        // they dropped), a reader another edit opened first, a replaced track
+        // table. Tearing down a PlaybackReader unregisters it from the read
+        // thread, which is too slow to hold any lock for.
+        FreedSets freed;
+        std::vector<Track> replacedTracks;
         {
-            const juce::ScopedLock tl (tracksLock);
-            const juce::ScopedLock sl (clipsLock);
+            const juce::ScopedLock cl (clipsLock);
             if (trackIdx >= (int) tracks.size())
             {
-                tracks.resize ((size_t) trackIdx + 1);
-                const juce::ScopedLock info (infoLock);
-                trackLengths.resize (tracks.size(), 0);
+                // A clip on a strip past the last take (a cross-track paste onto
+                // a strip never recorded). The bigger table is built here; only
+                // the swap happens under the render's lock.
+                std::vector<Track> grown (tracks);
+                grown.resize ((size_t) trackIdx + 1);
+                {
+                    const juce::ScopedLock info (infoLock);
+                    trackLengths.resize (grown.size(), 0);
+                }
+                {
+                    const juce::ScopedLock tl (tracksLock);
+                    tracks.swap (grown);
+                    readerCount.store ((int) tracks.size(), std::memory_order_release);
+                }
+                replacedTracks = std::move (grown);
             }
-            readerCount.store ((int) tracks.size(), std::memory_order_release);
-            for (auto& b : built)
-                if (extraReaders.find (b.first) == extraReaders.end())
-                    extraReaders.emplace (b.first, std::move (b.second));
-            if (trackIdx >= (int) activeClips.size())        activeClips.resize ((size_t) trackIdx + 1);
-            if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
-            activeClips[(size_t) trackIdx]        = std::move (clips);
-            clipsAuthoritative[(size_t) trackIdx] = 1;   // explicit list (even if empty)
+            extraReaders.merge (built);   // one another edit opened meanwhile stays in `built`
+
+            auto lists = liveClipSet->tracks;   // the other tracks' lists are shared, not copied
+            if (trackIdx >= (int) lists.size()) lists.resize ((size_t) trackIdx + 1);
+            lists[(size_t) trackIdx] = resolveClips (std::move (clips), extraReaders);   // explicit list, even if empty
+
+            // Prune cross-track readers nothing references across ANY
+            // track -- otherwise every consolidate / cross-track paste
+            // leaks a buffered reader + file handle until session close.
+            std::set<juce::String> wanted;
+            for (const auto& list : lists)
+                if (list != nullptr)
+                    for (size_t k = 0; k < list->clips.size(); ++k)
+                        if (! list->sources[k].ownTake) wanted.insert (list->clips[k].audioFile.getFullPathName());
+            std::vector<std::unique_ptr<PlaybackReader>> dropped;
+            for (auto it = extraReaders.begin(); it != extraReaders.end();)
+            {
+                if (wanted.count (it->first) != 0) { ++it; continue; }
+                dropped.push_back (std::move (it->second));
+                it = extraReaders.erase (it);
+            }
+
             // A track with a clip list is as long as its clips say, however
             // much file sits behind them: a cropped show must not keep the
             // whole take's length.
@@ -532,47 +672,28 @@ namespace zynforge
             for (size_t i = 0; i < tracks.size(); ++i)
             {
                 media = juce::jmax (media, tracks[i].length);
-                if (i >= clipsAuthoritative.size() || clipsAuthoritative[i] == 0)
+                if (i >= lists.size() || lists[i] == nullptr)
                     extent = juce::jmax (extent, tracks[i].length);
             }
-            for (const auto& list : activeClips)
-                for (const auto& c : list)
-                    extent = juce::jmax (extent, c.timelineStartSamples + c.fileLengthSamples);
+            for (const auto& list : lists)
+                if (list != nullptr)
+                    for (const auto& c : list->clips)
+                        extent = juce::jmax (extent, c.timelineStartSamples + c.fileLengthSamples);
             if (extent <= 0) extent = media;   // nothing arranged: still a session
+
+            publishClips (std::move (lists), std::move (dropped), freed);
             totalLength.store (extent, std::memory_order_release);
             loaded.store (extent > 0, std::memory_order_release);
             if (position.load (std::memory_order_acquire) > extent)
                 position.store (extent, std::memory_order_release);
-            // Mirror into the lock-free flag the audio thread reads on
-            // clipsLock contention (see processBlock).
-            if (trackIdx < kMaxAuthoritativeTracks)
-                authoritativeFlags[(size_t) trackIdx].store (1, std::memory_order_release);
-
-            // Prune cross-track readers nothing references across ANY
-            // track -- otherwise every consolidate / cross-track paste
-            // leaks a buffered reader + file handle until session close.
-            for (auto it = extraReaders.begin(); it != extraReaders.end();)
-            {
-                bool wanted = false;
-                for (const auto& list : activeClips)
-                {
-                    for (const auto& c : list)
-                        if (c.audioFile != juce::File()
-                            && c.audioFile.getFullPathName() == it->first) { wanted = true; break; }
-                    if (wanted) break;
-                }
-                if (wanted) ++it;
-                else { stale.push_back (std::move (it->second)); it = extraReaders.erase (it); }
-            }
         }
     }
 
     void SessionPlayer::clearAllClips()
     {
+        FreedSets freed;   // destroyed after the lock is released
         const juce::ScopedLock sl (clipsLock);
-        activeClips.clear();
-        clipsAuthoritative.clear();
-        for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
+        publishClips ({}, {}, freed);
     }
 
     void SessionPlayer::processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept
@@ -648,10 +769,11 @@ namespace zynforge
         if (scratch.getNumSamples() < playableThisBlock)
             scratch.setSize (2, playableThisBlock, false, false, true);
 
-        // Snapshot the clip lists under the lock -- held only long enough
-        // to take a const reference. After release we iterate read-only
-        // and the UI may modify the (different) live vector.
-        const juce::ScopedTryLock stl (clipsLock);
+        // The clip lists: the published set, marked in use until this block
+        // returns. No lock: an edit publishing a new set meanwhile never makes
+        // this block wait or fail, and frees this set only after it.
+        const auto* clipSet = enterClipSet();
+        const juce::ScopeGuard leaveClipSet { [this] { clipsInUse.store (nullptr, std::memory_order_release); } };
 
         // Anything but a straight continuation is a jump. Hold it until every
         // track has the target, so they all enter on the same sample. The
@@ -665,7 +787,7 @@ namespace zynforge
         }
         if (heldJump >= 0 && ! isSeekLocked())
         {
-            const bool ready = stl.isLocked() && prepareJump (startPos, kJumpReadySamples, n);
+            const bool ready = clipSet != nullptr && prepareJump (*clipSet, startPos, kJumpReadySamples, n);
             if (! ready && heldJumpSamples < (juce::int64) (deviceSampleRate * kJumpCeilingSeconds))
             {
                 heldJumpSamples += numSamples;
@@ -674,14 +796,14 @@ namespace zynforge
         }
         heldJump = -1;
 
-        if (stl.isLocked() && ++cuePassCounter % kCuePassEveryBlocks == 0)
+        if (clipSet != nullptr && ++cuePassCounter % kCuePassEveryBlocks == 0)
         {
             const auto blockEnd = startPos + playableThisBlock;
             const auto ahead = (juce::int64) (deviceSampleRate * kCueAheadSeconds);
             // Nothing from the loop end on plays before the wrap; everything
             // before it does, the wrap included.
             const auto horizon = looping ? juce::jmin (blockEnd + ahead, lEnd - 1) : blockEnd + ahead;
-            cueUpcoming (blockEnd, horizon,
+            cueUpcoming (*clipSet, blockEnd, horizon,
                          looping && lEnd - blockEnd <= ahead ? lStart : (juce::int64) -1, n);
         }
 
@@ -699,16 +821,9 @@ namespace zynforge
             // reader/length short-circuit below must NOT pre-silence it --
             // doing so made the live monitor go silent exactly where the
             // offline bounce still rendered the clip (monitor != render).
-            const std::vector<Clip>* clips = nullptr;
-            if (stl.isLocked()
-                && i < (int) clipsAuthoritative.size()
-                && clipsAuthoritative[(size_t) i]
-                && i < (int) activeClips.size())
-            {
-                // Authoritative list -- honour it even when empty (every
-                // clip deleted => the track is silent, not whole-file).
-                clips = &activeClips[(size_t) i];
-            }
+            // Authoritative list -- honour it even when empty (every clip
+            // deleted => the track is silent, not whole-file).
+            const TrackClips* clips = clipSet != nullptr ? clipSet->listFor (i) : nullptr;
 
             // Legacy whole-file path with nothing to play here -> silence.
             // Applies ONLY when there is no authoritative clip list; the clip
@@ -722,8 +837,9 @@ namespace zynforge
             if (clips != nullptr)
             {
                 juce::FloatVectorOperations::clear (out, numSamples);
-                for (const auto& c : *clips)
+                for (size_t k = 0; k < clips->clips.size(); ++k)
                 {
+                    const auto& c = clips->clips[k];
                     if (c.muted) continue;   // muted clips render silence
                     const auto clipEndTL = c.timelineStartSamples + c.fileLengthSamples;
                     // Overlap of [startPos, startPos+playableThisBlock)
@@ -740,24 +856,14 @@ namespace zynforge
                         scratch.setSize (2, spanLen, false, false, true);
                     scratch.clear (0, spanLen);   // both channels
                     // Cross-track clips read from their own file's reader
-                    // (resolved under the clipsLock we already hold); clips
-                    // with no audioFile use the track's default reader.
-                    // A stereo file is read in full; readChan picks the L (0)
-                    // or R (1) half for THIS logical track. Cross-track clips
-                    // reference mono Track files, so they always read ch 0.
-                    juce::AudioFormatReader* rd = t.reader.get();
-                    int readChan = t.useRight ? 1 : 0;
-                    if (c.audioFile != juce::File())
-                    {
-                        rd = nullptr; // missing explicit media must never substitute the own take
-                        readChan = juce::jlimit (0, 1, c.sourceChannel);
-                        auto it = extraReaders.find (c.audioFile.getFullPathName());
-                        if (it != extraReaders.end() && it->second != nullptr)
-                        {
-                            rd = it->second.get();
-                            readChan = juce::jlimit (0, 1, c.sourceChannel);
-                        }
-                    }
+                    // (resolved when the list was published); clips with no
+                    // audioFile use the track's default reader. Missing
+                    // explicit media reads nothing: it must never substitute
+                    // the own take. A stereo file is read in full; readChan
+                    // picks the L (0) or R (1) half for THIS logical track.
+                    juce::AudioFormatReader* rd = readerFor (*clips, k, t);
+                    const int readChan = clips->sources[k].ownTake ? (t.useRight ? 1 : 0)
+                                                                   : juce::jlimit (0, 1, c.sourceChannel);
                     if (rd != nullptr)
                         rd->read (&scratch, 0, spanLen, fileReadStart, true, true);
 
@@ -801,14 +907,13 @@ namespace zynforge
                 continue;
             }
 
-            // No clip list resolved above. If this track is clip-authoritative
-            // (has an explicit arrangement) but we couldn't read it -- the
-            // try-lock was contended (UI mid-edit) -- render SILENCE for this
-            // block instead of the legacy whole-file path. Otherwise a track
-            // the engineer has arranged into clips (or emptied) would briefly
-            // leak its full underlying Track_NN.wav during the contention
-            // window. Genuinely non-clip tracks (flag 0) still fall through.
-            if (i < kMaxAuthoritativeTracks
+            // No clip list resolved above. If this block got no clip set at
+            // all (enterClipSet gave up) and the track is clip-authoritative,
+            // render SILENCE for this block instead of the legacy whole-file
+            // path, or a track the engineer has arranged into clips (or
+            // emptied) would leak its full underlying take. Genuinely non-clip
+            // tracks (flag 0) still fall through.
+            if (clipSet == nullptr && i < kMaxAuthoritativeTracks
                 && authoritativeFlags[(size_t) i].load (std::memory_order_acquire))
             {
                 juce::FloatVectorOperations::clear (out, numSamples);
@@ -841,14 +946,7 @@ namespace zynforge
         position.compare_exchange_strong (expected, nextRenderPosition, std::memory_order_acq_rel);
     }
 
-    PlaybackReader* SessionPlayer::readerForClip (const Clip& c, const Track& t) const noexcept
-    {
-        if (c.audioFile == juce::File()) return t.reader.get();
-        const auto it = extraReaders.find (c.audioFile.getFullPathName());
-        return it != extraReaders.end() ? it->second.get() : nullptr;
-    }
-
-    bool SessionPlayer::prepareJump (juce::int64 pos, juce::int64 span, int numTracks) noexcept
+    bool SessionPlayer::prepareJump (const ClipSet& set, juce::int64 pos, juce::int64 span, int numTracks) noexcept
     {
         bool ready = true;
         const auto ask = [&ready] (PlaybackReader* reader, juce::int64 filePos, juce::int64 length)
@@ -860,16 +958,16 @@ namespace zynforge
         for (int i = 0; i < numTracks; ++i)
         {
             const auto& t = tracks[(size_t) i];
-            if (i < (int) clipsAuthoritative.size() && clipsAuthoritative[(size_t) i]
-                && i < (int) activeClips.size())
+            if (const auto* list = set.listFor (i))
             {
-                for (const auto& c : activeClips[(size_t) i])
+                for (size_t k = 0; k < list->clips.size(); ++k)
                 {
+                    const auto& c = list->clips[k];
                     if (c.muted) continue;
                     const auto from = juce::jmax (pos, c.timelineStartSamples);
                     const auto to   = juce::jmin (pos + span, c.timelineStartSamples + c.fileLengthSamples);
                     if (to > from)
-                        ask (readerForClip (c, t), c.fileStartSamples + (from - c.timelineStartSamples), to - from);
+                        ask (readerFor (*list, k, t), c.fileStartSamples + (from - c.timelineStartSamples), to - from);
                 }
             }
             else if (pos < t.length)
@@ -880,38 +978,75 @@ namespace zynforge
         return ready;
     }
 
-    void SessionPlayer::cueUpcoming (juce::int64 blockEnd, juce::int64 horizon, juce::int64 wrapTarget,
-                                     int numTracks) noexcept
+    void SessionPlayer::cueUpcoming (const ClipSet& set, juce::int64 blockEnd, juce::int64 horizon,
+                                     juce::int64 wrapTarget, int numTracks) noexcept
     {
         for (int i = 0; i < numTracks; ++i)
         {
             const auto& t = tracks[(size_t) i];
-            if (i >= (int) clipsAuthoritative.size() || ! clipsAuthoritative[(size_t) i]
-                || i >= (int) activeClips.size())
+            const auto* list = set.listFor (i);
+            if (list == nullptr)
             {
                 if (wrapTarget >= 0 && t.reader != nullptr) t.reader->cue (wrapTarget, PlaybackReader::kLoopWrapCue);
                 continue;
             }
 
-            // The next clip before the horizon (the caller stops it at the loop
-            // end) and the clip the wrap lands in are cued on their own slots:
-            // a clip starting just before the loop end plays before the wrap,
-            // and on one slot the wrap's cue replaced it every pass.
-            const Clip* next = nullptr;
-            for (const auto& c : activeClips[(size_t) i])
+            // The wrap: every clip the jump to the loop start waits for (the
+            // window prepareJump checks) is cued, not only the one the loop
+            // start sits in. A clip starting a few thousand samples into the
+            // loop held every pass silent until its first block came off the
+            // disk. A reader keeps two wrap places: the clip the loop starts in
+            // and one more of the same file just after it (a moved or trimmed
+            // clip). A place another cue already holds takes no slot.
+            if (wrapTarget >= 0)
             {
+                struct Cued { PlaybackReader* reader; juce::int64 at; };
+                std::array<Cued, 8> cued {};
+                int numCued = 0;
+                const auto windowEnd = wrapTarget + kJumpReadySamples;
+                for (size_t k = 0; k < list->clips.size() && numCued < (int) cued.size(); ++k)
+                {
+                    const auto& c = list->clips[k];
+                    if (c.muted) continue;
+                    const auto from = juce::jmax (wrapTarget, c.timelineStartSamples);
+                    const auto to   = juce::jmin (windowEnd, c.timelineStartSamples + c.fileLengthSamples);
+                    auto* reader = to > from ? readerFor (*list, k, t) : nullptr;
+                    if (reader == nullptr) continue;
+                    const auto at = c.fileStartSamples + (from - c.timelineStartSamples);
+                    int sameReader = 0;
+                    bool held = false;
+                    for (int j = 0; j < numCued && ! held; ++j)
+                        if (cued[(size_t) j].reader == reader)
+                        {
+                            ++sameReader;
+                            held = PlaybackReader::cueHolds (cued[(size_t) j].at, at, to - from);
+                        }
+                    if (held || sameReader >= 2) continue;
+                    reader->cue (at, sameReader == 0 ? PlaybackReader::kLoopWrapCue
+                                                     : PlaybackReader::kLoopWrapSecondCue);
+                    cued[(size_t) numCued++] = { reader, at };
+                }
+            }
+
+            // The next clip before the horizon (the caller stops it at the loop
+            // end) has a slot of its own: a clip starting just before the loop
+            // end plays before the wrap, and on one slot the wrap's cue
+            // replaced it every pass.
+            const Clip* next = nullptr;
+            size_t nextIndex = 0;
+            for (size_t k = 0; k < list->clips.size(); ++k)
+            {
+                const auto& c = list->clips[k];
                 if (c.muted) continue;
-                if (wrapTarget >= 0 && wrapTarget >= c.timelineStartSamples
-                    && wrapTarget < c.timelineStartSamples + c.fileLengthSamples)
-                    if (auto* reader = readerForClip (c, t))
-                        reader->cue (c.fileStartSamples + (wrapTarget - c.timelineStartSamples),
-                                     PlaybackReader::kLoopWrapCue);
                 if (c.timelineStartSamples > blockEnd && c.timelineStartSamples <= horizon
                     && (next == nullptr || c.timelineStartSamples < next->timelineStartSamples))
+                {
                     next = &c;
+                    nextIndex = k;
+                }
             }
             if (next != nullptr)
-                if (auto* reader = readerForClip (*next, t))
+                if (auto* reader = readerFor (*list, nextIndex, t))
                     reader->cue (next->fileStartSamples, PlaybackReader::kNextClipCue);
         }
     }
