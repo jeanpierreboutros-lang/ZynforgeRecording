@@ -48,6 +48,7 @@ namespace zynforge { class EngineFix20261116Tests; class PlayFix20261116Tests; c
 namespace zynforge { class Design20261117AlarmsTests; }
 namespace zynforge { class Design20261117PanelsTests; }
 namespace zynforge { class Fix20261124MainTests; }
+namespace zynforge { class Fix20261124SessionTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -247,7 +248,7 @@ private:
     juce::String openCopiedSession (const juce::File& source, const juce::File& copy, bool carried);
     static juce::String moveStatusLine (const juce::File& oldDir, const juce::File& newDir, bool carried,
                                         bool oldCopyRemains, const juce::String& refused);
-    void startHandoffCopy (const juce::File& source, const juce::File& dest);
+    void startHandoffCopy (const juce::File& source, const juce::File& dest, bool createdDestination);
     // When a job's save of the source fails, whether to go on from what is on
     // disk. The tests stand in for the dialog through continueFromDiskPromptForTests.
     void offerContinueFromDisk (const juce::String& action, const juce::String& carried,
@@ -768,6 +769,7 @@ private:
     friend class zynforge::Design20261117AlarmsTests;
     friend class zynforge::Design20261117PanelsTests;
     friend class zynforge::Fix20261124MainTests;
+    friend class zynforge::Fix20261124SessionTests;
 
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of

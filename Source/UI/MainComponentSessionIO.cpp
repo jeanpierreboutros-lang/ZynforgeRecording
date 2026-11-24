@@ -142,6 +142,22 @@ void removePartialCopy (const juce::File& dest, bool removeFolder)
         child.deleteRecursively();
 }
 
+// A copy refused before anything went into its folder gives the folder back,
+// if this copy made it. One the engineer made, or one holding anything at all,
+// stays where it is.
+void removeFolderIfEmpty (const juce::File& dir, bool madeHere)
+{
+    if (madeHere && dir.isDirectory()
+        && dir.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty())
+        dir.deleteFile();
+}
+
+// The pre-panel refusal and the one when the panel answers say the same thing.
+juce::String missingFolderLine (const juce::File& dir, const juce::String& before)
+{
+    return "! Session folder is missing: " + dir.getFullPathName() + "; reconnect its drive before " + before;
+}
+
 bool ensureSessionScaffold (const juce::File& dest)
 {
     const auto ensureDir = [] (const juce::File& dir)
@@ -249,9 +265,28 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
         addedSinceSave = restoreUnsavedStrips (dir, n);
     restoreSessionDocuments (dir);
     engine.claimMixerFor (dir);
+    // A take on disk that would not open (a part missing, parts that do not
+    // match, a header that will not read) leaves its strip silent with no
+    // waveform. It is named here and not counted as loaded. A strip two takes
+    // claim is one too, and has its own line below ("Track N has ...").
+    const auto clashes = engine.getPlayer().loadClashes();
+    int unopenedCount = 0;
+    juce::StringArray silentStrips;
+    for (int i = 0; i < n; ++i)
+    {
+        if (! engine.getPlayer().trackFailedToOpen (i)) continue;
+        ++unopenedCount;
+        const auto label = "Track " + juce::String (i + 1);
+        if (std::any_of (clashes.begin(), clashes.end(),
+                         [&label] (const juce::String& c) { return c.startsWith (label + " has "); }))
+            continue;
+        const auto name = i < engine.getRecorder().getNumTracks()
+                              ? engine.getRecorder().getTrack (i).getNameThreadSafe() : juce::String();
+        silentStrips.add (label + (name.isNotEmpty() ? " (" + name + ")" : juce::String()));
+    }
     if (n > 0)
     {
-        statusLabel.setText ("Loaded " + juce::String (n) + " tracks"
+        statusLabel.setText ("Loaded " + juce::String (n - unopenedCount) + " tracks"
                                  + (addedSinceSave > 0 ? "; " + zynforge::counted (addedSinceSave, "strip")
                                                            + " recorded after the last save came back with default names and patch"
                                                        : juce::String()),
@@ -273,14 +308,24 @@ int MainComponent::openSessionFolder (const juce::File& dir, bool reload)
     if (leadInsOwed)
         toast.show (zynforge::MultitrackRecorder::describeOwedLeadIns (audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir),
                     Toast::Kind::Warning);
+    juce::StringArray loadProblems;
+    if (! silentStrips.isEmpty())
+    {
+        const auto line = juce::String (silentStrips.size() == 1 ? "Take did not open, strip plays silent: "
+                                                                 : "Takes did not open, strips play silent: ")
+                        + silentStrips.joinIntoString (", ") + " -- check the files in Audio Files";
+        loadProblems.add (line);
+        toast.show ("! " + line, Toast::Kind::Warning);
+    }
     // Two takes on one strip's number: neither plays, and the engineer has to
     // say which one by moving the other out (TakeNames.h).
-    if (const auto clashes = engine.getPlayer().loadClashes(); ! clashes.isEmpty())
+    if (! clashes.isEmpty())
     {
-        const auto line = "! " + clashes.joinIntoString ("; ");
-        statusLabel.setText (line, juce::dontSendNotification);
-        toast.show (line, Toast::Kind::Warning);
+        loadProblems.addArray (clashes);
+        toast.show ("! " + clashes.joinIntoString ("; "), Toast::Kind::Warning);
     }
+    if (! loadProblems.isEmpty())
+        statusLabel.setText ("! " + loadProblems.joinIntoString ("; "), juce::dontSendNotification);
     // The autosave interval counts from here, not from the last session: a
     // save landing seconds after the open would write behind the damaged-files
     // prompt, before the engineer can answer it.
@@ -939,9 +984,12 @@ juce::uint32 MainComponent::nextAutosaveRetryMs (juce::uint32 intervalMs)
 void MainComponent::serviceAutosave()
 {
     if (sessionIoBusy.load()) return;
-    // Nothing goes to the take's volume during a take, and a save would refuse
-    // M meanwhile. STOP saves, and the interval starts again from there.
-    if (engine.isRecording())
+    // Nothing goes to the take's volume from RECORD until the take's files are
+    // final, and a save would refuse M meanwhile. That includes a take a lost
+    // device is closing: nothing records then and no job holds the slot. Not
+    // even a look at the folder: a stat on a dead mount blocks this thread, and
+    // this runs 10 times a second. STOP saves, and the interval starts again.
+    if (engine.isTakeOnDisk() || captureSupervisor.isDaemonRecording())
     {
         lastAutosaveMs = juce::Time::getMillisecondCounter();
         return;
@@ -953,7 +1001,7 @@ void MainComponent::serviceAutosave()
     if (mins <= 0) return;                                          // Off
 
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory() && ! sessionFolderIsMissing()) return; // nothing to save into
+    if (! engine.hasSessionFolder() && ! sessionFolderIsMissing()) return; // nothing to save into
 
     const auto now = juce::Time::getMillisecondCounter();
     if (lastAutosaveMs == 0)                                        // first tick -> start the clock
@@ -1744,8 +1792,7 @@ void MainComponent::onSaveSessionAs()
     // Its audio is on that drive: a copy made now would be a session with none.
     if (sessionFolderIsMissing())
     {
-        showStatus ("! Session folder is missing: " + engine.getActiveSessionDir().getFullPathName()
-                    + "; reconnect its drive before Save As");
+        showStatus (missingFolderLine (engine.getActiveSessionDir(), "Save As"));
         return;
     }
     if (refuseWhileSessionPickerOpen()) return;
@@ -1764,6 +1811,9 @@ void MainComponent::onSaveSessionAs()
     //    'save current mixer state to a new folder' flow -- it just
     //    skips the directory copy.
     const auto source = engine.getActiveSessionDir();
+    // Whether this Save As copies a folder. The drive can go while the panel
+    // is up, so the answer asks again before anything is made.
+    const bool sourceHadFolder = engine.hasSessionFolder();
 
     chooser = std::make_unique<juce::FileChooser> (
         "Save session copy in...",
@@ -1774,11 +1824,20 @@ void MainComponent::onSaveSessionAs()
                      | juce::FileBrowserComponent::canSelectDirectories;
 
     juce::Component::SafePointer<MainComponent> chooserSelf (this);
-    launchSessionPicker ("Save As", flags, [chooserSelf, source, scope = questionScope()] (const juce::File& dest)
+    launchSessionPicker ("Save As", flags, [chooserSelf, source, sourceHadFolder, scope = questionScope()]
+                                           (const juce::File& dest)
     {
         if (chooserSelf == nullptr || dest.getFullPathName().isEmpty()) return;
-        if (chooserSelf->reserveForPickerAnswer ("Save As", scope))
-            chooserSelf->completeSaveAs (source, dest);
+        if (! chooserSelf->reserveForPickerAnswer ("Save As", scope)) return;
+        // Gone since the panel opened: the copy would be a session with no
+        // audio, and the app would switch to it and record the next take there.
+        if (sourceHadFolder && ! source.isDirectory())
+        {
+            chooserSelf->sessionJobs.release();
+            chooserSelf->showStatus (missingFolderLine (source, "Save As"));
+            return;
+        }
+        chooserSelf->completeSaveAs (source, dest);
     });
 }
 
@@ -1805,6 +1864,14 @@ bool MainComponent::reserveForPickerAnswer (const juce::String& what, const Ques
 
 void MainComponent::completeSaveAs (const juce::File& source, const juce::File& dest)
 {
+    // The open session's folder is where its audio is. Without it there is
+    // nothing to copy, and saving the mixer alone would pass for the session.
+    if (engine.mixerBelongsTo (source) && ! source.isDirectory())
+    {
+        sessionJobs.release();
+        showStatus (missingFolderLine (source, "Save As"));
+        return;
+    }
     // The copy is saved under its folder's name: one too long for what a save
     // derives from it could never be saved.
     if (const auto tooLong = zynforge::sessionrepair::nameTooLongForNewSession (dest.getFileName());
@@ -1822,20 +1889,20 @@ void MainComponent::completeSaveAs (const juce::File& source, const juce::File& 
         return;
     }
 
-    const bool createdDestination = ! dest.exists();
-    if (createdDestination && dest.createDirectory().failed())
-    { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
-    if (! dest.isDirectory())
-    { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
-
-    // Refuse a destination INSIDE the source: copyDirectoryTo would copy
-    // the growing destination into itself.
+    // Refuse a destination INSIDE the source, before anything is made there:
+    // copyDirectoryTo would copy the growing destination into itself.
     if (source.isDirectory() && pathsafety::isSameOrDescendant (source, dest))
     {
         sessionJobs.release();
         showStatus ("Save As failed -- pick a folder outside the current session");
         return;
     }
+
+    const bool createdDestination = ! dest.exists();
+    if (createdDestination && dest.createDirectory().failed())
+    { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
+    if (! dest.isDirectory())
+    { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
 
     // Save As is a clone, never a merge.  Refusing a non-empty folder
     // prevents JUCE's copyFileTo from deleting same-named destination
@@ -2182,24 +2249,29 @@ void MainComponent::exportTimelineCsv()
     const auto dir = engine.getActiveSessionDir();
     if (! dir.isDirectory()) { showStatus (noFolderText ("No active session to export.", "exporting")); return; }
     if (refuseUnloadedSession ("exporting")) return;
+    // A new panel would close the open one without an answer.
+    if (refuseWhileSessionPickerOpen()) return;
     const auto csv = buildTimelineCsv();
 
     const auto def = dir.getChildFile ("Export Files")
                         .getChildFile (dir.getFileName() + "_timeline.csv");
     chooser = std::make_unique<juce::FileChooser> ("Export session timeline (CSV)", def, "*.csv");
     juce::Component::SafePointer<MainComponent> self (this);
-    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+    launchSessionPicker ("Export Timeline CSV", juce::FileBrowserComponent::saveMode
                           | juce::FileBrowserComponent::warnAboutOverwriting,
-        [self, this, csv] (const juce::FileChooser& fc)
+        [self, csv, scope = questionScope()] (const juce::File& f)
         {
             if (self == nullptr) return;
-            const auto f = fc.getResult();
             if (f == juce::File()) return;
+            // The panel held nothing while it was up: a take that started
+            // behind it (desk, OSC, twin) owns the drive this would write to.
+            if (! self->reserveForPickerAnswer ("Export Timeline CSV", scope)) return;
             f.getParentDirectory().createDirectory();
-            showStatus (zynforge::atomicfile::writeText (f, csv)
-                            ? "Timeline exported: " + f.getFileName()
-                            : "Couldn't write " + f.getFileName()
-                                + "; previous export was preserved");
+            const bool written = zynforge::atomicfile::writeText (f, csv);
+            self->sessionJobs.release();
+            self->showStatus (written ? "Timeline exported: " + f.getFileName()
+                                      : "Couldn't write " + f.getFileName()
+                                          + "; previous export was preserved");
         });
 }
 
@@ -2381,7 +2453,9 @@ void MainComponent::completeShowHandoff (const juce::File& source, const juce::F
         showStatus ("Handoff needs a new or empty folder; nothing was overwritten");
         return;
     }
-    if (! dest.isDirectory() && dest.createDirectory().failed())
+    // Made here, it goes again if the handoff stops before anything is in it.
+    const bool createdDestination = ! dest.isDirectory();
+    if (createdDestination && dest.createDirectory().failed())
     {
         sessionJobs.release();
         showStatus ("Could not create the handoff folder");
@@ -2389,26 +2463,29 @@ void MainComponent::completeShowHandoff (const juce::File& source, const juce::F
     }
     if (saveSessionStateTo (source))
     {
-        startHandoffCopy (source, dest);
+        startHandoffCopy (source, dest, createdDestination);
         return;
     }
     juce::Component::SafePointer<MainComponent> self (this);
     offerContinueFromDisk ("The handoff",
                            "The handoff is verified against the source, so unsaved changes will not be in it.",
-                           [self, source, dest] { if (self != nullptr) self->startHandoffCopy (source, dest); },
-                           [self]
+                           [self, source, dest, createdDestination]
+                           { if (self != nullptr) self->startHandoffCopy (source, dest, createdDestination); },
+                           [self, dest, createdDestination]
                            {
                                if (self == nullptr) return;
+                               removeFolderIfEmpty (dest, createdDestination);
                                self->sessionJobs.release();
                                self->showStatus ("Handoff cancelled: session metadata could not be saved");
                            });
 }
 
-void MainComponent::startHandoffCopy (const juce::File& source, const juce::File& dest)
+void MainComponent::startHandoffCopy (const juce::File& source, const juce::File& dest, bool createdDestination)
 {
     const auto timelineCsv = buildTimelineCsv();
     if (timelineCsv.isEmpty())
     {
+        removeFolderIfEmpty (dest, createdDestination);
         sessionJobs.release();
         showStatus ("Handoff cancelled: session timeline is unavailable");
         return;
@@ -2417,6 +2494,7 @@ void MainComponent::startHandoffCopy (const juce::File& source, const juce::File
     if (const auto outside = projectexport::firstMediaOutsideSession (interchange);
         outside != juce::File())
     {
+        removeFolderIfEmpty (dest, createdDestination);
         sessionJobs.release();
         showStatus ("Handoff cancelled: a clip reads " + outside.getFullPathName()
                     + ", which is outside this session and would not be in the copy");
@@ -2429,6 +2507,7 @@ void MainComponent::startHandoffCopy (const juce::File& source, const juce::File
     if (! atomicfile::writeText (incomplete,
          "This show handoff was interrupted or failed. Do not deliver it as verified.\n"))
     {
+        removeFolderIfEmpty (dest, createdDestination);
         sessionJobs.release();
         showStatus ("Could not create the handoff safety marker");
         return;
@@ -2750,7 +2829,14 @@ void MainComponent::promptSaveSessionTemplate()
 
 bool MainComponent::saveSessionTemplate (const juce::String& name)
 {
-    const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
+    // "~Live" would be read as a home folder and "." as a hidden file, so the
+    // front of the name loses those; a name with nothing left is refused.
+    const auto safeName = pathsafety::visibleName (name.replaceCharacters ("/:\\?*<>|\"", "         "));
+    if (safeName.isEmpty())
+    {
+        showStatus ("Template NOT saved -- \"" + name + "\" can't name a file; use letters or numbers");
+        return false;
+    }
     const auto out = templatesDir().getChildFile (safeName + ".zftemplate");
     const bool ok = zynforge::atomicfile::writeText (out, sessionTemplateJson (name));
     ++templateMenuRevision;   // the File menu lists it from the next build on
@@ -2947,8 +3033,10 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         return {};
 
     // Resolve a safe folder name even if the engineer typed something
-    // with slashes / colons in the picker.
-    auto safeName = juce::File::createLegalFileName (r.name);
+    // with slashes / colons in the picker. A leading "~" would be read as a
+    // home folder and a leading "." as this folder, its parent or a hidden
+    // one, so those go too; the status names the folder that was made.
+    auto safeName = pathsafety::visibleName (juce::File::createLegalFileName (r.name));
     if (safeName.isEmpty()) safeName = "Untitled-1";
 
     // Ensure the chosen Local Storage exists, then make the session
