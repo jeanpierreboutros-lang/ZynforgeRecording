@@ -30,6 +30,10 @@ namespace zynforge
         // name under it, then the meter. paint() and resized() both place from
         // here, so a number and a name can't overlap at any window width.
         struct Column { juce::Rectangle<int> number, name, meter; };
+        // A column is never narrower than this. Columns that don't fit the
+        // window scroll sideways (86 strips need 2432 px), never past its edge.
+        static constexpr int kMinColumnW = 28;
+        static constexpr int kMarginW    = 12;   // round the columns
         static constexpr int kNumberRowH = 14;
         static constexpr int kNameRowH   = 18;
         static constexpr int kHeaderH    = kNumberRowH + kNameRowH + 2;   // the stamped band

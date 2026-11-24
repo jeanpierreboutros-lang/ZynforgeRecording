@@ -5,6 +5,7 @@
 #include "FloatingLaunch.h"
 
 #include <algorithm>
+#include <functional>
 #include <vector>
 
 namespace zynforge
@@ -20,7 +21,6 @@ namespace zynforge
                 liveBridges().push_back (this);
                 rebuild();
                 lastGen = engine.getRecorder().getTrackGeneration();
-                setSize (juce::jmax (640, (int) meters.size() * 60 + 24), 380);
                 // Watch for track-set changes. Each meter holds a TrackState&
                 // that removeStripAt/setStripCount frees; without this rebuild
                 // the bridge polled freed memory for the life of the window
@@ -79,6 +79,12 @@ namespace zynforge
                 }
             }
 
+            // The window's frame sizes the columns to the room they need.
+            std::function<void()> onColumnsChanged;
+            int columnCount() const noexcept { return (int) meters.size(); }
+            int widthNeeded() const noexcept
+            { return columnCount() * Meterbridge::kMinColumnW + 2 * Meterbridge::kMarginW; }
+
             void rebuild()
             {
                 meters.clear();
@@ -114,12 +120,13 @@ namespace zynforge
                     nameTracks.push_back (i);
                 }
                 resized();
+                if (onColumnsChanged) onColumnsChanged();
             }
 
             void resized() override
             {
                 if (meters.empty()) return;
-                const auto inner = getLocalBounds().reduced (12);
+                const auto inner = getLocalBounds().reduced (Meterbridge::kMarginW);
                 for (std::size_t i = 0; i < meters.size(); ++i)
                 {
                     const auto col = Meterbridge::columnAt (inner, (int) meters.size(), (int) i);
@@ -138,7 +145,7 @@ namespace zynforge
                 // stamped column number above each name.
                 if (! meters.empty())
                 {
-                    auto inner = getLocalBounds().reduced (12);
+                    auto inner = getLocalBounds().reduced (Meterbridge::kMarginW);
                     auto band  = juce::Rectangle<int> (inner.getX(), inner.getY(), inner.getWidth(), Meterbridge::kHeaderH);
                     g.setColour (brand::steelHeaderHi);   // FLAT: solid header band (no gradient)
                     g.fillRect (band);
@@ -181,10 +188,10 @@ namespace zynforge
 
             juce::Rectangle<int> columnBounds (std::size_t i) const
             {
-                constexpr int kMargin = 12;   // as resized() and paint() lay the columns out
-                auto inner = getLocalBounds().reduced (kMargin);
+                // As resized() and paint() lay the columns out (columnAt).
+                const auto inner = getLocalBounds().reduced (Meterbridge::kMarginW);
                 if (meters.empty()) return {};
-                const int colW = juce::jmax (28, inner.getWidth() / (int) meters.size());
+                const int colW = juce::jmax (Meterbridge::kMinColumnW, inner.getWidth() / (int) meters.size());
                 return { inner.getX() + (int) i * colW, inner.getY(), colW, inner.getHeight() };
             }
 
@@ -239,11 +246,59 @@ namespace zynforge
             std::vector<std::unique_ptr<juce::Label>> names;
             std::vector<int>                          nameTracks;
         };
+
+        // The window's content: the columns in a viewport that scrolls
+        // sideways. Columns keep their 28 px minimum, so on a laptop or a
+        // 1920 px display the strips past the window's width -- alarm marks
+        // and all -- are a scroll away instead of drawn off its edge. When
+        // every column fits, they fill the window and nothing scrolls.
+        class MeterbridgeFrame final : public juce::Component
+        {
+        public:
+            explicit MeterbridgeFrame (AudioEngine& engine) : columns (engine)
+            {
+                columns.onColumnsChanged = [this] { layoutColumns(); };
+                view.setViewedComponent (&columns, false);
+                view.setScrollBarsShown (false, true);   // sideways only, and only when needed
+                addAndMakeVisible (view);
+                setSize (initialWidth(), 380);
+            }
+
+            void paint (juce::Graphics& g) override { g.fillAll (brand::bgDeep); }   // behind the scrollbar
+
+            void resized() override
+            {
+                view.setBounds (getLocalBounds());
+                layoutColumns();
+            }
+
+        private:
+            // As wide as every column wants (60 px each), but never wider than
+            // the display it opens on: past it, the scrollbar takes over.
+            int initialWidth() const
+            {
+                int width = juce::jmax (640, columns.columnCount() * 60 + 2 * Meterbridge::kMarginW);
+                if (const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+                    width = juce::jmin (width, juce::jmax (640, display->userArea.getWidth() - 2 * brand::space::xl));
+                return width;
+            }
+
+            void layoutColumns()
+            {
+                const int room = view.getWidth();
+                const int needed = columns.widthNeeded();
+                const int height = view.getHeight() - (needed > room ? view.getScrollBarThickness() : 0);
+                columns.setSize (juce::jmax (room, needed), juce::jmax (0, height));
+            }
+
+            MeterbridgeContent columns;
+            juce::Viewport     view;   // declared after: it lets go of the columns first
+        };
     }
 
     Meterbridge::Column Meterbridge::columnAt (juce::Rectangle<int> inner, int columns, int index)
     {
-        const int colW = juce::jmax (28, inner.getWidth() / juce::jmax (1, columns));
+        const int colW = juce::jmax (kMinColumnW, inner.getWidth() / juce::jmax (1, columns));
         auto col = juce::Rectangle<int> (inner.getX() + index * colW, inner.getY(), colW, inner.getHeight());
         Column c;
         c.number = col.removeFromTop (kNumberRowH).reduced (2, 0);
@@ -267,7 +322,7 @@ namespace zynforge
 
     juce::DialogWindow* Meterbridge::launch (AudioEngine& engine)
     {
-        auto content = std::make_unique<MeterbridgeContent> (engine);
+        auto content = std::make_unique<MeterbridgeFrame> (engine);
 
         juce::DialogWindow::LaunchOptions opts;
         opts.content.setOwned (content.release());
