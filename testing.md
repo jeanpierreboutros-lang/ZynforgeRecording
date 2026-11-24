@@ -1,5 +1,26 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-24 review fix round (41 findings)
+
+A sixth whole-codebase review at `b3810ac` (nine read-only reviewers) found 41 issues; eight fixers fixed them on worktree branches, each finding tested red first, and the lead merged them (`integrate/fix-2026-11-24`). New suites, red on the unfixed code then green:
+
+| File | Suite | Groups | Red failures |
+|---|---|---|---|
+| `Fix20261124CaptureTests.cpp` | *Fixes 2026-11-24 capture* | 9 | 19 |
+| `Fix20261124MainTests.cpp` | *Fixes 2026-11-24 main* | 9 | 12 |
+| `Fix20261124SessionTests.cpp` | *Fixes 2026-11-24 session* | 23 | several red runs (session-red*.log) |
+| `Fix20261124HelperTests.cpp` | *Fixes 2026-11-24 helper* | 5 | red first (port 54715 "another program"; 48 kHz header after a 96 kHz restart) |
+| `Fix20261124NetTests.cpp` | *Fixes 2026-11-24 network* | 8 | 20 |
+| `Fix20261124EditTests.cpp` | *Fixes 2026-11-24 edit* | 23 | 67 |
+| `Fix20261124PlayTests.cpp` | *Fixes 2026-11-24 playback* | 3 | 6 |
+| `Fix20261124MixerTests.cpp` | *Fixes 2026-11-24 mixer* | 12 | 20 |
+
+Also: the skipped-cycle report test checks `captureProcess` (red first). `tools/test_verify_tools.py` gained verify_take log-window, pass, capturing-process and soak-monitor named-take cases. Two new invariants rules ("a take's status path reads no disk" now covers `serviceAutosave`; "playback reads clip lists without the editors' lock") were checked against the old code; "no Track_* globs in tools/" is new.
+
+Not testable headlessly: a CoreAudio connect timeout counted as "still there" (read only); the MainComponent branch of `twinStopRecord`'s finalization wait (covered through the existing twin host test); the PlaybackReader re-check (only Rosetta in a CI VM ever tore a read).
+
+Results on the merged tree: **Release 2200 test groups, 0 failures**. Both gates clean.
+
 ## 2026-11-24 skipped CoreAudio cycles (the 2026-11-23 drops)
 
 How it was found: analysis of the show's files (breaks on every channel exactly at 512-sample buffer starts), macOS's log (101 overloads every 73.4 s, only during the take), and a reproduction on the development Mac. The reproduction used a virtual 64-channel input, 86 armed strips, primary plus USB backup, and 6½ minutes: overloads every 73.4 s, and the report said 0 missed. A `sample` of the process at an overload caught `pollSmartStatusAsync` → `querySmartStatus` → `fork()`.

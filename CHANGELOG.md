@@ -17,6 +17,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — the 2026-11-24 review: 41 findings, 2026-11-24
+A sixth whole-codebase review found 41 issues (0 critical, 4 high, 17 medium, 20 low); all are fixed, each with a test that failed first. See the top ADR of [decisions.md](decisions.md).
+- **Skipped CoreAudio cycles (gaps in the same day's fix):** StereoMix.wav now gets the same silence as the tracks, so it no longer drifts ahead of the multitrack. A skip can no longer make a punch be discarded, and skips outside a punch's captured window are not counted against it. A driver whose buffer is bigger than asked for is no longer read as skipping every cycle.
+- **SMART drive health actually works:** it was asked about the session folder, not the drive, so it never read anything. It now reads the drive while idle, never during a take, and a failing drive shows before RECORD.
+- **Cues:** a cue recalled while a take is being saved holds its inputs and patches them before the next RECORD, instead of silently leaving the old inputs for the next take.
+- **EDIT:** the crossfade handle makes a real crossfade (it made a level bump of up to +6 dB). A right-click no longer clears the clip selection, so Delete can't hit the wrong thing. Edge drags no longer read the disk on every mouse move. Waveforms no longer carry into another session. Clip lock protects clip gain. Locked group peers refuse fades. A pasted clip draws its own channel. Cmd-wheel zoom follows the axis. Fit-to-window sizing is right. Tool buttons and the minimap ignore right-clicks. The dim existing take is drawn per clip during a continue.
+- **Playback:** clip edits during playback no longer drop blocks on every output, loop wraps no longer stutter when a clip starts just after the loop start, the Markers list stays current, and a playback read can never return audio from another position.
+- **Sessions:** Save As refuses if the session drive vanished while its panel was open. Refused Save As and handoff leave no empty folders. Names starting with "~" or "." work. Autosave never touches a take that is still closing. Export Timeline CSV refuses if a take started behind its panel. A take that fails to open at load is named.
+- **Capture helper:** replacing an older helper waits until it has let go, instead of failing with "another program may hold the port" and turning helper mode off (this was also an intermittent CI failure). In helper mode, a sample-rate change during STOP is applied before the next take.
+- **Main window:** the clock and the sample-rate alarm keep the take's rate through a device hold. The idle TIME LEFT refreshes.
+- **Network:** a twin follower still saving answers the leader with the real outcome. A desk macro sending 1.0 says it needs an integer. Named OSC markers on different buttons no longer cancel each other.
+- **Mixer:** the meterbridge scrolls to reach all strips, the pan readout follows every pan change, the Add Tracks row removal is safe, and a backup folder pick never hangs the window on a stuck drive.
+- **Tools:** `verify_take.sh` says "could not check" instead of a false green, covers every pass, and counts only the capturing process (the report now names it, `captureProcess`). `soak_monitor.sh` watches named take files.
+
 ### Fixed — digital drops every 72 s while recording, 2026-11-24
 - **Every 72 s of a take, every channel lost a 10.7 ms buffer.** The drive-health (SMART) poll ran `diskutil` during the take through a fork(). That froze the app long enough for CoreAudio to skip an audio cycle ("skipping cycle due to overload"), and the 2026-11-23 show logged 101 of them. The poll now runs only when nothing is recording or playing, and the app never forks.
 - **A skipped CoreAudio cycle can no longer pass unseen.** The app reads each buffer's timestamp. Lost frames count as missed (MISSED on the plate, the report's `missedSamples`), are named in the report (`inputCyclesSkipped`, `inputSkippedFrames`), and go into a live take as silence so every track stays on time. The show's report said 0 missed.

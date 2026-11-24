@@ -39,6 +39,14 @@ This came from a design critique of the real window (rendered headless). The own
 - [ ] Family tokens: Recording draws meter heat by dBFS (`brand::meterHeatAtDb`). The family `tokens.json` heat fractions should become 0.8 / 0.9 / 0.9667 so the generated `ForgeTokens.h` agrees.
 - [ ] The Mac mini still has `281c6c0`.
 
+## Bug audit, 2026-11-24
+
+A sixth whole-codebase review at `b3810ac` made 41 findings (0 critical, 4 high, 17 medium, 20 low). All are fixed on eight branches merged on `main`, each tested red first (see the top ADR of [decisions.md](decisions.md) and testing.md).
+
+- [ ] Owner: review the top ADR's decisions, above all the judgement call that a skipped cycle in a stopped-transport punch is filled and the punch kept, and that a cue recalled during a save holds its inputs.
+- [ ] Owner: run *2026-11-24 fix round* in [FIELD-TEST.md](FIELD-TEST.md) on the show rig.
+- [ ] Left as found (out of scope): a twin follower's own failed STOP that finished before the leader's STOP still reads "stopped" on the leader; a cue recalled during a save loses its playhead move; in helper mode a cue recalled during the helper's STOP wait takes the during-take path; a StereoMix try-lock miss near STOP drops that block from the mix; Cmd+X on a range clears the range current at its answer; `askChildrenToExit` signals every helper child after a failed launch.
+
 ## Second real show, 2026-11-23
 
 - [x] `a3ffc1b` recorded 86 strips for 1 h 35 min through an RME HDSPe AoX, with no missed samples, no stall and no crash. Hashes finished on 2026-11-24, and `tools/verify_take.sh` passed every file (see *Second real show* in [SHOW-READINESS.md](SHOW-READINESS.md)).

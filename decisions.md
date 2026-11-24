@@ -2,6 +2,29 @@
 
 
 
+## The 2026-11-24 review fix round: the choices the fixes made — 2026-11-24
+
+**Status:** Accepted. A sixth whole-codebase review (nine read-only reviewers at b3810ac) found 41 issues (0 critical, 4 high, 17 medium, 20 low), seven of them gaps in that day's skipped-cycle fix. The owner said "Fix all"; eight fixers on worktree branches, each finding tested red first, merged by the lead.
+
+**Decisions the fixes made (owner to review):**
+- **Skipped cycles and punches.** A skip is handled only when the block after it is captured from its first frame, filled with silence only on a free-running take, and never makes a punch splice fail (`TakeStop::captureHoles` leaves the skips out). Skips in a windowed punch's pre-roll, post-roll, in-point block, or with the transport stopped inside the window are not counted. *Judgement call:* a punch recorded with the transport stopped (a cursor punch after its question) is free-running, so a skip there is filled with silence and the punch is still spliced; discarding it instead is a one-line change.
+- **StereoMix gaps queue** (up to 64) instead of one pending gap, so the mix gets every skip and ride-through gap at its place.
+- **SMART** is read per volume, only while idle, with the reading tied to its folder and volume; a Failing reading taken at idle is an amber banner notice before RECORD (red during a take, as before). USB drives answer "Not Supported", which raises nothing.
+- **A cue recalled while a take is saved** applies its mix, arms and outputs at once and holds its inputs until the save ends ("(inputs held until the take is saved)"), as a recall during a take already holds them. Refusing the whole recall was the alternative; holding matches what the engineer already sees mid-take.
+- **Desk macro values stay integers only** (the 2026-10-31 decision), but a float, text or multi-value message now says so once a second instead of vanishing.
+- **Named OSC markers** pair press and release by (command, name).
+- **EDIT crossfade dot** makes a crossfade across the whole overlap (each clip's fade spans it, each keeps its own curve: linear sums to unity, equal-power keeps constant power, +3 dB in the middle on identical audio). The clip model has no movable crossing point, so the dot no longer slides one.
+- **Clip lock protects clip gain**, and fade, crossfade and gain edits refuse the whole edit group when a peer clip is locked.
+- **Delete** refuses ("The selection changed while Delete was asked -- nothing deleted") instead of acting on a different selection.
+- **Session names**: a leading "~", "." or space is dropped; a name with nothing usable falls back to "Untitled-N"; a template with nothing usable is refused.
+- **Meterbridge** scrolls sideways when the strips don't fit (28 px minimum column).
+- **Backup folder pick** waits at most 1.5 s for its drive, then refuses.
+- **Capture helper replacement** may wait up to about 4 s (about 7-8 s at worst with retries) for an old helper still shutting down, and says so instead of blaming "another program".
+- **Playback readers have three cue slots** (+2 blocks each: about +256 KB per mono reader, about +16 MB for 64 tracks) so two loop-wrap places can be cued.
+- **verify_take** prints a yellow "could not check this Mac's log" note (never a green pass) when the log can't cover the take, checks the whole multi-pass take, and counts only the capturing process.
+
+**Left as they were (found while fixing, out of scope):** a twin follower whose own failed STOP fully finished before the leader's STOP still tells the leader "stopped"; a cue recalled during a save loses its playhead move; in helper mode a cue recalled during the helper's STOP wait takes the during-take path; a StereoMix try-lock miss near STOP drops that block from the mix; a windowed punch's mix writes the whole block; Cmd+X on a range clears the range current when its question is answered; `askChildrenToExit` signals every helper child after a failed launch.
+
 ## No fork, and a skipped CoreAudio cycle is caught and filled — 2026-11-24
 
 **Status:** Accepted. After the 2026-11-23 show the owner heard digital drops in the stereo mix track and asked to find the cause, then: "How can I fix the app, and don't make this happen again?"

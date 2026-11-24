@@ -312,6 +312,14 @@ Force-killing can wedge an audio device, so keep a recovery plan and stop if the
 - [ ] **Ring memory.** Watch RSS on a 64-channel take with 3 copies and no pre-roll. Since 2026-11-24 the rings hold 20 s each: about 740 MB of ring, reached about 20 s into the take (it was about 200 MB). A long pre-roll fits inside the same 1 GiB in all.
 - [ ] **Backup drive pause (2026-11-24).** On a long take with a backup on a USB drive, pull the backup's cable for 5 s and plug it back in, or watch for a real pause: `log show ... 'sender == "apfs" AND eventMessage CONTAINS "to flush"'`. Any pause under about 20 s should leave `copyProblems` empty and `backupFailed` false. DISK STRUGGLING should show during the pause and clear after it.
 - [ ] **No CoreAudio overloads in a take (2026-11-24).** On the show rig, with every channel armed and the backup on, record at least 10 minutes. During it, `log stream --predicate 'eventMessage CONTAINS "skipping cycle due to overload"'` must stay empty (it fired every 73 s on the 2026-11-23 build). Afterwards `verify_take.sh` says "no CoreAudio overload" and the report has `inputCyclesSkipped` 0. Also check that no `diskutil` runs during the take (`ps -ax | grep diskutil`).
+- [ ] **2026-11-24 fix round, on the show rig.**
+  - **SMART:** with the session on an internal or Thunderbolt SSD, the drive is read about a second after the session opens. A USB drive reads "Not Supported", and nothing shows.
+  - **StereoMix:** with Record StereoMix on, after a take with any `inputCyclesSkipped`, StereoMix.wav is exactly as long as the tracks.
+  - **Cues during a save:** recall a cue with different inputs right after STOP. The status says "(inputs held until the take is saved)", and PATCH shows the new inputs once the save ends, before RECORD.
+  - **Helper:** after installing a new build with the helper on, the first launch replaces the old helper without the "another program" message.
+  - **EDIT:** a crossfade made with the dot sounds level across the seam.
+  - **Meterbridge:** all strips can be scrolled to on the laptop screen.
+  - **verify_take:** on a take older than the Mac's log, it prints "could not check this Mac's log", not a green OK.
 
 ### Sessions
 
