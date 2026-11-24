@@ -36,6 +36,10 @@ namespace zynforge::capture
     //    a take rolling, or one that can't be shown to be idle (closing a take
     //    it sends no status; or it did not answer Quit), is kept and named,
     //    no take starts on it, and tick() replaces it as soon as it is idle.
+    //  * A launch first waits (bounded) for a helper that has closed the port
+    //    to let go of the port's key, launches again when the one it started
+    //    could not listen, and keeps as its own only the helper that holds the
+    //    port: one that lost the port to another is reaped, never reported dead.
     //
     // The daemon side needs no watchdog: a vanished GUI just drops the
     // socket (SIGPIPE ignored) and recording continues.
@@ -58,6 +62,10 @@ namespace zynforge::capture
         bool isRunning();
         // The exit status once it has exited (a signal reads as 128 + signal), else -1.
         int  exitCode() const noexcept { return lastExitCode; }
+        // 0 once it has exited and been reaped (isRunning), or before start.
+        pid_t processId() const noexcept { return pid; }
+        // SIGTERM: the helper closes its device and exits.
+        void askToExit();
 
     private:
         pid_t pid { 0 };
@@ -193,6 +201,16 @@ namespace zynforge::capture
         bool idleByFreshStatus() const;
         bool retireOtherBuild();
         bool launchAndAttach();
+        bool attachToLaunched (bool& answeredWrongly);
+        bool launchedHelperAnswers();
+        // A helper that has closed its port can still hold the port's key a
+        // while (CaptureServer::stop), and one launched meanwhile can't listen.
+        // A launch waits this long for the key, and starts the helper again,
+        // after a pause, when the one it started could not listen.
+        static constexpr int kEndpointReleaseWaitMs = 4000;
+        static constexpr int kLaunchAttempts        = 3;
+        static constexpr int kRelaunchPauseMs       = 250;    // doubled each time
+        static constexpr int kRelaunchReleaseWaitMs = 1000;
         bool isOtherBuild (const juce::String& build);
         void replaceOtherBuildWhenIdle();
         bool               otherBuildKept { false };
