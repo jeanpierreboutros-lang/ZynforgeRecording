@@ -127,6 +127,7 @@ namespace zynforge::capture
         void releaseFinishedTake();
         void noteDevice (const juce::String& name);
         juce::String heldDevice() const;
+        void settleDeviceRestart (std::unique_lock<std::mutex>& commandGuard);
 
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
@@ -165,6 +166,11 @@ namespace zynforge::capture
         juce::String        deviceName;       // set while a device runs
         juce::String        appliedDeviceState; // message thread: the setup the last configure opened
         std::atomic<int>    stopsInFlight { 0 };
+        // The device (re)started while a take's files were closing, so the
+        // recorder could not be prepared for it (MultitrackRecorder::prepare
+        // returns while finalizing). Set on the message thread; STOP and START
+        // prepare for the running device once the files are final.
+        std::atomic<bool>   deviceRestartPending { false };
         juce::String        buildId;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureDaemon)

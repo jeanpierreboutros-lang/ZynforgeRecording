@@ -200,12 +200,52 @@ namespace zynforge::capture
         const auto block = device->getCurrentBufferSizeSamples();
         currentSampleRate.store (sr);
         currentBlockSize .store (block);
-        recorder.prepare (sr, block, recorder.getNumTracks() > 0 ? recorder.getNumTracks()
-                                    : device->getActiveInputChannels().countNumberOfSetBits());
+        {
+            // A STOP closing the take's files on the command thread leaves the
+            // recorder as it is (prepare returns at once), and the next take
+            // was written at this device's rate under the old rate's header.
+            // Asked under the lock STOP's start takes, so the two can't pass
+            // each other. Prepared once the files are final, as AudioEngine
+            // defers its device configuration (settleDeviceRestart).
+            const juce::ScopedLock structure (recorder.getStructureLock());
+            if (recorder.isFinalizing())
+                deviceRestartPending.store (true);
+            else
+            {
+                deviceRestartPending.store (false);
+                recorder.prepare (sr, block, recorder.getNumTracks() > 0 ? recorder.getNumTracks()
+                                            : device->getActiveInputChannels().countNumberOfSetBits());
+            }
+        }
         recorder.setAudioWorkgroup (device->getWorkgroup());
         noteDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
         deviceAvailable.store (true);
         audioLoadPct.store (0.0f);
+    }
+
+    // A device restart that came while a take's files were closing, applied
+    // now they are final: the callback is taken off and put back, so JUCE runs
+    // audioDeviceAboutToStart again and the recorder is prepared for the
+    // device as it runs now. That is the message thread's work, and the
+    // command lock is let go meanwhile: the message thread can be waiting for
+    // it (audioDeviceStopped at the end of a take).
+    void CaptureDaemon::settleDeviceRestart (std::unique_lock<std::mutex>& commandGuard)
+    {
+        if (testMode.load() || ! deviceRestartPending.load()) return;
+        commandGuard.unlock();
+        runDeviceWork ([this]
+        {
+            // A take rolling or closing again settles it at its own end.
+            if (! deviceRestartPending.load() || recorder.isRecording() || recorder.isFinalizing()) return;
+            if (deviceManager.getCurrentAudioDevice() == nullptr)
+            {
+                deviceRestartPending.store (false);   // stopped since: its next start prepares
+                return;
+            }
+            deviceManager.removeAudioCallback (this);
+            deviceManager.addAudioCallback (this);
+        });
+        commandGuard.lock();
     }
 
     void CaptureDaemon::noteDevice (const juce::String& name)
@@ -323,6 +363,9 @@ namespace zynforge::capture
                 // The window checked its last status. Only here is the answer
                 // current: the device can fall back between that and this.
                 const auto wantedDevice = c.configuration.getProperty ("expectedDevice", "").toString();
+                // A device restart a STOP has not yet applied: never a take at
+                // the rate before it.
+                settleDeviceRestart (g);
                 if (recorder.isRecording())              { r.error = "capture is already recording"; }
                 else if (c.sessionDir.isEmpty())         { r.error = "no sessionDir"; }
                 else if (! testMode.load() && ! deviceAvailable.load())
@@ -413,6 +456,9 @@ namespace zynforge::capture
                     if (recorder.hasReportWriteFailed()) failures.add ("integrity report failed");
                     r.error = "recording stopped, but finalisation failed: " + failures.joinIntoString (", ");
                 }
+                // The device restarted while the files closed: prepared for it
+                // before the window hears the take ended and can start the next.
+                settleDeviceRestart (g);
                 if (beforeStopReplyForTests) beforeStopReplyForTests();
                 sendStatusUnlocked (buildStatus());
                 if (betweenStopStatusAndReplyForTests) betweenStopStatusAndReplyForTests();
