@@ -4,6 +4,7 @@
 
 #include "CheckedFileStream.h"
 
+#include <array>
 #include <atomic>
 #include <memory>
 
@@ -63,20 +64,29 @@ namespace zynforge
         }
 
         // Audio thread, before the block that follows a stretch the device
-        // did not deliver: that many frames of silence go in at this point.
+        // did not deliver (a ride-through's return, a cycle CoreAudio skipped):
+        // that many frames of silence go in at this point, as in every track.
+        // Gaps queue, so two that come closer together than the writer thread
+        // runs (two skipped cycles a block apart) both land. Only a gap the
+        // queue has no room for marks the mix failed.
         void addGap (juce::int64 frames) noexcept
         {
             if (frames <= 0) return;
-            // One at a time; the writer thread takes it within milliseconds,
-            // and a take is held open far longer than that between two.
-            if (gapAt.load (std::memory_order_acquire) >= 0)
+            const auto next = gapsAdded.load (std::memory_order_relaxed);   // this thread's own
+            if (next - gapsTaken.load (std::memory_order_acquire) >= kMaxPendingGaps)
             {
                 failed.store (true, std::memory_order_relaxed);
                 return;
             }
-            gapFrames.store (frames, std::memory_order_relaxed);
-            gapAt.store (queued, std::memory_order_release);
+            auto& gap = gaps[(size_t) (next % kMaxPendingGaps)];
+            gap.at = queued;
+            gap.frames = frames;
+            gapsAdded.store (next + 1, std::memory_order_release);
         }
+
+        // Gaps waiting for the writer thread. It takes each within
+        // milliseconds, and at most one gap comes per block.
+        static constexpr int kMaxPendingGaps = 64;
 
     private:
         static constexpr int kSilenceFrames = 4096;
@@ -86,19 +96,27 @@ namespace zynforge
         // Writer thread. True while it wrote something.
         bool writePending()
         {
-            // Ready first, then the gap: a block queued after a gap is only
+            // Ready first, then the gaps: a block queued after a gap is only
             // seen once the gap that comes before it is.
             const int ready = fifo.getNumReady();
-            const auto at = gapAt.load (std::memory_order_acquire);
+            const auto taken = gapsTaken.load (std::memory_order_relaxed);   // this thread's own
+            juce::int64 at = -1, length = 0;
+            if (taken < gapsAdded.load (std::memory_order_acquire))
+            {
+                // The audio thread leaves this slot alone until it is taken.
+                const auto& gap = gaps[(size_t) (taken % kMaxPendingGaps)];
+                at = gap.at;
+                length = gap.frames;
+            }
             if (at >= 0 && at == consumed)
             {
-                for (auto left = gapFrames.load (std::memory_order_relaxed); left > 0;)
+                for (auto left = length; left > 0;)
                 {
                     const int count = (int) juce::jmin (left, (juce::int64) kSilenceFrames);
                     writeFrom (silence, 0, count);
                     left -= count;
                 }
-                gapAt.store (-1, std::memory_order_release);
+                gapsTaken.store (taken + 1, std::memory_order_release);
                 return true;
             }
             int wanted = ready;
@@ -134,7 +152,12 @@ namespace zynforge
         juce::AudioBuffer<float> buffer, silence;
         juce::int64 queued { 0 };      // audio thread: frames queued so far
         juce::int64 consumed { 0 };    // writer thread: of those, frames written
-        std::atomic<juce::int64> gapAt { -1 }, gapFrames { 0 };
+        // A ring of gaps, one writer each side: the audio thread fills a slot
+        // and then counts it added; the writer thread writes it and then
+        // counts it taken. `at` is where in `queued` the silence goes.
+        struct Gap { juce::int64 at { 0 }, frames { 0 }; };
+        std::array<Gap, (size_t) kMaxPendingGaps> gaps {};
+        std::atomic<juce::int64> gapsAdded { 0 }, gapsTaken { 0 };
         const int flushInterval;
         int untilFlush { 0 };   // the first write puts a length in the header at once
 
