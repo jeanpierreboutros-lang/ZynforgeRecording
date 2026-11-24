@@ -5,6 +5,8 @@
 #include "MainComponent.h"
 #include "EditToolsBar.h"
 
+#include <algorithm>
+
 using namespace zynforge;
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
@@ -241,11 +243,45 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
                 // Deleting a recording is destructive enough to confirm first
                 // (the engineer asked for a warning). The file stays on disk;
                 // this only pulls the clip from the arrangement (undoable).
-                confirmDeleteRecording (ripple, [this, ripple, haveClip, haveRange]
+                // The answer acts on what the question was about, or on nothing:
+                // a clip selection gone while it waited (an undo, a remote edit)
+                // turned a clip ripple into a range ripple, and a clip selected
+                // meanwhile turned a range ripple into a clip delete.
+                const auto clipPrints = haveClip ? clipedit::printsOf (engine, selectedClipTargets())
+                                                 : std::vector<clipedit::ClipPrint> {};
+                const auto rangeStart = engine.getPlayer().getLoopStart();
+                const auto rangeEnd   = engine.getPlayer().getLoopEnd();
+                confirmDeleteRecording (ripple, [this, ripple, haveClip, clipPrints, rangeStart, rangeEnd]
                 {
+                    const bool clipNow = editPage != nullptr && editPage->getSelectedClipTrack() >= 0;
+                    bool same = false;
+                    if (haveClip)
+                    {
+                        // The same clips, wherever undo or an edit moved them.
+                        if (const auto found = clipedit::findPrinted (engine, clipPrints); found && clipNow)
+                        {
+                            auto asked = *found;
+                            auto now = selectedClipTargets();
+                            std::sort (asked.begin(), asked.end());
+                            std::sort (now.begin(), now.end());
+                            same = asked == now;
+                        }
+                    }
+                    else
+                    {
+                        const auto& player = engine.getPlayer();
+                        same = player.hasLoopRegion() && player.getLoopStart() == rangeStart
+                            && player.getLoopEnd() == rangeEnd
+                            && ! (ripple && clipNow);   // a ripple would take the clip
+                    }
+                    if (! same)
+                    {
+                        showStatus ("The selection changed while Delete was asked -- nothing deleted");
+                        return;
+                    }
                     if (ripple)         editRippleDelete();
                     else if (haveClip)  editDeleteSelectedClip();
-                    else if (haveRange) editClearRange();
+                    else                editClearRange();
                 });
                 return true;
             }

@@ -82,6 +82,11 @@ namespace zynforge
         // vertical just scales amplitude. delta > 0 zooms in.
         void  wheelZoomHorizontal (float delta);
         void  wheelZoomVertical   (float delta);
+        // The zoom step a wheel event carries: the axis that moved. macOS turns
+        // Shift+wheel into a horizontal scroll (deltaY 0), and a trackpad swipe
+        // can be sideways; 0 when the wheel did not move, which zooms nothing.
+        static float zoomWheelDelta (const juce::MouseWheelDetails& w) noexcept
+        { return std::abs (w.deltaY) >= std::abs (w.deltaX) ? w.deltaY : w.deltaX; }
 
         // Fires whenever zoom changes (toolbar, mouse wheel, Memory
         // Location recall, etc.). Host uses this to autosave the per-
@@ -291,7 +296,7 @@ namespace zynforge
             {
                 if ((e.mods.isCommandDown() || e.mods.isCtrlDown()) && onZoomWheel)
                 {
-                    onZoomWheel (w.deltaY, e.mods.isShiftDown());
+                    onZoomWheel (zoomWheelDelta (w), e.mods.isShiftDown());
                     return;
                 }
                 juce::Viewport::mouseWheelMove (e, w);

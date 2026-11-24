@@ -1982,8 +1982,20 @@ namespace zynforge
         return insertAt;
     }
 
+    juce::int64 AudioEngine::clipSourceLength (int track, int clipIndex) const
+    {
+        const auto* clips = tryClipsFor (track);
+        if (clips == nullptr || clipIndex < 0 || clipIndex >= (int) clips->size()) return 0;
+        const auto& c = (*clips)[(size_t) clipIndex];
+        if (c.audioFile == juce::File()) return player.getTrackLengthSamples (track);
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        if (auto reader = ConcatReader::create (fm, findTakeParts (c.audioFile)))
+            return reader->lengthInSamples;
+        return 0;
+    }
+
     juce::int64 AudioEngine::constrainClipEditDelta (int track, int clipIndex, ClipEdit mode,
-                                                    juce::int64 delta) const
+                                                    juce::int64 delta, juce::int64 sourceLength) const
     {
         const auto* clips = tryClipsFor (track);
         if (clips == nullptr || clipIndex < 0 || clipIndex >= (int) clips->size()) return 0;
@@ -1995,19 +2007,16 @@ namespace zynforge
             return juce::jlimit (-juce::jmin (c.fileStartSamples, c.timelineStartSamples),
                                 juce::jmax ((juce::int64) 0, c.fileLengthSamples - minLength), delta);
         if (delta <= 0) return juce::jmax (delta, juce::jmin ((juce::int64) 0, minLength - c.fileLengthSamples));
-        juce::int64 sourceLength = 0;
-        if (c.audioFile == juce::File()) sourceLength = player.getTrackLengthSamples (track);
-        else
-        {
-            juce::AudioFormatManager fm; fm.registerBasicFormats();
-            if (auto reader = ConcatReader::create (fm, findTakeParts (c.audioFile)))
-                sourceLength = reader->lengthInSamples;
-        }
+        // A clip on its own file: measuring it lists the folder and opens the
+        // file. A drag passes the length it measured at the grab, so a right
+        // edge dragged across an edit group does no disk work per mouse event.
+        if (sourceLength < 0) sourceLength = clipSourceLength (track, clipIndex);
         return juce::jmin (delta, juce::jmax ((juce::int64) 0,
                                            sourceLength - c.fileStartSamples - c.fileLengthSamples));
     }
 
-    bool AudioEngine::editClip (int track, int clipIndex, ClipEdit mode, juce::int64 deltaSamples)
+    bool AudioEngine::editClip (int track, int clipIndex, ClipEdit mode, juce::int64 deltaSamples,
+                                juce::int64 sourceLength)
     {
         if (isArrangementFrozen()) return false;
         if (track < 0 || track >= (int) trackClips.size()) return false;
@@ -2015,7 +2024,7 @@ namespace zynforge
         if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
         auto& c = list[(size_t) clipIndex];
         if (c.locked) return false;   // edits refused on locked clips
-        deltaSamples = constrainClipEditDelta (track, clipIndex, mode, deltaSamples);
+        deltaSamples = constrainClipEditDelta (track, clipIndex, mode, deltaSamples, sourceLength);
         if (deltaSamples == 0) return false;
 
         // Min length: 1024 samples (~20 ms at 48 k) so a clip never
@@ -2191,6 +2200,9 @@ namespace zynforge
         if (isArrangementFrozen()) return false;
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
+        // A lock pins the clip as it sounds: its gain as well as its edges and
+        // fades (a gain preset or ride changed a locked keeper).
+        if ((*list)[(size_t) clipIndex].locked) return false;
         (*list)[(size_t) clipIndex].gainDb = juce::jlimit (-60.0f, 12.0f, dB);
         player.setTrackClips (track, *list);
         syncActiveTake (track);

@@ -4,6 +4,7 @@
 
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "LeftClickOnly.h"
 
 #include <array>
 #include <functional>
@@ -127,11 +128,15 @@ namespace zynforge
             }
 
             bool active { false };
+            bool menuPress { false };   // the press now held asked for a menu
             std::function<void()> onClick;
 
+            // A right-click is a menu and nothing else: a right, middle or
+            // Ctrl press picks no tool (it toggled the tool under it).
+            void mouseDown (const juce::MouseEvent& e) override { menuPress = leftclick::isMenuPress (e); }
             void mouseUp (const juce::MouseEvent& e) override
             {
-                if (e.mouseWasClicked() && onClick) onClick();
+                if (e.mouseWasClicked() && ! menuPress && ! leftclick::isMenuPress (e) && onClick) onClick();
             }
 
             bool keyPressed (const juce::KeyPress& k) override

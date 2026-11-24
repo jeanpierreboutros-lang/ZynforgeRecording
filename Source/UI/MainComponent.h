@@ -49,6 +49,7 @@ namespace zynforge { class Design20261117AlarmsTests; }
 namespace zynforge { class Design20261117PanelsTests; }
 namespace zynforge { class Fix20261124MainTests; }
 namespace zynforge { class Fix20261124SessionTests; }
+namespace zynforge { class Fix20261124EditTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -512,6 +513,7 @@ private:
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
     // Test seam: receives what either delete prompt would run on "Delete".
     std::function<void (std::function<void()>)> confirmForTests;
+    friend class zynforge::Fix20261124EditTests;
 
     // Confirmation gate for deleting the selected channel(s) from the EDIT
     // view (right-click ▸ Delete Channel, or Delete on a selected channel).

@@ -175,11 +175,23 @@ namespace zynforge
         // between timeline-adjacent clips. draggingXfadeAIdx is the
         // OUTGOING clip's index in the per-track list, draggingXfadeBIdx
         // the incoming one's (not necessarily AIdx + 1: a Move leaves the
-        // list unsorted). We slide the equal-power crossfade point by
-        // updating both clips' fade lengths so the midpoint follows
-        // the mouse.
+        // list unsorted). Dragging it makes the overlap a full crossfade
+        // (applyCrossfade).
         int draggingXfadeAIdx { -1 };
         int draggingXfadeBIdx { -1 };
+        // The press now held asks for a menu (right or middle button, or
+        // Ctrl-click): it opens the menu and nothing else -- no click, no
+        // selection change, no drag. leftclick::isMenuPress.
+        bool menuPress { false };
+        // This drag edits nothing: a peer clip it would reach is locked (or a
+        // crossfade has no room), said once at its first step.
+        bool dragRefused { false };
+        // The crossfade this drag makes is in place.
+        bool xfadeApplied { false };
+        // Each dragPeers clip's source length, read once when a TrimRight drag
+        // starts: measuring a clip on its own file lists its folder and opens
+        // it, which per mouse event per peer froze the message thread.
+        std::vector<juce::int64> dragSourceLengths;
         int dragStartX          {  0 };
         // The pointer has left kClickSlopPx since the press: the gesture is a
         // drag from here on, even if it comes back to where it started.
@@ -627,6 +639,15 @@ namespace zynforge
             if (c.audioFile != juce::File() && c.audioFile != take)
                 return { thumbnailForFile (c.audioFile), false,
                          c.sourceChannel >= 0 ? juce::jlimit (0, 1, c.sourceChannel) : 0 };
+            // A clip that names the row's own take file plays the channel it
+            // names (SessionPlayer reads an explicit file's sourceChannel), not
+            // the row's: a clip copied from the L row of an unlinked stereo file
+            // onto the R row plays L and drew R. A one-channel file has only 0.
+            if (c.audioFile != juce::File())
+            {
+                auto& thumb = rightLane ? rightThumb() : thumbnailL;
+                return { &thumb, false, thumb.getNumChannels() > 1 ? juce::jlimit (0, 1, c.sourceChannel) : 0 };
+            }
             if (rightLane) return { &rightThumb(), ! stereoOneFile, stereoOneFile ? 1 : 0 };
             if (stereo)    return { &thumbnailL, ! stereoOneFile, 0 };
             return { &thumbnailL, false, monoFileChannel };
@@ -849,19 +870,42 @@ namespace zynforge
             // it trickled in. Rows off screen never painted, so kept theirs.
             liveHold = ! recPeakL.empty();
             reloadsAtHold = waveformReloads;
+            heldSession = engine.getActiveSessionDir();
         }
         bool isHoldingLiveEnvelope() const noexcept { return liveHold; }
+
+        // The session folder the held take was captured into. Strip ids repeat
+        // across sessions (strip_uid_N per index), so a hold is only ever this
+        // session's take: another session's rows never show or continue it.
+        const juce::File& heldSessionDir() const noexcept { return heldSession; }
+        // A hold that names another session than this one. A hold whose
+        // session was not known at STOP (none pinned yet) keeps the old rule.
+        bool holdsAnotherSession (const juce::File& session) const noexcept
+        { return liveHold && heldSession != juce::File() && heldSession != session; }
+        // Drop a hold that belongs to another session; the lane shows its own
+        // files (or nothing) instead.
+        void releaseHeldTakeOutside (const juce::File& session)
+        {
+            if (! holdsAnotherSession (session)) return;
+            liveHold = false;
+            recPeakL.reset();
+            recPeakR.reset();
+            heldSession = juce::File();
+            repaint();
+        }
 
         // A row built new for the same strip (a link, a delete during the
         // post-STOP rescan) takes over the held take, so its lane does not drop
         // the whole take for the part of it scanned so far.
         const LivePeakHistory& heldEnvelope (bool rightLane) const noexcept { return rightLane ? recPeakR : recPeakL; }
         bool holdRescanIssued() const noexcept { return waveformReloads != reloadsAtHold; }
-        void adoptHeldTake (const LivePeakHistory& left, const LivePeakHistory* right, bool rescanIssued)
+        void adoptHeldTake (const LivePeakHistory& left, const LivePeakHistory* right, bool rescanIssued,
+                            const juce::File& session)
         {
             recPeakL = left;
             if (right != nullptr && stereo) recPeakR = *right;
             liveHold = ! recPeakL.empty();
+            heldSession = session;
             // The old row's settle rescan had been issued: this row's own first
             // scan is the one that releases it. Otherwise the settle rescan
             // still reloads every holding row, as before.
@@ -1354,7 +1398,49 @@ namespace zynforge
                 }
             }
             else if (! haveClipBlocks || showLive)
-                drawContinuous (liveFrac, existingFrac);
+            {
+                // A take rolling over an arrangement (a continue): the dim
+                // backdrop is the arrangement as it plays -- each clip's file
+                // region at its timeline span, on the lane's take-time scale,
+                // drawn like the clip blocks (laneWaveFor). Squeezing the whole
+                // take into the arrangement's width drew cut audio after a crop
+                // or ripple delete, and moved audio where it no longer plays.
+                // A take seeded from the held one draws that take itself.
+                const bool perClip = liveRecording && haveClipBlocks && ! seededFromHold();
+                if (perClip)
+                {
+                    const auto lane = TimelineMapper::forLane (inner, juce::jmax<juce::int64> (1, timelineTotalS));
+                    const double srE = engine.getPlayer().getSampleRate() > 0.0
+                                         ? engine.getPlayer().getSampleRate() : 48000.0;
+                    const auto dim = brand::clipWave (getStripColour()).withAlpha (brand::alpha::muted);
+                    for (int i = 0; i < (int) clipsForWave->size(); ++i)
+                    {
+                        const auto& c = (*clipsForWave)[(size_t) i];
+                        const int xL = lane.toXFloor (c.timelineStartSamples);
+                        const int xR = lane.toXFloor (c.timelineStartSamples + c.fileLengthSamples);
+                        if (xR <= xL) continue;
+                        const juce::Rectangle<int> span (xL, inner.getY(), xR - xL, inner.getHeight());
+                        const double t0 = (double) c.fileStartSamples / srE;
+                        const double t1 = (double) (c.fileStartSamples + c.fileLengthSamples) / srE;
+                        const auto draw = [&] (const LaneWave& w, juce::Rectangle<int> area)
+                        {
+                            if (! w.hasAudio()) return;
+                            g.setColour (dim);
+                            drawThumbnailVisible (g, *w.thumb, area, t0, t1, w.wholeFile ? -1 : w.channel,
+                                                  waveZoom (*w.thumb));
+                        };
+                        if (stereo)
+                        {
+                            const int laneH = span.getHeight() / 2;
+                            draw (laneWaveFor (c, false), span.withHeight (laneH));
+                            draw (rightLaneWaveFor (i), span.withTrimmedTop (laneH));
+                        }
+                        else
+                            draw (laneWaveFor (c, false), span);
+                    }
+                }
+                drawContinuous (liveFrac, perClip ? 0.0 : existingFrac);
+            }
 
             // ─── Clip region blocks (waveform mode) ─────────────────
             // After Edit ▸ Split / Separate, the track grows a clip list.
@@ -2042,6 +2128,13 @@ namespace zynforge
         void mouseDown (const juce::MouseEvent& e) override
         {
             pastClickSlop = false;   // every press starts as a click
+            dragRefused   = false;
+            xfadeApplied  = false;
+            // A right-click is a menu and nothing else (CLAUDE.md): its release
+            // must not read as a click on the lane (which cleared the clip
+            // selection, so a following Delete took a range or the channel),
+            // and a middle press must not move or trim like a left one.
+            menuPress = leftclick::isMenuPress (e);
 
             // JUCE delivers mouse events to a disabled component, and a session
             // job holds the page disabled until the host's next tick locks it.
@@ -2059,7 +2152,7 @@ namespace zynforge
                 // clicks) selects this channel into the shared MIXER/EDIT
                 // selection. Shift/Cmd extends; a plain click selects only
                 // this one. Drives Option+R bulk arm from the EDIT view.
-                if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+                if (! menuPress
                     && inNameZone (e.x)
                     && page->onRowSelect)
                 {
@@ -2074,7 +2167,7 @@ namespace zynforge
             // with no audio we use a notional 5-min span (matching
             // EditTimeRuler) so a fresh session lets the engineer place
             // the cursor anywhere and drop markers before recording.
-            if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+            if (! menuPress
                 && inWavePane (e.x) && ! isInResizeZone (e.getPosition()))
             {
                 const auto& player = engine.getPlayer();
@@ -2102,9 +2195,11 @@ namespace zynforge
             // Right-click on a clip in the waveform lane → clip menu.
             // Anywhere else on the row → the row's menu. Delete is offered on
             // the header only, the DAW-standard place to remove a track; the
-            // host confirms before deleting.
-            if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+            // host confirms before deleting. A middle press opens nothing and
+            // edits nothing.
+            if (menuPress)
             {
+                if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())) return;
                 if (inNameZone (e.x))
                 {
                     showRowMenu (e.getScreenPosition(), true);
@@ -2352,11 +2447,18 @@ namespace zynforge
                                     // Alt/Option-click resets clip gain to 0 dB.
                                     if (e.mods.isAltDown())
                                     {
+                                        // A locked peer refuses the reset whole,
+                                        // as the gain menu and a ride do.
+                                        const auto targets = peerClipTargets (i);
+                                        if (clipedit::anyLocked (engine, targets))
+                                        {
+                                            sayStatus ("A peer of this clip is locked -- unlock it first");
+                                            return;
+                                        }
                                         auto* page = findParentComponentOfClass<EditPage>();
                                         if (page != nullptr) page->beginClipEdit();
-                                        for (int peer : editGroupPeers())
-                                            if (const int pi = peerClipIndex (peer, i); pi >= 0)
-                                                engine.setClipGainDb (peer, pi, 0.0f);
+                                        for (auto [peer, pi] : targets)
+                                            engine.setClipGainDb (peer, pi, 0.0f);
                                         if (page != nullptr) page->commitClipEdit ("Reset clip gain");
                                         repaint();
                                         return;
@@ -2443,8 +2545,95 @@ namespace zynforge
             return list != nullptr && clip >= 0 && clip < (int) list->size() ? &(*list)[(size_t) clip] : nullptr;
         }
 
+        // Tell the host's status line why a gesture did nothing.
+        void sayStatus (const juce::String& text)
+        {
+            if (auto* page = findParentComponentOfClass<EditPage>(); page != nullptr && page->onStatus)
+                page->onStatus (text);
+        }
+
+        // This drag edits nothing from here on, and says why once.
+        void refuseDrag (const juce::String& why)
+        {
+            dragRefused = true;
+            sayStatus (why);
+        }
+
+        // The crossfade the X draws: the outgoing clip fades out across the
+        // WHOLE overlap [bStart, aEnd] and the incoming one fades in across it,
+        // so their gains sum to unity (linear) or keep the power (equal-power)
+        // at every sample of it. Each fade is anchored at its own clip edge
+        // (ClipModel), so the overlap fixes both lengths and there is no
+        // crossing point to move: the dot makes the crossfade whole, wherever
+        // it is dragged. Fades that summed to the overlap (one ending where the
+        // other began) left both clips at full level around the dot: up to
+        // +6 dB on correlated audio, in playback and every render.
+        // Every edit-group peer takes its own overlap; a locked clip, or a clip
+        // whose other fade leaves no room, refuses the crossfade whole, so a
+        // group never drifts apart.
+        void applyCrossfade()
+        {
+            const auto* clips = engine.tryClipsFor (index);
+            if (clips == nullptr || draggingXfadeAIdx >= (int) clips->size()
+                || draggingXfadeBIdx < 0 || draggingXfadeBIdx >= (int) clips->size())
+                return;
+            struct Pair { int track, a, b; juce::int64 overlap; };
+            std::vector<Pair> pairs;
+            std::vector<std::pair<int, int>> all;
+            for (int peer : editGroupPeers())
+            {
+                const int pa = peerClipIndex (peer, draggingXfadeAIdx);
+                const int pb = peerClipIndex (peer, draggingXfadeBIdx);
+                const auto* a = clipOn (peer, pa);
+                const auto* b = clipOn (peer, pb);
+                if (a == nullptr || b == nullptr) continue;
+                all.emplace_back (peer, pa);
+                all.emplace_back (peer, pb);
+                const auto overlap = a->timelineStartSamples + a->fileLengthSamples - b->timelineStartSamples;
+                if (overlap > 0) pairs.push_back ({ peer, pa, pb, overlap });
+            }
+            if (pairs.empty()) return;
+            if (clipedit::anyLocked (engine, all))
+            {
+                refuseDrag ("A peer of this crossfade is locked -- unlock it first");
+                return;
+            }
+            for (const auto& p : pairs)
+            {
+                const auto* a = clipOn (p.track, p.a);
+                const auto* b = clipOn (p.track, p.b);
+                if (a->fadeInSamples + p.overlap > a->fileLengthSamples
+                    || b->fadeOutSamples + p.overlap > b->fileLengthSamples)
+                {
+                    refuseDrag ("No room for the crossfade -- a clip's other fade fills it");
+                    return;
+                }
+            }
+            for (const auto& p : pairs)
+            {
+                if (const auto* a = clipOn (p.track, p.a))
+                {
+                    engine.setClipFades (p.track, p.a, a->fadeInSamples, p.overlap);
+                    // A fade already that long kept its ramp: a piece of a split
+                    // fade does not reach silence at the clip's end.
+                    if (a->fadeOutRampSamples != 0)
+                        engine.setClipFadeRamps (p.track, p.a, a->fadeInRampSamples, a->fadeInRampOffsetSamples, 0, 0);
+                }
+                if (const auto* b = clipOn (p.track, p.b))
+                {
+                    engine.setClipFades (p.track, p.b, p.overlap, b->fadeOutSamples);
+                    if (b->fadeInRampSamples != 0)
+                        engine.setClipFadeRamps (p.track, p.b, 0, 0, b->fadeOutRampSamples, b->fadeOutRampOffsetSamples);
+                }
+            }
+            xfadeApplied = true;
+            repaint();
+        }
+
         void mouseDrag (const juce::MouseEvent& e) override
         {
+            if (menuPress) return;   // a menu press drags nothing
+
             // Capture (or its finalization) locked the timeline mid-gesture --
             // a remote / LTC-chase / R-key start. Click-through stops NEW
             // gestures, not one already in flight, so refuse the rest of it.
@@ -2466,61 +2655,10 @@ namespace zynforge
                     || draggingClipMode == ClipDrag::SelectRange))
                 return;
 
-            // Crossfade midpoint drag. Convert the mouse x to a
-            // sample position, then set both adjacent clips' fades
-            // so the equal-power crossfade point lands there.
-            //   bFadeIn  = midSample - bStart
-            //   aFadeOut = aEnd      - midSample
-            // The midpoint is clamped inside [bStart+1, aEnd-1] so
-            // a fade never goes to zero (which would visually drop
-            // one side of the crossfade entirely).
+            // Crossfade dot drag: make the overlap a crossfade, once per drag.
             if (draggingXfadeAIdx >= 0)
             {
-                auto* clips = engine.tryClipsFor (index);
-                if (clips != nullptr && draggingXfadeAIdx < (int) clips->size()
-                    && draggingXfadeBIdx >= 0 && draggingXfadeBIdx < (int) clips->size())
-                {
-                    const auto& player = engine.getPlayer();
-                    const juce::int64 totalSamples = player.isLoaded()
-                        ? player.getTotalLengthSamples() : 0;
-                    if (totalSamples > 0)
-                    {
-                        const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
-                        const double prop = juce::jlimit (0.0, 1.0,
-                            (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
-                        const juce::int64 midSample = (juce::int64) (prop * (double) totalSamples);
-                        const auto& a = (*clips)[(size_t) draggingXfadeAIdx];
-                        const auto& b = (*clips)[(size_t) draggingXfadeBIdx];
-                        const auto aEnd   = a.timelineStartSamples + a.fileLengthSamples;
-                        const auto bStart = b.timelineStartSamples;
-                        // Guard the degenerate overlap. With an overlap of <= 2
-                        // samples the bounds invert (lo > hi): juce::jlimit
-                        // asserts in debug and returns the UPPER bound in
-                        // release, which produced a NEGATIVE fade length.
-                        if (aEnd - bStart < 2) return;
-                        const juce::int64 lo = bStart + 1, hi = aEnd - 1;
-                        const juce::int64 clamped = juce::jlimit (lo, hi, midSample);
-                        const juce::int64 bFadeIn  = clamped - bStart;
-                        const juce::int64 aFadeOut = aEnd - clamped;
-                        // Preserve existing fadeIn / fadeOut on the
-                        // OPPOSITE edge of each clip; only the
-                        // crossfade-side fade is being adjusted.
-                        // Broadcast to EDIT-group peers like every other clip
-                        // edit -- the crossfade was the one drag that stayed
-                        // local, so a grouped pair silently drifted apart.
-                        for (int peer : editGroupPeers())
-                        {
-                            const int pa = peerClipIndex (peer, draggingXfadeAIdx);
-                            const int pb = peerClipIndex (peer, draggingXfadeBIdx);
-                            if (pa < 0 || pb < 0) continue;
-                            if (const auto* out = clipOn (peer, pa))
-                                engine.setClipFades (peer, pa, out->fadeInSamples, aFadeOut);
-                            if (const auto* in = clipOn (peer, pb))
-                                engine.setClipFades (peer, pb, bFadeIn, in->fadeOutSamples);
-                        }
-                        repaint();
-                    }
-                }
+                if (! xfadeApplied && ! dragRefused) applyCrossfade();
                 return;
             }
 
@@ -2605,7 +2743,24 @@ namespace zynforge
             // accumulating per-frame).
             if (draggingClipIdx >= 0)
             {
-                if (dragPeers.empty()) dragPeers = peerClipTargets (draggingClipIdx);
+                if (dragPeers.empty())
+                {
+                    dragPeers = peerClipTargets (draggingClipIdx);
+                    // A fade or gain change that skips a locked peer leaves the
+                    // group apart: refuse it whole, as the menu and a trim or
+                    // move do (constrainClipEditDelta).
+                    if ((draggingClipMode == ClipDrag::FadeIn || draggingClipMode == ClipDrag::FadeOut
+                         || draggingClipMode == ClipDrag::ClipGain)
+                        && clipedit::anyLocked (engine, dragPeers))
+                        refuseDrag ("A peer of this clip is locked -- unlock it first");
+                    // The right edge is bounded by each source's length: read it
+                    // once here, never per mouse event.
+                    dragSourceLengths.clear();
+                    if (draggingClipMode == ClipDrag::TrimRight && ! dragRefused)
+                        for (auto [peer, pi] : dragPeers)
+                            dragSourceLengths.push_back (engine.clipSourceLength (peer, pi));
+                }
+                if (dragRefused) return;
                 const auto& player = engine.getPlayer();
                 // Map pixels at the scale the clip was GRABBED at. Dragging the
                 // last clip right grows the session on every step, and re-reading
@@ -2700,9 +2855,14 @@ namespace zynforge
                         {
                             // One bounded delta preserves alignment when any peer
                             // reaches zero, a source edge, or a locked clip.
-                            for (auto [peer, pi] : dragPeers)
-                                stepSamples = engine.constrainClipEditDelta (peer, pi, mode, stepSamples);
-                            for (auto [peer, pi] : dragPeers) engine.editClip (peer, pi, mode, stepSamples);
+                            const auto sourceLengthOf = [this] (size_t k)
+                            { return k < dragSourceLengths.size() ? dragSourceLengths[k] : (juce::int64) -1; };
+                            for (size_t k = 0; k < dragPeers.size(); ++k)
+                                stepSamples = engine.constrainClipEditDelta (dragPeers[k].first, dragPeers[k].second,
+                                                                             mode, stepSamples, sourceLengthOf (k));
+                            for (size_t k = 0; k < dragPeers.size(); ++k)
+                                engine.editClip (dragPeers[k].first, dragPeers[k].second, mode, stepSamples,
+                                                 sourceLengthOf (k));
                             lastDragSamples += stepSamples;
                         }
                         repaint();
@@ -2714,6 +2874,14 @@ namespace zynforge
 
         void mouseUp (const juce::MouseEvent& e) override
         {
+            // A menu press armed nothing: its release is no click (it cleared
+            // the clip selection) and ends no gesture.
+            if (std::exchange (menuPress, false))
+            {
+                pastClickSlop = false;
+                return;
+            }
+
             // A gesture released after the timeline locked commits nothing.
             const auto* lockPage = findParentComponentOfClass<EditPage>();
             const bool timelineLocked = ! isEnabled() || (lockPage != nullptr && lockPage->isTimelineReadOnly());
@@ -2735,6 +2903,9 @@ namespace zynforge
             draggingClipMode = ClipDrag::TrimLeft;
             draggingXfadeAIdx = -1;
             draggingXfadeBIdx = -1;
+            dragRefused      = false;
+            xfadeApplied     = false;
+            dragSourceLengths.clear();
             lastDragSamples  = 0;
             dragTimelineSamples = 0;
             // Commit the clip-edit drag as a single Cmd+Z step (trim /
@@ -2956,6 +3127,15 @@ namespace zynforge
             auto withUndo = [self] (const juce::String& label, auto&& op)
             { self->clipUndoStep (label, op); };
 
+            // A lock pins the clip's gain as well as its edges and fades: a gain
+            // item refuses the whole group when one peer is locked, so it
+            // never changes some peers and not the rest.
+            if (((chosen >= 501 && chosen <= 506) || chosen == 510) && clipedit::anyLocked (engine, targets))
+            {
+                sayStatus ("A peer of this clip is locked -- unlock it first");
+                return;
+            }
+
             switch (chosen)
             {
                 // Per-clip ops mirror to every edit peer -- a collapsed stereo
@@ -3072,6 +3252,12 @@ namespace zynforge
                         {
                             if (page != nullptr && page->onStatus)
                                 page->onStatus ("The clip changed while its gain was asked -- nothing changed");
+                            return;
+                        }
+                        if (clipedit::anyLocked (rowSafe->engine, *clips))
+                        {
+                            if (page != nullptr && page->onStatus)
+                                page->onStatus ("A peer of this clip is locked -- unlock it first");
                             return;
                         }
                         if (page != nullptr) page->beginClipEdit();
@@ -3228,7 +3414,7 @@ namespace zynforge
             menu.addItem (411, "Delete clip",       ! locked);
             menu.addItem (413, "Consolidate clip",  ! locked);
             menu.addSeparator();
-            menu.addSubMenu ("Clip gain",  gain);
+            menu.addSubMenu ("Clip gain",  gain, ! locked);
             menu.addSubMenu ("Fade in",    fadeIn,  ! locked);
             menu.addSubMenu ("Fade out",   fadeOut, ! locked);
             menu.addItem (320, "Equal-power fades", ! locked, curveNow == 1);
@@ -3582,6 +3768,7 @@ namespace zynforge
         // thumbnail isFullyLoaded(). This is what makes the waveform appear
         // INSTANTLY on stop instead of "building" for a beat.
         bool                      liveHold              { false };
+        juce::File                heldSession;   // where the held take was captured (heldSessionDir)
         int                       reloadsAtHold         { 0 };   // waveformReloads when the hold began
         // Bins at the start of the live envelope that are the held previous
         // take (setLiveRecording), drawn as the existing take, not as capture.
