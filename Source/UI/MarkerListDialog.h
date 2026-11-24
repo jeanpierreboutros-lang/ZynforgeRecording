@@ -12,9 +12,12 @@
 namespace zynforge
 {
     // Sortable marker list. Double-click a row to jump the player to
-    // that sample position; right-click for rename / delete. The dialog
-    // tracks marker mutations via a 4 Hz timer so adds / renames in the
-    // EDIT view show up live. It closes when a take starts behind it, and
+    // that marker; right-click for rename / delete. The dialog draws from a
+    // copy of the markers it last showed and a 4 Hz timer refreshes it on any
+    // change (an add, a move, a rename, a re-sort), not only a new count, so
+    // edits in the EDIT view show up live. A row acts on the marker it shows,
+    // by identity: an index goes stale as soon as the list re-sorts. It
+    // closes when a take starts behind it, and
     // refuses Rename / Delete while one rolls: a rename prompt would stand
     // in front of STOP.
     class MarkerListDialog final : public juce::Component,
@@ -37,6 +40,7 @@ namespace zynforge
             addAndMakeVisible (table);
 
             setSize (520, 420);
+            refreshRows();
             startTimerHz (4);
         }
 
@@ -104,25 +108,67 @@ namespace zynforge
                     safeSelf->engine.getMarkers().renameMarker (
                         target, own->getTextEditorContents ("n").trim());
                     safeSelf->engine.getMarkers().save();
-                    safeSelf->table.updateContent();
+                    safeSelf->refreshRows();
                 }));
             }
             else if (chosen == 2)
             {
                 engine.getMarkers().removeMarker (row);
                 engine.getMarkers().save();
-                table.updateContent();
+                refreshRows();
             }
         }
 
     private:
-        void timerCallback() override
+        // Same markers, in the same order, at the same places and names, at
+        // the same rate as the rows on screen.
+        bool showsCurrentMarkers() const
         {
-            const int n = engine.getMarkers().getCount();
-            if (n != lastCount) { lastCount = n; table.updateContent(); }
+            const auto& markers = engine.getMarkers();
+            const auto& all = markers.getAll();
+            if (all.size() != shown.size() || markers.getSampleRate() != shownRate) return false;
+            for (size_t i = 0; i < all.size(); ++i)
+                if (all[i].runtimeId != shown[i].runtimeId || all[i].sampleOffset != shown[i].sampleOffset
+                    || all[i].name != shown[i].name)
+                    return false;
+            return true;
         }
 
-        int getNumRows() override { return engine.getMarkers().getCount(); }
+        void refreshRows()
+        {
+            // The selection stays on its marker when the rows re-sort.
+            const auto* selected = shownAt (table.getSelectedRow());
+            const auto selectedId = selected != nullptr ? selected->runtimeId : juce::String();
+            shown     = engine.getMarkers().getAll();
+            shownRate = engine.getMarkers().getSampleRate();
+            table.updateContent();
+            const int row = rowOf (selectedId);
+            if (row >= 0) table.selectRow (row, true, true);
+            else          table.deselectAllRows();
+            // updateContent repaints only rows whose index changed: a row that
+            // now shows another marker, time or name must redraw too.
+            table.repaint();
+        }
+
+        const Marker* shownAt (int row) const noexcept
+        {
+            return juce::isPositiveAndBelow (row, (int) shown.size()) ? &shown[(size_t) row] : nullptr;
+        }
+
+        int rowOf (const juce::String& runtimeId) const
+        {
+            if (runtimeId.isEmpty()) return -1;
+            for (size_t i = 0; i < shown.size(); ++i)
+                if (shown[i].runtimeId == runtimeId) return (int) i;
+            return -1;
+        }
+
+        void timerCallback() override
+        {
+            if (! showsCurrentMarkers()) refreshRows();
+        }
+
+        int getNumRows() override { return (int) shown.size(); }
 
         void paintRowBackground (juce::Graphics& g, int /*r*/, int /*w*/,
                                   int /*h*/, bool selected) override
@@ -132,8 +178,10 @@ namespace zynforge
 
         void paintCell (juce::Graphics& g, int row, int col, int w, int h, bool) override
         {
-            const auto& m = engine.getMarkers().getMarker (row);
-            const auto sr = engine.getMarkers().getSampleRate();
+            const auto* shownMarker = shownAt (row);
+            if (shownMarker == nullptr) return;
+            const auto& m = *shownMarker;
+            const auto sr = shownRate;
             juce::String text;
             switch (col)
             {
@@ -159,6 +207,8 @@ namespace zynforge
 
         void cellClicked (int row, int /*col*/, const juce::MouseEvent& e) override
         {
+            const auto* shownMarker = shownAt (row);
+            if (shownMarker == nullptr) return;
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
                 juce::PopupMenu m;
@@ -171,7 +221,7 @@ namespace zynforge
                 // afterwards is a use-after-free. Every other dialog in the app
                 // already uses this pattern; this was the one that didn't.
                 juce::Component::SafePointer<MarkerListDialog> safeSelf (this);
-                const auto markerId = engine.getMarkers().getMarker (row).runtimeId;
+                const auto markerId = shownMarker->runtimeId;
                 m.showMenuAsync (juce::PopupMenu::Options(), [safeSelf, markerId] (int chosen)
                 {
                     if (safeSelf != nullptr) safeSelf->applyMenuChoice (chosen, markerId);
@@ -181,14 +231,20 @@ namespace zynforge
 
         void cellDoubleClicked (int row, int /*col*/, const juce::MouseEvent&) override
         {
-            // Jump the player to this marker's sample position.
-            const auto& m = engine.getMarkers().getMarker (row);
-            engine.getPlayer().setPositionSamples (m.sampleOffset);
+            // Jump the player to the marker this row shows, where it is now.
+            const auto* shownMarker = shownAt (row);
+            if (shownMarker == nullptr) return;
+            auto& markers = engine.getMarkers();
+            const int index = markers.indexOfId (shownMarker->runtimeId);
+            if (index < 0) { refreshRows(); return; }   // deleted since the list last refreshed
+            engine.getPlayer().setPositionSamples (markers.getMarker (index).sampleOffset);
         }
 
         AudioEngine&         engine;
         juce::TableListBox   table;
-        int                  lastCount { -1 };
+        // The rows on screen, as of the last refresh.
+        std::vector<Marker>  shown;
+        double               shownRate { 0.0 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MarkerListDialog)
     };

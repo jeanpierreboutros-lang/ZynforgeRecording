@@ -153,8 +153,9 @@ namespace zynforge
         // empty list means the whole track is silent (e.g. every clip
         // deleted). A track the engine has NEVER set clips for falls back
         // to the legacy 'play the whole file' path -- so untouched tracks
-        // still play. Setter is UI-thread; the audio thread reads under a
-        // lock the setter holds only briefly while swapping the vector.
+        // still play. The setter builds the new lists off the audio thread and
+        // publishes them with one atomic store; the render never waits on it
+        // (see ClipSet).
         void setTrackClips (int trackIdx, std::vector<Clip> clips);
         void clearAllClips();
 
@@ -207,40 +208,85 @@ namespace zynforge
         std::vector<int>   unopenedTracks;         // see trackFailedToOpen
         juce::StringArray  clashText;              // see loadClashes
 
-        // Active clip lists, keyed by track index. Audio thread reads
-        // under clipsLock -- UI thread holds it just long enough to
-        // std::move a new vector in.
-        std::vector<std::vector<Clip>> activeClips;
-        // Parallel to activeClips: 1 once the engine has explicitly set a
-        // clip list for that track. Disambiguates "empty list = silence"
-        // (authoritative) from "no list = play whole file" (never set).
-        std::vector<char>              clipsAuthoritative;
+        // The clip lists, as one immutable set the render reads without a
+        // lock. An edit builds the next set on its own thread, publishes it
+        // with one atomic store, and frees a replaced set later, on an editing
+        // thread, once the render is not on it (clipsInUse). A clip edit while
+        // the show plays therefore never costs a block, and nothing is freed
+        // on the audio thread. The render reads a set only while it holds
+        // tracksLock, so an edit holding tracksLock knows no set is in use.
+        struct ClipSource
+        {
+            // A clip naming its own file reads this reader, resolved from
+            // extraReaders when its list was published; nullptr means the
+            // media is missing, and it must never fall back to the own take.
+            PlaybackReader* reader { nullptr };
+            bool ownTake { true };   // no audioFile: the track's own reader
+        };
+        struct TrackClips
+        {
+            std::vector<Clip>       clips;
+            std::vector<ClipSource> sources;   // parallel to clips
+        };
+        struct ClipSet
+        {
+            // By track. nullptr: never given a list, the track plays its whole
+            // file. An empty list is authoritative: the track is silent.
+            std::vector<std::shared_ptr<const TrackClips>> tracks;
+            // Readers dropped from extraReaders when this set was replaced. Only
+            // this set and older ones point at them, so they go with it.
+            std::vector<std::unique_ptr<PlaybackReader>> droppedReaders;
+
+            const TrackClips* listFor (int track) const noexcept
+            {
+                return track >= 0 && track < (int) tracks.size() ? tracks[(size_t) track].get() : nullptr;
+            }
+        };
+        using ReaderMap = std::map<juce::String, std::unique_ptr<PlaybackReader>>;
+        using FreedSets = std::vector<std::unique_ptr<ClipSet>>;
+        static std::shared_ptr<const TrackClips> resolveClips (std::vector<Clip>, const ReaderMap&);
+        static bool resolvedAgainst (const TrackClips&, const ReaderMap&);
+        static PlaybackReader* readerFor (const TrackClips&, size_t clip, const Track&) noexcept;
+        // clipsLock held. Publish `lists`; the set they replace takes
+        // `dropped` with it. Sets the render has left go to `freed`, which the
+        // caller destroys after its locks are released.
+        void publishClips (std::vector<std::shared_ptr<const TrackClips>> lists,
+                           std::vector<std::unique_ptr<PlaybackReader>> dropped, FreedSets& freed);
+        void reclaimClipSets (FreedSets& freed);
+        // Audio thread: the published set, marked in use; nullptr if an edit
+        // kept replacing it (the block then treats every list as unreadable).
+        const ClipSet* enterClipSet() noexcept;
+
+        std::unique_ptr<ClipSet>     liveClipSet;       // the published set's owner
+        FreedSets                    retiredClipSets;   // replaced, oldest first
+        std::atomic<const ClipSet*>  publishedClips { nullptr };
+        std::atomic<const ClipSet*>  clipsInUse     { nullptr };   // the set the render is reading
+        // Serialises every edit of the clip lists, extraReaders and `tracks`.
+        // The audio thread never takes it, so an edit may take its time here.
         mutable juce::CriticalSection  clipsLock;
 
-        // Lock-free mirror of clipsAuthoritative, readable by the audio thread
-        // WITHOUT clipsLock. When the processBlock try-lock is contended we
-        // can't read the (resizable) clipsAuthoritative vector safely, so we
-        // consult this instead: a track flagged here has an explicit clip
-        // arrangement and must render SILENCE for the block rather than leak
-        // its underlying whole file. Indices at/above the array size are
-        // treated as non-authoritative (legacy whole-file). 512 comfortably
-        // covers the 256-strip ceiling.
+        // Lock-free mirror of which tracks have a list, for a block that got no
+        // clip set: a flagged track has an explicit arrangement and renders
+        // SILENCE for that block rather than leak its underlying whole file.
+        // Indices at/above the array size are treated as non-authoritative
+        // (legacy whole-file). 512 comfortably covers the 256-strip ceiling.
         static constexpr int kMaxAuthoritativeTracks = 512;
         std::array<std::atomic<char>, kMaxAuthoritativeTracks> authoritativeFlags {};
 
-        PlaybackReader* readerForClip (const Clip&, const Track&) const noexcept;
         // Ask for [position, position + span) on every track. True once all of
-        // it is in RAM. Both of these are called with clipsLock held.
-        bool prepareJump (juce::int64 position, juce::int64 span, int numTracks) noexcept;
-        void cueUpcoming (juce::int64 blockEnd, juce::int64 horizon, juce::int64 wrapTarget, int numTracks) noexcept;
+        // it is in RAM. Audio thread, with the set it entered.
+        bool prepareJump (const ClipSet&, juce::int64 position, juce::int64 span, int numTracks) noexcept;
+        void cueUpcoming (const ClipSet&, juce::int64 blockEnd, juce::int64 horizon, juce::int64 wrapTarget,
+                          int numTracks) noexcept;
 
         // Per-clip readers for clips that reference a file OTHER than their
         // track's own Track_NN.wav (cross-track paste). Keyed by absolute
         // path. Built on the message thread in setTrackClips (file open is
-        // slow); the audio thread only looks them up, under clipsLock. A
-        // clip with an empty audioFile uses its track's default reader, so
+        // slow), changed only under clipsLock; the audio thread reaches them
+        // through the clip set's resolved pointers, never by name. A clip
+        // with an empty audioFile uses its track's default reader, so
         // existing sessions are completely unaffected.
-        std::map<juce::String, std::unique_ptr<PlaybackReader>> extraReaders;
+        ReaderMap extraReaders;
 
         std::atomic<bool>        loaded      { false };
         std::atomic<bool>        playing     { false };

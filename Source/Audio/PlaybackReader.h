@@ -18,9 +18,11 @@ namespace zynforge
     // of the last read, and learns of a new position only when a read has
     // already missed. Every jump therefore lost audio, up to its 100 ms idle
     // poll, by a different amount on each track. This reader also holds:
-    //   - two CUES: where the player will read soon (the next clip, and the
-    //     loop start it wraps to), so those blocks are in RAM before the jump.
-    //     A clip that starts just before a loop end needs both at once;
+    //   - three CUES: where the player will read soon (the next clip, and two
+    //     places the loop wrap lands in), so those blocks are in RAM before
+    //     the jump. A clip that starts just before a loop end needs the next
+    //     clip's and the wrap's at once, and a loop that starts in one clip
+    //     with the next a moment later needs both wrap places;
     //   - two read positions, for one reader serving two places at once, as
     //     overlapping clips cut from one file do.
     // isBuffered lets the player hold a jump until every track has the target.
@@ -29,7 +31,10 @@ namespace zynforge
     // memcpy, no lock, no allocation. Only the background thread touches the
     // source reader. A block is pinned while copied from (`readers`), and the
     // background thread blanks `start` before it looks at the pin, so one side
-    // always sees the other and a block is never refilled under a copy.
+    // always sees the other and a block is never refilled under a copy. A copy
+    // also checks `start` again once it is done (seqlock style), so even a
+    // platform that reordered that handshake returns a miss, never audio from
+    // another position.
     class PlaybackReader final : public juce::AudioFormatReader,
                                  private juce::TimeSliceClient
     {
@@ -69,10 +74,12 @@ namespace zynforge
         // unrefreshed for kCueExpiry reads (the player cues again every few
         // blocks while the jump is still ahead). A cue held for ever took two of
         // a small pool's blocks from the read-ahead of every later crossfade.
-        // One slot each for the next clip and the loop start: with one, the
-        // loop start replaced the cue of a clip starting in the last moments of
-        // the loop, and that clip came in late on every pass.
-        static constexpr int kNextClipCue = 0, kLoopWrapCue = 1, kCueSlots = 2;
+        // One slot for the next clip and two for the loop wrap: with one slot,
+        // the loop start replaced the cue of a clip starting in the last
+        // moments of the loop, and that clip came in late on every pass. The
+        // second wrap slot holds a clip of the same file that starts just
+        // after the loop start, which the wrap waits for too.
+        static constexpr int kNextClipCue = 0, kLoopWrapCue = 1, kLoopWrapSecondCue = 2, kCueSlots = 3;
         void cue (juce::int64 position, int slot = kNextClipCue) noexcept
         {
             slot = juce::jlimit (0, kCueSlots - 1, slot);
@@ -81,6 +88,14 @@ namespace zynforge
                 cueTicks[slot].store (readTick.load (std::memory_order_relaxed), std::memory_order_relaxed);
                 cuePositions[slot].store (position, std::memory_order_relaxed);
             }
+        }
+
+        // True when a cue at `cued` keeps all of [position, position +
+        // numSamples) in RAM, so a second cue there would add nothing.
+        static bool cueHolds (juce::int64 cued, juce::int64 position, juce::int64 numSamples) noexcept
+        {
+            const auto first = blockStart (cued);
+            return position >= first && position + numSamples <= first + (juce::int64) kCueBlocks * kBlockSamples;
         }
 
         // How a new reader's first read went (see prime).
@@ -255,7 +270,17 @@ namespace zynforge
                             else
                                 juce::FloatVectorOperations::clear (dest + destOffset, copied);
                         }
-                    allRead = allRead && block->clean.load (std::memory_order_relaxed);
+                    // Seqlock-style check: the block still holds this position
+                    // now the copy is done. The pin keeps the filler off it, so
+                    // this never fires where the handshake holds; where it did
+                    // not (a translated binary in a CI VM once returned two
+                    // samples from elsewhere), the copy is a miss: the caller
+                    // overwrites it or returns silence.
+                    std::atomic_thread_fence (std::memory_order_acquire);
+                    if (block->start.load (std::memory_order_relaxed) != start)
+                        copied = 0;
+                    else
+                        allRead = allRead && block->clean.load (std::memory_order_relaxed);
                 }
                 block->readers.fetch_sub (1, std::memory_order_seq_cst);
                 if (copied > 0) return copied;
@@ -355,8 +380,8 @@ namespace zynforge
         std::atomic<juce::int64>  readLows[2]      { { -1 }, { -1 } };
         std::atomic<juce::uint32> lowTicks[2]      { { 0 }, { 0 } };
         std::atomic<juce::uint32> readTick    { 0 };
-        std::atomic<juce::int64>  cuePositions[kCueSlots] { { -1 }, { -1 } };
-        std::atomic<juce::uint32> cueTicks[kCueSlots]     { { 0 }, { 0 } };   // readTick when each was cued
+        std::atomic<juce::int64>  cuePositions[kCueSlots] { { -1 }, { -1 }, { -1 } };
+        std::atomic<juce::uint32> cueTicks[kCueSlots]     { { 0 }, { 0 }, { 0 } };   // readTick when each was cued
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PlaybackReader)
     };

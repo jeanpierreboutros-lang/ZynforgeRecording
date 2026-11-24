@@ -275,6 +275,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/OscRemoteTests.cpp
     Source/Tests/PlaceholderViewTests.cpp
     Source/Tests/PlayFix20261116Tests.cpp
+    Source/Tests/Fix20261124PlayTests.cpp
     Source/Tests/PlaylistBoundaryTests.cpp
     Source/Tests/PreflightTests.cpp
     Source/Tests/PunchRecordTests.cpp
