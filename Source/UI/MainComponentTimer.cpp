@@ -72,12 +72,7 @@ void MainComponent::timerCallback()
     const bool playing = engine.isPlaying();
     surfaceAsyncReportFailure();
 
-    const double deviceSR = [this]() -> double
-    {
-        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
-            return d->getCurrentSampleRate();
-        return 48000.0;
-    }();
+    const double deviceSR = tickDeviceRate();
     // Warn if the device's actual rate (e.g. the incoming Dante / wordclock)
     // doesn't match the session's intended rate -- a silent rate mismatch
     // would record everything at the wrong speed / pitch.
@@ -411,6 +406,8 @@ void MainComponent::updateClockAndDiskCadence (double deviceSR)
     BigClockPanel::Mode m = BigClockPanel::Mode::Idle;
     juce::int64 elapsed = 0;
     double      timerSR = deviceSR;
+    // Which drives the SMART readings are for. Paths only, no disk.
+    noteSmartDrives();
 
     if (engine.isRecording())
     {
@@ -421,10 +418,8 @@ void MainComponent::updateClockAndDiskCadence (double deviceSR)
         timerSR = takeClockRate (deviceSR);
         shownTakeRate = timerSR;
 
-        // Refresh the idle minutes-remaining estimate every 48 ticks (4.8 s at
-        // the 10 Hz timer). A take reads its own volume probes instead.
-        if ((++diskTick % 48) == 0)
-            engine.refreshDiskMinutesRemaining();
+        // No record-time refresh here: a take reads its own volume probes.
+        ++diskTick;
         // Disk keep-up every 12 ticks (1.2 s): three consecutive smoothed
         // samples below ~85 % of the expected bytes/sec (a few seconds,
         // plus EMA lag) flip the "disk struggling" flag so the status bar
@@ -447,11 +442,14 @@ void MainComponent::updateClockAndDiskCadence (double deviceSR)
     }
     else if (! engine.isCaptureFinalizing())
     {
-        // Slow SMART status poll, idle only: every 720 ticks (72 s at 10 Hz),
-        // and once soon after launch. Dispatched to a background thread:
-        // `diskutil info` blocks for 50-200 ms normally and can hang outright
-        // on an unresponsive volume. Failing status flips a hard warning.
-        if ((smartIdleTick++ % 720) == 30)
+        // Idle. The record-time figure every 48 ticks (4.8 s at 10 Hz): the
+        // drive can fill between takes (an export, a copy in the Finder).
+        if ((++diskTick % 48) == 0)
+            refreshIdleRecordTime();
+        // SMART, idle only (it launches a process): soon after launch or a
+        // drive change, then every 720 ticks (72 s). On a background thread:
+        // `diskutil info` takes 50-200 ms and can hang on a dead volume.
+        if (++smartIdleTick >= smartPollAtTick)
             pollSmartStatusAsync();
     }
 
@@ -812,6 +810,9 @@ void MainComponent::refreshAlarmBanner()
     // is already rolling is the one in trouble.
     if (sampleRateWarning.isNotEmpty())
         alarms.push_back ({ sampleRateWarning, engine.isRecording() ? Level::Danger : Level::Notice });
+    // A failing drive read before the take; once one rolls, its warnings say it.
+    if (const auto smart = smartIdleAlarm(); smart.isNotEmpty() && ! activeCaptureWarning.contains ("SMART FAILING"))
+        alarms.push_back ({ smart, engine.isRecording() ? Level::Danger : Level::Notice });
     collectTwinAlarms (twinLink.snapshot(), alarms);
     // A TCP desk that dropped its link said so once, on the status line. The
     // names and scene markers stopped with it, so it stands here until the
@@ -867,42 +868,192 @@ void MainComponent::showRecordRefusal (const juce::String& reason)
     if (! alarmBanner.isFullyShown (reason)) showStatus (reason);
 }
 
-// Query SMART health for the session + backup volumes on a BACKGROUND thread.
-// MultitrackRecorder::querySmartStatus shells out to `diskutil info`, which
-// blocks for 50-200 ms on a healthy drive and can stall far longer on a network
-// mount or a spun-down disk. Running it inline from timerCallback froze the
-// message thread -- and therefore the whole UI -- in the middle of a take.
-// Only ONE probe is ever in flight; the results land in atomics the timer reads.
+// The folders the SMART readings are for: the open session's, or with none
+// open the folder the next session is made in (RECORD makes one there), and
+// the backup's. A reading stays for a folder on the volume it was read from, so
+// the session RECORD makes keeps it, and goes for a folder anywhere else. The
+// drive is read again soon either way. Paths only: this runs every tick, during
+// takes too, and touches no drive.
+void MainComponent::noteSmartDrives()
+{
+    auto session = engine.getActiveSessionDir();
+    if (session == juce::File()) session = zynforge::newSessionsRoot (engine);
+    const auto backup = engine.getRecorder().getBackupDirectory();
+    if (session == smartPrimaryFor && backup == smartBackupFor) return;
+
+    // "/" holds every other drive under /Volumes, so nothing counts as on it.
+    const auto onVolume = [] (const juce::File& folder, const juce::File& volume)
+    {
+        return volume != juce::File() && volume.getParentDirectory() != volume
+            && (folder == volume || folder.isAChildOf (volume));
+    };
+    if (session != smartPrimaryFor)
+    {
+        smartPrimaryFor = session;
+        if (! onVolume (session, smartPrimaryVolume))
+        {
+            smartPrimaryStatus.store (-1, std::memory_order_relaxed);
+            smartPrimaryVolume = juce::File();
+        }
+    }
+    if (backup != smartBackupFor)
+    {
+        smartBackupFor = backup;
+        if (! onVolume (backup, smartBackupVolume))
+        {
+            smartBackupStatus.store (-1, std::memory_order_relaxed);
+            smartBackupVolume = juce::File();
+        }
+    }
+    smartPollAtTick = juce::jmin (smartPollAtTick, smartIdleTick + 10);   // 1 s of idle
+}
+
+// Query SMART health for the session + backup drives on a BACKGROUND thread.
+// MultitrackRecorder::querySmartStatus launches `diskutil info`, which takes
+// 50-200 ms on a healthy drive and can stall far longer on a network mount or
+// a spun-down disk. Only ONE probe is ever in flight; the results are published
+// on the message thread, for the folders they were read for.
 void MainComponent::pollSmartStatusAsync()
 {
     // Never while audio runs for a take or playback: launching a process can
     // cost the audio thread its deadline (2026-11-23 show).
     if (engine.isRecording() || engine.isPlaying() || engine.isCaptureFinalizing())
         return;
+    noteSmartDrives();
     if (smartQueryInFlight.exchange (true, std::memory_order_acq_rel))
-        return;   // a previous probe is still waiting on a slow drive
+        return;   // a previous probe is still waiting on a slow drive; this poll stays due
+    smartPollAtTick = smartIdleTick + 720;
 
-    const auto sessionDir = engine.getActiveSessionDir();
-    const auto backupDir  = engine.getRecorder().getBackupDirectory();
+    const auto sessionDir = smartPrimaryFor;
+    const auto backupDir  = smartBackupFor;
+    struct Reading { int status { -1 }; juce::File volume; };
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, sessionDir, backupDir]
+    juce::Thread::launch ([self, sessionDir, backupDir, gate = smartGate.gate]
     {
-        const int prim = sessionDir.isDirectory()
-            ? (int) MultitrackRecorder::querySmartStatus (sessionDir) : -1;
-        const int back = backupDir.isDirectory()
-            ? (int) MultitrackRecorder::querySmartStatus (backupDir)  : -1;
+        // RECORD or PLAY can come while the first drive is read: asked again
+        // right before each diskutil starts. It reads only the engine's atomics.
+        const auto stillIdle = [gate]
+        {
+            const std::lock_guard<std::mutex> hold (gate->lock);
+            const auto* e = gate->engine;
+            return e != nullptr && ! e->isRecording() && ! e->isPlaying() && ! e->isCaptureFinalizing();
+        };
+        const auto hook = std::atomic_load (&MainComponent::smartQueryForTests);
+        // Nothing: not read, because something started rolling.
+        const auto read = [&stillIdle, &hook] (const juce::File& folder) -> std::optional<Reading>
+        {
+            if (folder == juce::File()) return Reading {};   // none configured
+            Reading reading;
+            reading.volume = MultitrackRecorder::volumeMountPointFor (folder);
+            if (hook != nullptr)
+            {
+                if (! stillIdle()) return std::nullopt;
+                reading.status = (*hook) (folder);
+                return reading;
+            }
+            const auto status = MultitrackRecorder::querySmartStatusIfIdle (folder, stillIdle);
+            if (! status.has_value()) return std::nullopt;
+            reading.status = (int) *status;
+            return reading;
+        };
+        const auto prim = read (sessionDir);
+        const auto back = prim.has_value() ? read (backupDir) : std::nullopt;
 
         // Publish on the message thread through the SafePointer so a quit
         // mid-probe can't write into a freed MainComponent.
-        juce::MessageManager::callAsync ([self, prim, back]
+        juce::MessageManager::callAsync ([self, sessionDir, backupDir, prim, back]
         {
             if (self == nullptr) return;
-            if (prim >= 0) self->smartPrimaryStatus.store (prim, std::memory_order_relaxed);
-            if (back >= 0) self->smartBackupStatus .store (back, std::memory_order_relaxed);
-            self->smartQueryInFlight.store (false, std::memory_order_release);
+            auto& window = *self;
+            window.smartQueryInFlight.store (false, std::memory_order_release);
+            // A folder changed meanwhile is read again by the poll it made due.
+            if (prim.has_value() && sessionDir == window.smartPrimaryFor)
+            {
+                window.smartPrimaryStatus.store (prim->status, std::memory_order_relaxed);
+                window.smartPrimaryVolume = prim->volume;
+            }
+            if (back.has_value() && backupDir == window.smartBackupFor)
+            {
+                window.smartBackupStatus.store (back->status, std::memory_order_relaxed);
+                window.smartBackupVolume = back->volume;
+            }
+            // A drive left unread for a take is read soon after it.
+            if (! prim.has_value() || ! back.has_value())
+                window.smartPollAtTick = juce::jmin (window.smartPollAtTick, window.smartIdleTick + 10);
         });
     });
+}
+
+// A failing drive read between takes. Before RECORD it stands on the banner, so
+// the drive can be changed before the show; a take's own warnings carry it once
+// one rolls. Amber at idle: red is for a take in trouble.
+juce::String MainComponent::smartIdleAlarm() const
+{
+    constexpr int failing = (int) MultitrackRecorder::SmartStatus::Failing;
+    const bool session = smartPrimaryStatus.load (std::memory_order_relaxed) == failing;
+    const bool backup  = smartBackupStatus .load (std::memory_order_relaxed) == failing;
+    if (! session && ! backup) return {};
+    return juce::String ("! SMART FAILING -- replace the ")
+         + (session && backup ? "session and backup drives" : session ? "session drive" : "backup drive")
+         + " before recording";
+}
+
+// Between takes the clock shows pre-flight's record-time figure for as long as
+// what it was worked out for stands (idleEstimateKey). The drive can fill
+// meanwhile, so the figure is worked out again every 4.8 s. That stats every
+// destination from this thread, and a stat on a dead mount blocks until the OS
+// gives up: each drive is asked first on a thread of its own, and the figure is
+// worked out only once all have answered, as pre-flight does. One that does
+// not answer in 10 s takes the figure down: the clock shows free space instead
+// of a time nobody can vouch for. Never while a take is on disk.
+void MainComponent::refreshIdleRecordTime()
+{
+    if (engine.isTakeOnDisk() || idleEstimateFor.isEmpty() || idleEstimateFor != idleEstimateKey())
+        return;
+    if (idleRecordTimeInFlight)
+    {
+        if (juce::Time::getMillisecondCounter() - idleRecordTimeAskedMs > 10000)
+            idleEstimateFor.clear();
+        return;
+    }
+    std::vector<juce::File> drives { engine.getActiveSessionDir(), engine.getRecorder().getBackupDirectory() };
+    for (const auto& mirror : engine.getMirrors()) drives.push_back (mirror.root);
+    idleRecordTimeInFlight = true;
+    idleRecordTimeAskedMs = juce::Time::getMillisecondCounter();
+    ++idleRecordTimeReads;
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::Thread::launch ([self, drives, key = idleEstimateFor]
+    {
+        for (const auto& drive : drives)
+            if (drive.getFullPathName().isNotEmpty())
+                (void) zynforge::VolumeProbe::readVolume (drive);
+        juce::MessageManager::callAsync ([self, key]
+        {
+            if (self == nullptr) return;
+            auto& window = *self;
+            window.idleRecordTimeInFlight = false;
+            // Still between takes, and still the figure pre-flight worked out.
+            if (window.engine.isTakeOnDisk() || window.idleEstimateFor != key || key != window.idleEstimateKey())
+                return;
+            window.engine.refreshDiskMinutesRemaining();
+        });
+    });
+}
+
+// A take held open through a device stop (ride-through) records at the rate it
+// started at. The stand-in device JUCE opened meanwhile, or none at all, says
+// nothing about it: reading that doubled a 96 kHz take's clock and raised a
+// false SAMPLE-RATE MISMATCH beside the notice that the device is held.
+double MainComponent::tickDeviceRate()
+{
+    if (engine.isRidingThroughDeviceStop())
+        if (const double take = engine.getTakeSampleRate(); take > 0.0)
+            return take;
+    if (auto* device = engine.getDeviceManager().getCurrentAudioDevice())
+        return device->getCurrentSampleRate();
+    return 48000.0;
 }
 
 // Timeline position (continues from the take end on a continue), not the new
