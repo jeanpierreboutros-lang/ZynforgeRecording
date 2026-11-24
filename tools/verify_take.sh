@@ -192,6 +192,36 @@ else
     [[ "$deviceLost" == "false" ]] || { red "  capture audio device stopped during the take"; fail=1; }
     stallMs=$(jq -r '.deviceStallMs // 0' "$REPORT")
     [[ "$stallMs" == "0" ]] || { red "  no audio from the device for $stallMs ms during the take"; fail=1; }
+    # IO cycles CoreAudio skipped (an overload): their input never arrived. The
+    # app counts them since 2026-11-24; a live take holds them as silence.
+    skipped=$(jq -r '.inputCyclesSkipped // 0' "$REPORT")
+    if [[ "$skipped" != "0" ]]; then
+        red "  CoreAudio skipped $skipped IO cycle(s): $(jq -r '.inputSkippedFrames // 0' "$REPORT") frames of input never arrived"
+        fail=1
+    fi
+    # macOS's own log for the take, which also covers takes made before the app
+    # counted skipped cycles (the 2026-11-23 show said 0 missed with 101 of
+    # them). Needs this Mac's log; ZF_VERIFY_SKIP_SYSLOG=1 skips it.
+    stopped=$(jq -r '.stoppedAt // empty' "$REPORT")
+    if [[ -n "$stopped" && -x /usr/bin/log && -z "${ZF_VERIFY_SKIP_SYSLOG:-}" ]]; then
+        window=$(python3 -I -c '
+import sys, datetime
+stop = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).astimezone()
+start = stop - datetime.timedelta(seconds=float(sys.argv[2]) + 5)
+print(start.strftime("%Y-%m-%d %H:%M:%S") + "|" + stop.strftime("%Y-%m-%d %H:%M:%S"))
+' "$stopped" "$(jq -r '.passSeconds // .totalSeconds // 0' "$REPORT")" 2>/dev/null || true)
+        if [[ "$window" == *"|"* ]]; then
+            overloads=$(/usr/bin/log show --style compact --start "${window%|*}" --end "${window#*|}" \
+                --predicate '(process == "Zynforge Recording" OR process == "ZynforgeCapture") AND eventMessage CONTAINS "skipping cycle due to overload"' \
+                2>/dev/null | grep -c "skipping cycle" || true)
+            if [[ "$overloads" =~ ^[0-9]+$ ]] && (( overloads > 0 )); then
+                red "  macOS logged $overloads CoreAudio overload(s) in the recorder during this take: each one lost a buffer of input on every channel"
+                fail=1
+            else
+                grn "  OK — no CoreAudio overload in this Mac's log for the take"
+            fi
+        fi
+    fi
     # Only the primary is verified here, and step 5 re-hashes every file of it.
     # A copy whose drive was gone or hung when its hashes were made is that
     # copy's problem, not this take's: a note, unless a primary hash is missing.

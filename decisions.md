@@ -2,6 +2,31 @@
 
 
 
+## No fork, and a skipped CoreAudio cycle is caught and filled — 2026-11-24
+
+**Status:** Accepted. After the 2026-11-23 show the owner heard digital drops in the stereo mix track and asked to find the cause, then: "How can I fix the app, and don't make this happen again?"
+
+**Context:**
+- The show's files had no exact-zero gaps. Instead, 613 breaks fell exactly on 512-sample buffer starts, on every channel at once, in 118 moments (phase 0 of the 512-sample cycle, versus about 2 per other phase). The backup matched the primary there.
+- macOS logged 101 "HALC_ProxyIOContext::IOWorkLoop: skipping cycle due to overload" in the recorder, only during the take, every 73.4 s, with cause ClientHALIODurationExceededBudget + SafetyViolationOccurred. Against the take's BWF start, the offset between each overload and its break grew through the show: each overload lost input, and the files ended about 2 s shorter than the wall-clock span.
+- The report said 0 missed: the recorder counted only its own losses and never read the callback's timestamps.
+- Reproduced on the development Mac with a virtual 64-channel input, 86 armed strips and the same two drives: overloads every 73.4 s. A `sample` of the process at an overload showed `pollSmartStatusAsync` → `querySmartStatus` → `fork()`. That poll ran every 720 timer ticks (72 s at 10 Hz) *only while recording*, once per drive, through `juce::ChildProcess`, which forks. The 2026-11-14 show had no backup and logged no overload.
+
+**Decision:**
+- No process is launched with fork(): the SMART query uses posix_spawn (`runToolOutput`). The poll runs only when idle (never during a take, playback or finalization), and a take keeps the reading taken before it. Invariants gate rule "no process is launched with fork()".
+- `CycleGapDetector` reads each buffer's host time. Frames lost to a skipped cycle are counted as missed, reported (`inputCyclesSkipped`, `inputSkippedFrames`), and written as silence through `addCaptureGap` on a live take, the rule the app already had for a device that stops delivering audio. This keeps every track on the clock. A take that follows playback (punch, continue with the player rolling) only counts them, since the player lost the same cycle and the take is still on its timeline.
+- `tools/verify_take.sh` fails a take with skipped cycles in its report, or with overloads in macOS's log for the take window (that also covers takes made before this change).
+
+**Alternatives considered:**
+- Keep the poll during a take but use posix_spawn. It's lighter, but launching a process mid-take buys nothing a take needs. DISK STRUGGLING already warns from the write rate.
+- Count skipped cycles without filling. That would leave a live take short of real time by the lost frames, unlike the app's existing rule for device gaps.
+- SMART through IOKit with no subprocess. That's more code for a value USB drives don't even report ("SMART Status: Not Supported").
+
+**Consequences:**
+- \+ The cause of the 2026-11-23 drops is gone. Any skipped cycle from another cause is now counted, filled, alarmed and failed by verify_take, never silent.
+- − A SMART failure that starts mid-take is seen only after the take. The pre-take reading still warns.
+- − A take with skipped cycles now has short silent gaps where the audio jumped before. The drop is audible either way, but the tracks stay on time.
+
 ## Every copy's ring holds 20 s of live audio — 2026-11-24
 
 **Status:** Accepted. After the 2026-11-23 show the owner asked for a bigger backup buffer "if it is good for the app", and that it "will not change the behavior".

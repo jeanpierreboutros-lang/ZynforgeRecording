@@ -434,19 +434,25 @@ void MainComponent::updateClockAndDiskCadence (double deviceSR)
         if ((diskTick % 12) == 0)
             recorder.updateDiskHealth (recorder.isRecording()
                                            ? recorder.estimateBytesPerSecondForArmedTracks() : 0);
-        // Slow SMART status poll -- every 720 ticks (72 s at 10 Hz), and
-        // only when recording. Dispatched to a background thread: `diskutil
-        // info` blocks for 50-200 ms normally and can hang outright on an
-        // unresponsive volume, which froze the UI mid-take when it ran here.
-        // Failing status flips a hard warning.
-        if ((diskTick % 720) == 0)
-            pollSmartStatusAsync();
+        // No SMART poll here. It ran every 72 s of a take and launched
+        // `diskutil` with fork(), which froze this process long enough for
+        // CoreAudio to skip an IO cycle: the 2026-11-23 show lost a buffer on
+        // every channel each time. A take keeps the reading taken before it.
     }
     else if (engine.isPlaying())
     {
         m = BigClockPanel::Mode::Playing;
         elapsed = player.getPositionSamples();
         timerSR = player.getSampleRate();
+    }
+    else if (! engine.isCaptureFinalizing())
+    {
+        // Slow SMART status poll, idle only: every 720 ticks (72 s at 10 Hz),
+        // and once soon after launch. Dispatched to a background thread:
+        // `diskutil info` blocks for 50-200 ms normally and can hang outright
+        // on an unresponsive volume. Failing status flips a hard warning.
+        if ((smartIdleTick++ % 720) == 30)
+            pollSmartStatusAsync();
     }
 
     bigClock.setMode (m);
@@ -869,6 +875,10 @@ void MainComponent::showRecordRefusal (const juce::String& reason)
 // Only ONE probe is ever in flight; the results land in atomics the timer reads.
 void MainComponent::pollSmartStatusAsync()
 {
+    // Never while audio runs for a take or playback: launching a process can
+    // cost the audio thread its deadline (2026-11-23 show).
+    if (engine.isRecording() || engine.isPlaying() || engine.isCaptureFinalizing())
+        return;
     if (smartQueryInFlight.exchange (true, std::memory_order_acq_rel))
         return;   // a previous probe is still waiting on a slow drive
 

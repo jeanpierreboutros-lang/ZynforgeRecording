@@ -2663,6 +2663,7 @@ namespace zynforge
     void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     {
         const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        cycleGapsStale.store (true, std::memory_order_release);
         const auto sr = device->getCurrentSampleRate();
         const auto blockSize = device->getCurrentBufferSizeSamples();
         if (isCaptureFinalizing())
@@ -3528,6 +3529,7 @@ namespace zynforge
     void AudioEngine::audioDeviceStopped()
     {
         const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        cycleGapsStale.store (true, std::memory_order_release);
         if (isCaptureFinalizing())
         {
             deferredDeviceAudio.store (true, std::memory_order_release);
@@ -3574,7 +3576,7 @@ namespace zynforge
     void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
                                                         float* const* outputs, int numOutputs,
                                                         int numSamples,
-                                                        const juce::AudioIODeviceCallbackContext&)
+                                                        const juce::AudioIODeviceCallbackContext& context)
     {
         callbackCount.fetch_add (1, std::memory_order_relaxed);
         // A take held open through a device stop runs a stand-in silent, and
@@ -3582,10 +3584,15 @@ namespace zynforge
         if (deferredDeviceAudio.load (std::memory_order_acquire)
             || deviceRideThrough.load (std::memory_order_acquire))
         {
+            cycleGaps.reset();   // the resume gap accounts for the time away
             for (int channel = 0; channel < numOutputs; ++channel)
                 if (outputs[channel]) juce::FloatVectorOperations::clear (outputs[channel], numSamples);
             return;
         }
+        // Frames CoreAudio dropped before this block by skipping a cycle.
+        if (cycleGapsStale.exchange (false, std::memory_order_acq_rel)) cycleGaps.reset();
+        const auto skippedFrames = cycleGaps.onBlock (context.hostTimeNs, numSamples,
+                                                      deviceSampleRate.load (std::memory_order_relaxed));
 
         // CPU-load measurement: capture start time so we can report
         // (callback time / available time) as a load percentage. The
@@ -3692,6 +3699,18 @@ namespace zynforge
                     rideGapFrames.fetch_add (gapFrames, std::memory_order_relaxed);
                 }
             }
+        }
+
+        // A cycle CoreAudio skipped (an overload, 2026-11-23 show): its input
+        // never came. Counted as missed and named in the report; a live take
+        // holds it as silence so every track stays on the clock. A take that
+        // follows playback is still on its timeline (the player lost the same
+        // cycle), so there it is only counted.
+        if (skippedFrames > 0 && gapFrames == 0 && recorder.isRecording())
+        {
+            const double rate = deviceSampleRate.load (std::memory_order_relaxed);
+            recorder.noteSkippedInputCycle (juce::jmin (skippedFrames, (juce::int64) (rate * kMaxGapSeconds)),
+                                            ! playerWasRolling);
         }
 
         bool capturedThisBlock = false;

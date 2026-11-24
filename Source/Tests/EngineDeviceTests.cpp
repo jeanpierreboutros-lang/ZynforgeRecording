@@ -332,6 +332,7 @@ public:
         devicePanelInputMeter();   // C3
         masterMeterIsPostFader();   // C3
         stereoMixWriteErrors();   // C4
+        skippedCycleIsMissedAndSilent();   // 2026-11-24
         recordAgainstADeviceStop();   // C5
         takeOutlivesItsMonitorOutput();   // C5
         inputLossStillEndsTheTake();   // C5
@@ -612,6 +613,96 @@ private:
         expect (engine.hasStereoMixWriteFailed(), "STOP forgot the failure");
         engine.setRecordStereoMix (false);
         engine.wrapStereoMixWriterForTests = nullptr;
+    }
+
+    // ── 2026-11-24: a cycle CoreAudio skips ────────────────────────────
+    // In the 2026-11-23 show CoreAudio skipped an IO cycle about every 73 s
+    // ("skipping cycle due to overload"): that buffer's input never reached the
+    // app, every channel jumped, and the report still said 0 missed. The next
+    // buffer's host time is the only trace: it is one cycle late.
+    void skippedCycleIsMissedAndSilent()
+    {
+        beginTest ("A cycle CoreAudio skips mid-take is counted as missed and written as silence");
+        enginedevice::Folder session;
+        AudioEngine engine;
+        engine.prepareForTests (enginedevice::kRate, enginedevice::kBlock);
+        enginedevice::readyTwoStrips (engine);
+        expect (engine.startRecording (session.dir), engine.getRecorder().getStartError());
+
+        juce::AudioBuffer<float> in (8, enginedevice::kBlock), out (2, enginedevice::kBlock);
+        const auto blockNs = (std::uint64_t) std::llround (enginedevice::kBlock * 1.0e9 / enginedevice::kRate);
+        std::uint64_t hostNs = 5'000'000'000ull;
+        const auto blocks = [&] (int count, float value)
+        {
+            for (int c = 0; c < 8; ++c)
+                juce::FloatVectorOperations::fill (in.getWritePointer (c), value, enginedevice::kBlock);
+            for (int b = 0; b < count; ++b)
+            {
+                out.clear();
+                const juce::AudioIODeviceCallbackContext context { &hostNs };
+                engine.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), 8,
+                                                         out.getArrayOfWritePointers(), 2,
+                                                         enginedevice::kBlock, context);
+                hostNs += blockNs;
+            }
+        };
+        blocks (40, 0.25f);
+        hostNs += blockNs;              // the skipped cycle: its input never arrives
+        blocks (40, 0.5f);
+
+        expectEquals (engine.captureStatus().missedSamples, (juce::int64) (2 * enginedevice::kBlock),
+                      "the skipped cycle was not counted on both armed strips");
+        engine.stopRecording();
+        expect (enginedevice::pumpUntil ([&] { return ! engine.isCaptureFinalizing(); }));
+        for (int track = 1; track <= 2; ++track)
+            enginedevice::expectGapInFile (*this, session.track (track), 40 * enginedevice::kBlock,
+                                           enginedevice::kBlock, 40 * enginedevice::kBlock);
+        const auto report = juce::JSON::parse (session.dir.getChildFile ("session.report.json"));
+        expectEquals ((int) report.getProperty ("inputCyclesSkipped", -1), 1);
+        expectEquals ((int) report.getProperty ("inputSkippedFrames", -1), enginedevice::kBlock);
+
+        beginTest ("Steady, jittery or split CoreAudio buffers are never taken for a skipped cycle");
+        enginedevice::Folder second;
+        AudioEngine steady;
+        steady.prepareForTests (enginedevice::kRate, enginedevice::kBlock);
+        enginedevice::readyTwoStrips (steady);
+        expect (steady.startRecording (second.dir), steady.getRecorder().getStartError());
+        juce::Random random (0x5ca1ab1e);
+        for (int b = 0; b < 200; ++b)
+        {
+            out.clear();
+            // Up to a third of a cycle early or late, and every other buffer
+            // without a time stamp, as JUCE sends a split IO cycle's second half.
+            const auto jitter = (std::int64_t) ((random.nextDouble() - 0.5) * (double) blockNs * 0.66);
+            const auto stamped = (std::uint64_t) ((std::int64_t) hostNs + jitter);
+            const juce::AudioIODeviceCallbackContext context { (b % 2) == 0 ? &stamped : nullptr };
+            steady.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), 8,
+                                                     out.getArrayOfWritePointers(), 2,
+                                                     enginedevice::kBlock, context);
+            hostNs += blockNs;
+        }
+        expectEquals (steady.captureStatus().missedSamples, (juce::int64) 0, "a cycle was taken for skipped");
+        steady.stopRecording();
+        expect (enginedevice::pumpUntil ([&] { return ! steady.isCaptureFinalizing(); }));
+
+        beginTest ("A skipped cycle in a take that follows playback is counted, and adds no silence");
+        enginedevice::Folder third;
+        AudioEngine follows;
+        follows.prepareForTests (enginedevice::kRate, enginedevice::kBlock);
+        enginedevice::readyTwoStrips (follows);
+        expect (follows.startRecording (third.dir), follows.getRecorder().getStartError());
+        enginedevice::Feeder feed { follows, 8 };
+        feed.blocks (40, 0.25f);
+        // The player lost the same cycle, so the take is still on its
+        // timeline: the engine passes fill = false while playback rolls.
+        follows.getRecorder().noteSkippedInputCycle (enginedevice::kBlock, false);
+        feed.blocks (40, 0.5f);
+        expectEquals (follows.captureStatus().missedSamples, (juce::int64) (2 * enginedevice::kBlock));
+        follows.stopRecording();
+        expect (enginedevice::pumpUntil ([&] { return ! follows.isCaptureFinalizing(); }));
+        enginedevice::expectGapInFile (*this, third.track (1), 40 * enginedevice::kBlock, 0, 40 * enginedevice::kBlock);
+        const auto followed = juce::JSON::parse (third.dir.getChildFile ("session.report.json"));
+        expectEquals ((int) followed.getProperty ("inputCyclesSkipped", -1), 1);
     }
 
     // ── ENG-04 ─────────────────────────────────────────────────────────

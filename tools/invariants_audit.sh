@@ -422,6 +422,18 @@ report "no thread can be killed by force" \
        "JUCE kills a thread that outlives a stopThread timeout (0 kills at once), locks held and writes half done; a ThreadPool does it after 500 ms. Use stopThread (-1), and stop a juce::TimeSliceThread before its destructor does it with 2 s" \
        "$HITS"
 
+# 2026-11-23 show: a drive-health poll launched `diskutil` with
+# juce::ChildProcess (fork()) every 72 s of a take. fork() froze the whole
+# process long enough for CoreAudio to skip an IO cycle, and every channel
+# lost a buffer each time. A tool is launched with posix_spawn only
+# (runToolOutput in MultitrackRecorder.cpp, CaptureSupervisor), never mid-take.
+HITS=$(grep -rnE 'ChildProcess|(^|[^A-Za-z_.>:])(fork|vfork|popen|system)[[:space:]]*\(' Source \
+           --include='*.h' --include='*.cpp' --include='*.mm' \
+       | grep -v '^Source/Tests/' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*)')
+report "no process is launched with fork()" \
+       "fork() (juce::ChildProcess, popen, system) froze the recorder long enough for CoreAudio to skip a cycle (2026-11-23 show). Launch a tool with posix_spawn (runToolOutput in MultitrackRecorder.cpp), and never while a take or playback rolls" \
+       "$HITS"
+
 HITS=""
 grep -q 'COMMAND /usr/bin/codesign --force --sign -' CMakeLists.txt \
     || HITS="CMakeLists.txt: local app bundle is not resealed after the capture helper is embedded"

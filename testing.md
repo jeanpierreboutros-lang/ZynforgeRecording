@@ -1,5 +1,16 @@
 # Testing Strategy — ZynForge Recording
 
+## 2026-11-24 skipped CoreAudio cycles (the 2026-11-23 drops)
+
+How it was found: analysis of the show's files (breaks on every channel exactly at 512-sample buffer starts), macOS's log (101 overloads every 73.4 s, only during the take), and a reproduction on the development Mac. The reproduction used a virtual 64-channel input, 86 armed strips, primary plus USB backup, and 6½ minutes: overloads every 73.4 s, and the report said 0 missed. A `sample` of the process at an overload caught `pollSmartStatusAsync` → `querySmartStatus` → `fork()`.
+
+Three groups added to *Engine device fixes 2026-11-11* (`EngineDeviceTests.cpp`, `skippedCycleIsMissedAndSilent`):
+- *A cycle CoreAudio skips mid-take is counted as missed and written as silence.* The engine's callback is fed with host times, and one cycle is skipped. The test expects 2 × 256 missed, 256 frames of silence at the skip in both take files, and `inputCyclesSkipped` 1 / `inputSkippedFrames` 256 in the report. On the old code: 0 missed, files 256 short with no gap, no report fields (7 failures).
+- *Steady, jittery or split CoreAudio buffers are never taken for a skipped cycle.* 200 buffers with up to a third of a cycle of jitter, every other one unstamped: 0 missed.
+- *A skipped cycle in a take that follows playback is counted, and adds no silence.* `noteSkippedInputCycle (…, false)`: counted, file length unchanged.
+
+Gates: the invariants audit has a new rule, "no process is launched with fork()" (`ChildProcess`, `fork`, `vfork`, `popen`, `system` outside Source/Tests). It is clean on the fix and catches the old `querySmartStatus`. `tools/verify_take.sh` reads `inputCyclesSkipped` and macOS's log for the take window (`ZF_VERIFY_SKIP_SYSLOG=1` skips the log); on the 2026-11-23 show it reports the 101 overloads. `tools/test_verify_tools.py` passes.
+
 ## 2026-11-24 copy rings hold 20 s
 
 Two groups added to *Capture path* (`CapturePathTests.cpp`, in `testPreRoll`):

@@ -23,6 +23,14 @@
 #include <mutex>
 #include <atomic>
 #include <filesystem>
+#if JUCE_MAC
+ #include <fcntl.h>
+ #include <signal.h>
+ #include <spawn.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+ extern char** environ;
+#endif
 
 #if JUCE_MAC
  #include <pthread/qos.h>
@@ -690,6 +698,37 @@ namespace zynforge
         }
         samplesSinceStart.fetch_add (lost, std::memory_order_relaxed);
         alarmFrames.store (alarmFrames.load (std::memory_order_relaxed) + lost, std::memory_order_relaxed);
+    }
+
+    void MultitrackRecorder::noteSkippedInputCycle (juce::int64 frames, bool fill) noexcept
+    {
+        if (frames <= 0) return;
+        {
+            // Not nested: addCaptureGap opens its own section.
+            const CallbackSection section (callbackEpoch);
+            const auto* view = liveView.load (std::memory_order_seq_cst);
+            if (view == nullptr || ! view->recording) return;
+            inputSkipCycles.fetch_add (1, std::memory_order_relaxed);
+            inputSkipFrames.fetch_add (frames, std::memory_order_relaxed);
+        }
+        if (fill)
+        {
+            addCaptureGap (frames);
+            return;
+        }
+        const CallbackSection section (callbackEpoch);
+        const auto* view = liveView.load (std::memory_order_seq_cst);
+        if (view == nullptr || ! view->recording) return;
+        // Counted on every channel the take captures, as addCaptureGap counts.
+        const int n = (int) juce::jmin (fifos.size(), captureArms.size());
+        for (int ch = 0; ch < n; ++ch)
+        {
+            const bool armed = captureArms[(size_t) ch];
+            const bool pairArmed = ch > 0 && tracks[(size_t) ch - 1]->isStereo.load (std::memory_order_relaxed)
+                                && captureArms[(size_t) ch - 1];
+            if (armed || pairArmed)
+                missedSamples.fetch_add (frames, std::memory_order_relaxed);
+        }
     }
 
     // NOTE: punch-in is triggered two ways, both via armPunchIn(): the normal
@@ -2459,6 +2498,8 @@ namespace zynforge
 
         samplesSinceStart.store (0, std::memory_order_relaxed);
         missedSamples    .store (0, std::memory_order_relaxed);
+        inputSkipCycles  .store (0, std::memory_order_relaxed);
+        inputSkipFrames  .store (0, std::memory_order_relaxed);
         latches->primaryLostFrames.store (0, std::memory_order_relaxed);
         captureDeviceLost.store (false, std::memory_order_relaxed);
         deviceStallMs.store (0, std::memory_order_relaxed);
@@ -2556,30 +2597,87 @@ namespace zynforge
                                             std::memory_order_release);
     }
 
+   #if JUCE_MAC
+    namespace
+    {
+        // Runs a tool and returns its stdout, or nothing after `timeoutMs`.
+        // posix_spawn, never fork() (juce::ChildProcess): fork() write-protects
+        // every page of this process for copy-on-write and takes every malloc
+        // lock, and in a recorder holding a gigabyte of buffers that stalled
+        // the CoreAudio IO threads past their deadline. CoreAudio skipped a
+        // cycle each time, and the 2026-11-23 show lost a buffer on every
+        // channel every 72 s while the old poll ran mid-take.
+        std::optional<juce::String> runToolOutput (const juce::StringArray& args, int timeoutMs)
+        {
+            int fds[2];
+            if (pipe (fds) != 0) return std::nullopt;
+            fcntl (fds[0], F_SETFD, FD_CLOEXEC);
+            fcntl (fds[1], F_SETFD, FD_CLOEXEC);
+            posix_spawn_file_actions_t actions;
+            posix_spawnattr_t attributes;
+            bool ready = posix_spawn_file_actions_init (&actions) == 0;
+            const bool attrs = posix_spawnattr_init (&attributes) == 0;
+            ready = ready && attrs
+                 && posix_spawnattr_setflags (&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT) == 0
+                 && posix_spawn_file_actions_addopen (&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0
+                 && posix_spawn_file_actions_adddup2 (&actions, fds[1], STDOUT_FILENO) == 0
+                 && posix_spawn_file_actions_addopen (&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) == 0;
+            std::vector<std::string> storage;
+            for (const auto& a : args) storage.push_back (a.toStdString());
+            std::vector<char*> argv;
+            for (auto& s : storage) argv.push_back (s.data());
+            argv.push_back (nullptr);
+            pid_t child = 0;
+            const bool spawned = ready && ! storage.empty()
+                              && posix_spawn (&child, argv[0], &actions, &attributes, argv.data(), environ) == 0;
+            posix_spawn_file_actions_destroy (&actions);
+            if (attrs) posix_spawnattr_destroy (&attributes);
+            close (fds[1]);
+            if (! spawned)
+            {
+                close (fds[0]);
+                return std::nullopt;
+            }
+            // Wait first, then read: `diskutil info` writes a couple of KB, far
+            // under the 64 KiB pipe buffer, so it never blocks on us, and a
+            // wedged volume cannot hold this thread past the timeout.
+            int status = 0;
+            bool exited = false;
+            for (int waited = 0; waited <= timeoutMs; waited += 10)
+            {
+                const pid_t r = waitpid (child, &status, WNOHANG);
+                if (r == child) { exited = true; break; }
+                if (r < 0) break;
+                std::this_thread::sleep_for (std::chrono::milliseconds (10));
+            }
+            if (! exited)
+            {
+                kill (child, SIGKILL);
+                waitpid (child, &status, 0);
+                close (fds[0]);
+                return std::nullopt;
+            }
+            fcntl (fds[0], F_SETFL, O_NONBLOCK);
+            std::string data;
+            char buffer[4096];
+            for (ssize_t n; (n = read (fds[0], buffer, sizeof (buffer))) > 0;)
+                data.append (buffer, (size_t) n);
+            close (fds[0]);
+            return juce::String::fromUTF8 (data.data(), (int) data.size());
+        }
+    }
+   #endif
+
     MultitrackRecorder::SmartStatus MultitrackRecorder::querySmartStatus (const juce::File& mountPoint)
     {
        #if JUCE_MAC
         if (! mountPoint.exists()) return SmartStatus::Unknown;
 
-        juce::ChildProcess proc;
-        const juce::StringArray cmd { "/usr/sbin/diskutil", "info",
-                                       mountPoint.getFullPathName() };
-        if (! proc.start (cmd, juce::ChildProcess::wantStdOut)) return SmartStatus::Unknown;
-
-        // WAIT FIRST, THEN READ -- and kill on timeout. readAllProcessOutput()
-        // loops on a BLOCKING pipe read until the child closes it, so it has no
-        // timeout of its own; calling it first made the waitForProcessToFinish
-        // below dead code and let an unresponsive volume (network mount,
-        // spun-down USB, a wedged diskutil) block the caller indefinitely.
-        // `diskutil info` emits a couple of KB -- far under the 64 KiB pipe
-        // buffer -- so the child can always run to completion without us
-        // draining it, which makes wait-then-read safe here.
-        if (! proc.waitForProcessToFinish (2000))
-        {
-            proc.kill();
-            return SmartStatus::Unknown;
-        }
-        const auto out = proc.readAllProcessOutput();
+        // Runs only while no take or playback is rolling (MainComponent::
+        // pollSmartStatusAsync), and never forks (runToolOutput).
+        const auto output = runToolOutput ({ "/usr/sbin/diskutil", "info", mountPoint.getFullPathName() }, 2000);
+        if (! output.has_value()) return SmartStatus::Unknown;
+        const auto& out = *output;
 
         for (const auto& line : juce::StringArray::fromLines (out))
         {
@@ -2770,6 +2868,7 @@ namespace zynforge
         juce::int64 totalSamples {}, totalMissed {};
         bool        deviceLostAtStop {};
         juce::int64 deviceStallMsAtStop {};
+        juce::int64 inputSkipCyclesAtStop {}, inputSkipFramesAtStop {};
         double      totalSeconds {};
         bool        backupWasRunning {};
         bool        doPunch {};
@@ -2812,6 +2911,7 @@ namespace zynforge
         bool        backupWasRunning {}, reportedBackupFailure {}, reportedPrimaryFailure {},
                     reportedPunchFailure {}, reportedMirrorFailure {}, reportedDeviceLoss {};
         juce::int64 reportedDeviceStallMs {};
+        juce::int64 reportedInputSkipCycles {}, reportedInputSkipFrames {};
         int         reportedMirrorsSkipped {};
         juce::int64  timeReference {};
         juce::String timeReferenceSource;
@@ -3050,6 +3150,8 @@ namespace zynforge
         stop.totalMissed      = getMissedSamples();
         stop.deviceLostAtStop = captureDeviceLost.load (std::memory_order_relaxed);
         stop.deviceStallMsAtStop = deviceStallMs.load (std::memory_order_relaxed);
+        stop.inputSkipCyclesAtStop = inputSkipCycles.load (std::memory_order_relaxed);
+        stop.inputSkipFramesAtStop = inputSkipFrames.load (std::memory_order_relaxed);
         stop.totalSeconds     = sampleRate > 0.0 ? (double) stop.totalSamples / sampleRate : 0.0;
         stop.backupWasRunning = isBackupActive();
         {
@@ -3688,6 +3790,8 @@ namespace zynforge
         report.reportedMirrorsSkipped = (int) previousInt ("mirrorsSkipped") + mirrorsSkipped;
         report.reportedDeviceLoss = previousBool ("captureDeviceLost") || stop.deviceLostAtStop;
         report.reportedDeviceStallMs = previousInt ("deviceStallMs") + stop.deviceStallMsAtStop;
+        report.reportedInputSkipCycles = previousInt ("inputCyclesSkipped") + stop.inputSkipCyclesAtStop;
+        report.reportedInputSkipFrames = previousInt ("inputSkippedFrames") + stop.inputSkipFramesAtStop;
         report.reportedPrimaryFailure = previousBool ("primaryFailed") || primFailed;
         // Read now: a copy's own post-take work can fail after the take stopped.
         report.reportedBackupFailure = previousBool ("backupFailed")
@@ -3742,6 +3846,10 @@ namespace zynforge
         report->setProperty ("passPreRollCutSamples", passPreRollCut);
         report->setProperty ("captureDeviceLost", reportedDeviceLoss);
         report->setProperty ("deviceStallMs", reportedDeviceStallMs);
+        // IO cycles CoreAudio skipped (an overload): their audio never came.
+        // A live take holds them as silence; missedSamples counts them too.
+        report->setProperty ("inputCyclesSkipped", reportedInputSkipCycles);
+        report->setProperty ("inputSkippedFrames", reportedInputSkipFrames);
         report->setProperty ("backupActive",   backupWasRunning);
         if (backupWasRunning) report->setProperty ("backupRoot", bDir.getFullPathName());
         report->setProperty ("backupFailed",   reportedBackupFailure);

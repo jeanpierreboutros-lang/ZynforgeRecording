@@ -947,6 +947,9 @@ private:
     // At most one SMART probe in flight -- the 30 s poll must not stack up
     // background queries when a drive is answering slowly.
     std::atomic<bool> smartQueryInFlight { false };
+    // Idle timer ticks; the poll never runs during a take or playback (it
+    // launches a process, see MultitrackRecorder::querySmartStatus).
+    juce::uint32      smartIdleTick { 0 };
     void pollSmartStatusAsync();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

@@ -17,6 +17,7 @@
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
 #include "LoudnessMeter.h"
+#include "CycleGapDetector.h"
 #include "MixKernel.h"
 #include "MultiPartReader.h"
 #include "StripColours.h"
@@ -1130,6 +1131,11 @@ namespace zynforge
         std::atomic<juce::int64> lastCaptureTicks { 0 };           // audio thread: start of the last captured block
         std::atomic<int>         lastCaptureBlock { 0 };
         std::atomic<juce::int64> rideGapFrames { 0 };              // silence added this take
+        // Audio thread only. A device start or stop raises cycleGapsStale so
+        // the next callback starts the stamps afresh instead of reading the
+        // time the device was off as a skipped cycle.
+        CycleGapDetector         cycleGaps;
+        std::atomic<bool>        cycleGapsStale { true };
         std::atomic<int>         rideOutcome { 0 };
         // A ride-through came back without the monitor output: once the take
         // is over and the chosen output is listed, the device watch reopens it.

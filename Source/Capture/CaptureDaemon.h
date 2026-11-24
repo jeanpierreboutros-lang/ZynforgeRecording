@@ -3,6 +3,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 
 #include "../Audio/CallbackWatchdog.h"
+#include "../Audio/CycleGapDetector.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Network/CaptureIdentity.h"
 #include "../Network/CaptureLink.h"
@@ -141,6 +142,10 @@ namespace zynforge::capture
         std::atomic<bool> testMode  { false };
         std::atomic<double> currentSampleRate { 0.0 };
         std::atomic<int>    currentBlockSize  { 0 };
+        // Audio thread only; a device start or stop raises cycleGapsStale
+        // (AudioEngine has the same pair, see CycleGapDetector.h).
+        zynforge::CycleGapDetector cycleGaps;
+        std::atomic<bool>   cycleGapsStale { true };
         std::atomic<float>  audioLoadPct { 0.0f };
         std::atomic<bool>   deviceAvailable { false };
         std::atomic<bool>   captureDeviceLost { false };

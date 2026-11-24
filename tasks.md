@@ -46,6 +46,9 @@ This came from a design critique of the real window (rendered headless). The own
 - [x] 27 inputs at the noise floor all show were spare backup playback channels (owner, 2026-11-24).
 - [x] Installed the 20 s rings (`e4e8d61`) on the development Mac on 2026-11-24. Every older version is in the Trash (INSTALL.md).
 - [ ] Owner: turn Spotlight off on the take drives, and pick a backup drive that keeps up.
+- [x] Digital drops on every channel about every 72 s (owner heard them in the stereo mix track): CoreAudio skipped 101 cycles, caused by the mid-take SMART poll's fork() of `diskutil`. Reproduced on the development Mac, fixed (no fork, SMART idle only, skipped cycles counted and filled, verify_take reads macOS's log, gate rule), tested red-first: *A cycle CoreAudio skips mid-take is counted as missed and written as silence*.
+- [ ] Owner: a 10-minute full-channel take with the backup on, then `verify_take.sh`, on the build that goes to the next show (no overload, `inputCyclesSkipped` 0).
+- [ ] Owner: decide whether to crossfade the 118 drop moments in the 2026-11-23 multitrack (positions in the session scratchpad analysis, not in this public repo).
 
 ## First real show, 2026-11-14
 

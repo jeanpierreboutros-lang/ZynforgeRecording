@@ -188,6 +188,7 @@ namespace zynforge::capture
 
     void CaptureDaemon::audioDeviceAboutToStart (juce::AudioIODevice* device)
     {
+        cycleGapsStale.store (true, std::memory_order_release);
         // prepare() finalises a running take. Keep the loss visible if the
         // device restarts without delivering audioDeviceStopped first.
         if (recorder.isRecording())
@@ -221,6 +222,7 @@ namespace zynforge::capture
 
     void CaptureDaemon::audioDeviceStopped()
     {
+        cycleGapsStale.store (true, std::memory_order_release);
         deviceAvailable.store (false);
         noteDevice ({});
         audioLoadPct.store (0.0f);
@@ -245,10 +247,16 @@ namespace zynforge::capture
                                                           float* const* outputChannelData,
                                                           int numOutputChannels,
                                                           int numSamples,
-                                                          const juce::AudioIODeviceCallbackContext&)
+                                                          const juce::AudioIODeviceCallbackContext& context)
     {
         callbackCount.fetch_add (1, std::memory_order_relaxed);
         const auto cbStart = juce::Time::getHighResolutionTicks();
+        // A cycle CoreAudio skipped goes in as silence before this block,
+        // counted as missed (capture only: nothing here follows playback).
+        if (cycleGapsStale.exchange (false, std::memory_order_acq_rel)) cycleGaps.reset();
+        const double rateNow = currentSampleRate.load (std::memory_order_relaxed);
+        if (const auto skipped = cycleGaps.onBlock (context.hostTimeNs, numSamples, rateNow); skipped > 0)
+            recorder.noteSkippedInputCycle (juce::jmin (skipped, (juce::int64) (rateNow * 30.0)), true);
         const float* routed[256] {};
         const int count = juce::jmin (256, recorder.getNumTracks());
         for (int ch = 0; ch < count; ++ch)

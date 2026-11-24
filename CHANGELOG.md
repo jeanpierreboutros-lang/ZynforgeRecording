@@ -17,6 +17,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — digital drops every 72 s while recording, 2026-11-24
+- **Every 72 s of a take, every channel lost a 10.7 ms buffer.** The drive-health (SMART) poll ran `diskutil` during the take through a fork(). That froze the app long enough for CoreAudio to skip an audio cycle ("skipping cycle due to overload"), and the 2026-11-23 show logged 101 of them. The poll now runs only when nothing is recording or playing, and the app never forks.
+- **A skipped CoreAudio cycle can no longer pass unseen.** The app reads each buffer's timestamp. Lost frames count as missed (MISSED on the plate, the report's `missedSamples`), are named in the report (`inputCyclesSkipped`, `inputSkippedFrames`), and go into a live take as silence so every track stays on time. The show's report said 0 missed.
+- `tools/verify_take.sh` fails a take with skipped cycles, or with CoreAudio overloads in macOS's log during the take. Run on the 2026-11-23 show, it reports the 101.
+- The invariants gate refuses `juce::ChildProcess`, `popen`, `system` and `fork` in app code. See *No fork, and a skipped CoreAudio cycle is caught and filled* in [decisions.md](decisions.md).
+
 ### Changed — copies ride out 20 s drive pauses, 2026-11-24
 - Every copy's buffer (primary, backup, each mirror) now holds 20 s of live audio instead of about 5.5 s. In the 2026-11-23 show a USB backup SSD took 7 to 9 s to finish its writes three times and the backup lost 16 s; the same pauses now lose nothing.
 - The extra room only uses memory the pre-roll leaves under the existing 1 GiB limit, so the pre-roll that fits is unchanged. Ring memory during a take is now about 660 MB at 86 channels on two copies (was about 180 MB).
