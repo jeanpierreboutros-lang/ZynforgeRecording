@@ -892,8 +892,16 @@ namespace zynforge
         // left. The engine clamps to [0, fileSize] and prevents a clip
         // from inverting (length never < 1 sample).
         enum class ClipEdit { TrimLeft, TrimRight, Move };
-        juce::int64 constrainClipEditDelta (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples) const;
-        bool editClip (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples);
+        // sourceLength: the clip's source length (clipSourceLength), measured
+        // once by a drag; -1 measures it here, which for a clip on its own file
+        // lists that file's folder and opens it.
+        juce::int64 constrainClipEditDelta (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples,
+                                            juce::int64 sourceLength = -1) const;
+        bool editClip (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples, juce::int64 sourceLength = -1);
+        // How much audio a clip's source holds: the strip's take, or the clip's
+        // own file (all its parts). A TrimRight drag reads it once per clip at
+        // its start, never per mouse event.
+        juce::int64 clipSourceLength (int track, int clipIndex) const;
 
         // Non-destructive crop: on EVERY track, replace its clip list with
         // the parts that fall inside the timeline range [start, end),

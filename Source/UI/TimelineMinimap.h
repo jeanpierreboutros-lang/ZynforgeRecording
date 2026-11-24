@@ -4,6 +4,7 @@
 
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "LeftClickOnly.h"
 
 #include <functional>
 
@@ -70,8 +71,14 @@ namespace zynforge
             return { xL, 1.0f, juce::jmax (3.0f, xR - xL), (float) getHeight() - 2.0f };
         }
 
-        void mouseDown (const juce::MouseEvent& e) override { scrollTo (e.x); }
-        void mouseDrag (const juce::MouseEvent& e) override { scrollTo (e.x); }
+        // A right or middle press is no navigation: it jumped the timeline and
+        // paused FOLLOW.
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            menuPress = leftclick::isMenuPress (e);
+            if (! menuPress) scrollTo (e.x);
+        }
+        void mouseDrag (const juce::MouseEvent& e) override { if (! menuPress) scrollTo (e.x); }
 
     private:
         // The lane maps the timeline across content x [headerW + inset,
@@ -92,6 +99,7 @@ namespace zynforge
         }
 
         int contentW { 1 }, headerW { brand::space::editHeaderW }, viewX { 0 }, viewW { 1 };
+        bool menuPress { false };   // the press now held asked for a menu
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TimelineMinimap)
     };

@@ -245,6 +245,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/EngineFixTests.cpp
     Source/Tests/EngineFix20261116Tests.cpp
     Source/Tests/Fix20261122EditTests.cpp
+    Source/Tests/Fix20261124EditTests.cpp
     Source/Tests/Fix20261122ExportTests.cpp
     Source/Tests/Fix20261122NetworkTests.cpp
     Source/Tests/Fix20261122RecorderTests.cpp

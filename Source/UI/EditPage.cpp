@@ -52,8 +52,9 @@ namespace zynforge
             {
                 if (auto* page = findParentComponentOfClass<EditPage>())
                 {
-                    if (e.mods.isShiftDown()) page->wheelZoomVertical   (w.deltaY);
-                    else                      page->wheelZoomHorizontal (w.deltaY);
+                    const float delta = EditPage::zoomWheelDelta (w);
+                    if (e.mods.isShiftDown()) page->wheelZoomVertical   (delta);
+                    else                      page->wheelZoomHorizontal (delta);
                     return;
                 }
             }
@@ -173,13 +174,17 @@ namespace zynforge
         {
             auto& rec = engine.getRecorder();
             // A post-STOP hold shows the strip's own take, so it follows the
-            // strip into a row built new (a link, a delete), by lane.
+            // strip into a row built new (a link, a delete), by lane -- within
+            // the session it was captured in. Strip ids repeat across sessions
+            // (one per index), so another session's row with the same id drew
+            // this take, and a continue there seeded from it.
             struct Held { LivePeakHistory envelope { TrackState::kLiveBinSamples }; bool rescanIssued { false }; };
             std::map<juce::String, Held> held;
+            const auto session = engine.getActiveSessionDir();
             for (size_t k = 0; k < rows.size(); ++k)
             {
                 const auto& r = *rows[k];
-                if (! r.isHoldingLiveEnvelope()) continue;
+                if (! r.isHoldingLiveEnvelope() || r.holdsAnotherSession (session)) continue;
                 held[r.getStripKey()] = { r.heldEnvelope (false), r.holdRescanIssued() };
                 if (r.isStereoPair() && k < builtRightKeys.size() && builtRightKeys[k].isNotEmpty())
                     held[builtRightKeys[k]] = { r.heldEnvelope (true), r.holdRescanIssued() };
@@ -230,7 +235,7 @@ namespace zynforge
                 {
                     const auto right = stereo ? held.find (rightKey) : held.end();
                     r->adoptHeldTake (left->second.envelope, right != held.end() ? &right->second.envelope : nullptr,
-                                      left->second.rescanIssued);
+                                      left->second.rescanIssued, session);
                 }
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
@@ -265,30 +270,44 @@ namespace zynforge
             // Fit-to-window fallback distributes the viewport height across
             // the rows that opted into Size::FitToWindow -- minus the gaps
             // between rows, so a fit-to-window row still lands flush in view.
+            // Only the rows on screen count, each at the height it is drawn at
+            // (a dragged row's custom height, not its preset's 80 px), and a
+            // row a Memory Location hid takes no room: a hidden row left a
+            // blank band and the fit rows overran or fell short of the view.
             int fixedTotal = 0;
             int fitRows    = 0;
+            int shownRows  = 0;
             for (auto& r : rows)
             {
+                if (! r->isVisible()) continue;
+                ++shownRows;
                 if (r->getRowSize() == TrackRow::Size::FitToWindow) ++fitRows;
-                else fixedTotal += TrackRow::pixelsFor (r->getRowSize());
+                else fixedTotal += r->getRowPixelHeight (0);
             }
-            const int gapTotal = (int) rows.size() > 1 ? ((int) rows.size() - 1) * kRowGap : 0;
+            const int gapTotal = shownRows > 1 ? (shownRows - 1) * kRowGap : 0;
             const int fitFallback = fitRows > 0
                 ? juce::jmax (28, (viewportHeight - fixedTotal - gapTotal) / fitRows)
                 : 80;
 
             auto bounds = getLocalBounds();
             int totalH = 0;
+            bool firstShown = true;
             for (size_t i = 0; i < rows.size(); ++i)
             {
                 const int h = rows[i]->getRowPixelHeight (fitFallback);
-                rows[i]->setBounds (bounds.removeFromTop (h));
-                totalH += h;
-                if (i + 1 < rows.size())
+                if (! rows[i]->isVisible())
+                {
+                    rows[i]->setBounds (bounds.withHeight (h));   // keeps its size, takes no room
+                    continue;
+                }
+                if (! firstShown)
                 {
                     bounds.removeFromTop (kRowGap);   // dark separator
                     totalH += kRowGap;
                 }
+                firstShown = false;
+                rows[i]->setBounds (bounds.removeFromTop (h));
+                totalH += h;
             }
             // Resize ourselves so the viewport scrolls when content > view.
             setSize (getWidth(), juce::jmax (viewportHeight, totalH));
@@ -436,6 +455,11 @@ namespace zynforge
         void holdLiveEnvelopesUntilScanned()
         {
             for (auto& r : rows) r->holdLiveEnvelopeUntilScanned();
+        }
+        // Another session is open: a row it reuses drops the last session's take.
+        void releaseHeldTakesOutside (const juce::File& session)
+        {
+            for (auto& r : rows) r->releaseHeldTakeOutside (session);
         }
 
         // Stop every row's meter timer before the caller frees the TrackStates
@@ -1027,6 +1051,8 @@ namespace zynforge
         // deleted or relinked (the generation bumps) or another session
         // opens, it names whichever clip now sits there -- and Delete /
         // Nudge / Duplicate would act on that clip.
+        list->releaseHeldTakesOutside (sessionDir);
+
         const int gen = engine.getRecorder().getTrackGeneration();
         if (gen != selectionTrackGen || sessionDir != selectionSessionDir)
         {
@@ -1817,7 +1843,9 @@ namespace zynforge
 
     void EditPage::wheelZoomHorizontal (float delta)
     {
-        if (list == nullptr) return;
+        // A wheel event with no movement (the other axis, a momentum tail)
+        // is no step: it zoomed out.
+        if (list == nullptr || delta == 0.0f) return;
         pauseFollowForZoom();
         // Keep the time under the viewport centre stable across the zoom.
         const double centreFrac = (viewport.getViewPositionX()
@@ -1832,6 +1860,7 @@ namespace zynforge
 
     void EditPage::wheelZoomVertical (float delta)
     {
+        if (delta == 0.0f) return;
         setVerticalZoom (vZoom * (delta > 0.0f ? 1.18f : 1.0f / 1.18f));
     }
 

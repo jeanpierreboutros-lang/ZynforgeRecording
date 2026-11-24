@@ -41,8 +41,8 @@ namespace zynforge
         float        gainDb               { 0.0f };
         // Editing flags.
         //   muted  → clip outputs silence (still claims its timeline range)
-        //   locked → engine refuses trim / move / fade edits; UI greys
-        //            the handles. Use to pin a 'keeper' take during
+        //   locked → engine refuses trim / move / fade / gain edits; UI
+        //            greys the handles. Use to pin a 'keeper' take during
         //            virtual soundcheck so a stray drag can't ruin it.
         bool         muted                { false };
         bool         locked               { false };
