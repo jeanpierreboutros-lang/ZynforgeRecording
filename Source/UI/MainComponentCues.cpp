@@ -245,6 +245,21 @@ void MainComponent::jumpToCue (int index)
     // snapshot put back its fader, mute and input from before the link, so the
     // pair recorded and played R from somewhere nobody could see.
     const bool recording = engine.isRecording();
+    // After STOP, until the take's files are final, the engine refuses an
+    // input patch (setTrackInputRouting), as MIXER and PATCH do. A cue recalled
+    // then moves everything else at once; its inputs wait in heldCueInputs, the
+    // status line says so, and they land as the save ends (applyHeldCueInputs),
+    // before RECORD can start again. Dropped without a word, the next take
+    // recorded the previous cue's inputs.
+    const bool finalizing = ! recording && engine.isCaptureFinalizing();
+    heldCueInputs.clear();
+    const auto patchInput = [this, &rec, finalizing] (int track, int input, int output)
+    {
+        if (! finalizing) { engine.setTrackInputRouting (track, input); return; }
+        auto& t = rec.getTrack (track);
+        if (t.inputRouting.load (std::memory_order_relaxed) == juce::jmax (-1, input)) return;
+        heldCueInputs.push_back ({ t.stripId, track, input, output });
+    };
     const auto pairedLeft = [&rec, total] (int t)
     { return t >= 0 && t + 1 < total && rec.getTrack (t).isStereo.load (std::memory_order_relaxed); };
     const int n = (int) cue.strips.size();
@@ -275,19 +290,19 @@ void MainComponent::jumpToCue (int index)
         const int input = s.inputRouting == -2 ? target : s.inputRouting;
         if (! pair)
         {
-            if (! recording) engine.setTrackInputRouting (target, input);
+            if (! recording) patchInput (target, input, s.outputRouting);
             zynforge::vsc::recallOutput (engine, target, s.outputRouting);
             continue;
         }
+        const int output = s.outputRouting >= 0 ? pairStartChannel (s.outputRouting, engine.getCurrentDeviceOutputCount())
+                                                : s.outputRouting;
         // R is always L + 1, on the device's last two when L asks for its last.
         if (! recording)
         {
             const int left = pairStartChannel (input, engine.getCurrentDeviceInputCount());
-            engine.setTrackInputRouting (target,     left);
-            engine.setTrackInputRouting (target + 1, left < 0 ? -1 : left + 1);
+            patchInput (target,     left,                    output);
+            patchInput (target + 1, left < 0 ? -1 : left + 1, output >= 0 ? output + 1 : output);
         }
-        const int output = s.outputRouting >= 0 ? pairStartChannel (s.outputRouting, engine.getCurrentDeviceOutputCount())
-                                                : s.outputRouting;
         zynforge::vsc::recallOutput (engine, target,     output);
         zynforge::vsc::recallOutput (engine, target + 1, output >= 0 ? output + 1 : output);
     }
@@ -303,7 +318,36 @@ void MainComponent::jumpToCue (int index)
     showStatus ("Cue " + juce::String (index + 1) + " '" + cue.name + "' recalled -- "
                 + juce::String (n - missing) + " strips"
                 + (missing > 0 ? "; " + zynforge::counted (missing, "strip") + " in the cue not found" : juce::String())
-                + (recording ? " (arm + input held -- recording)" : ""));
+                + (recording ? " (arm + input held -- recording)"
+                   : ! heldCueInputs.empty() ? " (inputs held until the take is saved)" : ""));
+}
+
+// The take's save has ended (saveFinalizedCaptureMetadata): the inputs a cue
+// recalled during it go in now, by the strip the cue resolved, and the output
+// is written again after its input, as jumpToCue does (VSC follows the input).
+// Taken whole, so a held patch never reaches any take but the next.
+void MainComponent::applyHeldCueInputs()
+{
+    const auto held = std::exchange (heldCueInputs, {});
+    if (held.empty()) return;
+    auto& rec = engine.getRecorder();
+    const auto find = [&rec] (const HeldCueInput& h)
+    {
+        if (h.track >= 0 && h.track < rec.getNumTracks() && rec.getTrack (h.track).stripId == h.stripId)
+            return h.track;
+        if (h.stripId.isNotEmpty())
+            for (int j = 0; j < rec.getNumTracks(); ++j)
+                if (rec.getTrack (j).stripId == h.stripId) return j;
+        return -1;
+    };
+    for (const auto& h : held)
+    {
+        const int track = find (h);
+        if (track < 0) continue;   // strips can't be deleted or moved while a take saves
+        engine.setTrackInputRouting (track, h.input);
+        zynforge::vsc::recallOutput (engine, track, h.output);
+    }
+    lastTrackCount = -1;   // the strips' input boxes redraw
 }
 
 void MainComponent::promptCueName (const juce::String& title,

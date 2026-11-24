@@ -289,19 +289,34 @@ namespace zynforge
             showFaderValue();
             dirty = true;
         }
-        if (std::abs ((float) panSlider.getValue() - panL) > 0.01f)
+        // Every pan this knob didn't make lands here: a cue's ramp, an edit-group
+        // peer, a surface's V-pot, EDIT. The readout follows the knob, as the
+        // fader's does, and to the percent it shows: a ramp's last step can be
+        // under the knob's 0.01 threshold and still change "L39" to "L40".
+        const auto panMoved = [] (double shown, float now)
+        {
+            return std::abs ((float) shown - now) > 0.01f
+                || juce::roundToInt (shown * 100.0) != juce::roundToInt ((double) now * 100.0);
+        };
+        bool panShown = false;
+        if (panMoved (panSlider.getValue(), panL))
         {
             panSlider.setValue (panL, juce::dontSendNotification);
-            dirty = true;
+            panShown = true;
         }
         if (pairState != nullptr)
         {
             const float panR = pairState->pan.load (std::memory_order_relaxed);
-            if (std::abs ((float) panSliderR.getValue() - panR) > 0.01f)
+            if (panMoved (panSliderR.getValue(), panR))
             {
                 panSliderR.setValue (panR, juce::dontSendNotification);
-                dirty = true;
+                panShown = true;
             }
+        }
+        if (panShown)
+        {
+            showPanText();
+            dirty = true;
         }
 
         // Colour mirror -- only push to LookAndFeel if the resolved

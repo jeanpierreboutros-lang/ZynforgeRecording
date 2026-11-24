@@ -95,6 +95,7 @@ namespace zynforge
     class MixerFixTests;
     class Design20261117PanelsTests;
     class MixerFix20261116Tests;
+    class Fix20261124MixerTests;
 
     namespace backupdlg
     {
@@ -218,16 +219,32 @@ namespace zynforge
                 pathLabel .setBounds (r);
             }
 
+            // Where Choose... opens: the row's folder, else ~/Music. Whether
+            // the folder is there is a stat on its drive, so it is asked off the
+            // message thread under the drive wait; a drive that does not answer
+            // opens the picker at ~/Music.
+            static juce::File chooserStart (const juce::File& root)
+            {
+                const auto music = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+                if (root == juce::File()) return music;
+                const auto there = preflight::withinTime (preflight::kDriveWaitMs,
+                    [root, stall = rootCheckStallForTests]
+                    {
+                        if (stall) stall();
+                        return root.isDirectory();
+                    });
+                return there.value_or (false) ? root : music;
+            }
+
         private:
             friend class zynforge::MixerFixTests;
             friend class zynforge::MixerFix20261116Tests;
+            friend class zynforge::Fix20261124MixerTests;
             void pickFolder()
             {
                 chooser = std::make_unique<juce::FileChooser> (
                     acceptCb ? "Pick a backup folder (recordings are copied here)" : "Pick a mirror drive root",
-                    cfg.root.isDirectory()
-                        ? cfg.root
-                        : juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                    chooserStart (cfg.root),
                     "");
                 const auto flags = juce::FileBrowserComponent::openMode
                                  | juce::FileBrowserComponent::canSelectDirectories;
@@ -398,6 +415,7 @@ namespace zynforge
             friend class zynforge::DialogAuditTests;
             friend class zynforge::MixerFixTests;
             friend class zynforge::MixerFix20261116Tests;
+            friend class zynforge::Fix20261124MixerTests;
             friend class zynforge::Design20261117PanelsTests;
             static constexpr int kRowH = 36;
 
@@ -521,12 +539,34 @@ namespace zynforge
                     : "on the same drive as the session -- not an independent copy";
             }
 
+            // BackupMirrorDialog::backupFolderRefusal makes the folder, writes a
+            // probe file in it and canonicalizes it: all on the folder's drive,
+            // which may never answer. So it runs on a thread of its own under the
+            // drive wait, like checkRoots, and a drive that does not answer in
+            // time is a refusal that says so. The window is back within the wait
+            // either way, so a take started behind it can still close it.
+            static juce::String pickRefusal (const juce::File& folder, const juce::File& session,
+                                             const juce::File& sessionsRoot)
+            {
+                const auto answer = preflight::withinTime (preflight::kDriveWaitMs,
+                    [folder, session, sessionsRoot, stall = rootCheckStallForTests]
+                    {
+                        if (stall) stall();
+                        // Given up on: nobody reads the answer, so nothing is made.
+                        if (preflight::probeCancelled()) return juce::String();
+                        return BackupMirrorDialog::backupFolderRefusal (folder, session, sessionsRoot);
+                    });
+                return answer.has_value()
+                    ? *answer
+                    : "Backup folder not taken -- its drive did not answer within "
+                      + juce::String (preflight::kDriveWaitMs / 1000.0, 1) + " s; pick it again once the drive responds";
+            }
+
             // The refusals a backup folder has always had, at the moment of
             // picking it. An offline drive already saved here is left alone.
             bool acceptBackup (const juce::File& folder)
             {
-                const auto refusal = BackupMirrorDialog::backupFolderRefusal (folder, engine.getActiveSessionDir(),
-                                                                              nextSessionsRoot());
+                const auto refusal = pickRefusal (folder, engine.getActiveSessionDir(), nextSessionsRoot());
                 if (refusal.isEmpty()) return true;
                 status.setText (refusal, juce::dontSendNotification);
                 if (host.backupRefused) host.backupRefused (refusal);

@@ -4,6 +4,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
+#include <algorithm>
 #include <memory>
 
 namespace zynforge
@@ -212,24 +213,33 @@ namespace zynforge
                 auto r = std::make_unique<TrackRow>();
                 r->isFirstRow = rowComponents.empty();
                 r->onAddRow = [this] { addRow(); };
-                r->onRemoveRow = [this] (TrackRow* who)
-                {
-                    for (auto it = rowComponents.begin(); it != rowComponents.end(); ++it)
-                        if (it->get() == who)
-                        {
-                            removeChildComponent (who);
-                            rowComponents.erase (it);
-                            // Re-flag the first row in case it was removed.
-                            for (size_t i = 0; i < rowComponents.size(); ++i)
-                                rowComponents[i]->isFirstRow = (i == 0);
-                            resizeFor (rowComponents.size());
-                            return;
-                        }
-                };
+                r->onRemoveRow = [this] (TrackRow* who) { removeRow (who); };
                 r->setSubmitAction ([this] { commit(); });   // Enter in a field = Create
                 addAndMakeVisible (*r);
                 rowComponents.push_back (std::move (r));
                 resizeFor (rowComponents.size());
+            }
+
+            // The press runs inside the row's own '-' button. Deleting the row
+            // there destroyed that button and the function running the press
+            // while they still ran. The row leaves the dialog now and is freed
+            // on the next message, once the press has returned.
+            void removeRow (TrackRow* who)
+            {
+                const auto it = std::find_if (rowComponents.begin(), rowComponents.end(),
+                                              [who] (const auto& row) { return row.get() == who; });
+                if (it == rowComponents.end()) return;
+                removeChildComponent (who);
+                removedRows.push_back (std::move (*it));
+                rowComponents.erase (it);
+                // Re-flag the first row in case it was removed.
+                for (size_t i = 0; i < rowComponents.size(); ++i)
+                    rowComponents[i]->isFirstRow = (i == 0);
+                resizeFor (rowComponents.size());
+                juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<DialogContent> (this)]
+                {
+                    if (safe != nullptr) safe->removedRows.clear();
+                });
             }
 
         public:
@@ -273,6 +283,7 @@ namespace zynforge
             juce::Label title;
             // Owned here: a Component never deletes its children.
             std::vector<std::unique_ptr<TrackRow>> rowComponents;
+            std::vector<std::unique_ptr<TrackRow>> removedRows;   // out of the dialog, freed after the press
             juce::TextButton createButton, cancelButton;
             AddTracksDialog::ResultCallback callback;
 

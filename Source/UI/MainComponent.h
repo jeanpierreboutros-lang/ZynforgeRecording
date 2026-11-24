@@ -43,6 +43,7 @@
 
 namespace zynforge { struct PreflightRow; class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class NetworkStateTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class MainWindowFixTests; class EditIntegrityTests; class PunchRuleTests; class EditDetailTests; class EditRowFixTests; class SessionSafetyTests; class SessionFixTests; struct ConcurrencyAuditAccess; class EngineFixTests; class CapturePathTests; }
 namespace zynforge { class MixerFixTests; class UiFixTests; class NetFix20261116Tests; }
+namespace zynforge { class Fix20261124MixerTests; }
 namespace zynforge { class SessionFix20261116Tests; class MainWindowFix20261116Tests; class MixerFix20261116Tests; }
 namespace zynforge { class EngineFix20261116Tests; class PlayFix20261116Tests; class DesignRenderHarness; }
 namespace zynforge { class Design20261117AlarmsTests; }
@@ -738,6 +739,7 @@ private:
     juce::String remoteDeviceRefusal;   // or because nobody there can answer for the device
 
     friend class zynforge::MixerFixTests;
+    friend class zynforge::Fix20261124MixerTests;
     friend class zynforge::UiFixTests;
     friend class zynforge::CaptureDaemonLinkTests;
     friend class zynforge::CapturePathTests;
@@ -874,6 +876,15 @@ private:
     // every session swap, persisted on every add / pick / update.
     std::vector<zynforge::SetlistBar::Cue> cues;
     int currentCueIndex { -1 };
+
+    // A cue recalled while a STOP's save still owns the take: the engine
+    // refuses an input patch until the save ends, so the cue's inputs wait
+    // here and land the moment it does (saveFinalizedCaptureMetadata), before
+    // RECORD can start again. By the strip the cue resolved; the output goes
+    // again with it, because on the soundcheck patch it follows the input.
+    struct HeldCueInput { juce::String stripId; int track { -1 }; int input { -1 }; int output { -1 }; };
+    std::vector<HeldCueInput> heldCueInputs;
+    void applyHeldCueInputs();
 
     void loadSetlistFromActiveSession();
     bool saveSetlistToActiveSession (bool writeBackup = true) const;
