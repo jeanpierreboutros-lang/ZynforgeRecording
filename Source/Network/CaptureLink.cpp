@@ -82,14 +82,22 @@ namespace zynforge::capture
     bool CaptureServer::listen (int port, const juce::String& bindAddr)
     {
         stop();
+        // The port's key before the port, when the port is known: a helper
+        // that can't take the key (one is running there, or one that closed
+        // the port is still shutting down) never opens the port. Opened first,
+        // a window connected to it in the moment before it closed again and
+        // took it for something else answering.
+        const bool keyFirst = port > 0;
+        if (keyFirst && ! endpointIdentity.create (port)) return false;
         listener = std::make_unique<juce::StreamingSocket>();
         if (! listener->createListener (port, bindAddr))
         {
             listener.reset();
+            endpointIdentity.reset();
             return false;
         }
         listenPort.store (listener->getBoundPort() > 0 ? listener->getBoundPort() : port);
-        if (! endpointIdentity.create (listenPort.load()))
+        if (! keyFirst && ! endpointIdentity.create (listenPort.load()))
         {
             listener.reset();
             listenPort.store (-1);
@@ -122,10 +130,17 @@ namespace zynforge::capture
             if (live != nullptr) live->close();
         }
         if (acceptThread.joinable()) acceptThread.join();
+        // The port is closed and the one thread that reads the key (the accept
+        // loop's handshake) has ended: let go of the key now, not after the
+        // readers. A helper started in this one's place takes the key as it
+        // opens the port, and a reader still inside a command held it back
+        // for as long as that command ran (the window waits for it too, see
+        // CaptureSupervisor::launchAndAttach).
+        if (beforeIdentityReleaseForTests && endpointIdentity.secret().isNotEmpty()) beforeIdentityReleaseForTests();
+        endpointIdentity.reset();
         if (readThread.joinable())   readThread.join();
         joinRetiredReaders (true);
         listener.reset();
-        endpointIdentity.reset();
         listenPort.store (-1);
         clientConnected.store (false);
     }

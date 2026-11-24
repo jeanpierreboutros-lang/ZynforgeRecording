@@ -77,7 +77,7 @@ namespace zynforge::capture::identity
             descriptor = ::openat (directory, filename.toRawUTF8(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0600);
             struct stat status {};
             if (descriptor < 0 || ::fstat (descriptor, &status) != 0 || ! validFile (status)
-                || ::flock (descriptor, LOCK_EX | LOCK_NB) != 0)
+                || ! lockExclusively (descriptor))
             { resetLocked(); return false; }
             ownsFile = true;
             key = securetoken::generate();
@@ -216,11 +216,18 @@ namespace zynforge::capture::identity
            #endif
         }
 
+        // A helper holds this port's key: one is running there, or one that
+        // has closed the port is still shutting down (CaptureServer::stop).
+        static bool keyHeld (int port)
+        {
+            return lockIsHeld ((juce::String (port) + ".key").toRawUTF8());
+        }
+
         // A helper is alive on this port and publishes no TakeClaim: a build from
         // before they existed, so nothing says which session it is writing.
         static bool helperWithoutClaims (int port)
         {
-            if (! lockIsHeld ((juce::String (port) + ".key").toRawUTF8())) return false;
+            if (! keyHeld (port)) return false;
             const int claims = openSharedFile ((juce::String (port) + ".claims").toRawUTF8(), false);
             if (claims < 0) return true;
            #if JUCE_MAC || JUCE_LINUX
@@ -256,6 +263,20 @@ namespace zynforge::capture::identity
         static bool validFile (const struct stat& status)
         { return S_ISREG (status.st_mode) && status.st_uid == ::geteuid()
                  && (status.st_mode & 0777) == 0600 && status.st_nlink == 1; }
+
+        // A window asking whether the key is held (lockIsHeld) holds its lock
+        // shared for an instant; only a helper holds it for longer. A few tries
+        // ride out the instant, as SessionClaim::hold does.
+        static bool lockExclusively (int file)
+        {
+            for (int attempt = 0; attempt < 50; ++attempt)
+            {
+                if (::flock (file, LOCK_EX | LOCK_NB) == 0) return true;
+                if (errno != EWOULDBLOCK) return false;
+                juce::Thread::sleep (2);
+            }
+            return false;
+        }
 
         // The cleaner wants all three dates over three days old; an hour-old
         // modification date is far from that, and a touch per hour is enough.

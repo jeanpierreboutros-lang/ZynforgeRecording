@@ -54,12 +54,17 @@ int main (int argc, char* argv[])
     int  port     = 17890;
     int  inputs   = 32;
     bool noDevice = false;
+    int  startDelayMs = 0;
     for (int i = 1; i < argc; ++i)
     {
         const juce::String a (argv[i]);
         if (a == "--port"   && i + 1 < argc) port   = juce::String (argv[++i]).getIntValue();
         if (a == "--inputs" && i + 1 < argc) inputs = juce::String (argv[++i]).getIntValue();
         if (a == "--no-device") noDevice = true;   // tests / CI: no audio hardware
+        // Tests: a helper slow to start, so a window can attach to another
+        // one before this one tries the port.
+        if (a == "--start-delay-ms" && i + 1 < argc)
+            startDelayMs = juce::jlimit (0, 10000, juce::String (argv[++i]).getIntValue());
     }
 
     // A dropped GUI socket must fail the write, not kill the take.
@@ -71,6 +76,8 @@ int main (int argc, char* argv[])
     sigemptyset (&action.sa_mask);
     sigaction (SIGTERM, &action, nullptr);
     sigaction (SIGINT,  &action, nullptr);
+
+    if (startDelayMs > 0) juce::Thread::sleep (startDelayMs);
 
     zynforge::capture::CaptureDaemon daemon;
     daemon.onQuitRequest = [] { shouldQuit.store (true); };   // wire Quit command

@@ -5,12 +5,18 @@
 
 #include <juce_events/juce_events.h>
 
+#include <arpa/inet.h>
 #include <array>
+#include <cerrno>
 #include <fcntl.h>
 #include <libproc.h>
+#include <netinet/in.h>
+#include <poll.h>
 #include <signal.h>
 #include <spawn.h>
 #include <string>
+#include <sys/proc_info.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
@@ -19,6 +25,84 @@ extern char** environ;
 
 namespace zynforge::capture
 {
+    namespace
+    {
+        // What a connect to the helper's port finds. Only a refusal says
+        // nothing listens there: a connect that times out found a helper too
+        // busy to accept (its backlog full), still there.
+        enum class PortAnswer { refused, answered, noAnswer };
+
+        PortAnswer probePort (int port, int timeoutMs)
+        {
+            const int probe = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (probe < 0) return PortAnswer::noAnswer;
+            const juce::ScopeGuard closeProbe { [probe] { ::close (probe); } };
+            const int on = 1;
+            ::setsockopt (probe, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof (on));
+            ::fcntl (probe, F_SETFD, FD_CLOEXEC);
+            ::fcntl (probe, F_SETFL, ::fcntl (probe, F_GETFL) | O_NONBLOCK);
+            sockaddr_in address {};
+            address.sin_len = sizeof (address);
+            address.sin_family = AF_INET;
+            address.sin_port = htons ((uint16_t) port);
+            address.sin_addr.s_addr = htonl (INADDR_LOOPBACK);
+            if (::connect (probe, reinterpret_cast<const sockaddr*> (&address), sizeof (address)) == 0)
+                return PortAnswer::answered;
+            if (errno == ECONNREFUSED) return PortAnswer::refused;
+            if (errno != EINPROGRESS) return PortAnswer::noAnswer;
+            pollfd waiting { probe, POLLOUT, 0 };
+            if (::poll (&waiting, 1, timeoutMs) <= 0) return PortAnswer::noAnswer;
+            int error = 0;
+            socklen_t length = sizeof (error);
+            if (::getsockopt (probe, SOL_SOCKET, SO_ERROR, &error, &length) != 0) return PortAnswer::noAnswer;
+            return error == 0 ? PortAnswer::answered
+                 : error == ECONNREFUSED ? PortAnswer::refused : PortAnswer::noAnswer;
+        }
+
+        // 1: that process holds a TCP socket listening on the port. 0: it holds
+        // none. -1: it can't be asked.
+        int listensOn (pid_t pid, int port)
+        {
+            if (pid <= 0) return 0;
+            const int bytes = proc_pidinfo (pid, PROC_PIDLISTFDS, 0, nullptr, 0);
+            if (bytes <= 0) return -1;
+            std::vector<proc_fdinfo> descriptors ((size_t) bytes / sizeof (proc_fdinfo) + 16);
+            const int got = proc_pidinfo (pid, PROC_PIDLISTFDS, 0, descriptors.data(),
+                                          (int) (descriptors.size() * sizeof (proc_fdinfo)));
+            if (got <= 0) return -1;
+            for (size_t i = 0; i < (size_t) got / sizeof (proc_fdinfo); ++i)
+            {
+                if (descriptors[i].proc_fdtype != PROX_FDTYPE_SOCKET) continue;
+                socket_fdinfo info {};
+                if (proc_pidfdinfo (pid, descriptors[i].proc_fd, PROC_PIDFDSOCKETINFO, &info, sizeof (info))
+                        < (int) sizeof (info)
+                    || info.psi.soi_kind != SOCKINFO_TCP)
+                    continue;
+                const auto& tcp = info.psi.soi_proto.pri_tcp;
+                if (tcp.tcpsi_state == TSI_S_LISTEN && (int) ntohs ((uint16_t) tcp.tcpsi_ini.insi_lport) == port)
+                    return 1;
+            }
+            return 0;
+        }
+
+        // A helper closes its port as it shuts down and lets go of the port's
+        // key after (CaptureServer::stop). One launched in between finds the
+        // key held and exits, unable to listen. True once the key is free, or
+        // a live helper answers on the port (the launch then attaches to it);
+        // false when one still held it as the wait ran out.
+        bool waitForEndpointRelease (int port, int timeoutMs)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
+            while (identity::Endpoint::keyHeld (port))
+            {
+                if (probePort (port, 200) == PortAnswer::answered) return true;
+                if (juce::Time::getMillisecondCounterHiRes() >= end) return false;
+                juce::Thread::sleep (25);
+            }
+            return true;
+        }
+    }
+
     bool HelperProcess::start (const juce::StringArray& arguments)
     {
         if (arguments.isEmpty()) return false;
@@ -63,6 +147,11 @@ namespace zynforge::capture
                          : WIFSIGNALED (state) ? 128 + WTERMSIG (state) : -1;
         pid = 0;   // exited, or no longer this process's child to ask about
         return false;
+    }
+
+    void HelperProcess::askToExit()
+    {
+        if (pid > 0) ::kill (pid, SIGTERM);
     }
 
     CaptureSupervisor::~CaptureSupervisor()
@@ -158,12 +247,13 @@ namespace zynforge::capture
         { const std::lock_guard<std::mutex> g (statusLock); status = {}; statusAtMs = 0; }
         everAttached = false;
         attachedBuild.clear();
-        // It lets go of the port once it has shut down.
+        // It closes its port as it shuts down, and lets go of the port's key
+        // after that (launchAndAttach waits for the key). Only a refusal says
+        // the port is closed: a connect that timed out was taken for "gone",
+        // and the helper launched then found the port still held.
         for (int attempt = 0; attempt < 50; ++attempt)
         {
-            juce::StreamingSocket probe;
-            if (! probe.connect ("127.0.0.1", port, 200)) return true;
-            probe.close();
+            if (probePort (port, 200) == PortAnswer::refused) return true;
             juce::Thread::sleep (100);
         }
         // Still there: stay with it rather than leave this window with none.
@@ -250,15 +340,64 @@ namespace zynforge::capture
         juce::StringArray cmd { binaryPath.getFullPathName(),
                                 "--port", juce::String (port) };
         cmd.addArray (extraArgs);
-        if (! process.start (cmd))
-        {
-            lastConnectError = "The capture daemon program could not be started.";
-            return false;
-        }
-        launched = true;
 
-        // The daemon needs a beat to bind; retry the connect briefly.
-        bool answeredWrongly = false;
+        // The helper before this one (one of another build just asked to
+        // quit, or one the last window asked to quit as it closed) may have
+        // closed the port and still hold its key: one launched now could not
+        // listen. Launched again after a pause when it could not, as that
+        // helper can be a moment slower to let go than this wait.
+        bool keyHeldAtLaunch = ! waitForEndpointRelease (port, kEndpointReleaseWaitMs);
+        bool answeredWrongly = false, exited = false, helperHeldKey = false;
+        int exitCode = -1;
+        for (int launch = 0; launch < kLaunchAttempts; ++launch)
+        {
+            if (launch > 0)
+            {
+                juce::Thread::sleep (kRelaunchPauseMs << (launch - 1));
+                keyHeldAtLaunch = ! waitForEndpointRelease (port, kRelaunchReleaseWaitMs);
+            }
+            if (! process.start (cmd))
+            {
+                lastConnectError = "The capture daemon program could not be started.";
+                return false;
+            }
+            launched = true;
+            if (attachToLaunched (answeredWrongly)) return true;
+            exited = ! process.isRunning();
+            exitCode = process.exitCode();
+            if (answeredWrongly || ! exited || exitCode != helperexit::kExitCannotListen) break;
+            helperHeldKey = keyHeldAtLaunch || identity::Endpoint::keyHeld (port);
+        }
+        // Say what happened. Only the helper's own exit code blames the port:
+        // one that quit for another reason, or never answered, says so. A port
+        // whose key a helper still held is that helper's, still shutting down.
+        askChildrenToExit (binaryPath.getFileName());
+        launched = false;
+        const auto portText = juce::String (port);
+        const bool couldNotListen = exited && exitCode == helperexit::kExitCannotListen;
+        lastConnectError = couldNotListen && helperHeldKey
+                             ? "The capture daemon could not listen on port " + portText
+                               + ": the capture daemon before it there is still shutting down. "
+                                 "Try again in a moment."
+                         : couldNotListen
+                             ? "The capture daemon could not listen on port " + portText
+                               + "; another program may hold it."
+                         : exited
+                             ? "The capture daemon quit while starting (exit code " + juce::String (exitCode)
+                               + "), before it answered."
+                         : answeredWrongly
+                             ? "Something answered on port " + portText
+                               + ", but not as a capture daemon this build can talk to."
+                             : "The capture daemon started but did not answer on port " + portText
+                               + " within 2 seconds.";
+        return false;
+    }
+
+    // The helper just started needs a beat to open its port: the connect is
+    // tried for 2 seconds. False when it exited first, never answered, or
+    // something else answered (answeredWrongly).
+    bool CaptureSupervisor::attachToLaunched (bool& answeredWrongly)
+    {
         for (int attempt = 0; attempt < 20; ++attempt)
         {
             juce::Thread::sleep (100);
@@ -267,11 +406,7 @@ namespace zynforge::capture
                 const auto greeting = client.hello (1500);
                 if (greeting.ok)
                 {
-                    // Twin-launch race: if our spawned process already exited it
-                    // lost the port bind and we actually attached to a
-                    // pre-existing daemon -- don't claim ownership (we must not
-                    // later kill a daemon we didn't spawn).
-                    if (! process.isRunning()) launched = false;
+                    launched = launchedHelperAnswers();
                     everAttached  = true;
                     deathReported = false;
                     attachedBuild = greeting.build;
@@ -283,28 +418,33 @@ namespace zynforge::capture
                 }
                 client.disconnect();
                 answeredWrongly = true;
-                break;
+                return false;
             }
-            if (! process.isRunning()) break;   // crashed on startup
+            if (! process.isRunning()) return false;   // crashed on startup, or could not listen
         }
-        // Say what happened. Only the helper's own exit code blames the port:
-        // one that quit for another reason, or never answered, says so.
-        const bool exited = ! process.isRunning();
-        const int exitCode = process.exitCode();
-        askChildrenToExit (binaryPath.getFileName());
-        launched = false;
-        const auto portText = juce::String (port);
-        lastConnectError = exited && exitCode == helperexit::kExitCannotListen
-                             ? "The capture daemon could not listen on port " + portText
-                               + "; another program may hold it."
-                         : exited
-                             ? "The capture daemon quit while starting (exit code " + juce::String (exitCode)
-                               + "), before it answered."
-                         : answeredWrongly
-                             ? "Something answered on port " + portText
-                               + ", but not as a capture daemon this build can talk to."
-                             : "The capture daemon started but did not answer on port " + portText
-                               + " within 2 seconds.";
+        return false;
+    }
+
+    // Twin-launch race: what answered may not be the helper just started. It
+    // can have lost the port to one already there, or still be starting and
+    // about to. Only the one holding the port's listener answered, and one
+    // this window did not start is never its to stop. The one it started and
+    // that lost is reaped here (it exits by itself once it can't listen),
+    // rather than kept as this window's helper and read later as one that
+    // died, with a take's worth of alarm.
+    bool CaptureSupervisor::launchedHelperAnswers()
+    {
+        const int listening = listensOn (process.processId(), port);
+        if (listening > 0) return true;
+        if (listening < 0) return process.isRunning();   // it can't be asked: as before
+        for (int waited = 0; waited < 3000 && process.isRunning(); waited += 20)
+            juce::Thread::sleep (20);
+        if (process.isRunning())
+        {
+            process.askToExit();
+            for (int waited = 0; waited < 1000 && process.isRunning(); waited += 20)
+                juce::Thread::sleep (20);
+        }
         return false;
     }
 

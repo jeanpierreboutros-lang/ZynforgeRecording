@@ -17,6 +17,7 @@ namespace zynforge { class EngineFixTests; }
 namespace zynforge { class CapturePathTests; }
 namespace zynforge { class CaptureHelperTests; }
 namespace zynforge { class CaptureFix20261116Tests; }
+namespace zynforge { class Fix20261124HelperTests; }
 
 namespace zynforge::capture
 {
@@ -89,6 +90,8 @@ namespace zynforge::capture
         juce::String identityRefreshNoteForTests() const { return server.identityRefreshNoteForTests(); }
         std::function<void()> beforeStartForTests;
         std::function<void()> beforeStopReplyForTests;
+        // Runs on STOP's thread while the take's files are being closed.
+        std::function<void()> duringStopFinalizationForTests;
         // Runs after STOP's own status has gone out and before its reply.
         std::function<void()> betweenStopStatusAndReplyForTests;
         // Runs on the status thread between building a status and sending it.
@@ -112,6 +115,7 @@ namespace zynforge::capture
         friend class zynforge::CapturePathTests;
         friend class zynforge::CaptureHelperTests;
         friend class zynforge::CaptureFix20261116Tests;
+        friend class zynforge::Fix20261124HelperTests;
         std::function<void()> registerCallbackForTests;
         void handleCommand (const Command&);
         bool runDeviceWork (const std::function<void()>& work);
@@ -123,6 +127,7 @@ namespace zynforge::capture
         void releaseFinishedTake();
         void noteDevice (const juce::String& name);
         juce::String heldDevice() const;
+        void settleDeviceRestart (std::unique_lock<std::mutex>& commandGuard);
 
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
@@ -161,6 +166,11 @@ namespace zynforge::capture
         juce::String        deviceName;       // set while a device runs
         juce::String        appliedDeviceState; // message thread: the setup the last configure opened
         std::atomic<int>    stopsInFlight { 0 };
+        // The device (re)started while a take's files were closing, so the
+        // recorder could not be prepared for it (MultitrackRecorder::prepare
+        // returns while finalizing). Set on the message thread; STOP and START
+        // prepare for the running device once the files are final.
+        std::atomic<bool>   deviceRestartPending { false };
         juce::String        buildId;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureDaemon)
