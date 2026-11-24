@@ -125,6 +125,7 @@ namespace zynforge::capture
         if (readThread.joinable())   readThread.join();
         joinRetiredReaders (true);
         listener.reset();
+        if (beforeIdentityReleaseForTests && endpointIdentity.secret().isNotEmpty()) beforeIdentityReleaseForTests();
         endpointIdentity.reset();
         listenPort.store (-1);
         clientConnected.store (false);

@@ -54,6 +54,9 @@ namespace zynforge::capture
         // system's /tmp cleaner (identity::Endpoint::refresh). Any thread.
         void keepIdentityFiles() { endpointIdentity.refresh(); }
         juce::String identityRefreshNoteForTests() const { return endpointIdentity.refreshNoteForTests(); }
+        // Runs in stop() just before this endpoint's key is let go, while the
+        // port is already closed: a helper slow to let go of its key.
+        std::function<void()> beforeIdentityReleaseForTests;
 
         // Push to the connected GUI. Thread-safe; no-op if no client. Returns
         // false if the write failed (peer gone). A reply sent from inside a

@@ -385,7 +385,14 @@ namespace zynforge::capture
                 // the files close, and the helper must not exit in between.
                 stopsInFlight.fetch_add (1);
                 const juce::ScopeGuard stopAnswered { [this] { stopsInFlight.fetch_sub (1); } };
-                recorder.stopRecording();
+                // The recorder's stopRecording in its parts, as AudioEngine
+                // runs it.
+                if (recorder.beginFinalization())
+                {
+                    const juce::ScopeGuard finalized { [this] { recorder.endFinalization(); } };
+                    if (duringStopFinalizationForTests) duringStopFinalizationForTests();
+                    recorder.finishFinalization();
+                }
                 const bool clean = ! recorder.hasPrimaryFailed()
                                 && ! captureDeviceLost.load()
                                 && ! recorder.hasBackupFailed()

@@ -11,6 +11,8 @@
 #include <thread>
 #include <sys/types.h>
 
+namespace zynforge { class Fix20261124HelperTests; }
+
 namespace zynforge::capture
 {
     // GUI-side supervisor for the zynforge-capture daemon (Phases 1d + 2 of
@@ -173,6 +175,7 @@ namespace zynforge::capture
         std::function<void (bool wasRecording)> onDaemonDied;
 
     private:
+        friend class zynforge::Fix20261124HelperTests;
         CaptureClient      client;
         HelperProcess      process;
         juce::File         binaryPath;

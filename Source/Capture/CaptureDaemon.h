@@ -17,6 +17,7 @@ namespace zynforge { class EngineFixTests; }
 namespace zynforge { class CapturePathTests; }
 namespace zynforge { class CaptureHelperTests; }
 namespace zynforge { class CaptureFix20261116Tests; }
+namespace zynforge { class Fix20261124HelperTests; }
 
 namespace zynforge::capture
 {
@@ -89,6 +90,8 @@ namespace zynforge::capture
         juce::String identityRefreshNoteForTests() const { return server.identityRefreshNoteForTests(); }
         std::function<void()> beforeStartForTests;
         std::function<void()> beforeStopReplyForTests;
+        // Runs on STOP's thread while the take's files are being closed.
+        std::function<void()> duringStopFinalizationForTests;
         // Runs after STOP's own status has gone out and before its reply.
         std::function<void()> betweenStopStatusAndReplyForTests;
         // Runs on the status thread between building a status and sending it.
@@ -112,6 +115,7 @@ namespace zynforge::capture
         friend class zynforge::CapturePathTests;
         friend class zynforge::CaptureHelperTests;
         friend class zynforge::CaptureFix20261116Tests;
+        friend class zynforge::Fix20261124HelperTests;
         std::function<void()> registerCallbackForTests;
         void handleCommand (const Command&);
         bool runDeviceWork (const std::function<void()>& work);
