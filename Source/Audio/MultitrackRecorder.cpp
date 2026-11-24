@@ -2663,14 +2663,41 @@ namespace zynforge
     }
    #endif
 
-    MultitrackRecorder::SmartStatus MultitrackRecorder::querySmartStatus (const juce::File& mountPoint)
+    juce::File MultitrackRecorder::volumeMountPointFor (const juce::File& folder)
+    {
+        const auto path = folder.getFullPathName();
+        if (path.isEmpty()) return {};
+       #if JUCE_MAC
+        // statfs names the volume the path is on. A path that is not there
+        // fails, where a walk up the path would land on /Volumes, the boot disk.
+        struct statfs info {};
+        if (::statfs (path.toRawUTF8(), &info) != 0) return {};
+        const auto mount = juce::String::fromUTF8 (info.f_mntonname);
+        return juce::File::isAbsolutePath (mount) ? juce::File (mount) : juce::File();
+       #else
+        return {};
+       #endif
+    }
+
+    MultitrackRecorder::SmartStatus MultitrackRecorder::querySmartStatus (const juce::File& folder)
+    {
+        return querySmartStatusIfIdle (folder, {}).value_or (SmartStatus::Unknown);
+    }
+
+    std::optional<MultitrackRecorder::SmartStatus> MultitrackRecorder::querySmartStatusIfIdle (
+        const juce::File& folder, const std::function<bool()>& stillIdle)
     {
        #if JUCE_MAC
-        if (! mountPoint.exists()) return SmartStatus::Unknown;
+        // diskutil knows volumes, not folders: "Could not find disk" for any
+        // folder below a mount point, so a session folder always read Unknown.
+        const auto volume = volumeMountPointFor (folder);
+        if (volume == juce::File()) return SmartStatus::Unknown;
 
         // Runs only while no take or playback is rolling (MainComponent::
-        // pollSmartStatusAsync), and never forks (runToolOutput).
-        const auto output = runToolOutput ({ "/usr/sbin/diskutil", "info", mountPoint.getFullPathName() }, 2000);
+        // pollSmartStatusAsync), asked again here, after a statfs that can
+        // block on a hung drive. Never forks (runToolOutput).
+        if (stillIdle && ! stillIdle()) return std::nullopt;
+        const auto output = runToolOutput ({ "/usr/sbin/diskutil", "info", volume.getFullPathName() }, 2000);
         if (! output.has_value()) return SmartStatus::Unknown;
         const auto& out = *output;
 
@@ -2683,7 +2710,7 @@ namespace zynforge
         }
         return SmartStatus::Unknown;
        #else
-        juce::ignoreUnused (mountPoint);
+        juce::ignoreUnused (folder, stillIdle);
         return SmartStatus::Unknown;
        #endif
     }

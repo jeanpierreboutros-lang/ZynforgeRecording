@@ -44,13 +44,16 @@ print(values.get("lastCaptureDir") or values.get("activeSessionDir") or "")
 PY
 }
 
-# The newest take file of any strip, in any container. Renders and punch
-# sidecars are not the take.
+# The newest take file of any strip, in any container. A take is named for its
+# strip, "07 KiCK.wav" (Source/Audio/TakeNames.h, since 2026-11-16), or
+# "Track_07.wav" (before, or a strip with no name of its own), and a part adds
+# "_partNN". Renders and punch sidecars are not the take.
 newest_take(){
     local audio="$1/Audio Files"
     [[ -d "$audio" ]] || audio="$1"
     find "$audio" -maxdepth 1 -type f \
-        \( -name 'Track_*.wav' -o -name 'Track_*.aif' -o -name 'Track_*.aiff' -o -name 'Track_*.flac' \) \
+        \( -name 'Track_*' -o -name '[0-9][0-9] *' -o -name '[0-9][0-9][0-9] *' \) \
+        \( -iname '*.wav' -o -iname '*.aif' -o -iname '*.aiff' -o -iname '*.flac' \) \
         ! -name '*.punchbase*' ! -name '*_consolidated_*' -exec stat -f '%m %N' {} + 2>/dev/null \
         | sort -rn | head -1 | cut -d' ' -f2-
 }

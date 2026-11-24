@@ -9,6 +9,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "BwfStamp.h"
@@ -393,18 +394,29 @@ namespace zynforge
         // recorder doesn't have to re-derive the arm + format setup.
         void updateDiskHealth (juce::int64 expectedBytesPerSec) noexcept;
 
-        // SMART status query. macOS-only at present; shells out to
-        // `diskutil info <mountPoint>` and parses the SMART Status
-        // line. Slow (~50-200 ms blocking subprocess call) -- the
-        // host calls this from a low-frequency timer (every 30 s),
-        // not the audio path. Returns:
+        // SMART status of the drive holding `folder`. macOS only: asks
+        // `diskutil info` about the volume the folder is on, at its mount
+        // point (volumeMountPointFor). Given a folder below the mount point
+        // diskutil answers "Could not find disk", and every session folder
+        // read as Unknown until 2026-11-24. Launches a process (posix_spawn,
+        // killed after 2 s): a background thread only, and only while nothing
+        // rolls (MainComponent::pollSmartStatusAsync). Returns:
         //   Verified  -- drive's SMART controller reports healthy
         //   Failing   -- imminent hardware failure predicted
-        //   Unknown   -- internal disk that doesn't report SMART
-        //                (some NVMe + APFS containers), network mount,
-        //                or query failed
+        //   Unknown   -- a drive that doesn't report SMART (USB says "Not
+        //                Supported"), a network mount, a folder that is not
+        //                there, or the query failed
         enum class SmartStatus { Verified, Failing, Unknown };
-        static SmartStatus querySmartStatus (const juce::File& mountPoint);
+        static SmartStatus querySmartStatus (const juce::File& folder);
+        // The same, asking `stillIdle` right before diskutil starts, after the
+        // mount point is read (that read can block on a hung drive while a
+        // take starts). Nothing when it says no: no process was launched.
+        static std::optional<SmartStatus> querySmartStatusIfIdle (const juce::File& folder,
+                                                                  const std::function<bool()>& stillIdle);
+        // Where the volume holding `folder` is mounted (statfs f_mntonname),
+        // or an empty File when the folder is not there. Never walks up: a
+        // folder on an unplugged drive is not the boot disk's.
+        static juce::File volumeMountPointFor (const juce::File& folder);
 
         // Optional second copy of every track to a backup folder.
         // Pass an empty File to disable. Only effective for the next session.

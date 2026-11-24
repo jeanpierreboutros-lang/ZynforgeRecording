@@ -11,6 +11,8 @@
 #   • continuation/split parts have a playable base (Track_NN or NN Name)
 #   • matches session.report.json: track count, complete per-file sha256,
 #     and reports `missedSamples`
+#   • reads this Mac's log for CoreAudio overloads in the take's time; a log
+#     it cannot read, or that holds nothing from then, is a yellow note
 #
 # Usage:
 #   tools/verify_take.sh [SESSION_DIR]
@@ -171,6 +173,7 @@ done
 
 # ── Cross-check against session.report.json ─────────────────────────────────
 hdr "3. session.report.json cross-check"
+syslogNote=""   # why macOS's log could not be checked, if it could not
 if [[ ! -f "$REPORT" ]]; then
     red "no session.report.json — the report must be written on stop."; fail=1
 else
@@ -201,27 +204,143 @@ else
     fi
     # macOS's own log for the take, which also covers takes made before the app
     # counted skipped cycles (the 2026-11-23 show said 0 missed with 101 of
-    # them). Needs this Mac's log; ZF_VERIFY_SKIP_SYSLOG=1 skips it.
-    stopped=$(jq -r '.stoppedAt // empty' "$REPORT")
-    if [[ -n "$stopped" && -x /usr/bin/log && -z "${ZF_VERIFY_SKIP_SYSLOG:-}" ]]; then
-        window=$(python3 -I -c '
-import sys, datetime
-stop = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).astimezone()
-start = stop - datetime.timedelta(seconds=float(sys.argv[2]) + 5)
-print(start.strftime("%Y-%m-%d %H:%M:%S") + "|" + stop.strftime("%Y-%m-%d %H:%M:%S"))
-' "$stopped" "$(jq -r '.passSeconds // .totalSeconds // 0' "$REPORT")" 2>/dev/null || true)
-        if [[ "$window" == *"|"* ]]; then
-            overloads=$(/usr/bin/log show --style compact --start "${window%|*}" --end "${window#*|}" \
-                --predicate '(process == "Zynforge Recording" OR process == "ZynforgeCapture") AND eventMessage CONTAINS "skipping cycle due to overload"' \
-                2>/dev/null | grep -c "skipping cycle" || true)
-            if [[ "$overloads" =~ ^[0-9]+$ ]] && (( overloads > 0 )); then
-                red "  macOS logged $overloads CoreAudio overload(s) in the recorder during this take: each one lost a buffer of input on every channel"
-                fail=1
-            else
-                grn "  OK — no CoreAudio overload in this Mac's log for the take"
-            fi
-        fi
+    # them). Needs this Mac's log for the whole take: a log that could not be
+    # read, or holds nothing from the take's time (made on another Mac, or the
+    # log has rolled over since), is a yellow note, never an OK.
+    # ZF_VERIFY_SKIP_SYSLOG=1 skips it; ZF_VERIFY_LOG_TOOL stands in for
+    # /usr/bin/log (tests).
+    logtool="${ZF_VERIFY_LOG_TOOL:-/usr/bin/log}"
+    if [[ -n "${ZF_VERIFY_SKIP_SYSLOG:-}" ]]; then
+        syslogNote="skipped (ZF_VERIFY_SKIP_SYSLOG is set)"
+    elif [[ ! -x "$logtool" ]]; then
+        syslogNote="there is no $logtool"
+    else
+        syslog=$(python3 -I - "$REPORT" "$logtool" "${media[@]}" 2>/dev/null <<'PY'
+import datetime, json, os, pathlib, subprocess, sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+tool = sys.argv[2]
+media = sys.argv[3:]
+APP, HELPER = "Zynforge Recording", "ZynforgeCapture"
+OVERLOAD = "skipping cycle due to overload"
+EDGE = datetime.timedelta(seconds=300)   # the log must hold a line this near each end
+
+
+def say(kind, text):
+    print(kind + "\t" + text)
+
+
+def unchecked(why):
+    say("UNCHECKED", why)
+    sys.exit(0)
+
+
+def seconds(name):
+    try:
+        return max(0.0, float(report.get(name) or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+try:
+    stop = datetime.datetime.fromisoformat(str(report.get("stoppedAt") or "").replace("Z", "+00:00"))
+except ValueError:
+    unchecked("the report has no stop time")
+if stop.tzinfo is None:
+    stop = stop.astimezone()
+
+# The report keeps no time for each pass: its totals add up every pass of the
+# session, and only the last pass has a length of its own. So the whole take
+# is checked, from its first take file's creation (less the pre-roll) or the
+# stop less every pass's length, whichever is earlier, to the stop. Nothing
+# before the take: an overload then lost no input that is in it.
+start = stop - datetime.timedelta(seconds=seconds("totalSeconds") or seconds("passSeconds"))
+births = []
+for name in media:
+    try:
+        born = datetime.datetime.fromtimestamp(os.stat(name).st_birthtime, tz=datetime.timezone.utc)
+    except (OSError, AttributeError, ValueError, OverflowError):
+        continue
+    if born <= stop:   # a copy made since says nothing about when the take began
+        births.append(born)
+if births:
+    start = min(start, min(births) - datetime.timedelta(seconds=seconds("preRollSeconds")))
+
+# Only the process that captured lost input. In the capture helper's mode the
+# window still runs its own monitor output, and its overloads cost no take.
+said = str(report.get("captureProcess") or "")
+capture = HELPER if (said == HELPER or "helper" in said.lower() or "daemon" in said.lower()) else APP
+
+
+def local(moment):
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def lines(begin, end, predicate):
+    # log show takes whole seconds of this Mac's time and can print lines from
+    # outside the range asked for: ask for the whole seconds around the range,
+    # then keep exactly the range, fraction of a second and all.
+    asked_end = end.astimezone().replace(microsecond=0)
+    if asked_end < end:
+        asked_end += datetime.timedelta(seconds=1)
+    try:
+        done = subprocess.run([tool, "show", "--style", "ndjson", "--start", local(begin), "--end",
+                               local(asked_end), "--predicate", predicate],
+                              capture_output=True, text=True, timeout=1800)
+    except (OSError, subprocess.SubprocessError) as error:
+        unchecked("log show did not run (%s)" % error)
+    if done.returncode != 0:
+        unchecked("log show failed: " + ((done.stderr.strip().splitlines() or ["exit %d" % done.returncode])[0]))
+    kept = []
+    for raw in done.stdout.splitlines():
+        try:
+            entry = json.loads(raw)
+            when = datetime.datetime.strptime(entry["timestamp"], "%Y-%m-%d %H:%M:%S.%f%z")
+        except (ValueError, KeyError, TypeError):
+            continue
+        if begin <= when <= end:
+            kept.append((os.path.basename(entry.get("processImagePath") or ""), entry.get("eventMessage") or ""))
+    return kept
+
+
+# coreaudiod logs every few seconds while audio runs; the recorder seldom does.
+heard = '(process == "coreaudiod" OR process == "%s" OR process == "%s")' % (APP, HELPER)
+head = lines(start, min(stop, start + EDGE), heard)
+tail = lines(max(start, stop - EDGE), stop, heard)
+if not head or not tail:
+    unchecked("it holds nothing from %s of the take (%s to %s): made on another Mac, or the log has rolled over"
+              % ("the start" if tail else "the end" if head else "the time", local(start), local(stop)))
+
+overloads = [process for process, message in
+             lines(start, stop, '(process == "%s" OR process == "%s") AND eventMessage CONTAINS "%s"'
+                   % (APP, HELPER, OVERLOAD))
+             if OVERLOAD in message]
+count = overloads.count(capture)
+if not said and overloads.count(HELPER):
+    say("NOTE", "%s logged %d CoreAudio overload(s) in the take's time. The report does not say which process "
+                "captured: if the capture helper did, each one lost a buffer of input" % (HELPER, overloads.count(HELPER)))
+spread = (stop - start).total_seconds() - seconds("totalSeconds")
+if spread > 3600:
+    say("NOTE", "the passes are spread over %.1f h: an overload between them (playback, idle) counts too, since "
+                "the report keeps no time for each pass" % ((stop - start).total_seconds() / 3600))
+if count:
+    say("FAIL", "macOS logged %d CoreAudio overload(s) in %s during this take: each one lost a buffer of input "
+                "on every channel" % (count, capture))
+else:
+    say("OK", "no CoreAudio overload in this Mac's log for the take (%s, %s to %s)" % (capture, local(start), local(stop)))
+PY
+)
+        syslogNote="the log check itself failed"
+        while IFS=$'\t' read -r kind text; do
+            case "$kind" in
+                OK)        grn "  OK — $text"; syslogNote="" ;;
+                FAIL)      red "  $text"; fail=1; syslogNote="" ;;
+                NOTE)      ylw "  $text" ;;
+                UNCHECKED) syslogNote="$text" ;;
+            esac
+        done <<< "$syslog"
     fi
+    [[ -z "$syslogNote" ]] || ylw "  could not check this Mac's log for the take: $syslogNote"
     # Only the primary is verified here, and step 5 re-hashes every file of it.
     # A copy whose drive was gone or hung when its hashes were made is that
     # copy's problem, not this take's: a note, unless a primary hash is missing.
@@ -419,6 +538,7 @@ fi
 hdr "Result"
 if (( fail == 0 )); then
     grn "ALL CHECKS PASSED — the take is intact."
+    [[ -z "$syslogNote" ]] || ylw "macOS's log was not checked for this take: see the yellow line in step 3."
     exit 0
 else
     red "PROBLEMS FOUND — see red lines above."

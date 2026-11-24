@@ -37,6 +37,7 @@
 #include "ClipEditTargets.h"
 
 #include <memory>
+#include <mutex>
 #include <set>
 #include <vector>
 
@@ -46,6 +47,7 @@ namespace zynforge { class SessionFix20261116Tests; class MainWindowFix20261116T
 namespace zynforge { class EngineFix20261116Tests; class PlayFix20261116Tests; class DesignRenderHarness; }
 namespace zynforge { class Design20261117AlarmsTests; }
 namespace zynforge { class Design20261117PanelsTests; }
+namespace zynforge { class Fix20261124MainTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -765,6 +767,7 @@ private:
     friend class zynforge::PlayFix20261116Tests;
     friend class zynforge::Design20261117AlarmsTests;
     friend class zynforge::Design20261117PanelsTests;
+    friend class zynforge::Fix20261124MainTests;
 
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of
@@ -936,21 +939,63 @@ private:
     // hard cuts are click-free. Toggled from the Edit menu.
     bool zeroCrossSnap { true };
 
-    // SMART status cache. `diskutil info` is a blocking subprocess call
-    // (50-200 ms typical, unbounded on an unresponsive volume), so it runs on a
-    // BACKGROUND thread and publishes here; the timer only ever reads these
-    // atomics. Running it inline on the message thread froze the whole UI
-    // mid-take whenever the drive was slow to answer. -1 = unset,
-    // 0 = Verified, 1 = Failing, 2 = Unknown.
+    // SMART status cache. `diskutil info` is a process (50-200 ms, killed after
+    // 2 s), so it runs on a BACKGROUND thread and publishes here, on the message
+    // thread; the timer only reads these. -1 = not read, 0 = Verified,
+    // 1 = Failing, 2 = Unknown. Each reading belongs to the folder beside it
+    // and the volume it was read from: a folder on another drive clears it,
+    // and the drive is read again soon either way (noteSmartDrives). A take
+    // keeps the reading taken before it.
     std::atomic<int>  smartPrimaryStatus { -1 };
     std::atomic<int>  smartBackupStatus  { -1 };
-    // At most one SMART probe in flight -- the 30 s poll must not stack up
-    // background queries when a drive is answering slowly.
+    juce::File        smartPrimaryFor, smartBackupFor;
+    juce::File        smartPrimaryVolume, smartBackupVolume;
+    // At most one SMART probe in flight: a drive answering slowly must not
+    // stack up queries. A poll that comes due meanwhile runs once it answers.
     std::atomic<bool> smartQueryInFlight { false };
-    // Idle timer ticks; the poll never runs during a take or playback (it
-    // launches a process, see MultitrackRecorder::querySmartStatus).
+    // Idle timer ticks, and the one the next poll runs at: 3 s after launch,
+    // 1 s after a drive changes or a read was left for a take, then every 72 s.
+    // Never during a take, playback or finalization (it launches a process).
     juce::uint32      smartIdleTick { 0 };
+    juce::uint32      smartPollAtTick { 30 };
+    // What the SMART worker asks right before each diskutil: does anything roll
+    // now? It reads the engine's atomics under this lock, and the window clears
+    // `engine` (destroyed before the engine, being declared after it) first.
+    struct SmartGate
+    {
+        std::mutex lock;
+        const zynforge::AudioEngine* engine { nullptr };
+    };
+    struct SmartGateOwner
+    {
+        explicit SmartGateOwner (const zynforge::AudioEngine& e) { gate->engine = &e; }
+        ~SmartGateOwner()
+        {
+            const std::lock_guard<std::mutex> hold (gate->lock);
+            gate->engine = nullptr;
+        }
+        std::shared_ptr<SmartGate> gate { std::make_shared<SmartGate>() };
+        JUCE_DECLARE_NON_COPYABLE (SmartGateOwner)
+    };
+    SmartGateOwner smartGate { engine };
+    void noteSmartDrives();
     void pollSmartStatusAsync();
+    // A failing drive read between takes, for the banner; empty when none.
+    juce::String smartIdleAlarm() const;
+public:
+    // Tests: answers in diskutil's place, on the SMART worker. Empty in the app.
+    static inline std::shared_ptr<const std::function<int (const juce::File&)>> smartQueryForTests;
+private:
+    // The idle record-time figure is worked out again every 4.8 s between
+    // takes, once its drives have answered on a thread of their own
+    // (refreshIdleRecordTime). Message thread.
+    void refreshIdleRecordTime();
+    bool         idleRecordTimeInFlight { false };
+    juce::uint32 idleRecordTimeAskedMs { 0 };
+    int          idleRecordTimeReads { 0 };   // refreshes started (tests)
+    // The rate this tick reads the device at: the take's own through a
+    // ride-through, not the stand-in's or a 48 kHz guess.
+    double tickDeviceRate();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

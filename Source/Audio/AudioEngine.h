@@ -1052,6 +1052,10 @@ namespace zynforge
         void serviceDeviceWatch (juce::uint32 nowMs);
         // True while a take is held open waiting for its input device.
         bool isRidingThroughDeviceStop() const noexcept { return deviceRideThrough.load (std::memory_order_acquire); }
+        // The rate the take in this process started at, which a ride-through
+        // keeps whatever device stands in meanwhile; 0 with no take here.
+        // Message thread: startRecording writes it there.
+        double getTakeSampleRate() const noexcept { return recorder.isRecording() ? takeDevice.rate : 0.0; }
 
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;

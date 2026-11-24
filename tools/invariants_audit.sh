@@ -130,6 +130,18 @@ report "take stems come from TakeNames.h" \
        "use takenames::freshStem / StemIndex / existingStem, not a hand-built Track_NN" \
        "$HITS"
 
+# The tools find takes too. soak_monitor.sh kept a Track_* glob when names came
+# in, and every soak of a named take logged "NOTHING TO WATCH" (2026-11-24). A
+# tool line that matches Track_ takes by a glob or pattern must match "NN Name"
+# takes on the same line. Comments and the tools' own tests are not scanned.
+HITS=$(grep -nE 'Track_(\*|\[|\\d)' tools/*.sh tools/*.py 2>/dev/null \
+      | grep -vE '^tools/(invariants_audit\.sh|test_[^:]*\.py):' \
+      | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' \
+      | grep -vE '\[0-9\]\[0-9\] |\[0-9\]\{2,3\}|\\d\{\{?2,3\}')
+report "no Track_* globs in tools/: a take is NN Name too" \
+       "match \"NN Name\" takes on the same line (TAKE_STEM_RE in verify_take.sh, newest_take in soak_monitor.sh)" \
+       "$HITS"
+
 # ── 5. New sessions honour the Local Storage override ───────────────────────
 # Record entry points (OSC, transport bar) hardcoded
 # ~/Music/Zynforge Sessions, so a remote-triggered take landed on the wrong
@@ -492,8 +504,10 @@ report "session_mix.json is written only through the mixer guard" \
 # needs, so a copy's hung NAS froze the window and held the take. Take readings
 # come from the recorder's volume probes (readDiskEstimate), which only load
 # atomics. The lines allowed below are the between-takes free-space read,
-# behind isTakeOnDisk, and the SMART poll's own thread. hasSessionFolder is how a
-# tick asks whether there is a session.
+# behind isTakeOnDisk. hasSessionFolder is how a tick asks whether there is a
+# session. The SMART poll and the idle record-time figure ask their drives on
+# threads of their own, and the figure (which stats every destination) is
+# worked out only in refreshIdleRecordTime, once they have answered.
 FS_CALLS='isDirectory\(\)|existsAsFile\(\)|\.exists\(\)|getBytesFreeOnVolume|getVolumeTotalSize|estimateMinutesRemaining'
 HITS=$(grep -n "getCaptureLengthSamples" Source/UI/MainComponentTimer.cpp 2>/dev/null | sed 's,//.*,,' | grep "getCaptureLengthSamples")
 report "the 10 Hz tick reads no take length" \
@@ -509,8 +523,15 @@ report "noting a capture reads nothing back from the take's volume" \
 HITS=$(sed -n '/EngineStatus CaptureDaemon::buildStatus/,/^    }/p' Source/Capture/CaptureDaemon.cpp 2>/dev/null \
        | grep -E "$FS_CALLS" | sed 's,^,buildStatus: ,')
 TICK=$(grep -nE "$FS_CALLS" Source/UI/MainComponentTimer.cpp 2>/dev/null \
-       | grep -vE 'active\.isDirectory\(\) \? active|sessRoot\.exists\(\)|getBytesFreeOnVolume\(\);|(sessionDir|backupDir)\.isDirectory\(\)$|^[0-9]+:[[:space:]]*//')
+       | grep -vE 'active\.isDirectory\(\) \? active|sessRoot\.exists\(\)|getBytesFreeOnVolume\(\);|^[0-9]+:[[:space:]]*//')
 [[ -n "$TICK" ]] && HITS+=$'\n'"Source/UI/MainComponentTimer.cpp:$TICK"
+TICK=$(awk '/^void MainComponent::refreshIdleRecordTime/ { inside = 1 }
+            inside && /^}/ { inside = 0 }
+            ! inside && /refreshDiskMinutesRemaining/ && ! /^[[:space:]]*\/\// { print NR ": " $0 }' \
+       Source/UI/MainComponentTimer.cpp 2>/dev/null)
+grep -q '^void MainComponent::refreshIdleRecordTime' Source/UI/MainComponentTimer.cpp \
+    || TICK+=$'\n'"refreshIdleRecordTime moved; point this rule at it"
+[[ -n "$TICK" ]] && HITS+=$'\n'"Source/UI/MainComponentTimer.cpp (record time outside refreshIdleRecordTime):$TICK"
 # EDIT's own 24 Hz timer runs on that thread too, through finalization.
 grep -q 'void EditPage::timerCallback' Source/UI/EditPage.cpp \
     || HITS+=$'\nSource/UI/EditPage.cpp: the EDIT timer moved; point this rule at it'
