@@ -660,6 +660,10 @@ private:
         const auto report = juce::JSON::parse (session.dir.getChildFile ("session.report.json"));
         expectEquals ((int) report.getProperty ("inputCyclesSkipped", -1), 1);
         expectEquals ((int) report.getProperty ("inputSkippedFrames", -1), enginedevice::kBlock);
+        // verify_take reads macOS's log for this process's overloads only.
+        expectEquals (report.getProperty ("captureProcess", {}).toString(),
+                      juce::File::getSpecialLocation (juce::File::currentExecutableFile).getFileName(),
+                      "the report does not say which process captured the take");
 
         beginTest ("Steady, jittery or split CoreAudio buffers are never taken for a skipped cycle");
         enginedevice::Folder second;

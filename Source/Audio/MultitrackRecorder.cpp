@@ -3882,6 +3882,12 @@ namespace zynforge
         // A live take holds them as silence; missedSamples counts them too.
         report->setProperty ("inputCyclesSkipped", reportedInputSkipCycles);
         report->setProperty ("inputSkippedFrames", reportedInputSkipFrames);
+        // The process that captured the take ("Zynforge Recording", or
+        // "ZynforgeCapture" for a helper take): tools/verify_take.sh reads only
+        // its CoreAudio overloads from macOS's log, since the window keeps its
+        // own monitor callback during a helper take.
+        report->setProperty ("captureProcess",
+                             juce::File::getSpecialLocation (juce::File::currentExecutableFile).getFileName());
         report->setProperty ("backupActive",   backupWasRunning);
         if (backupWasRunning) report->setProperty ("backupRoot", bDir.getFullPathName());
         report->setProperty ("backupFailed",   reportedBackupFailure);
